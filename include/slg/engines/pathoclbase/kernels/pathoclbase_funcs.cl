@@ -306,6 +306,7 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		const int restirEnabled, const uint restirCandidateCount,
 		const int restirTemporalEnable, const int restirStoreEnable,
 		const uint restirPixelIndex, __global RestirReservoir *restirReservoirs,
+		const int restirSpatialEnable, __global RestirReservoir *restirSpatialGrid,
 		__global DirectLightIlluminateInfo *info
 		LIGHTS_PARAM_DECL) {
 	// Select the light strategy to use
@@ -350,9 +351,107 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		float resPickPdf = 0.f;
 		float wSum = 0.f;
 		float resTarget = 0.f;
+		// Total proposal draws (fresh draws including culled ones plus
+		// the sample counts of merged neighbor reservoirs). This is the
+		// M of W = wSum/M, NOT just the loop trip count - mirroring
+		// mTotal in the CPU implementation.
+		uint mTotal = 0;
+		uint mergeCount = 0;
 
-		for (uint i = 0; i < M; ++i) {
-			const float u_i = fmod(u0 + i * (1.f / M), 1.f);
+		//------------------------------------------------------------------
+		// Spatial reuse (Stage 4): GRIS merge of neighbor reservoirs from
+		// a world-space hash grid - kernel port of the spatial merge in
+		// LightStrategyRestirDI::SampleLightsBSDF(). Each stored neighbor
+		// winner is re-evaluated against THIS point's target (pi_new) and
+		// merged with weight bNbr = wSum_nbr * (pi_new / pi_old), which is
+		// the GRIS-correct combine; the neighbor's sample count joins M.
+		// Grid cells are advisory data shared between tasks: a torn read
+		// yields a bounded wrong-weight merge, never a crash or NaN.
+		//------------------------------------------------------------------
+		if (restirSpatialEnable) {
+			const uint gridLightCount = as_uint(lightDist[0]);
+			const int cx = Floor2Int(bsdf->hitPoint.p.x / RESTIR_SPATIAL_CELL_SIZE);
+			const int cy = Floor2Int(bsdf->hitPoint.p.y / RESTIR_SPATIAL_CELL_SIZE);
+			const int cz = Floor2Int(bsdf->hitPoint.p.z / RESTIR_SPATIAL_CELL_SIZE);
+
+			// Own cell first, then the 6 face neighbors; capped at 2 merges
+			const int OFFS[7][3] = {
+				{0, 0, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+				{0, -1, 0}, {0, 0, 1}, {0, 0, -1},
+			};
+			for (int o = 0; (o < 7) && (mergeCount < 2); ++o) {
+				// Same integer hash as LightStrategyRestirDI::GridHash()
+				const int dx = OFFS[o][0], dy = OFFS[o][1], dz = OFFS[o][2];
+				uint h = (uint)(cx + dx) * 73856093u ^
+						(uint)(cy + dy) * 19349663u ^ (uint)(cz + dz) * 83492791u;
+				h ^= h >> 16;
+				h *= 2246822519u;
+				h ^= h >> 13;
+				__global RestirReservoir *entry =
+						&restirSpatialGrid[h & (RESTIR_SPATIAL_GRID_SIZE - 1u)];
+
+				const uint eLightIndex = entry->lightIndex;
+				const float eWSum = entry->wSum;
+				const uint eM = entry->M;
+				const float eTarget = entry->target;
+				if ((eLightIndex == NULL_INDEX) || (eLightIndex >= gridLightCount) ||
+						(eWSum <= 0.f) || (eM == 0u) || (eTarget <= 0.f))
+					continue;
+
+				const float nbPickPdf = LightStrategy_SampleLightPdf(
+						lightsDistribution,
+						dlscAllEntries,
+						dlscDistributions, dlscBVHNodes,
+						dlscRadius2, dlscNormalCosAngle,
+						VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+						bsdf->isVolume,
+						eLightIndex);
+				if (nbPickPdf <= 0.f)
+					continue;
+
+				float nbPdfW;
+				const float3 nbRadiance = Light_Illuminate(
+						&lights[eLightIndex],
+						bsdf,
+						time, u0, 0.f, 0.f,
+						worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+						tmpHitPoint,
+						shadowRay, &nbPdfW
+						LIGHTS_PARAM);
+				if (Spectrum_IsBlack(nbRadiance) || (nbPdfW <= 0.f))
+					continue;
+
+				const float nbTarget = Spectrum_Y(nbRadiance) /
+						(nbPickPdf * nbPdfW);
+				if (nbTarget <= 0.f)
+					continue;
+
+				const float bNbr = eWSum * (nbTarget / eTarget);
+				wSum += bNbr;
+				mTotal += eM;
+				++mergeCount;
+
+				const uint acceptSeed = SobolSequence_BlueNoiseHash(
+						as_uint(u0) ^ (0x45d9f3bu + (uint)o));
+				const float r = SobolSequence_BlueNoiseHash(
+						acceptSeed ^ (o * 0x85EBCA6Bu)) * (1.f / 4294967296.f);
+				if ((resLightIndex == NULL_INDEX) || (r < bNbr / wSum)) {
+					resLightIndex = eLightIndex;
+					resPickPdf = nbPickPdf;
+					resTarget = nbTarget;
+				}
+			}
+		}
+
+		// Neighbor merges already spent their Illuminate() budget; the
+		// fresh stream draws M - mergeCount candidates (>= 1) so the total
+		// per-vertex cost stays bounded, as on CPU.
+		const uint candCount = (M > mergeCount) ? (M - mergeCount) : 1u;
+		for (uint i = 0; i < candCount; ++i) {
+			// Every proposal draw counts toward mTotal, including the
+			// culled ones below (they add 0 to wSum but still count in M).
+			++mTotal;
+			const float u_i = fmod(u0 + i * (1.f / candCount), 1.f);
 
 			float candPickPdf;
 			const uint candIndex = LightStrategy_SampleLights(lightDist,
@@ -424,7 +523,7 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		// temporal bias of ReSTIR.
 		//----------------------------------------------------------------------
 		float wSumTotal = wSum;
-		uint MTotal = M;
+		uint MTotal = mTotal;
 		float curTarget = resTarget;
 		uint curLightIndex = resLightIndex;
 		float curPickPdf = resPickPdf;
@@ -459,6 +558,43 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 				reservoir->M = MTotal;
 				reservoir->target = curTarget;
 			}
+		}
+
+		// Cap the reuse count at 2x the candidate count (CPU port): a
+		// runaway M would let stale winners dominate the merge. The wSum
+		// rescale keeps W = wSum/M exact.
+		const uint mCap = 2u * M;
+		if (MTotal > mCap) {
+			wSumTotal *= (float)mCap / (float)MTotal;
+			MTotal = mCap;
+		}
+
+		//------------------------------------------------------------------
+		// Spatial store: share the finished reservoir at this point's
+		// hash-grid cell for future merges. Only representative winners
+		// are shared (a tiny winner target under normal mass produces an
+		// astronomical W and poisons the next merge - the 1e26-pathology
+		// guard from the CPU implementation). lightIndex is the commit
+		// word: it is written last so readers that see a valid index get
+		// a complete-or-stale entry, and cells start all-zero (wSum == 0
+		// is rejected on read, so no NULL init is needed).
+		//------------------------------------------------------------------
+		if (restirSpatialEnable && (wSumTotal > 0.f) &&
+				(curTarget >= .05f * wSumTotal / (float)max(MTotal, 1u))) {
+			const int cx = Floor2Int(bsdf->hitPoint.p.x / RESTIR_SPATIAL_CELL_SIZE);
+			const int cy = Floor2Int(bsdf->hitPoint.p.y / RESTIR_SPATIAL_CELL_SIZE);
+			const int cz = Floor2Int(bsdf->hitPoint.p.z / RESTIR_SPATIAL_CELL_SIZE);
+			uint h = (uint)cx * 73856093u ^ (uint)cy * 19349663u ^
+					(uint)cz * 83492791u;
+			h ^= h >> 16;
+			h *= 2246822519u;
+			h ^= h >> 13;
+			__global RestirReservoir *entry =
+					&restirSpatialGrid[h & (RESTIR_SPATIAL_GRID_SIZE - 1u)];
+			entry->wSum = wSumTotal;
+			entry->M = MTotal;
+			entry->target = curTarget;
+			entry->lightIndex = curLightIndex;
 		}
 
 		lightIndex = curLightIndex;

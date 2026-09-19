@@ -40,6 +40,12 @@ typedef struct {
 		// Temporal reuse: merge each pixel's stored previous-pass
 		// reservoir (lightIndex/wSum/M/target) as extra proposal draws.
 		int temporalEnable;
+		// Spatial reuse: GRIS merge of hash-grid neighbor reservoirs.
+		// The grid cells live in restirReservoirs[reservoirCount ..].
+		int spatialEnable;
+		// Number of per-pixel temporal reservoirs at the head of the
+		// restirReservoirs buffer; the spatial hash grid follows them.
+		unsigned int reservoirCount;
 	} restir;
 
 	// MNEE (Manifold Next Event Estimation): direct light sampling through

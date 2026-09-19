@@ -81,11 +81,16 @@ void CompiledScene::CompilePathTracer() {
 			restirStrategy->GetEffectiveCandidateCount();
 		compiledPathTracer.restir.temporalEnable =
 			restirStrategy->IsTemporalReuseEnabled();
+		compiledPathTracer.restir.spatialEnable =
+			restirStrategy->IsSpatialReuseEnabled();
 	} else {
 		compiledPathTracer.restir.enabled = false;
 		compiledPathTracer.restir.candidateCount = 0;
 		compiledPathTracer.restir.temporalEnable = false;
+		compiledPathTracer.restir.spatialEnable = false;
 	}
+	// Filled at device init once the film sub-region is known
+	compiledPathTracer.restir.reservoirCount = 0;
 
 	CompilePhotonGI();
 

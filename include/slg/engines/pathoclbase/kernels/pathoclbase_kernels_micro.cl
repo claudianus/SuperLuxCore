@@ -654,6 +654,10 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 						(pathInfo->depth.depth == 0),
 				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
 				restirReservoirs,
+				taskConfig->pathTracer.restir.spatialEnable,
+				// The spatial hash grid is appended after the per-pixel
+				// temporal reservoirs in the same buffer
+				restirReservoirs + taskConfig->pathTracer.restir.reservoirCount,
 				&taskDirectLight->illumInfo
 				LIGHTS_PARAM)) {
 		// I have now to evaluate the BSDF

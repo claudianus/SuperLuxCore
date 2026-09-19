@@ -445,6 +445,14 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// Allocate tasksConfigBuff
 	//--------------------------------------------------------------------------
 
+	// The ReSTIR spatial hash grid is appended to the per-pixel reservoir
+	// buffer, so the kernels need the head count to locate it.
+	{
+		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
+		renderEngine->taskConfig.pathTracer.restir.reservoirCount =
+				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth();
+	}
+
 	intersectionDevice.AllocBufferRO(&taskConfigBuff, &renderEngine->taskConfig, sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration), "GPUTaskConfiguration");
 
 	//--------------------------------------------------------------------------
@@ -827,12 +835,14 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
 
 	{
-		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
-		const u_int filmWidth = renderEngine->GetFilm().GetWidth();
-		const u_int reservoirCount = (subRegion[3] + 1) * filmWidth;
-		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(reservoirCount);
+		const u_int reservoirCount =
+				renderEngine->taskConfig.pathTracer.restir.reservoirCount;
+		// The spatial-reuse hash grid is appended after the per-pixel
+		// reservoirs (16384 cells, matching the CPU GRID_HASH_SIZE).
+		const u_int totalCount = reservoirCount + RESTIR_SPATIAL_GRID_SIZE;
+		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(totalCount);
 		intersectionDevice.AllocBufferRW(&restirReservoirsBuff, zeroReservoirs.data(),
-				sizeof(slg::ocl::pathoclbase::RestirReservoir) * reservoirCount, "RestirReservoirs");
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) * totalCount, "RestirReservoirs");
 	}
 
 	//--------------------------------------------------------------------------

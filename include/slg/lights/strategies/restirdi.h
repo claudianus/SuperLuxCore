@@ -129,6 +129,9 @@ public:
 	// reservoir buffer of the PATHOCL kernels). The CPU strategy exposes
 	// the flag so the GPU config mirrors the scene configuration.
 	bool IsTemporalReuseEnabled() const { return temporalReuseEnable; }
+	// Stage 4 spatial merge flag, consumed by the GPU kernels
+	// (lightstrategy.restir.spatialreuse.enable, default false)
+	bool IsSpatialReuseEnabled() const { return spatialReuseEnable; }
 
 	// Stage 4 stats (accessed by tests/benchmarks)
 	u_int GetSpatialReuseHits() const { return spatialReuseHits.load(); }

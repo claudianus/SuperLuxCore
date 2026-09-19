@@ -34,7 +34,7 @@ Light strategy `restir_di` plugs into the existing light-selection path:
 | 2 | `stage 2: zero-weight occluded` | Occluded candidates get zero weight (cheap pruning). |
 | 3 | `stage 3: contribution-aware` | `SampleLightsBSDF` target weights candidates by actual contribution. |
 | 4 | `stage 4: spatial reuse (hashed grid)` + `adaptive candidate count` | Neighbouring reservoirs merged through a spatial hash grid. |
-| GPU | `GPU kernel port`, `per-pixel temporal reuse (opt-in)` | Reservoir stages ported to OpenCL/Metal kernels. |
+| GPU | `GPU kernel port`, `per-pixel temporal reuse (opt-in)`, `spatial reuse` | Reservoir stages ported to OpenCL/Metal kernels; the spatial hash grid is appended to the reservoir buffer and merged with the same GRIS weights as CPU. |
 | GRIS | `GRIS-correct spatial reservoir merge` | Generalized RIS weighting keeps the spatial merge unbiased. |
 | Fixes | `exact direct-hit MIS under culling`, `bounded negatives` | Dark-bias / energy corrections. |
 
@@ -50,7 +50,9 @@ Light strategy `restir_di` plugs into the existing light-selection path:
 - Reuse is currently **DI only** — no ReSTIR PT / GI / PG stages.
 - The RIS target does **not** yet include the visibility term; spatial reuse
   therefore has a measured ~2x inefficiency vs a visibility-weighted target
-  (roadmap E2).
+  (roadmap E2). Without shift mappings, spatial reuse does not reduce RMSE on
+  the manylights validation scenes - measured ~1.1-1.3x worse on CPU and GPU
+  alike (`dev-tools/e14_restir_spatial_gpu_test.py`); it stays opt-in.
 - Experimental stages are gated default-off pending regression coverage.
 
 ## Test scenes / validation

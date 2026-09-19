@@ -115,6 +115,13 @@ typedef struct {
 	float target;				// target weight of the winning sample
 } RestirReservoir;
 
+// ReSTIR DI spatial reuse (Stage 4 port of restirdi.cpp): the same
+// ReservoirEntry layout is reused for hash-grid cells appended after the
+// per-pixel temporal reservoirs in the restirReservoirs buffer. The
+// hashing and cell size match LightStrategyRestirDI::GridHash/CELL_SIZE.
+#define RESTIR_SPATIAL_GRID_SIZE (1u << 14)
+#define RESTIR_SPATIAL_CELL_SIZE .5f
+
 // The state used to keep track of the rendered path
 typedef struct {
 	PathState state;
