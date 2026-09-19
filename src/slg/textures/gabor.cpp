@@ -133,7 +133,10 @@ float GaborNoiseTexture::GetFloatValue(const HitPoint &hitPoint) const {
 
 	switch (output) {
 		case GABOR_PHASE:
-			return atan2f(im, re) * (1.f / (2.f * M_PI)) + .5f;
+			// atan2(0, 0) is undefined; sparse cells frequently sum to
+			// exactly (0, 0)
+			return (re == 0.f && im == 0.f) ? .5f :
+					atan2f(im, re) * (1.f / (2.f * M_PI)) + .5f;
 		case GABOR_INTENSITY:
 			return Clamp(sqrtf(re * re + im * im) * sigmaInv * .5f, 0.f, 1.f);
 		default:

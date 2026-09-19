@@ -87,8 +87,14 @@ OPENCL_FORCE_INLINE float GaborNoiseTexture_ConstEvaluateFloat(
 	GaborNoiseTexture_EvalPhasor(v.x * scale, v.y * scale, freq,
 			isotropy, orient, &re, &im);
 
-	if (output == 1u) // GABOR_PHASE
-		return atan2(im, re) * (1.f / (2.f * M_PI_F)) + .5f;
+	if (output == 1u) { // GABOR_PHASE
+		// atan2(0, 0) is undefined; sparse cells frequently sum to exactly
+		// (0, 0) and some GPU fast-math atan2 implementations return NaN
+		// or garbage instead of 0.
+		const float phase = (re == 0.f && im == 0.f) ? .5f :
+				atan2(im, re) * (1.f / (2.f * M_PI_F)) + .5f;
+		return phase;
+	}
 	else if (output == 2u) // GABOR_INTENSITY
 		return clamp(sqrt(re * re + im * im) * sigmaInv * .5f, 0.f, 1.f);
 	else // GABOR_VALUE
