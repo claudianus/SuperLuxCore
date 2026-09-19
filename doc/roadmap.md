@@ -25,7 +25,7 @@ claims backed by measured evidence.
 | Track | Item | Notes |
 |---|---|---|
 | E9 leftovers | OptiX/CUDA motion geometry refresh | `OptixMotionGeometryDesc` vertex buffers; out of scope until the CUDA path is revived |
-| E2 | ReSTIR PT/GI/PG + RIS visibility term | current DI-only, ~2× spatial-reuse inefficiency |
+| E2 | ReSTIR PT/GI/PG + RIS visibility term | spatial reuse now ported to GPU (GRIS merge, opt-in, unbiased within 3%); still DI-only, ~2× visibility inefficiency; shifts are the known next step for a variance win |
 | E1 | OIDN Metal into dep bundle | validated locally; needs LuxCoreDeps `with_device_metal=True` recipe + dep release |
 | Wavefront M3 | material bucketing | decided: not pursued — wavefront loses on every tested workload (dense-vs-wavefront −7~−17%, re-verified 2026-09 cornell 512²/30s: 13.4M vs 12.2M spp/s ≈ −9%); see `dev-tools/wavefront-design.md` M2 status |
 | Blender UX | V-Ray/Corona-level polish | persistent-scene cache + deltas landed; remaining: render stats UX, low-resource fallback profiles |
