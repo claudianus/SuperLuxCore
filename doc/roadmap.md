@@ -33,19 +33,22 @@ claims backed by measured evidence.
 
 ## Standing gaps (honest list)
 
-- **Critical bug found 2026-10 (PATHOCL texture eval corruption).**
-  On PATHOCL (dense and wavefront alike), any texture that pops child
-  evals — even `add` of two constants — returns nondeterministically
-  wrong results (~1/4 to ~9/16 of pixels get the correct value, the rest
-  read as zero/garbage; observed 8e23 outliers). Repro:
-  `scene.textures.t.type=add`, `texture1=0.3`, `texture2=0.4` as an
-  emissive quad's emission → PATHCPU=0.70, TILEPATHOCL=0.70,
-  PATHOCL≈0.175 with a periodic `..##` zero mask. Single-child textures
-  (mathfunc, const) are unaffected. TILEPATHOCL uses the same MK_*
-  kernels yet is unaffected, so the defect is in PATHOCL's task/queue
-  wiring (suspect eval-stack aliasing or missing kernel ordering in the
-  MK_* chain on Metal/cl2msl). Highest-priority correctness item —
-  composed materials on PATHOCL cannot be trusted until fixed.
+- ~~Critical bug found 2026-10 (PATHOCL texture eval corruption)~~ —
+  **fixed 2026-10.** Root cause was not texture evaluation: PATHOCL's
+  bucketed samplers (RANDOM/SOBOL/PMJ02) assigned buckets via an atomic
+  counter and every task sharing a bucket swept `pixelOffset`
+  0..bucketSize-1 in lockstep, so each sample wave covered only
+  `bucketCount` morton-clustered positions. With the default task count
+  (≈512K) far exceeding small film pixel counts and `batch.haltspp`
+  halting after a few waves, ~3/4 of pixels received zero samples —
+  a deterministic `..##` mask (dark pixels had RAYCOUNT=0).
+  Fix: per-task staggered cyclic bucket sweep (`bucketCycleStart`, see
+  `include/slg/samplers/sampler_types.cl`); wave-1 coverage now spreads
+  across the film while every visited bucket is still swept completely.
+  Verified on dense+wavefront PATHOCL, RANDOM/SOBOL/PMJ02, 64²/32×16/
+  256², 6+ repeats — `dev-tools/e12_pathocl_eval_corruption.py` is the
+  regression test. Also fixed: `atan2(0,0)` in the Gabor phase output
+  returned garbage on Metal fast-math paths (explicit guard added).
 - Metal is Apple-only by design; OpenCL SW path is the cross-vendor
   fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and

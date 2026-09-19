@@ -9,10 +9,11 @@
 #   - CPU (PATHCPU) and GPU (TILEPATHOCL via cl2msl) results agree closely
 #     (same cell hash + same impulse schedule on both paths)
 #
-# NOTE: PATHOCL currently has a pre-existing texture-eval corruption bug
-# (nondeterministic wrong results for any texture with multiple child
-# inputs, e.g. even `add` of two constants; TILEPATHOCL is unaffected).
-# The GPU leg therefore uses TILEPATHOCL.
+# PATHOCL is covered too: it regressed on this scene because bucketed
+# samplers swept pixel offsets in lockstep across tasks, leaving a
+# periodic morton-hole mask when rendering halted early. The sampler
+# now uses a staggered cyclic bucket sweep (see bucketCycleStart in
+# include/slg/samplers/sampler_types.cl).
 #
 # Run:
 #   LUXCORE_PY=out/build/src/pyluxcore/Release \
@@ -120,7 +121,7 @@ def main():
     pyluxcore.Init()
     open("/tmp/gabor_quad.ply", "w").write(QUAD_PLY)
 
-    for engine in ("PATHCPU", "TILEPATHOCL"):
+    for engine in ("PATHCPU", "TILEPATHOCL", "PATHOCL"):
         # value output: must vary spatially and sit near mid-range
         img = render(engine, "value",
                      "scene.textures.gb0.frequency = 4.0\n"

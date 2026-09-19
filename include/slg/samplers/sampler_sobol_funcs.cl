@@ -179,23 +179,25 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
+	const uint bucketCycleStart = sample->bucketCycleStart;
 
 	Seed rngGeneratorSeed = sample->rngGeneratorSeed;
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
 			pixelOffset++;
+			if (pixelOffset >= bucketSize)
+				pixelOffset = 0;
 			passOffset = 0;
 
-			if (pixelOffset >= bucketSize) {
-				// Ask for a new bucket
+			if (pixelOffset == bucketCycleStart) {
+				// The task completed a full cyclic sweep of the bucket:
+				// ask for a new bucket (see RandomSample::bucketCycleStart)
 				uint bucketSeed;
 				SobolSamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
 						&bucketIndex, &bucketSeed);
 
 				sample->bucketIndex = bucketIndex;
-				pixelOffset = 0;
-				passOffset = 0;
 
 				Rnd_Init(bucketSeed, &rngGeneratorSeed);
 			}
@@ -337,7 +339,9 @@ OPENCL_FORCE_INLINE bool SobolSampler_Init(__constant const GPUTaskConfiguration
 	__global SobolSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->sobol.bucketSize;
-	sample->pixelOffset = bucketSize * bucketSize;
+	// Staggered cyclic sweep (see RandomSample::bucketCycleStart)
+	sample->bucketCycleStart = gid % bucketSize;
+	sample->pixelOffset = sample->bucketCycleStart - 1;
 	sample->passOffset = sampler->sobol.superSampling;
 
 	SobolSampler_NextSample(taskConfig,
