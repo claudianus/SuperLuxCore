@@ -1924,6 +1924,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
+		// GABORNOISE_TEX
+		//----------------------------------------------------------------------
+		case GABORNOISE_TEX:
+			GaborNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
+					hitPoint, sampleDistance TEXTURES_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		default:
 			// Something wrong here
 			break;

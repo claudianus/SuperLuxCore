@@ -108,6 +108,7 @@ extern std::string KernelSource_texture_imagemap_funcs;
 extern std::string KernelSource_texture_others_funcs;
 extern std::string KernelSource_texture_triplanar_funcs;
 extern std::string KernelSource_texture_random_funcs;
+extern std::string KernelSource_texture_gabor_funcs;
 extern std::string KernelSource_texture_whitenoise_funcs;
 extern std::string KernelSource_texture_funcs;
 extern std::string KernelSource_texture_funcs_evalops;

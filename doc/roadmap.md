@@ -33,6 +33,19 @@ claims backed by measured evidence.
 
 ## Standing gaps (honest list)
 
+- **Critical bug found 2026-10 (PATHOCL texture eval corruption).**
+  On PATHOCL (dense and wavefront alike), any texture that pops child
+  evals — even `add` of two constants — returns nondeterministically
+  wrong results (~1/4 to ~9/16 of pixels get the correct value, the rest
+  read as zero/garbage; observed 8e23 outliers). Repro:
+  `scene.textures.t.type=add`, `texture1=0.3`, `texture2=0.4` as an
+  emissive quad's emission → PATHCPU=0.70, TILEPATHOCL=0.70,
+  PATHOCL≈0.175 with a periodic `..##` zero mask. Single-child textures
+  (mathfunc, const) are unaffected. TILEPATHOCL uses the same MK_*
+  kernels yet is unaffected, so the defect is in PATHOCL's task/queue
+  wiring (suspect eval-stack aliasing or missing kernel ordering in the
+  MK_* chain on Metal/cl2msl). Highest-priority correctness item —
+  composed materials on PATHOCL cannot be trusted until fixed.
 - Metal is Apple-only by design; OpenCL SW path is the cross-vendor
   fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and

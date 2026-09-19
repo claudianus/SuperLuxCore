@@ -82,7 +82,9 @@ typedef enum {
 	// Fresnel textures
 	FRESNELCOLOR_TEX, FRESNELCONST_TEX,
 	// Generic math-function texture (trig/exp/log)
-	MATHFUNC_TEX
+	MATHFUNC_TEX,
+	// Sparse Gabor convolution noise
+	GABORNOISE_TEX
 } TextureType;
 
 typedef struct {
@@ -499,6 +501,13 @@ typedef struct {
 } WhiteNoiseTexParam;
 
 typedef struct {
+	unsigned int vecTexIndex;
+	float scale, frequency, isotropy, orientation;
+	unsigned int output; // slg::GaborOutput
+	float sigmaInv; // precomputed 1/sigma of the phasor sum
+} GaborNoiseTexParam;
+
+typedef struct {
 	float width;
 	unsigned int borderTexIndex, insideTexIndex;
 } WireFrameTexParam;
@@ -586,6 +595,7 @@ typedef struct {
 		TriplanarTexParam triplanarTex;
 		RandomTexParam randomTex;
 		WhiteNoiseTexParam whiteNoiseTex;
+		GaborNoiseTexParam gaborNoiseTex;
 		WireFrameTexParam wireFrameTex;
 		DistortTexParam distortTex;
 		BombingTexParam bombingTex;
