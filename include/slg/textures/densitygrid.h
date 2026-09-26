@@ -45,6 +45,18 @@ public:
 	u_int GetDepth() const { return nz; }
 	ImageMapConstRef GetImageMap() const { return imageMap; }
 
+	// Returns true and sets *maxValue to an upper bound of the texture value
+	// over the given world-space box, if the mapping type allows to bound it
+	// (i.e. affine GLOBALMAPPING3D/LOCALMAPPING3D). Since the grid is sampled
+	// with trilinear interpolation, the max over a region is the max over the
+	// voxel vertices covered by that region.
+	bool GetMaxInWorldBBox(const luxrays::BBox &box, float *maxValue) const;
+
+	// Counterpart of GetMaxInWorldBBox(): a lower bound of the texture value
+	// over the box, used as the control extinction (minorant) of residual
+	// ratio tracking.
+	bool GetMinInWorldBBox(const luxrays::BBox &box, float *minValue) const;
+
 	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap *> &referencedImgMaps) const {
 		referencedImgMaps.insert(&imageMap);
 	}

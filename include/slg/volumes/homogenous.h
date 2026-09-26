@@ -34,10 +34,25 @@ public:
 		TextureConstRef iorTex,
 		TextureConstPtr emiTex,
 		TextureConstRef a, TextureConstRef s,
-		TextureConstRef g, const bool multiScattering);
+		TextureConstRef g, const bool multiScattering,
+		const bool useHG = false,
+		const bool useEquiangular = true);
 
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
+	// Distance sampling MIS between the transmittance-proportional and the
+	// equiangular (Kulla & Fajardo, EGSR 2012) distributions around one of
+	// the eqLightPoints, picked proportionally to its contribution estimate
+	// lum_i * (thetaB_i - thetaA_i) / D_i on this segment. Unbiased: for a
+	// homogeneous medium the free-flight pdf sigma_s * exp(-sigma_s * t)
+	// is analytic, so the mixture pdf can be evaluated exactly, and the
+	// conditioned MIS cancels the light selection probability.
+	float ScatterEquiangular(const luxrays::Ray &ray, const float u, const bool scatteredStart,
+		const std::vector<luxrays::Point> &eqLightPoints,
+		const std::vector<float> &eqLightLuminances,
+		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
+	virtual luxrays::Spectrum TransmittanceEstimate(const luxrays::Ray &ray,
+		const float u) const;
 
 	// Material interface
 
@@ -66,6 +81,8 @@ public:
 	TextureConstRef GetSigmaS() const { return sigmaS; }
 	TextureConstRef GetG() const { return schlickScatter.GetG(); }
 	bool IsMultiScattering() const { return multiScattering; }
+	bool IsHGPhase() const { return schlickScatter.IsHGPhase(); }
+	bool IsEquiangularEnabled() const { return equiangular; }
 
 	static float Scatter(const float u, const bool scatterAllowed, const float segmentLength,
 			const luxrays::Spectrum &sigmaA, const luxrays::Spectrum &sigmaS,
@@ -80,6 +97,7 @@ private:
 	std::reference_wrapper<const Texture> sigmaA, sigmaS;
 	SchlickScatter schlickScatter;
 	const bool multiScattering;
+	const bool equiangular;
 };
 
 }

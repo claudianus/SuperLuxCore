@@ -127,6 +127,13 @@ public:
 	// Expressed in float
 	u_int maxMaterialEvalStackSize;
 	u_int defaultWorldVolumeIndex;
+	// Null-collision majorant cells of all heterogeneous volumes
+	// (concatenated, indexed by HeterogenousVolumeParam::majorantOffset).
+	// Each cell is a float pair (minorant, majorant).
+	std::vector<float> volMajorants;
+	// World positions of point-ish lights eligible for equiangular
+	// distance sampling, 4 floats (xyz + pad) per light
+	std::vector<float> eqLightPoints;
 
 	// Compiled Textures
 	std::vector<slg::ocl::Texture> texs;

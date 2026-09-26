@@ -233,6 +233,28 @@ void PathOCLBaseOCLRenderThread::InitTextures() {
 				"JH2019 spectral upsampling table");
 	} else
 		intersectionDevice.FreeBuffer(&spectralUpsamplingTableBuff);
+
+	// Heterogeneous volume majorant cells (all volumes concatenated).
+	// NULL when no volume uses delta tracking; the kernel checks
+	// HeterogenousVolumeParam::majorantOffset so a NULL buffer is fine.
+	if (!renderEngine->compiledScene->volMajorants.empty())
+		intersectionDevice.AllocBufferRO(&volMajorantsBuff,
+				renderEngine->compiledScene->volMajorants.data(),
+				renderEngine->compiledScene->volMajorants.size() * sizeof(float),
+				"Volume majorant cells");
+	else
+		intersectionDevice.FreeBuffer(&volMajorantsBuff);
+
+	// Point-ish light positions for equiangular distance sampling
+	// (float4 xyz per light). NULL when none; the kernel checks
+	// eqLightCount so a NULL buffer is fine.
+	if (!renderEngine->compiledScene->eqLightPoints.empty())
+		intersectionDevice.AllocBufferRO(&eqLightPointsBuff,
+				renderEngine->compiledScene->eqLightPoints.data(),
+				renderEngine->compiledScene->eqLightPoints.size() * sizeof(float),
+				"Equiangular light points");
+	else
+		intersectionDevice.FreeBuffer(&eqLightPointsBuff);
 }
 
 void PathOCLBaseOCLRenderThread::InitLights() {

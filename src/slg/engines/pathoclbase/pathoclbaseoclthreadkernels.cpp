@@ -582,6 +582,14 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	// path.spectral.upsampling=jh2019; TEXTURES_PARAM tail)
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
 			spectralUpsamplingTableBuff);
+	// Volume majorant cells (TEXTURES_PARAM tail; NULL when unused)
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
+			volMajorantsBuff);
+	// Equiangular distance-sampling light positions (TEXTURES_PARAM tail)
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
+			eqLightPointsBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
+			(u_int)(renderEngine->compiledScene->eqLightPoints.size() / 4));
 
 	return argIndex;
 }

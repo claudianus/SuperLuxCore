@@ -112,12 +112,25 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 		// between scattering events and pass-through events
 		float3 connectionEmission = BLACK;
 
-		const float t = Volume_Scatter(&mats[rayVolumeIndex], ray,
-				hit ? rayHit->t : ray->maxt,
-				passThrough, volInfo->scatteredStart,
-				connectionThroughput, &connectionEmission,
-				tmpHitPoint
-				TEXTURES_PARAM);
+		float t;
+		if (shadowRay) {
+			// Shadow rays estimate the whole-segment transmittance (ratio
+			// tracking for heterogeneous volumes) instead of sampling a
+			// binary scattering event
+			*connectionThroughput *= Volume_TransmittanceEstimate(
+					&mats[rayVolumeIndex], ray,
+					hit ? rayHit->t : ray->maxt,
+					passThrough, tmpHitPoint
+					TEXTURES_PARAM);
+			t = -1.f;
+		} else {
+			t = Volume_Scatter(&mats[rayVolumeIndex], ray,
+					hit ? rayHit->t : ray->maxt,
+					passThrough, volInfo->scatteredStart,
+					connectionThroughput, &connectionEmission,
+					tmpHitPoint
+					TEXTURES_PARAM);
+		}
 
 		// Add the volume emitted light to the appropriate light group
 		if (!Spectrum_IsBlack(connectionEmission) && sampleResult)

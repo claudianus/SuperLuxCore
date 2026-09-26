@@ -579,6 +579,23 @@ void CompiledScene::CompileMaterials() {
 	const double tStart = WallClockTime();
 
 	mats.resize(materialsCount);
+	volMajorants.clear();
+
+	// Point-ish light positions for equiangular distance sampling
+	// (collected by Scene::Preprocess into scene.equiangularLightPoints)
+	eqLightPoints.clear();
+	eqLightPoints.reserve(scene.GetEquiangularLightPoints().size() * 4);
+	{
+		const auto &pts = scene.GetEquiangularLightPoints();
+		const auto &lums = scene.GetEquiangularLightLuminances();
+		for (size_t i = 0; i < pts.size(); ++i) {
+			eqLightPoints.push_back(pts[i].x);
+			eqLightPoints.push_back(pts[i].y);
+			eqLightPoints.push_back(pts[i].z);
+			// .w: light power, used by the contribution-aware selection
+			eqLightPoints.push_back(i < lums.size() ? lums[i] : 1.f);
+		}
+	}
 
 	for (u_int i = 0; i < materialsCount; ++i) {
 		auto& m = scene.GetMaterials().GetMaterial(i);
@@ -1018,6 +1035,8 @@ void CompiledScene::CompileMaterials() {
 						mat->volume.homogenous.sigmaSTexIndex = scene.GetTextures().GetTextureIndex(hv.GetSigmaS());
 						mat->volume.homogenous.gTexIndex = scene.GetTextures().GetTextureIndex(hv.GetG());
 						mat->volume.homogenous.multiScattering = hv.IsMultiScattering();
+						mat->volume.homogenous.phaseFunc = hv.IsHGPhase() ? 1 : 0;
+						mat->volume.homogenous.distanceSampling = hv.IsEquiangularEnabled() ? 1 : 0;
 						break;
 					}
 					case HETEROGENEOUS_VOL: {
@@ -1029,6 +1048,44 @@ void CompiledScene::CompileMaterials() {
 						mat->volume.heterogenous.stepSize = hv.GetStepSize();
 						mat->volume.heterogenous.maxStepsCount = hv.GetMaxStepsCount();
 						mat->volume.heterogenous.multiScattering = hv.IsMultiScattering();
+						mat->volume.heterogenous.phaseFunc = hv.IsHGPhase() ? 1 : 0;
+						mat->volume.heterogenous.deltaTracking = hv.IsDeltaTracking();
+						mat->volume.heterogenous.globalMajorant = hv.GetGlobalMajorant();
+						mat->volume.heterogenous.globalMinorant = hv.GetGlobalMinorant();
+
+						// Serialize the majorant grid (built by
+						// Scene::PreprocessVolumes during Scene::Preprocess)
+						if (hv.IsDeltaTracking() && hv.HasMajorantGrid()) {
+							const u_int *res = hv.GetMajorantGridRes();
+							const BBox &bbox = hv.GetMajorantBBox();
+							mat->volume.heterogenous.majorantBBoxMinX = bbox.pMin.x;
+							mat->volume.heterogenous.majorantBBoxMinY = bbox.pMin.y;
+							mat->volume.heterogenous.majorantBBoxMinZ = bbox.pMin.z;
+							mat->volume.heterogenous.majorantBBoxMaxX = bbox.pMax.x;
+							mat->volume.heterogenous.majorantBBoxMaxY = bbox.pMax.y;
+							mat->volume.heterogenous.majorantBBoxMaxZ = bbox.pMax.z;
+							// Cubic cells: cellSize is the largest domain
+							// extent divided by the requested resolution,
+							// same as in BuildMajorantGrid()
+							const float maxExtent = Max(bbox.pMax.x - bbox.pMin.x,
+									Max(bbox.pMax.y - bbox.pMin.y,
+									bbox.pMax.z - bbox.pMin.z));
+							mat->volume.heterogenous.majorantCellSize =
+									maxExtent / hv.GetMajorantRes();
+							mat->volume.heterogenous.majorantResX = res[0];
+							mat->volume.heterogenous.majorantResY = res[1];
+							mat->volume.heterogenous.majorantResZ = res[2];
+							mat->volume.heterogenous.majorantOffset = volMajorants.size();
+							// Cells are stored as (minorant, majorant) pairs
+							const auto &majCells = hv.GetMajorantCells();
+							const auto &minCells = hv.GetMinorantCells();
+							volMajorants.reserve(volMajorants.size() + 2 * majCells.size());
+							for (size_t i = 0; i < majCells.size(); ++i) {
+								volMajorants.push_back(minCells[i]);
+								volMajorants.push_back(majCells[i]);
+							}
+						} else
+							mat->volume.heterogenous.majorantOffset = NULL_INDEX;
 						break;
 					}
 					default:

@@ -73,6 +73,25 @@ float ClearVolume::Scatter(const Ray &ray, const float u,
 	return -1.f;
 }
 
+Spectrum ClearVolume::TransmittanceEstimate(const Ray &ray, const float u) const {
+	// Point where to evaluate the volume
+	HitPoint hitPoint;
+	hitPoint.Init();
+	hitPoint.fixedDir = ray.d;
+	hitPoint.p = ray.o;
+	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
+	hitPoint.passThroughEvent = u;
+
+	const float distance = ray.maxt - ray.mint;
+
+	const Spectrum sigma = SigmaT(hitPoint);
+	if (sigma.Black())
+		return Spectrum(1.f);
+
+	const Spectrum tau = (distance * sigma).Clamp();
+	return Exp(-tau);
+}
+
 Spectrum ClearVolume::Albedo(const HitPoint &hitPoint) const {
 	throw runtime_error("Internal error: called ClearVolume::Albedo()");
 }

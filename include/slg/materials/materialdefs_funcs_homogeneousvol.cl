@@ -81,7 +81,8 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Evaluate(__global const Material
 	const float3 result = SchlickScatter_Evaluate(
 			hitPoint, eyeDir, lightDir,
 			&event, &directPdfW,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal);
+			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			material->volume.homogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -108,10 +109,11 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Sample(__global const Material* 
 	BSDFEvent event;
 	const float3 result = SchlickScatter_Sample(
 			hitPoint, fixedDir, &sampledDir,
-			u0, u1, 
+			u0, u1,
 			passThroughEvent,
 			&pdfW, &event,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal);
+			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			material->volume.homogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

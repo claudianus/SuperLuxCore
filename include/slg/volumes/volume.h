@@ -65,6 +65,14 @@ public:
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const = 0;
 
+	// Returns an unbiased estimate of the transmittance over the ray segment
+	// [mint, maxt]. Used by shadow rays: instead of sampling a (binary)
+	// scattering event, the whole-segment transmittance is estimated
+	// analytically (clear/homogeneous) or with ratio tracking (heterogeneous),
+	// removing a large source of variance in direct lighting through media.
+	virtual luxrays::Spectrum TransmittanceEstimate(const luxrays::Ray &ray,
+		const float u) const = 0;
+
 	virtual void AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexsreferencedTexs) const;
 	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex);
 
@@ -90,10 +98,13 @@ protected:
 	int priority;
 };
 
-// An utility class
+// An utility class. Implements the volume phase function: the Schlick
+// approximation (default, legacy) or the exact Henyey-Greenstein function
+// (scene.volumes.<name>.phase = "hg").
 class SchlickScatter {
 public:
-	SchlickScatter(VolumeConstRef volume, TextureConstRef g);
+	SchlickScatter(VolumeConstRef volume, TextureConstRef g,
+			const bool useHG = false);
 
 	luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;
 
@@ -110,12 +121,14 @@ public:
 
 	TextureConstRef GetG() const { return g; }
 	void SetG(TextureConstRef tex) { g = tex; }
+	bool IsHGPhase() const { return useHG; }
 
 	VolumeConstRef volume;
 
 private:
 	luxrays::Spectrum GetColor(const HitPoint &hitPoint) const;
 	std::reference_wrapper<const Texture> g;
+	const bool useHG;
 };
 
 // Some utilities

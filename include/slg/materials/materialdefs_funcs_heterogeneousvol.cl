@@ -20,18 +20,20 @@
 
 OPENCL_FORCE_INLINE float3 SchlickScatter_GetColor(const float3 sigmaS, const float3 sigmaA) {
 	float3 r = sigmaS;
+	// Purely absorbing points (sigma_s = 0, sigma_a > 0) can be reached by
+	// sigma_t-rate delta tracking and must have zero albedo
 	if (r.x > 0.f)
 		r.x /= r.x + sigmaA.x;
 	else
-		r.x = 1.f;
+		r.x = (sigmaA.x > 0.f) ? 0.f : 1.f;
 	if (r.y > 0.f)
 		r.y /= r.y + sigmaA.y;
 	else
-		r.y = 1.f;
+		r.y = (sigmaA.y > 0.f) ? 0.f : 1.f;
 	if (r.z > 0.f)
 		r.z /= r.z + sigmaA.z;
 	else
-		r.z = 1.f;
+		r.z = (sigmaA.z > 0.f) ? 0.f : 1.f;
 
 	return r;
 }
@@ -40,16 +42,35 @@ OPENCL_FORCE_INLINE float3 SchlickScatter_Albedo(const float3 sigmaS, const floa
 	return Spectrum_Clamp(SchlickScatter_GetColor(sigmaS, sigmaA));
 }
 
+// Henyey-Greenstein phase function value. The denominator uses +2*g*cos
+// instead of -2*g*cos because localEyeDir is reversed compared to the
+// standard phase function definition.
+OPENCL_FORCE_INLINE float3 HGValue(const float3 g, const float cosTheta) {
+	const float3 gg = g * g;
+	const float3 denom = 1.f + gg + 2.f * g * cosTheta;
+	return (1.f - gg) / (denom * sqrt(denom) * (4.f * M_PI_F));
+}
+
 OPENCL_FORCE_INLINE float3 SchlickScatter_Evaluate(
 		__global const HitPoint *hitPoint, const float3 localEyeDir, const float3 localLightDir,
 		BSDFEvent *event, float *directPdfW,
-		const float3 sigmaS, const float3 sigmaA, const float3 g) {
-	const float3 gValue = clamp(g, -1.f, 1.f);
-	const float3 k = gValue * (1.55f - .55f * gValue * gValue);
+		const float3 sigmaS, const float3 sigmaA, const float3 g,
+		const int phaseFunc) {
+	// HG is singular at |g| = 1, so it is clamped slightly tighter
+	const float3 gValue = clamp(g, phaseFunc ? -0.999f : -1.f, phaseFunc ? 0.999f : 1.f);
 
 	*event = DIFFUSE | REFLECT;
 
 	const float dotEyeLight = dot(localEyeDir, localLightDir);
+
+	if (phaseFunc) {
+		const float3 value = HGValue(gValue, dotEyeLight);
+		if (directPdfW)
+			*directPdfW = HGValue((float3)(Spectrum_Filter(gValue)), dotEyeLight).x;
+		return SchlickScatter_GetColor(sigmaS, sigmaA) * value;
+	}
+
+	const float3 k = gValue * (1.55f - .55f * gValue * gValue);
 	const float kFilter = Spectrum_Filter(k);
 	// 1+k*cos instead of 1-k*cos because localEyeDir is reversed compared to the
 	// standard phase function definition
@@ -68,26 +89,44 @@ OPENCL_FORCE_INLINE float3 SchlickScatter_Evaluate(
 
 OPENCL_FORCE_INLINE float3 SchlickScatter_Sample(
 		__global const HitPoint *hitPoint, const float3 fixedDir, float3 *sampledDir,
-		const float u0, const float u1, 
+		const float u0, const float u1,
 		const float passThroughEvent,
 		float *pdfW, BSDFEvent *event,
-		const float3 sigmaS, const float3 sigmaA, const float3 g) {
-	const float3 gValue = clamp(g, -1.f, 1.f);
+		const float3 sigmaS, const float3 sigmaA, const float3 g,
+		const int phaseFunc) {
+	const float3 gValue = clamp(g, phaseFunc ? -0.999f : -1.f, phaseFunc ? 0.999f : 1.f);
 	const float3 k = gValue * (1.55f - .55f * gValue * gValue);
 	const float kFilter = Spectrum_Filter(k);
+	const float gFilter = Spectrum_Filter(gValue);
 
-	// Add a - because localEyeDir is reversed compared to the standard phase
-	// function definition
-	const float cost = -(2.f * u0 + kFilter - 1.f) / (2.f * kFilter * u0 - kFilter + 1.f);
+	float cost;
+	if (phaseFunc) {
+		// Henyey-Greenstein inversion; the leading - converts to the
+		// reversed localEyeDir convention (see SchlickScatter_Evaluate)
+		if (fabs(gFilter) > 1e-5f) {
+			const float s = (1.f - gFilter * gFilter) / (1.f - gFilter + 2.f * gFilter * u0);
+			cost = -(1.f + gFilter * gFilter - s * s) / (2.f * gFilter);
+		} else
+			cost = -(1.f - 2.f * u0);
+	} else {
+		// Add a - because localEyeDir is reversed compared to the standard phase
+		// function definition
+		cost = -(2.f * u0 + kFilter - 1.f) / (2.f * kFilter * u0 - kFilter + 1.f);
+	}
+	cost = clamp(cost, -1.f, 1.f);
 
 	float3 x, y;
 	CoordinateSystem(fixedDir, &x, &y);
 	*sampledDir = SphericalDirectionWithFrame(sqrt(fmax(0.f, 1.f - cost * cost)), cost,
 			2.f * M_PI_F * u1, x, y, fixedDir);
 
-	// The - becomes a + because cost has been reversed above
-	const float compcost = 1.f + kFilter * cost;
-	*pdfW = (1.f - kFilter * kFilter) / (compcost * compcost * (4.f * M_PI_F));
+	if (phaseFunc)
+		*pdfW = HGValue((float3)(gFilter), cost).x;
+	else {
+		// The - becomes a + because cost has been reversed above
+		const float compcost = 1.f + kFilter * cost;
+		*pdfW = (1.f - kFilter * kFilter) / (compcost * compcost * (4.f * M_PI_F));
+	}
 	if (*pdfW <= 0.f)
 		return BLACK;
 
@@ -159,7 +198,8 @@ OPENCL_FORCE_INLINE void HeterogeneousVolMaterial_Evaluate(__global const Materi
 	const float3 result = SchlickScatter_Evaluate(
 			hitPoint, eyeDir, lightDir,
 			&event, &directPdfW,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal);
+			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			material->volume.heterogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -186,10 +226,11 @@ OPENCL_FORCE_INLINE void HeterogeneousVolMaterial_Sample(__global const Material
 	BSDFEvent event;
 	const float3 result = SchlickScatter_Sample(
 			hitPoint, fixedDir, &sampledDir,
-			u0, u1, 
+			u0, u1,
 			passThroughEvent,
 			&pdfW, &event,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal);
+			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			material->volume.heterogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

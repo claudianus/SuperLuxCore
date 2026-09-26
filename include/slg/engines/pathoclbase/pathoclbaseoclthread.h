@@ -277,6 +277,12 @@ protected:
 	// path.spectral.enable=1 and path.spectral.upsampling=jh2019; the
 	// kernel pointer doubles as the model switch (NULL = Smits).
 	luxrays::HardwareDeviceBuffer *spectralUpsamplingTableBuff;
+	// Heterogeneous volume majorant cells (all volumes concatenated);
+	// NULL when no volume uses delta tracking
+	luxrays::HardwareDeviceBuffer *volMajorantsBuff;
+	// Point-ish light world positions for equiangular distance sampling
+	// (float4 xyz each); NULL when no eligible light exists
+	luxrays::HardwareDeviceBuffer *eqLightPointsBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsValuesBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBVHNodesBuff;

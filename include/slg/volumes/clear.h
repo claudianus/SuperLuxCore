@@ -39,6 +39,8 @@ public:
 
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
+	virtual luxrays::Spectrum TransmittanceEstimate(const luxrays::Ray &ray,
+		const float u) const;
 
 	// Material interface
 

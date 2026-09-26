@@ -155,8 +155,10 @@ VolumeUPtr Scene::CreateVolume(const u_int defaultVolID, const string &volName, 
 		auto& scattering = GetTexture(props.Get(Property(propName + ".scattering")(0.f, 0.f, 0.f)));
 		auto& asymmetry = GetTexture(props.Get(Property(propName + ".asymmetry")(0.f, 0.f, 0.f)));
 		const bool multiScattering =  props.Get(Property(propName + ".multiscattering")(false)).Get<bool>();
+		const bool useHG = (props.Get(Property(propName + ".phase")("schlick")).Get<string>() == "hg");
+		const bool useEquiangular = (props.Get(Property(propName + ".distancesampling")("equiangular")).Get<string>() != "transmittance");
 
-		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering);
+		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering, useHG, useEquiangular);
 	} else if (volType == "heterogeneous") {
 		auto& absorption = GetTexture(props.Get(Property(propName + ".absorption")(0.f, 0.f, 0.f)));
 		auto& scattering = GetTexture(props.Get(Property(propName + ".scattering")(0.f, 0.f, 0.f)));
@@ -164,8 +166,15 @@ VolumeUPtr Scene::CreateVolume(const u_int defaultVolID, const string &volName, 
 		const float stepSize =  props.Get(Property(propName + ".steps.size")(1.f)).Get<double>();
 		const u_int maxStepsCount =  props.Get(Property(propName + ".steps.maxcount")(32u)).Get<u_int>();
 		const bool multiScattering =  props.Get(Property(propName + ".multiscattering")(false)).Get<bool>();
+		// Null-collision (delta) tracking over a majorant grid is the default:
+		// it removes the fixed step-size dependency and skips empty space.
+		// "march" selects the legacy fixed-step ray marching.
+		const string tracking = props.Get(Property(propName + ".tracking")("delta")).Get<string>();
+		const bool deltaTracking = (tracking != "march");
+		const u_int majorantRes = props.Get(Property(propName + ".majorantres")(32u)).Get<u_int>();
+		const bool useHG = (props.Get(Property(propName + ".phase")("schlick")).Get<string>() == "hg");
 
-		vol = std::make_unique<HeterogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, stepSize, maxStepsCount, multiScattering);
+		vol = std::make_unique<HeterogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, stepSize, maxStepsCount, multiScattering, deltaTracking, majorantRes, useHG);
 	} else
 		throw runtime_error("Unknown volume type: " + volType);
 

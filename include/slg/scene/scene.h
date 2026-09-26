@@ -121,6 +121,8 @@ public:
 	void Preprocess(luxrays::Context & ctx,
 		const u_int filmWidth, const u_int filmHeight, const u_int *filmSubRegion,
 		const bool useRTMode);
+	// Builds the null-collision majorant grids of the heterogeneous volumes
+	void PreprocessVolumes(const luxrays::BBox &sceneBBox);
 
 	luxrays::PropertiesUPtr ToProperties(const bool useRealFileName) const;
 
@@ -267,6 +269,11 @@ public:
 	auto& GetLightSources() { return lightDefs; }
 	const auto& GetLightSources() const { return lightDefs; }
 
+	// World positions of point-ish lights eligible for equiangular
+	// distance sampling (built by Scene::Preprocess)
+	const auto& GetEquiangularLightPoints() const { return equiangularLightPoints; }
+	const auto& GetEquiangularLightLuminances() const { return equiangularLightLuminances; }
+
 	auto& GetDataSet() { return *dataSet; }
 	const auto& GetDataSet() const { return *dataSet; }
 
@@ -315,6 +322,15 @@ protected:
 	MaterialDefinitions matDefs; // Material definitions
 	SceneObjectDefinitions objDefs; // SceneObject definitions
 	LightSourceDefinitions lightDefs; // LightSource definitions
+
+	// World positions of point-ish lights eligible for equiangular
+	// distance sampling (built by Scene::Preprocess, used by
+	// HomogeneousVolume::ScatterEquiangular). The parallel
+	// equiangularLightLuminances array holds each light's power, used
+	// for the contribution-aware selection weight
+	// w_i = lum_i * (thetaB_i - thetaA_i) / D_i
+	std::vector<luxrays::Point> equiangularLightPoints;
+	std::vector<float> equiangularLightLuminances;
 
 	// The trash bin container collects items that are pending deletion, in
 	// order to avoid dangling references in real time rendering when the scene

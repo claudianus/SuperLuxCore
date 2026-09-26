@@ -532,7 +532,7 @@ def rule_scalar_ptr_params(body: str) -> str:
             )
             # simpler: do the substitution on 'T *name' patterns
             span2 = re.sub(
-                r"(,\s*|^\s*)((?:const\s+)?(?:float2|float3|float4|uint2|uint3|uint4|float|uint|int|bool|uchar|size_t|Spectrum|BSDFEvent|TextureType|UV|Ray|RayHit|Normal|Point|Vector|Seed|Frame|Material|LightSource|Triangle|Mesh|ExtMesh|Matrix4x4|Transform|Spectrum|ImageMap|GPUTask|GPUTaskState|SampleResult|EyePathInfo|PathVolumeInfo|MaterialEvalOp|InterpolatedTransform|Photon|RadiancePhoton|IndexBVHArrayNode|Distribution1D|EnvLightCache|PGIC|BCD|CUDADevice|OCLDevice|Texture|BSDF|HitPoint|HitPointInfo|Camera|Film|Filter|Sampler|RandomSampler|SobolSampler|TilePathSampler|MetropolisSampler)\s*\*)(\s*[A-Za-z_])",
+                r"(,\s*|^\s*)((?:const\s+)?(?:float2|float3|float4|uint2|uint3|uint4|float|uint|int|bool|uchar|size_t|Spectrum|BSDFEvent|TextureType|UV|Ray|RayHit|Normal|Point|Vector|Seed|Frame|Material|LightSource|Triangle|Mesh|ExtMesh|Matrix4x4|Transform|Spectrum|ImageMap|GPUTask|GPUTaskState|SampleResult|EyePathInfo|PathVolumeInfo|MaterialEvalOp|InterpolatedTransform|Photon|RadiancePhoton|IndexBVHArrayNode|Distribution1D|EnvLightCache|PGIC|BCD|CUDADevice|OCLDevice|Texture|BSDF|HitPoint|HitPointInfo|Camera|Film|Filter|Sampler|RandomSampler|SobolSampler|TilePathSampler|MetropolisSampler|VolMajorantWalk)\s*\*)(\s*[A-Za-z_])",
                 r"\1thread \2 \3",
                 span,
                 flags=re.M,

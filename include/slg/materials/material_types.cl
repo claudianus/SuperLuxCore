@@ -324,6 +324,12 @@ typedef struct {
 	unsigned int sigmaSTexIndex;
 	unsigned int gTexIndex;
 	int multiScattering;
+	// Volume phase function: 0 = Schlick approximation, 1 = Henyey-Greenstein
+	int phaseFunc;
+	// Distance sampling: when != 0 and eqLightCount > 0, the free-flight
+	// distance is sampled by a one-sample MIS between the transmittance
+	// and equiangular (Kulla & Fajardo, EGSR 2012) distributions
+	int distanceSampling;
 } HomogenousVolumeParam;
 
 typedef struct {
@@ -333,6 +339,26 @@ typedef struct {
 	float stepSize;
 	unsigned int maxStepsCount;
 	int multiScattering;
+	// Volume phase function: 0 = Schlick approximation, 1 = Henyey-Greenstein
+	int phaseFunc;
+	// Null-collision tracking: when deltaTracking != 0 and majorantOffset
+	// != NULL_INDEX, free-flight sampling uses delta tracking over a
+	// per-cell majorant grid (DDA traversal) instead of fixed-step
+	// ray marching, and shadow rays use ratio tracking.
+	int deltaTracking;
+	// Majorant grid domain (world space) and cubic cell layout
+	float majorantBBoxMinX, majorantBBoxMinY, majorantBBoxMinZ;
+	float majorantBBoxMaxX, majorantBBoxMaxY, majorantBBoxMaxZ;
+	float majorantCellSize;
+	unsigned int majorantResX, majorantResY, majorantResZ;
+	// Start index of the cells inside the volMajorants buffer
+	// (NULL_INDEX when the grid is not available). Each cell is stored
+	// as a float pair (minorant, majorant).
+	unsigned int majorantOffset;
+	// sigma_t bound outside the grid domain
+	float globalMajorant;
+	// sigma_t lower bound outside the grid domain (residual tracking control)
+	float globalMinorant;
 } HeterogenousVolumeParam;
 
 typedef struct {

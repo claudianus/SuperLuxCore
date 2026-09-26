@@ -117,14 +117,17 @@ public:
 	// bins by their centroid against n (bins facing away are never picked).
 	// pdfW is the guide pdf (per solid angle) of the returned direction.
 	// Returns false when the cell is cold (caller falls back to BSDF-only).
+	// isotropic (volume scattering vertices): no cosine weighting and no
+	// hemisphere cutoff - media scatter into the full sphere.
 	bool Sample(const luxrays::Point &p, const luxrays::Normal &n,
 			float uBin, float uDir0, float uDir1,
-			luxrays::Vector *sampledDir, float *pdfW) const;
+			luxrays::Vector *sampledDir, float *pdfW,
+			bool isotropic = false) const;
 
 	// Guide pdf (per solid angle) of dir at (p, n), using the same
-	// cosine-weighted snapshot convention as Sample.
+	// cosine-weighted (resp. isotropic) snapshot convention as Sample.
 	float Pdf(const luxrays::Point &p, const luxrays::Normal &n,
-			const luxrays::Vector &dir) const;
+			const luxrays::Vector &dir, bool isotropic = false) const;
 
 	// Persistent cache (M2b): dump/load the frozen read side
 	// (4096 cells x (128 bins + total)). Used to train on CPU once and
@@ -152,11 +155,17 @@ private:
 			for (u_int i = 0; i < DIR_BINS; ++i)
 				bins[i].store(0.f, std::memory_order_relaxed);
 			total.store(0.f, std::memory_order_relaxed);
+			dirX.store(0.f, std::memory_order_relaxed);
+			dirY.store(0.f, std::memory_order_relaxed);
+			dirZ.store(0.f, std::memory_order_relaxed);
 		}
 		// Mutable so queries/training work through a const cache shared
 		// by all render threads (lock-free; see the class comment).
 		mutable std::atomic<float> bins[DIR_BINS];
 		mutable std::atomic<float> total;
+		// Directional first moment S1 = sum(wi * flux) for the vMF fit
+		// (volume path guiding only; not serialized to disk/GPU tables).
+		mutable std::atomic<float> dirX, dirY, dirZ;
 	};
 
 	u_int CellIndex(const luxrays::Point &p) const;
@@ -173,6 +182,18 @@ private:
 	}
 	// Snapshot a cell (bins + total) for self-consistent sample/evaluate
 	void SnapshotCell(u_int cell, float *bins, float *total) const;
+	// vMF fit of the cell's directional moment (volume isotropic mode).
+	// A sharp incident field (god-ray beam, single dominant source) fits a
+	// von Mises-Fisher lobe far better than 128 flat bins: exact closed-form
+	// sampling + pdf, no rejection. Returns false when the field is too
+	// cold or too isotropic (r = |S1|/S0 below threshold -> keep bins).
+	bool CellVmf(u_int cell, luxrays::Vector &mu, float &kappa) const;
+	// vMF pdf on the sphere: k e^{k(c-1)} / (2 pi (1-e^{-2k})), stable for
+	// all k > 0.
+	static float VmfPdf(float cosMuW, float kappa);
+	// Exact vMF sample via closed-form z inversion + uniform phi.
+	static luxrays::Vector VmfSample(const luxrays::Vector &mu, float kappa,
+			float u0, float u1);
 	// Trilinear blend of the 2x2x2 neighborhood masses (M2c-T experiment)
 	void SnapshotBlend(const luxrays::Point &p, float *bins, float *total) const;
 	// Swap training rounds when due (lock-free winner-takes-all; records

@@ -273,6 +273,152 @@ float DensityGridTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return EvalSpectrumValue(hitPoint).Y();
 }
 
+bool DensityGridTexture::GetMaxInWorldBBox(const BBox &box, float *maxValue) const {
+	// Only affine world->local mappings allow to bound a world-space box:
+	// UVMapping3D depends on per-vertex UVs and LocalRandomMapping3D is
+	// randomized per object/triangle.
+	const TextureMapping3DType mappingType = mapping->GetType();
+	if ((mappingType != GLOBALMAPPING3D) && (mappingType != LOCALMAPPING3D))
+		return false;
+
+	// Map the 8 world-space box corners to texture UVW space
+	Point uvwMin(INFINITY, INFINITY, INFINITY);
+	Point uvwMax(-INFINITY, -INFINITY, -INFINITY);
+	for (u_int i = 0; i < 8; ++i) {
+		const Point corner(
+				(i & 1) ? box.pMax.x : box.pMin.x,
+				(i & 2) ? box.pMax.y : box.pMin.y,
+				(i & 4) ? box.pMax.z : box.pMin.z);
+		const Point p = mapping->worldToLocal * corner;
+		uvwMin = Point(Min(uvwMin.x, p.x), Min(uvwMin.y, p.y), Min(uvwMin.z, p.z));
+		uvwMax = Point(Max(uvwMax.x, p.x), Max(uvwMax.y, p.y), Max(uvwMax.z, p.z));
+	}
+
+	const ImageMapStorage::WrapType wrap = imageMap.GetStorage().GetWrapType();
+
+	// If the box maps outside the [0, 1)^3 domain
+	const bool hasOutside =
+			(uvwMin.x < 0.f) || (uvwMin.y < 0.f) || (uvwMin.z < 0.f) ||
+			(uvwMax.x >= 1.f) || (uvwMax.y >= 1.f) || (uvwMax.z >= 1.f) ||
+			!isfinite(uvwMin.x) || !isfinite(uvwMax.x) ||
+			!isfinite(uvwMin.y) || !isfinite(uvwMax.y) ||
+			!isfinite(uvwMin.z) || !isfinite(uvwMax.z);
+	if ((wrap == ImageMapStorage::BLACK) &&
+			((uvwMin.x >= 1.f) || (uvwMin.y >= 1.f) || (uvwMin.z >= 1.f) ||
+			(uvwMax.x <= 0.f) || (uvwMax.y <= 0.f) || (uvwMax.z <= 0.f))) {
+		*maxValue = 0.f;
+		return true;
+	}
+	const float outsideValue =
+			((wrap == ImageMapStorage::WHITE) && hasOutside) ? 1.f : 0.f;
+
+	// The trilinear interpolation at UVW coordinate u reads the voxel
+	// vertices [floor(u * n), floor(u * n) + 1], so the range of voxels
+	// covering the box is [floor(min * n), floor(max * n) + 1].
+	int i0, i1, j0, j1, k0, k1;
+	if (wrap == ImageMapStorage::REPEAT) {
+		// REPEAT tiles the whole grid
+		i0 = j0 = k0 = 0;
+		i1 = nx - 1; j1 = ny - 1; k1 = nz - 1;
+	} else {
+		// BLACK, WHITE and CLAMP only read voxels of the [0, 1]^3 part of
+		// the mapped box (the outside contribution is in outsideValue or,
+		// for CLAMP, edge voxels included by the clamped range)
+		const float u0 = Clamp(uvwMin.x, 0.f, 1.f), u1 = Clamp(uvwMax.x, 0.f, 1.f);
+		const float v0 = Clamp(uvwMin.y, 0.f, 1.f), v1 = Clamp(uvwMax.y, 0.f, 1.f);
+		const float w0 = Clamp(uvwMin.z, 0.f, 1.f), w1 = Clamp(uvwMax.z, 0.f, 1.f);
+		i0 = Floor2Int(u0 * nx); i1 = Floor2Int(u1 * nx) + 1;
+		j0 = Floor2Int(v0 * ny); j1 = Floor2Int(v1 * ny) + 1;
+		k0 = Floor2Int(w0 * nz); k1 = Floor2Int(w1 * nz) + 1;
+	}
+	i0 = Clamp(i0, 0, nx - 1); i1 = Clamp(i1, 0, nx - 1);
+	j0 = Clamp(j0, 0, ny - 1); j1 = Clamp(j1, 0, ny - 1);
+	k0 = Clamp(k0, 0, nz - 1); k1 = Clamp(k1, 0, nz - 1);
+
+	auto& imgStorage = imageMap.GetStorage();
+	float maxV = outsideValue;
+	for (int z = k0; z <= k1; ++z)
+		for (int y = j0; y <= j1; ++y)
+			for (int x = i0; x <= i1; ++x)
+				maxV = Max(maxV, imgStorage.GetSpectrum((z * ny + y) * nx + x).Max());
+
+	*maxValue = maxV;
+	return true;
+}
+
+bool DensityGridTexture::GetMinInWorldBBox(const BBox &box, float *minValue) const {
+	const TextureMapping3DType mappingType = mapping->GetType();
+	if ((mappingType != GLOBALMAPPING3D) && (mappingType != LOCALMAPPING3D))
+		return false;
+
+	Point uvwMin(INFINITY, INFINITY, INFINITY);
+	Point uvwMax(-INFINITY, -INFINITY, -INFINITY);
+	for (u_int i = 0; i < 8; ++i) {
+		const Point corner(
+				(i & 1) ? box.pMax.x : box.pMin.x,
+				(i & 2) ? box.pMax.y : box.pMin.y,
+				(i & 4) ? box.pMax.z : box.pMin.z);
+		const Point p = mapping->worldToLocal * corner;
+		uvwMin = Point(Min(uvwMin.x, p.x), Min(uvwMin.y, p.y), Min(uvwMin.z, p.z));
+		uvwMax = Point(Max(uvwMax.x, p.x), Max(uvwMax.y, p.y), Max(uvwMax.z, p.z));
+	}
+
+	const ImageMapStorage::WrapType wrap = imageMap.GetStorage().GetWrapType();
+
+	const bool fullyOutside =
+			(uvwMin.x >= 1.f) || (uvwMin.y >= 1.f) || (uvwMin.z >= 1.f) ||
+			(uvwMax.x <= 0.f) || (uvwMax.y <= 0.f) || (uvwMax.z <= 0.f);
+	if (fullyOutside && !isfinite(uvwMin.x)) {
+		// Degenerate box (e.g. the whole space): fall back to a scan of the
+		// full grid plus the out-of-domain contribution
+	} else if (fullyOutside) {
+		*minValue = (wrap == ImageMapStorage::WHITE) ? 1.f :
+				(wrap == ImageMapStorage::BLACK) ? 0.f : 0.f;
+		// CLAMP maps the whole box to a single edge value: it is handled by
+		// the clamped voxel range below instead
+		if (wrap != ImageMapStorage::CLAMP && wrap != ImageMapStorage::REPEAT)
+			return true;
+	}
+	const bool hasOutside =
+			(uvwMin.x < 0.f) || (uvwMin.y < 0.f) || (uvwMin.z < 0.f) ||
+			(uvwMax.x >= 1.f) || (uvwMax.y >= 1.f) || (uvwMax.z >= 1.f) ||
+			!isfinite(uvwMin.x) || !isfinite(uvwMax.x) ||
+			!isfinite(uvwMin.y) || !isfinite(uvwMax.y) ||
+			!isfinite(uvwMin.z) || !isfinite(uvwMax.z);
+
+	// See GetMaxInWorldBBox() for the voxel range computation
+	int i0, i1, j0, j1, k0, k1;
+	if (wrap == ImageMapStorage::REPEAT) {
+		i0 = j0 = k0 = 0;
+		i1 = nx - 1; j1 = ny - 1; k1 = nz - 1;
+	} else {
+		const float u0 = Clamp(uvwMin.x, 0.f, 1.f), u1 = Clamp(uvwMax.x, 0.f, 1.f);
+		const float v0 = Clamp(uvwMin.y, 0.f, 1.f), v1 = Clamp(uvwMax.y, 0.f, 1.f);
+		const float w0 = Clamp(uvwMin.z, 0.f, 1.f), w1 = Clamp(uvwMax.z, 0.f, 1.f);
+		i0 = Floor2Int(u0 * nx); i1 = Floor2Int(u1 * nx) + 1;
+		j0 = Floor2Int(v0 * ny); j1 = Floor2Int(v1 * ny) + 1;
+		k0 = Floor2Int(w0 * nz); k1 = Floor2Int(w1 * nz) + 1;
+	}
+	i0 = Clamp(i0, 0, nx - 1); i1 = Clamp(i1, 0, nx - 1);
+	j0 = Clamp(j0, 0, ny - 1); j1 = Clamp(j1, 0, ny - 1);
+	k0 = Clamp(k0, 0, nz - 1); k1 = Clamp(k1, 0, nz - 1);
+
+	// Out-of-domain contributions: BLACK wrap adds a 0 (lowers the minimum),
+	// WHITE wrap adds a 1 (never lowers it), CLAMP/REPEAT are covered by the
+	// scanned voxel range.
+	auto& imgStorage = imageMap.GetStorage();
+	float minV = ((wrap == ImageMapStorage::BLACK) && hasOutside) ? 0.f : INFINITY;
+	for (int z = k0; z <= k1; ++z)
+		for (int y = j0; y <= j1; ++y)
+			for (int x = i0; x <= i1; ++x)
+				minV = Min(minV, imgStorage.GetSpectrum((z * ny + y) * nx + x).Min());
+
+	if (!isfinite(minV))
+		minV = 0.f;
+	*minValue = minV;
+	return true;
+}
+
 PropertiesUPtr DensityGridTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
 	auto props = std::make_unique<Properties>();
 

@@ -5885,7 +5885,14 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, const uint wavefrontEnable \
 		/* JH2019 spectral upsampling table (TEXTURES_PARAM tail): \
 		 * NULL unless path.spectral.upsampling=jh2019 */ \
-		, __global const float* restrict spectralUpsamplingTable
+		, __global const float* restrict spectralUpsamplingTable \
+		/* Heterogeneous volume majorant cells (TEXTURES_PARAM tail): \
+		 * NULL when no volume uses delta tracking */ \
+		, __global const float* restrict volMajorants \
+		/* Point-ish light positions for equiangular distance sampling \
+		 * (TEXTURES_PARAM tail): NULL/0 when none */ \
+		, __global const float4* restrict eqLightPoints \
+		, const uint eqLightCount
 
 // GPU light tracing (doc/features/gpu_lighttracing.md): extra args of
 // the light-path kernels only. Keeping them out of KERNEL_ARGS avoids

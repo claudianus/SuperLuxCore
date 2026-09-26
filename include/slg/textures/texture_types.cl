@@ -644,14 +644,25 @@ typedef struct {
 	 * packed floats uploaded by the host when \
 	 * path.spectral.upsampling=jh2019; NULL keeps the default Smits \
 	 * basis. Only dereferenced under SLG_SPECTRAL. */ \
-	, __global const float* restrict spectralUpsamplingTable
+	, __global const float* restrict spectralUpsamplingTable \
+	/* Heterogeneous volume majorant cells (all volumes concatenated, \
+	 * indexed by HeterogenousVolumeParam::majorantOffset). NULL when \
+	 * no volume uses delta tracking. */ \
+	, __global const float* restrict volMajorants \
+	/* World positions of point-ish lights eligible for equiangular \
+	 * distance sampling (float4 xyz each). NULL/0 when none. */ \
+	, __global const float4* restrict eqLightPoints \
+	, const uint eqLightCount
 #define TEXTURES_PARAM \
 	, texs \
 	, texEvalOps \
 	, texEvalStacks \
 	, maxTextureEvalStackSize \
 	IMAGEMAPS_PARAM SCENE_PARAM \
-	, spectralUpsamplingTable
+	, spectralUpsamplingTable \
+	, volMajorants \
+	, eqLightPoints \
+	, eqLightCount
 
 #endif
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

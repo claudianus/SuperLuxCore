@@ -47,6 +47,7 @@
 #include "slg/scene/scene.h"
 #include "slg/textures/constfloat.h"
 #include "slg/textures/constfloat3.h"
+#include "slg/volumes/homogenous.h"
 #include "slg/textures/imagemaptex.h"
 #include "slg/usings.h"
 #include "slg/utils/pathinfo.h"
@@ -851,14 +852,32 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 		}
 
 		// Check if there is volume scatter event
-		if (rayVolume) {
+		if (rayVolume && shadowRay) {
+			// Shadow rays estimate the whole-segment volume transmittance
+			// (analytic for clear/homogeneous volumes, ratio tracking for
+			// heterogeneous ones) instead of sampling a binary scattering
+			// event: much lower variance for direct lighting through media.
+			*connectionThroughput *= rayVolume->TransmittanceEstimate(*ray, passThrough);
+		} else if (rayVolume) {
 			// This applies volume transmittance too
 			//
 			// Note: by using passThrough here, I introduce subtle correlation
 			// between scattering events and pass-through events
 			Spectrum emis;
-			const float t = rayVolume->Scatter(*ray, passThrough, volInfo->IsScatteredStart(),
-					connectionThroughput, &emis);
+			float t;
+			const HomogeneousVolume *homoVol = (!equiangularLightPoints.empty()) ?
+					dynamic_cast<const HomogeneousVolume *>(&*rayVolume) : nullptr;
+			if (homoVol && homoVol->IsEquiangularEnabled()) {
+				// Equiangular + transmittance MIS distance sampling
+				// (Kulla & Fajardo, EGSR 2012) with contribution-aware
+				// light selection
+				t = homoVol->ScatterEquiangular(*ray, passThrough,
+						volInfo->IsScatteredStart(),
+						equiangularLightPoints, equiangularLightLuminances,
+						connectionThroughput, &emis);
+			} else
+				t = rayVolume->Scatter(*ray, passThrough, volInfo->IsScatteredStart(),
+						connectionThroughput, &emis);
 
 			// Add the volume emitted light to the appropriate light group
 			if (!emis.Black()) {

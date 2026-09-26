@@ -155,6 +155,13 @@ static bool GuidingIndirect() {
 // always failed the cutoff). A pure-diffuse bounce is guided when the
 // flag is on; a glossy bounce still needs enough roughness for the field.
 static bool GuidableBsdf(const BSDF &bsdf) {
+	// Volume scattering vertices: the phase function ignores the incident
+	// radiance field (isotropic/HG lobes sample blind), so guiding is
+	// always worthwhile; the smooth 128-bin field cannot resolve a
+	// near-delta HG lobe, but the adaptive MixWeight keeps thin cells
+	// mostly BSDF-sampled and MIS keeps any field unbiased.
+	if (bsdf.IsVolume())
+		return true;
 	return ((bsdf.GetEventTypes() & GLOSSY) != 0) ?
 			(bsdf.GetGlossiness() >= GuidingGloss()) : GuidingDiffuse();
 }
@@ -338,7 +345,8 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 								const float wDl = PathGuidingCache::MixWeight(
 										pathGuidingCache->ReadTotal(bsdf.hitPoint.p));
 								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * pathGuidingCache->Pdf(
-										bsdf.hitPoint.p, bsdf.hitPoint.shadeN, shadowRay.d);
+										bsdf.hitPoint.p, bsdf.hitPoint.shadeN, shadowRay.d,
+										bsdf.IsVolume());
 							}
 
 							if (directLightDepthInfo.GetRRDepth() >= rrDepth) {
@@ -941,6 +949,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						GuidableBsdf(bsdf) &&
 						((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
 						pathGuidingCache->CanGuide(bsdf.hitPoint.p);
+
 				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
 				// M2c adaptive mixture: selection probability from the
 				// read-side (frozen-in-round) cell total, so bounce-time
@@ -977,7 +986,14 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 								sampleResult.emission.Filter() - directVertStart;
 						localValue -= dlAdded;
 					}
-					pathGuidingCache->Record(bsdf.hitPoint.p, -eyeRay.d,
+					// Incident-radiance convention (Muller et al. 2017):
+					// the field at x_{k-1} stores "direction eyeRay.d found
+					// localValue at x_k" - the outgoing direction of the
+					// vertex that sampled it, not the incoming direction
+					// of this vertex (which would learn the transport
+					// direction reversed, guiding paths back along the
+					// camera chain instead of toward the radiance).
+					pathGuidingCache->Record(eyeRay.o, eyeRay.d,
 							localValue / arrival);
 					if (guidingEnable && tryGuide && takeGuideSide && !giSelected) {
 						float guidePdfW;
@@ -1009,7 +1025,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 								uBin,
 								uSelRescaled,
 								sampler.GetSample(sampleOffset + 7),
-								&guideDir, &guidePdfW) && (guidePdfW > 0.f)) {
+								&guideDir, &guidePdfW,
+								bsdf.IsVolume()) && (guidePdfW > 0.f)) {
 							// Shadow BSDF draw with the same uniforms: only
 							// its event is kept (single-lobe books for depth
 							// counting); the direction/pdf are the guide's.
@@ -1033,8 +1050,10 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 							// Evaluate). Reduce to the single-cos numerator the
 							// mixture needs (upstream DL quirk, out of scope).
 							const float cosLocal = fabsf(bsdf.GetFrame().ToLocal(guideDir).z);
-							const Spectrum guideEval = (cosLocal > 1e-3f) ?
-									guideEvalDouble / cosLocal : Spectrum();
+							// Volume BSDFs carry no cosine factor at all:
+							// Evaluate already returns phase*albedo.
+							const Spectrum guideEval = bsdf.IsVolume() ? guideEvalDouble :
+									Spectrum((cosLocal > 1e-3f) ? guideEvalDouble / cosLocal : Spectrum());
 							if (!guideEval.Black()) {
 								// bsdfEval already holds f * cos (like the
 								// BSDF branch factor); divide by the mixture.
@@ -1089,8 +1108,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						// takeGuideSide instead leaves the !take side at
 						// full BSDF weight (bias).
 						const float guidePdfW = pathGuidingCache->Pdf(
-								bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir);
-						const float mixPdfW = .5f * bsdfPdfW + .5f * guidePdfW;
+								bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir,
+								bsdf.IsVolume());
+						// The mixture denominator must use the actual
+						// selection probabilities (wGuide), not a fixed
+						// 50/50 split - the two differ whenever MixWeight
+						// adapts to the cell total (bias).
+						const float mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
 						if (mixPdfW > 0.f) {
 							// bsdfSample here holds f * cos / bsdfPdfW
 							// (material convention); reweight to the mixture.

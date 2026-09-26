@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "luxrays/utils/mc.h"
 #include "slg/engines/pathguiding.h"
 
 using namespace std;
@@ -106,6 +107,12 @@ void PathGuidingCache::SnapshotCell(u_int cell, float *bins, float *total) const
 }
 
 void PathGuidingCache::Record(const Point &p, const Vector &wi, float flux) const {
+	// Swap cadence counts record *attempts*, not kept records: in dim
+	// scenes most arrivals carry ~0 local value and are dropped below, so
+	// counting only keeps would stall rounds forever (read side never
+	// warms). Attempts grow steadily regardless of scene brightness.
+	writeRecords.fetch_add(1uLL, std::memory_order_relaxed);
+	MaybeSwap();
 	if (!(flux > 0.f) || !isfinite(flux))
 		return;
 	flux = Min(flux, RECORD_CLAMP);
@@ -113,8 +120,10 @@ void PathGuidingCache::Record(const Point &p, const Vector &wi, float flux) cons
 	const Cell &c = cellsWrite[cell];
 	AtomicAdd(c.bins[DirBin(wi)], flux);
 	AtomicAdd(c.total, flux);
-	writeRecords.fetch_add(1uLL, std::memory_order_relaxed);
-	MaybeSwap();
+	// Directional moment for the vMF fit (volume guiding)
+	AtomicAdd(c.dirX, wi.x * flux);
+	AtomicAdd(c.dirY, wi.y * flux);
+	AtomicAdd(c.dirZ, wi.z * flux);
 }
 
 bool PathGuidingCache::RecordBin(u_int cell, u_int bin, float flux) const {
@@ -126,6 +135,10 @@ bool PathGuidingCache::RecordBin(u_int cell, u_int bin, float flux) const {
 	const Cell &c = cellsWrite[cell];
 	AtomicAdd(c.bins[bin], flux);
 	AtomicAdd(c.total, flux);
+	const Vector d = BinDir(bin, .5f, .5f);
+	AtomicAdd(c.dirX, d.x * flux);
+	AtomicAdd(c.dirY, d.y * flux);
+	AtomicAdd(c.dirZ, d.z * flux);
 	return true;
 }
 
@@ -297,7 +310,8 @@ void PathGuidingCache::SnapshotBlend(const Point &p, float *bins, float *total) 
 }
 
 static void GuideWeights(const float *bins, float total,
-		const luxrays::Vector &nn, float *weights, float *wSum) {
+		const luxrays::Vector &nn, float *weights, float *wSum,
+		const bool isotropic = false) {
 	// Relative beta (fraction of mean bin, constant dilution forever) vs
 	// absolute beta (fixed pseudo-count: strong early, vanishes as data
 	// grows). LUX_PG_SMOOTHABS > 0 selects absolute (M2c absolute-smoothing
@@ -322,32 +336,97 @@ static void GuideWeights(const float *bins, float total,
 		const float cosB = s * cosf(phi) * nn.x + s * sinf(phi) * nn.y + c * nn.z;
 		// Smooth only the valid hemisphere: away-facing bins stay at
 		// weight 0 so they are never picked (picking them would draw
-		// below-surface directions that only kill the path).
-		weights[i] = (cosB > 0.f) ? bins[i] * cosB + beta : 0.f;
+		// below-surface directions that only kill the path). Volumes
+		// scatter into the full sphere: isotropic mode keeps every bin.
+		weights[i] = isotropic ? (bins[i] + beta) :
+				((cosB > 0.f) ? bins[i] * cosB + beta : 0.f);
 		sum += weights[i];
 	}
 	*wSum = sum;
 }
 
+// vMF fit for volume isotropic guiding: r = |S1|/S0 is the resultant
+// length (0 = uniform, 1 = delta). Below r_min the lobe is ill-defined
+// and the flat bins/uniform fallback is kept. Banerjee's approximation
+// maps r -> kappa; kappa is clamped for pdf/sampling stability.
+bool PathGuidingCache::CellVmf(u_int cell, Vector &mu, float &kappa) const {
+	static const float kWarmup = []() {
+		const char *e = getenv("LUX_PG_WARMUP");
+		return e ? (float)Max(atof(e), 1.0) : (float)WARMUP_RECORDS;
+	}();
+	static const bool kNoVmf = (getenv("LUX_PG_NOVMF") != nullptr);
+	if (kNoVmf)
+		return false;
+	const Cell &c = cells[cell];
+	const float s0 = c.total.load(std::memory_order_relaxed);
+	if (s0 < kWarmup)
+		return false;
+	const Vector s1(c.dirX.load(std::memory_order_relaxed),
+			c.dirY.load(std::memory_order_relaxed),
+			c.dirZ.load(std::memory_order_relaxed));
+	const float len = s1.Length();
+	const float r = len / s0;
+	if (!(r > .05f))
+		return false;
+	mu = s1 * (1.f / len);
+	kappa = Min(r * (3.f - r * r) / (1.f - r * r), 64.f);
+	return true;
+}
+
+float PathGuidingCache::VmfPdf(const float cosMuW, const float kappa) {
+	return kappa * expf(kappa * (cosMuW - 1.f)) /
+			(2.f * M_PI * (1.f - expf(-2.f * kappa)));
+}
+
+Vector PathGuidingCache::VmfSample(const Vector &mu, const float kappa,
+		const float u0, const float u1) {
+	// cos(theta) ~ k e^{k(z-1)} on [-1,1]: closed-form inversion
+	const float z = 1.f + logf(Max(u1 + (1.f - u1) * expf(-2.f * kappa),
+			1e-30f)) / kappa;
+	const float s = sqrtf(Max(0.f, 1.f - z * z));
+	const float phi = 2.f * M_PI * u0;
+	const Vector helper = (fabsf(mu.z) < .999f) ? Vector(0.f, 0.f, 1.f) :
+			Vector(0.f, 1.f, 0.f);
+	const Vector u = Normalize(Cross(helper, mu));
+	const Vector v = Cross(mu, u);
+	return u * (s * cosf(phi)) + v * (s * sinf(phi)) + mu * z;
+}
+
 bool PathGuidingCache::Sample(const Point &p, const Normal &n,
 		float uBin, float uDir0, float uDir1,
-		Vector *sampledDir, float *pdfW) const {
+		Vector *sampledDir, float *pdfW, const bool isotropic) const {
+	const u_int cell = CellIndex(p);
+	if (isotropic) {
+		// vMF lobe + uniform floor: exact sampling/pdf, sharp where the
+		// incident field is directional, always covers the sphere.
+		Vector mu;
+		float kappa;
+		if (CellVmf(cell, mu, kappa)) {
+			*sampledDir = (uBin < .85f) ? VmfSample(mu, kappa, uDir0, uDir1) :
+					UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .85f * VmfPdf(Dot(*sampledDir, mu), kappa) +
+					.15f * .25f * INV_PI;
+			return true;
+		}
+	}
+
 	float bins[DIR_BINS];
 	float total;
 	static const bool kTrilinear = (getenv("LUX_PG_TRILINEAR") != nullptr);
 	if (kTrilinear)
 		SnapshotBlend(p, bins, &total);
 	else
-		SnapshotCell(CellIndex(p), bins, &total);
+		SnapshotCell(cell, bins, &total);
 	if (total <= 0.f)
 		return false;
 
 	// Cosine-product pick with additive smoothing (see GuideWeights):
-	// bins facing away from n keep only the smoothing mass.
+	// bins facing away from n keep only the smoothing mass (isotropic
+	// mode keeps all bins for full-sphere volume scattering).
 	float weights[DIR_BINS];
 	float wSum = 0.f;
 	const Vector nn(n.x, n.y, n.z);
-	GuideWeights(bins, total, nn, weights, &wSum);
+	GuideWeights(bins, total, nn, weights, &wSum, isotropic);
 
 	float pick = uBin * wSum;
 	u_int bin = 0;
@@ -359,6 +438,11 @@ bool PathGuidingCache::Sample(const Point &p, const Normal &n,
 	if (!(weights[bin] > 0.f)) {
 		// Degenerate pick (e.g. uBin = 0 over leading empty bins):
 		// same valid-distribution fallback as above.
+		if (isotropic) {
+			*sampledDir = UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .25f * INV_PI;
+			return true;
+		}
 		return CosineSample(nn, uDir0, uDir1, sampledDir, pdfW);
 	}
 
@@ -369,21 +453,29 @@ bool PathGuidingCache::Sample(const Point &p, const Normal &n,
 }
 
 float PathGuidingCache::Pdf(const Point &p, const Normal &n,
-		const Vector &dir) const {
+		const Vector &dir, const bool isotropic) const {
+	const u_int cell = CellIndex(p);
+	if (isotropic) {
+		Vector mu;
+		float kappa;
+		if (CellVmf(cell, mu, kappa))
+			return .85f * VmfPdf(Dot(dir, mu), kappa) + .15f * .25f * INV_PI;
+	}
+
 	float bins[DIR_BINS];
 	float total;
 	static const bool kTrilinearPdf = (getenv("LUX_PG_TRILINEAR") != nullptr);
 	if (kTrilinearPdf)
 		SnapshotBlend(p, bins, &total);
 	else
-		SnapshotCell(CellIndex(p), bins, &total);
+		SnapshotCell(cell, bins, &total);
 	if (total <= 0.f)
 		return 0.f;
 
 	const Vector nn(n.x, n.y, n.z);
 	float weights[DIR_BINS];
 	float wSum = 0.f;
-	GuideWeights(bins, total, nn, weights, &wSum);
+	GuideWeights(bins, total, nn, weights, &wSum, isotropic);
 
 	// The bin of dir (same mapping as the sampler side)
 	const float phi = atan2f(dir.y, dir.x);
