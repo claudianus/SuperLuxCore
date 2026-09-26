@@ -307,7 +307,7 @@ VulkanIntersectionDevice::VulkanRTAccel *VulkanIntersectionDevice::BuildRTAccel(
 		t.vertexData.deviceAddress =
 				static_cast<VulkanDeviceBuffer *>(vb)->deviceAddr;
 		t.vertexStride = sizeof(Point);
-		t.maxVertex = nv;
+		t.maxVertex = nv - 1; // maxVertex is the highest index, not the count
 		t.indexType = VK_INDEX_TYPE_UINT32;
 		t.indexData.deviceAddress =
 				static_cast<VulkanDeviceBuffer *>(tb)->deviceAddr;
