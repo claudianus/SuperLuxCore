@@ -22,6 +22,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +30,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -70,6 +72,24 @@ static string GetClspvReflectionPath() {
 	if (slash != string::npos)
 		return c.substr(0, slash + 1) + "clspv-reflection";
 	return "clspv-reflection";
+}
+
+// opt binary used for per-kernel internalize+globaldce pruning before the
+// SPIR-V producer pass. Lives next to the clspv build's bundled LLVM.
+static string GetOptPath() {
+	const char *env = getenv("LUXRAYS_OPT");
+	if (env && env[0])
+		return env;
+	string c = GetClspvPath();
+	const size_t slash = c.find_last_of('/');
+	if (slash != string::npos) {
+		// <...>/bin/clspv -> <...>/third_party/llvm/bin/opt
+		const string derived = c.substr(0, slash) +
+				"/../third_party/llvm/bin/opt";
+		if (access(derived.c_str(), X_OK) == 0)
+			return derived;
+	}
+	return "opt"; // PATH lookup
 }
 
 static void InitVulkanLibrary() {
@@ -235,13 +255,8 @@ VulkanDevice::~VulkanDevice() {
 }
 
 VulkanDeviceProgram::~VulkanDeviceProgram() {
-	// The device is owned by VulkanDevice; programs are destroyed while
-	// the device is still alive (program lifetime is strictly shorter).
-	// shaderModule is destroyed by the owning device at Stop() via the
-	// device handle stored here — do it lazily through a registered list?
-	// Simpler: keep a device pointer in the program at creation time.
-	if (shaderModule && owner)
-		vkDestroyShaderModule((VkDevice)owner, (VkShaderModule)shaderModule, nullptr);
+	// Program is a pure cache-key container under split compilation;
+	// shader modules are owned by their kernels.
 }
 
 VulkanDeviceKernel::~VulkanDeviceKernel() {
@@ -254,6 +269,9 @@ VulkanDeviceKernel::~VulkanDeviceKernel() {
 	if (descPool) vkDestroyDescriptorPool(dev, (VkDescriptorPool)descPool, nullptr);
 	if (podBuffer) vkDestroyBuffer(dev, (VkBuffer)podBuffer, nullptr);
 	if (podBufferMem) vkFreeMemory(dev, (VkDeviceMemory)podBufferMem, nullptr);
+	if (moduleConstBuff) vkDestroyBuffer(dev, (VkBuffer)moduleConstBuff, nullptr);
+	if (moduleConstMem) vkFreeMemory(dev, (VkDeviceMemory)moduleConstMem, nullptr);
+	if (shaderModule) vkDestroyShaderModule(dev, (VkShaderModule)shaderModule, nullptr);
 }
 
 void VulkanDevice::Start() {
@@ -500,6 +518,63 @@ void VulkanDevice::FinishQueue() {
 // Program compilation (OpenCL C -> SPIR-V via clspv)
 //------------------------------------------------------------------------------
 
+// Enumerate __kernel entry points in a textual IR module by scanning for
+// spir_kernel definitions (same rule clspv uses: external linkage +
+// calling convention).
+static vector<string> ListKernelNames(const string &llPath) {
+	vector<string> names;
+	ifstream f(llPath);
+	string line;
+	while (getline(f, line)) {
+		// define ... spir_kernel ... @Name(
+		if (line.find("spir_kernel") == string::npos ||
+				line.find("define") != 0)
+			continue;
+		const size_t at = line.find('@');
+		const size_t par = line.find('(', at);
+		if (at != string::npos && par != string::npos)
+			names.push_back(line.substr(at + 1, par - at - 1));
+	}
+	return names;
+}
+
+// Disassemble bcPath once, drop the appending @llvm.global.annotations
+// global (it keeps every spir_kernel alive as a GlobalDCE root, so each
+// "per-kernel" module stays the full ~44MB program and clspv re-runs the
+// expensive inlining over all kernels per invocation). The annotations are
+// just clang's record of always_inline/etc. attributes which are already
+// real IR attributes on the functions. Returns the path of the stripped
+// .ll, which is also reused for kernel enumeration.
+static string StripAnnotationsToLL(const string &bcPath) {
+	const string opt = GetOptPath();
+	const string slashDir = opt.substr(0, opt.find_last_of('/') + 1);
+	const string llPath = bcPath + ".noann.ll";
+	struct stat st;
+	if (stat(llPath.c_str(), &st) == 0)
+		return llPath;
+	const string rawLL = bcPath + ".raw.ll";
+	{
+		ostringstream cmd;
+		cmd << "\"" << slashDir << "llvm-dis\" \"" << bcPath
+			<< "\" -o \"" << rawLL << "\"";
+		if (system(cmd.str().c_str()) != 0)
+			throw runtime_error("llvm-dis failed on " + bcPath);
+	}
+	ifstream in(rawLL);
+	ofstream out(llPath + ".tmp");
+	string line;
+	while (getline(in, line)) {
+		if (line.compare(0, 24, "@llvm.global.annotations") == 0)
+			continue;
+		out << line << "\n";
+	}
+	in.close();
+	out.close();
+	rename((llPath + ".tmp").c_str(), llPath.c_str());
+	remove(rawLL.c_str());
+	return llPath;
+}
+
 HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 		const vector<string> &programParameters,
 		const string &programSource,
@@ -529,98 +604,159 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 	// Kernel binary cache: same scheme as the persistent OCL cache.
 	const string hash = oclKernelPersistentCache::HashString(
 			oclKernelCache::ToOptsString(vkParams)) + "-" +
-			oclKernelPersistentCache::HashString(vkSource) + "-vk1";
+			oclKernelPersistentCache::HashString(vkSource) + "-vk2";
 
 	const string cacheDir = string(getenv("HOME") ? getenv("HOME") : "/tmp") +
 			"/.luxcore/vkcache";
 	mkdir((string(getenv("HOME") ? getenv("HOME") : "/tmp") + "/.luxcore").c_str(), 0755);
 	mkdir(cacheDir.c_str(), 0755);
-	const string spvPath = cacheDir + "/" + hash + ".spv";
-	const string mapPath = cacheDir + "/" + hash + ".map";
+	const string bcPath = cacheDir + "/" + hash + ".bc";
+	const string srcPath = cacheDir + "/" + hash + ".cl";
 
-	struct stat st, mst;
-	// Compile through clspv (subprocess — same in-spirit model as the
-	// runtime NVRTC/MSL compiles on the other backends). Both the SPIR-V
-	// and the reflection map must be cached; regenerate whichever is
-	// missing so a stale/incomplete cache never silently runs without
-	// argument layout.
-	if (stat(spvPath.c_str(), &st) != 0 || stat(mapPath.c_str(), &mst) != 0) {
-		const string srcPath = cacheDir + "/" + hash + ".cl";
+	struct stat st;
+	// Stage 1: frontend-only compile to LLVM bitcode (seconds; the clspv
+	// middle-end is what is slow, and it runs per kernel below).
+	if (stat(bcPath.c_str(), &st) != 0) {
 		{
 			ofstream srcFile(srcPath);
 			srcFile << vkSource;
 		}
 		ostringstream cmd;
-		cmd << "\"" << GetClspvPath() << "\""
-			// Physical storage buffers: __global pointer args become u64
-			// device addresses (legal SPIR-V function params), so clspv
-			// keeps ordinary calls instead of inlining the whole call
-			// graph into every kernel — required for corpus-scale sources.
+		// Pass the full producer flag set already at the bc stage: flags
+		// like -physical-storage-buffers shape the frontend IR (PSB
+		// pointers instead of __global addrspace(1)), and feeding
+		// non-PSB bitcode to `clspv -x ir -physical-storage-buffers`
+		// produces OpBitcast'd PSB pointers that SPIRV-Cross lowers to
+		// reinterpret_cast forms Metal rejects.
+		cmd << "\"" << GetClspvPath() << "\" --output-format=bc"
 			<< " --arch=spirv64 -physical-storage-buffers"
+			<< " -scalar-block-layout -cluster-pod-kernel-args"
+			<< " -module-constants-in-storage-buffer -long-vector"
+			<< " -replace-physical-pointer-bitcasts=false"
+			// Bare decimal literals (0.5, 1e-5, 10000.) promote to fp64 in
+			// OpenCL C; Metal has no fp64 at all, so keep literals fp32.
+			<< " -cl-single-precision-constant"
+			<< " --spv-version=1.6"
+			<< " -o \"" << bcPath << "\" \"" << srcPath << "\"";
+		for (const string &p : vkParams)
+			cmd << " " << p;
+		LR_LOG(deviceContext, "[" << programName << "] clspv frontend: " << cmd.str());
+		const int rc = system(cmd.str().c_str());
+		if (rc != 0 || stat(bcPath.c_str(), &st) != 0) {
+			LR_LOG(deviceContext, "[" << programName << "] clspv frontend failed rc=" << rc);
+			throw runtime_error(programName + " clspv bitcode compile failed");
+		}
+	}
+
+	// Split compilation: enumerate kernels, prune each to its own module
+	// (internalize+globaldce), then clspv -x ir -> .spv + clspv-reflection
+	// -> .map. A monolithic compile serially inlines the full call graph
+	// into every entry point (70+ min on PATHOCL); pruning one kernel per
+	// module makes each compile seconds-to-minutes and parallelizes cleanly.
+	const string prunedLL = StripAnnotationsToLL(bcPath);
+
+	auto prog = make_unique<VulkanDeviceProgram>();
+	prog->owner = device;
+	prog->cacheDir = cacheDir;
+	prog->cacheKey = hash;
+	prog->kernelNames = ListKernelNames(prunedLL);
+	if (prog->kernelNames.empty())
+		throw runtime_error(programName + ": no __kernel entry points in bitcode");
+
+	vector<string> todo;
+	for (const string &k : prog->kernelNames) {
+		const string spvPath = cacheDir + "/" + hash + "-" + k + ".spv";
+		const string mapPath = cacheDir + "/" + hash + "-" + k + ".map";
+		if (stat(spvPath.c_str(), &st) != 0 || stat(mapPath.c_str(), &st) != 0)
+			todo.push_back(k);
+	}
+	LR_LOG(deviceContext, "[" << programName << "] " << prog->kernelNames.size()
+			<< " kernels, " << todo.size() << " to compile");
+
+	if (!todo.empty()) {
+		// Producer flags: identical to the monolithic path.
+		const string flags =
+			" --arch=spirv64 -physical-storage-buffers"
 			// LuxCore structs use OpenCL/C packing (member directly after a
 			// 12-byte float3 tail); legal only under VK_EXT_scalar_block_layout
 			// (enabled in Start()). Our clspv build unlocks the flag.
-			<< " -scalar-block-layout"
+			" -scalar-block-layout"
 			// POD args -> one clustered storage buffer after the buffer args
-			<< " -cluster-pod-kernel-args"
+			" -cluster-pod-kernel-args"
 			// module-scope __constant tables (spectral LUTs, noise perm) ->
-			// a single storage buffer, init data in the descriptor map
-			<< " -module-constants-in-storage-buffer"
+			// a per-kernel storage buffer, init data in the descriptor map
+			" -module-constants-in-storage-buffer"
 			// float8/float16 used by some kernel paths
-			<< " -long-vector"
+			" -long-vector"
 			// Physical pointer bitcasts are legal under buffer device
 			// addressing: the producer reconciles pointee types with
 			// OpBitcast instead of rewriting accesses (the rewriting path
 			// cannot decompose multi-member structs like Transform and
 			// materializes >64-bit ints that are not valid SPIR-V).
-			<< " -replace-physical-pointer-bitcasts=false"
+			" -replace-physical-pointer-bitcasts=false"
+			// Bare double literals become fp32 (see bc stage note); the IR
+			// producer ignores it but keep the flag set uniform.
+			" -cl-single-precision-constant"
 			// Pointer compares and inttoptr null materialization need 1.4+;
 			// ray tracing entry points want 1.6.
-			<< " --spv-version=1.6";
-		for (const string &p : vkParams)
-			cmd << " " << p;
-		cmd << " -o \"" << spvPath << "\" \"" << srcPath << "\"";
+			" --spv-version=1.6";
 
-		LR_LOG(deviceContext, "[" << programName << "] clspv: " << cmd.str());
-		const int rc = system(cmd.str().c_str());
-		if (rc != 0 || stat(spvPath.c_str(), &st) != 0) {
-			LR_LOG(deviceContext, "[" << programName << "] clspv failed rc=" << rc);
-			throw runtime_error(programName + " clspv SPIR-V compile failed");
+		std::atomic<u_int> next{0};
+		std::atomic<u_int> failed{0};
+		const u_int nWorkers = std::min<u_int>(4, todo.size());
+		vector<std::thread> pool;
+		for (u_int w = 0; w < nWorkers; w++) {
+			pool.emplace_back([&, this]() {
+				for (u_int i = next++; i < todo.size(); i = next++) {
+					const string &k = todo[i];
+					const string kbase = cacheDir + "/" + hash + "-" + k;
+					ostringstream cmd;
+					// internalize keeps only this kernel external; on the
+					// annotations-stripped input globaldce can finally drop
+					// all other kernels and their call graphs, so each .spv
+					// has exactly one entry point and clspv only compiles
+					// this kernel's reachable code.
+					cmd << "\"" << GetOptPath() << "\" \"" << prunedLL << "\""
+						<< " -passes='internalize,globaldce'"
+						<< " -internalize-public-api-list=" << k
+						<< " -o \"" << kbase << ".bc\" && "
+						<< "\"" << GetClspvPath() << "\" -x ir" << flags
+						<< " \"" << kbase << ".bc\" -o \"" << kbase << ".spv\" && "
+						// -d: the tool's built-in validator only knows up to
+						// Vulkan 1.2; our SPIR-V 1.6 modules still parse fine.
+						<< "\"" << GetClspvReflectionPath() << "\" -d \"" << kbase << ".spv\""
+						<< " -o \"" << kbase << ".map\"";
+					const int rc = system(cmd.str().c_str());
+					remove((kbase + ".bc").c_str());
+					struct stat s2;
+					if (rc != 0 || stat((kbase + ".spv").c_str(), &s2) != 0 ||
+							stat((kbase + ".map").c_str(), &s2) != 0) {
+						LR_LOG(deviceContext, "[" << programName << "] kernel "
+								<< k << " compile failed rc=" << rc);
+						failed++;
+					}
+				}
+			});
 		}
-
-		// Reflection: kernel arg -> descriptor map (clspv-reflection tool)
-		ostringstream rcmd;
-		rcmd << "\"" << GetClspvReflectionPath() << "\" \"" << spvPath
-			<< "\" -o \"" << mapPath << "\"";
-		if (system(rcmd.str().c_str()) != 0) {
-			LR_LOG(deviceContext, "[" << programName << "] clspv-reflection failed");
-			throw runtime_error(programName + " clspv-reflection failed");
-		}
+		for (auto &t : pool)
+			t.join();
+		if (failed)
+			throw runtime_error(programName + ": " + ToString(failed.load()) +
+					" kernel(s) failed SPIR-V compile");
 	}
 
-	vector<char> spv;
-	{
-		ifstream f(spvPath, ios::binary);
-		spv.assign(istreambuf_iterator<char>(f), istreambuf_iterator<char>());
-	}
+	return static_cast<HardwareDeviceProgramUPtr>(std::move(prog));
+}
 
-	VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-	smi.codeSize = spv.size();
-	smi.pCode = (const uint32_t *)spv.data();
-	VkShaderModule mod;
-	VK_CHECK(vkCreateShaderModule((VkDevice)device, &smi, nullptr, &mod));
-
-	auto prog = make_unique<VulkanDeviceProgram>();
-	prog->shaderModule = (VkShaderModuleHandle)mod;
-	prog->owner = device;
-
-	// Parse the clspv-reflection descriptor map. Format (CSV, key/value pairs):
-	//   kernel_decl,<name>
-	//   kernel,<name>,arg,<argName>,argOrdinal,<n>,descriptorSet,<s>,
-	//       binding,<b>,offset,<o>,argKind,<kind>[,argSize,<z>]
-	//   spec_constant,workgroup_size_x,spec_id,0 (y=1, z=2)
-	//   constant,descriptorSet,<s>,binding,<b>,kind,constant[,data,<hex>]
-	// argKind: buffer, pod, pod_ubo, local, sampler, ro_image, wo_image, ...
+// Parse one per-kernel clspv-reflection descriptor map. Format (CSV):
+//   kernel,<name>,arg,<argName>,argOrdinal,<n>,descriptorSet,<s>,
+//       binding,<b>,offset,<o>,argKind,<kind>[,argSize,<z>]
+//   spec_constant,workgroup_size_x,spec_id,0 (y=1, z=2)
+//   constant,descriptorSet,<s>,binding,<b>,kind,constant[,data,<hex>]
+// argKind: buffer, pod, pod_ubo, local, sampler, ro_image, wo_image, ...
+static void ParseKernelMap(const string &mapPath, const string &kernelName,
+		VulkanDeviceProgram::KernelLayout &kl,
+		uint32_t &constBinding, string &constHex) {
 	ifstream mapFile(mapPath);
 	string line;
 	while (getline(mapFile, line)) {
@@ -634,10 +770,7 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 		if (f.size() < 2)
 			continue;
 
-		if (f[0] == "kernel" && f.size() >= 4) {
-			// kernel,<name>,arg,<argName>,<key>,<val>,...
-			const string &kname = f[1];
-			auto &kl = prog->layouts[kname];
+		if (f[0] == "kernel" && f.size() >= 4 && f[1] == kernelName) {
 			uint32_t ord = ~0u, binding = 0, offset = 0, argSize = 0;
 			string kind;
 			for (size_t i = 4; i + 1 < f.size(); i += 2) {
@@ -687,38 +820,12 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 						offset + (argSize ? argSize : 4u));
 		} else if (f[0] == "constant" && f.size() >= 6) {
 			// module-scope __constant buffer: descriptorSet/binding + init hex
-			uint32_t binding = 0;
-			string data;
 			for (size_t i = 1; i + 1 < f.size(); i += 2) {
-				if (f[i] == "binding") binding = strtoul(f[i + 1].c_str(), nullptr, 10);
-				else if (f[i] == "data" || f[i] == "hexbytes") data = f[i + 1];
+				if (f[i] == "binding") constBinding = strtoul(f[i + 1].c_str(), nullptr, 10);
+				else if (f[i] == "data" || f[i] == "hexbytes") constHex = f[i + 1];
 			}
-			prog->moduleConstantsBinding = binding;
-			prog->moduleConstantsHex = data;
-			prog->hasModuleConstants = true;
 		}
 	}
-
-	// Upload the module-scope __constant blob once per program
-	if (prog->hasModuleConstants && !prog->moduleConstantsHex.empty()) {
-		const string &hex = prog->moduleConstantsHex;
-		const size_t n = hex.size() / 2;
-		vector<char> blob(n);
-		for (size_t i = 0; i < n; i++)
-			blob[i] = (char)strtoul(hex.substr(i * 2, 2).c_str(), nullptr, 16);
-		HardwareDeviceBuffer *buf = nullptr;
-		AllocBuffer(&buf, BUFFER_TYPE_READ_ONLY, blob.data(), n,
-				programName + " module constants");
-		VulkanDeviceBuffer *vb = static_cast<VulkanDeviceBuffer *>(buf);
-		prog->moduleConstBuff = vb->buff;
-		prog->moduleConstMem = vb->mem;
-		prog->moduleConstSize = n;
-		// Note: the VulkanDeviceBuffer object itself is owned by the engine
-		// allocator path; keep handles for binding. Buffer lifetime = program
-		// lifetime (both end at device Stop()).
-	}
-
-	return static_cast<HardwareDeviceProgramUPtr>(std::move(prog));
 }
 
 HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
@@ -727,10 +834,21 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 	const VulkanDeviceProgram &prog =
 		dynamic_cast<const VulkanDeviceProgram &>(programRef);
 
-	auto it = prog.layouts.find(kernelName);
+	// Per-kernel SPIR-V module + descriptor map produced by CompileProgram.
+	const string kbase = prog.cacheDir + "/" + prog.cacheKey + "-" + kernelName;
+	vector<char> spv;
+	{
+		ifstream f(kbase + ".spv", ios::binary);
+		spv.assign(istreambuf_iterator<char>(f), istreambuf_iterator<char>());
+	}
+	if (spv.empty())
+		throw runtime_error("Vulkan kernel missing SPIR-V: " + kernelName);
+
 	VulkanDeviceProgram::KernelLayout layout;
-	if (it != prog.layouts.end())
-		layout = it->second;
+	uint32_t constBinding = ~0u;
+	string constHex;
+	ParseKernelMap(kbase + ".map", kernelName, layout, constBinding, constHex);
+	const bool hasModuleConstants = !constHex.empty();
 
 	// Descriptor set layout: one storage-buffer binding per BUFFER arg +
 	// the clustered-POD SSBO + the module-constants SSBO when present.
@@ -740,8 +858,8 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 			maxBind = std::max(maxBind, a.binding);
 	if (layout.podUBOBinding != ~0u)
 		maxBind = std::max(maxBind, layout.podUBOBinding);
-	if (prog.hasModuleConstants)
-		maxBind = std::max(maxBind, prog.moduleConstantsBinding);
+	if (hasModuleConstants)
+		maxBind = std::max(maxBind, constBinding);
 
 	vector<VkDescriptorSetLayoutBinding> binds(maxBind + 1);
 	vector<VkDescriptorSetLayoutBinding> used;
@@ -767,13 +885,13 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 		b.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 		binds[layout.podUBOBinding] = b;
 	}
-	if (prog.hasModuleConstants) {
+	if (hasModuleConstants) {
 		VkDescriptorSetLayoutBinding b{};
-		b.binding = prog.moduleConstantsBinding;
+		b.binding = constBinding;
 		b.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		b.descriptorCount = 1;
 		b.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-		binds[prog.moduleConstantsBinding] = b;
+		binds[constBinding] = b;
 	}
 	for (const auto &b : binds)
 		if (b.stageFlags) used.push_back(b);
@@ -816,19 +934,39 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 	specInfo.dataSize = sizeof(wgVals);
 	specInfo.pData = wgVals;
 
+	VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+	smi.codeSize = spv.size();
+	smi.pCode = (const uint32_t *)spv.data();
+	VK_CHECK(vkCreateShaderModule((VkDevice)device, &smi, nullptr,
+			(VkShaderModule *)&kern->shaderModule));
+
 	VkComputePipelineCreateInfo cpi{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
 	cpi.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	cpi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-	cpi.stage.module = (VkShaderModule)prog.shaderModule;
+	cpi.stage.module = (VkShaderModule)kern->shaderModule;
 	cpi.stage.pName = kernelName.c_str();
 	cpi.stage.pSpecializationInfo = &specInfo;
 	cpi.layout = (VkPipelineLayout)kern->pipelineLayout;
 	VK_CHECK(vkCreateComputePipelines((VkDevice)device, VK_NULL_HANDLE, 1, &cpi,
 			nullptr, (VkPipeline *)&kern->pipeline));
 
-	if (prog.hasModuleConstants) {
-		kern->moduleConstBuff = prog.moduleConstBuff;
-		kern->moduleConstBinding = prog.moduleConstantsBinding;
+	// Per-kernel module-scope __constant blob (each split module carries
+	// only the constants its own call graph reached after globaldce).
+	if (hasModuleConstants) {
+		const size_t n = constHex.size() / 2;
+		vector<char> blob(n);
+		for (size_t i = 0; i < n; i++)
+			blob[i] = (char)strtoul(constHex.substr(i * 2, 2).c_str(), nullptr, 16);
+		HardwareDeviceBuffer *buf = nullptr;
+		AllocBuffer(&buf, BUFFER_TYPE_READ_ONLY, blob.data(), n,
+				kernelName + " module constants");
+		VulkanDeviceBuffer *vb = static_cast<VulkanDeviceBuffer *>(buf);
+		kern->moduleConstBuff = vb->buff;
+		kern->moduleConstMem = vb->mem;
+		kern->moduleConstBinding = constBinding;
+		// The VulkanDeviceBuffer wrapper leaks with the buffer allocator
+		// path (freed at device Stop); the VkBuffer/VkDeviceMemory are
+		// owned and released by this kernel.
 	}
 
 	// Clustered POD backing buffer (storage buffer, raw-byte layout)

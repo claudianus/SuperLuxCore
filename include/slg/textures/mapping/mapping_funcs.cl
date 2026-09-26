@@ -27,8 +27,8 @@ OPENCL_FORCE_INLINE float2 UVMapping2D_Map(__global const TextureMapping2D *mapp
 	const float2 uv = HitPoint_GetUV(hitPoint, mapping->dataIndex EXTMESH_PARAM);
 
 	// Centered rotation
-	const float uOffset = 0.5 * mapping->uvMapping2D.centerrotation * mapping->uvMapping2D.uScale;
-	const float vOffset = 0.5 * mapping->uvMapping2D.centerrotation * mapping->uvMapping2D.vScale;
+	const float uOffset = 0.5f * mapping->uvMapping2D.centerrotation * mapping->uvMapping2D.uScale;
+	const float vOffset = 0.5f * mapping->uvMapping2D.centerrotation * mapping->uvMapping2D.vScale;
 
 	// Scale
 	const float uScaled = uv.x * mapping->uvMapping2D.uScale - uOffset;

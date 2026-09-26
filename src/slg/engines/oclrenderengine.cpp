@@ -76,11 +76,19 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 	DeviceDescription::Filter(DEVICE_TYPE_METAL_ALL, metalDescs);
 #endif
 
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+	auto vulkanDescs = ctx->GetAvailableDeviceDescriptions();
+	DeviceDescription::Filter(DEVICE_TYPE_VULKAN_ALL, vulkanDescs);
+#endif
+
 	DeviceDescriptions descs;
 	descs.insert(descs.end(), oclDescs.begin(), oclDescs.end());
 	descs.insert(descs.end(), cudaDescs.begin(), cudaDescs.end());
 #if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
 	descs.insert(descs.end(), metalDescs.begin(), metalDescs.end());
+#endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+	descs.insert(descs.end(), vulkanDescs.begin(), vulkanDescs.end());
 #endif
 
 	// Device info
@@ -104,7 +112,8 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 		bool selected = false;
 		if (haveSelectionString) {
 			if (oclDeviceConfig.at(i) == '1') {
-				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU))
+				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU |
+						DEVICE_TYPE_VULKAN_GPU))
 					desc.SetForceWorkGroupSize(forceGPUWorkSize);
 				else if (desc.GetType() & DEVICE_TYPE_OPENCL_CPU)
 					desc.SetForceWorkGroupSize(forceCPUWorkSize);
@@ -113,9 +122,14 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 				selected = true;
 			}
 		} else {
+			// Vulkan is opt-in for now (experimental): it is only selected
+			// through the explicit opencl.devices.select string, not by
+			// opencl.use.gpus.
 			if ((useCPUs && (desc.GetType() & DEVICE_TYPE_OPENCL_CPU)) ||
-					(useGPUs && desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU | DEVICE_TYPE_METAL_GPU))) {
-				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU | DEVICE_TYPE_METAL_GPU))
+					(useGPUs && desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU |
+							DEVICE_TYPE_METAL_GPU))) {
+				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU |
+						DEVICE_TYPE_METAL_GPU))
 					desc.SetForceWorkGroupSize(forceGPUWorkSize);
 				else if (desc.GetType() & DEVICE_TYPE_OPENCL_CPU)
 					desc.SetForceWorkGroupSize(forceCPUWorkSize);

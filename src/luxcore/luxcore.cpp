@@ -168,6 +168,12 @@ PropertiesUPtr luxcore::GetPlatformDesc() {
 	props << Property("compile.LUXRAYS_ENABLE_METAL")(false);
 #endif
 
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+	props << Property("compile.LUXRAYS_ENABLE_VULKAN")(true);
+#else
+	props << Property("compile.LUXRAYS_ENABLE_VULKAN")(false);
+#endif
+
 #if !defined(LUXCORE_DISABLE_OIDN)
 	props << Property("compile.LUXCORE_ENABLE_OIDN")(true);
 	props << Property("compile.LUXCORE_DISABLE_OIDN")(false);
@@ -198,10 +204,10 @@ PropertiesUPtr luxcore::GetOpenCLDeviceDescs() {
 	Context ctx;
 	auto deviceDescriptions = ctx.GetAvailableDeviceDescriptions();
 
-	// Select hardware devices (OpenCL, CUDA and Metal - the renderer's
+	// Select hardware devices (OpenCL, CUDA, Metal and Vulkan - the renderer's
 	// device selection string addresses all of them by position)
 	DeviceDescription::Filter((DeviceType)(DEVICE_TYPE_OPENCL_ALL | DEVICE_TYPE_CUDA_ALL |
-			DEVICE_TYPE_METAL_ALL), deviceDescriptions);
+			DEVICE_TYPE_METAL_ALL | DEVICE_TYPE_VULKAN_ALL), deviceDescriptions);
 
 	// Add all device information to the list
 	for (int i=0; DeviceDescriptionRef desc : deviceDescriptions) {
@@ -224,6 +230,8 @@ PropertiesUPtr luxcore::GetOpenCLDeviceDescs() {
 		} else if (desc.GetType() & DEVICE_TYPE_METAL_ALL) {
 			platformName = "Apple";
 			platformVersion = "Metal";
+		} else if (desc.GetType() & DEVICE_TYPE_VULKAN_ALL) {
+			platformName = "Vulkan";
 		}
 
 		const string prefix = "opencl.device." + ToString(i++);

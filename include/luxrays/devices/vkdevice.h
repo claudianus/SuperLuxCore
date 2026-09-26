@@ -113,17 +113,23 @@ public:
 
 class VulkanDeviceProgram : public HardwareDeviceProgram {
 public:
-	VulkanDeviceProgram() : shaderModule(nullptr), owner(nullptr) { }
+	VulkanDeviceProgram() : owner(nullptr) { }
 	virtual ~VulkanDeviceProgram();
 
 	// Owning VkDevice (needed to destroy the module)
 	VkDeviceHandle owner;
 
-	bool IsNull() const { return shaderModule == nullptr; }
+	bool IsNull() const { return cacheKey.empty(); }
 
-	// One SPIR-V module can carry all kernel entry points (clspv emits
-	// multi-entry modules).
-	VkShaderModuleHandle shaderModule;
+	// Split compilation: the monolithic module inlines the whole call
+	// graph into every entry point serially (O(minutes) per kernel in a
+	// single clspv process). Instead CompileProgram emits one LLVM
+	// bitcode module, then prunes + compiles each __kernel to its own
+	// SPIR-V in parallel (internalize+globaldce via opt, clspv -x ir).
+	// cacheKey locates <key>-<kernel>.spv / .map in the vkcache dir.
+	std::string cacheDir;
+	std::string cacheKey;
+	std::vector<std::string> kernelNames;
 
 	// Per-kernel argument layout parsed from clspv's descriptor map:
 	// for kernel arg index i -> role + descriptor binding or POD offset.
@@ -143,15 +149,6 @@ public:
 		uint32_t localSizeCount = 0;
 	};
 	std::map<std::string, KernelLayout> layouts;
-
-	// Module-scope __constant tables (spectral LUTs, noise perms) collected
-	// by clspv into a single SSBO; binding reported by the descriptor map.
-	bool hasModuleConstants = false;
-	uint32_t moduleConstantsBinding = 0;
-	std::string moduleConstantsHex;
-	VkBufferHandle moduleConstBuff = nullptr;
-	VkDeviceMemoryHandle moduleConstMem = nullptr;
-	size_t moduleConstSize = 0;
 };
 
 //------------------------------------------------------------------------------
@@ -172,6 +169,7 @@ public:
 	friend class VulkanDevice;
 
 protected:
+	VkShaderModuleHandle shaderModule = nullptr;
 	VkPipelineHandle pipeline;
 	VkPipelineLayoutHandle pipelineLayout;
 	VkDescriptorSetLayoutHandle setLayout;
@@ -193,8 +191,10 @@ protected:
 
 	// Workgroup size baked into the pipeline via workgroup_size_x spec const
 	uint32_t localSizeX = 0;
-	// Module-scope __constant SSBO to bind when the program has one
+	// Module-scope __constant SSBO to bind when this kernel's module has
+	// one (per-kernel modules carry only their own constants).
 	VkBufferHandle moduleConstBuff = nullptr;
+	VkDeviceMemoryHandle moduleConstMem = nullptr;
 	uint32_t moduleConstBinding = ~0u;
 
 	// Descriptor sets in flight; recycled on FinishQueue.
