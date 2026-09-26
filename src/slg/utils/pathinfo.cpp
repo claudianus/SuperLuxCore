@@ -55,7 +55,18 @@ EyePathInfo::EyePathInfo() : isPassThroughPath(true),
 		isTransmittedPath(true), lastOnlyInfiniteLights(false),
 		linkAcceptMask(~0ull),
 		isAdaptiveCaustic(false),
+		lpeAutomata(nullptr), lpeCount(0),
 		isNearlyCaustic(false) {
+	memset(lpeStates, 0, sizeof(lpeStates));
+}
+
+void EyePathInfo::InitLPE(const LPEAutomaton *automata, const u_int count) {
+	lpeAutomata = automata;
+	lpeCount = Min<u_int>(count, SLG_LPE_MAX_EXPRESSIONS);
+	for (u_int i = 0; i < lpeCount; ++i)
+		lpeStates[i] = automata[i].startAfterC;
+	for (u_int i = lpeCount; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		lpeStates[i] = 0;
 }
 
 void EyePathInfo::AddVertex(const BSDF &bsdf,
@@ -112,6 +123,13 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	lastGlossiness = glossiness;
 	lastOnlyInfiniteLights = bsdf.IsShadowCatcherOnlyInfiniteLights();
 	linkAcceptMask = bsdf.GetLinkAcceptMask();
+
+	// LPE: advance every expression's NFA by this vertex's event symbol
+	if (lpeCount) {
+		const u_int sym = LPEVertexEvent(event, bsdf.IsVolume());
+		for (u_int i = 0; i < lpeCount; ++i)
+			lpeStates[i] = LPEStep(lpeAutomata[i], lpeStates[i], sym);
+	}
 
 	isTransmittedPath = isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }

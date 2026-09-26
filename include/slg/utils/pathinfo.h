@@ -22,6 +22,7 @@
 #include <ostream>
 
 #include "slg/slg.h"
+#include "slg/utils/lpe.h"
 #include "slg/utils/pathdepthinfo.h"
 #include "slg/utils/pathvolumeinfo.h"
 
@@ -93,7 +94,28 @@ public:
 
 	void AddVertex(const BSDF &bsdf, const BSDFEvent event, const float pdfW,
 			const float glossinessThreshold);
-	
+
+	// LPE: seeds the per-expression NFA state sets with the automata's
+	// camera-stepped start sets. lpeAutomata is borrowed (film-owned).
+	void InitLPE(const LPEAutomaton *automata, const u_int count);
+	// Terminal evaluation: bitmask of the expressions accepting on sym
+	u_int LPEAcceptMask(const u_int sym) const {
+		u_int accept = 0;
+		for (u_int i = 0; i < lpeCount; ++i)
+			accept |= LPEAccept(lpeAutomata[i], lpeStates[i], sym) << i;
+		return accept;
+	}
+	// Next-event terminal: a light connection at the current vertex
+	// carries the path C v1..vN L - vN's own event must be stepped
+	// before the terminal (AddVertex runs after NEE in the loop)
+	u_int LPEAcceptMask(const u_int vSym, const u_int termSym) const {
+		u_int accept = 0;
+		for (u_int i = 0; i < lpeCount; ++i)
+			accept |= LPEAccept(lpeAutomata[i],
+					LPEStep(lpeAutomata[i], lpeStates[i], vSym), termSym) << i;
+		return accept;
+	}
+
 	bool IsCausticPath() const { return isNearlyCaustic && (depth.depth > 1); }
 	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
 
@@ -137,6 +159,12 @@ public:
 	// Adaptive caustic partition (see isAdaptiveCaustic in
 	// pathinfo_types.cl)
 	bool isAdaptiveCaustic;
+
+	// LPE: live NFA state set per expression (u32 bitmask each), stepped
+	// once per vertex event in AddVertex; see lpe_funcs.cl for the twin
+	const LPEAutomaton *lpeAutomata;
+	u_int lpeCount;
+	u_int lpeStates[SLG_LPE_MAX_EXPRESSIONS];
 
 private:
 	bool isNearlyCaustic;

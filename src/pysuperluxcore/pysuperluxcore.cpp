@@ -2685,6 +2685,7 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .value("MOTION_VECTOR", Film::OUTPUT_MOTION_VECTOR)
     .value("CRYPTOMATTE_OBJECT", Film::OUTPUT_CRYPTOMATTE_OBJECT)
     .value("CRYPTOMATTE_MATERIAL", Film::OUTPUT_CRYPTOMATTE_MATERIAL)
+    .value("LPE", Film::OUTPUT_LPE)
     .def_property_readonly_static("names", [](py::object self){
         return self.attr("__members__");
     })

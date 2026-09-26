@@ -61,6 +61,9 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 	sampleResult->cryptoObjectID = 0.f;
 	sampleResult->cryptoMaterialID = 0.f;
 
+	for (uint i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		VSTORE3F(BLACK, sampleResult->lpeRadiance[i].c);
+
 	sampleResult->firstPathVertexEvent = NONE;
 	sampleResult->firstPathVertex = true;
 	// sampleResult->lastPathVertex can not be really initialized here without knowing
@@ -197,6 +200,10 @@ OPENCL_FORCE_INLINE void SampleResult_ProjectSpectralToRGB(
 	SLG_PROJECT_FIELD(irradiancePathThroughput);
 	SLG_PROJECT_FIELD(albedo);
 #undef SLG_PROJECT_FIELD
+	for (uint i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->lpeRadiance[i].c),
+				sampleResult->spectralW, sampleResult->spectralHeroAlive),
+				sampleResult->lpeRadiance[i].c);
 }
 #endif
 

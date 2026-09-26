@@ -64,5 +64,10 @@ typedef struct {
 	// dVC *= vcFoldVC) - stored so a pass-through vertex (not a real
 	// vertex on the CPU side) can undo it at bounce time.
 	float vcFoldVCM, vcFoldVC;
+
+	// LPE: live NFA state set per film.lpe.N.expression (u32 bitmask
+	// each), seeded from the automaton's startAfterC in GenerateEyePath
+	// and stepped per vertex in EyePathInfo_AddVertex (lpe_funcs.cl)
+	unsigned int lpeStates[SLG_LPE_MAX_EXPRESSIONS];
 } EyePathInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

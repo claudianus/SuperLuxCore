@@ -253,6 +253,8 @@ void PathTracer::ResetEyeSampleResults(vector<SampleResult> &sampleResults) {
 	sampleResult.motionVector[1] = 0.f;
 	sampleResult.motionVector[2] = 0.f;
 	sampleResult.motionVector[3] = 0.f;
+	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		sampleResult.lpeRadiance[i] = Spectrum();
 
 	sampleResult.rayCount = 0.f;
 }
@@ -497,6 +499,10 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							const Spectrum incomingRadiance = bsdfEval * (weight * factor) * connectionThroughput * lightRadiance;
 
 							sampleResult->AddDirectLight(light->GetID(), event, pathThroughput, incomingRadiance, 1.f);
+							AccumulateLPE(sampleResult, pathInfo,
+									LPEVertexEvent(event, bsdf.IsVolume()),
+									light->IsEnvironmental() ? LPE_SYM_E : LPE_SYM_L,
+									pathThroughput * incomingRadiance);
 							if (kContribDump) {
 								g_dbgDL.fetch_add(Spectrum(pathThroughput * incomingRadiance).Filter(),
 										std::memory_order_relaxed);
@@ -647,6 +653,26 @@ static float LightConnectionSolidAngle(const LightSource &light,
 	}
 }
 
+void PathTracer::AccumulateLPE(SampleResult *sampleResult, const EyePathInfo &pathInfo,
+		const u_int sym, const Spectrum &r) {
+	if (!pathInfo.lpeCount)
+		return;
+	const u_int accept = pathInfo.LPEAcceptMask(sym);
+	for (u_int i = 0; i < pathInfo.lpeCount; ++i)
+		if (accept & (1u << i))
+			sampleResult->lpeRadiance[i] += r;
+}
+
+void PathTracer::AccumulateLPE(SampleResult *sampleResult, const EyePathInfo &pathInfo,
+		const u_int vSym, const u_int sym, const Spectrum &r) {
+	if (!pathInfo.lpeCount)
+		return;
+	const u_int accept = pathInfo.LPEAcceptMask(vSym, sym);
+	for (u_int i = 0; i < pathInfo.lpeCount; ++i)
+		if (accept & (1u << i))
+			sampleResult->lpeRadiance[i] += r;
+}
+
 void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 		const EyePathInfo &pathInfo,
 		const Spectrum &pathThroughput, const Ray &ray,
@@ -730,6 +756,7 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 				g_dbgPortalHitN++;
 		}
 		sampleResult->AddEmission(bsdf.GetLightID(), pathThroughput, weight * emittedRadiance);
+		AccumulateLPE(sampleResult, pathInfo, LPE_SYM_L, pathThroughput * (weight * emittedRadiance));
 	}
 }
 
@@ -768,6 +795,7 @@ void PathTracer::DirectHitInfiniteLight(SceneConstRef scene,
 				weight = 1.f;
 
 			sampleResult->AddEmission(envLight.GetID(), pathThroughput, weight * envRadiance);
+			AccumulateLPE(sampleResult, pathInfo, LPE_SYM_E, pathThroughput * (weight * envRadiance));
 		}
 	}	
 }
@@ -1843,6 +1871,7 @@ void PathTracer::RenderEyeSample(
 	const Spectral::ScopeWavelengths wlScope(sw);
 
 	EyePathInfo pathInfo;
+	pathInfo.InitLPE(film.GetLPEAutomata(), film.GetLPECount());
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
 

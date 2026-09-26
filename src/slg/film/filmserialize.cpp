@@ -106,6 +106,9 @@ template<class Archive> void Film::load(Archive &ar, const u_int version) {
 	ar & channel_MOTION_VECTOR;
 	ar & channel_CRYPTOMATTE_OBJECT;
 	ar & channel_CRYPTOMATTE_MATERIAL;
+	ar & channel_LPEs;
+	ar & lpeExpressions;
+	ar & lpeAutomata;
 
 	ar & channels;
 	ar & width;
@@ -200,6 +203,9 @@ template<class Archive> void Film::save(Archive &ar, const u_int version) const 
 	ar & channel_MOTION_VECTOR;
 	ar & channel_CRYPTOMATTE_OBJECT;
 	ar & channel_CRYPTOMATTE_MATERIAL;
+	ar & channel_LPEs;
+	ar & lpeExpressions;
+	ar & lpeAutomata;
 
 	ar & channels;
 	ar & width;

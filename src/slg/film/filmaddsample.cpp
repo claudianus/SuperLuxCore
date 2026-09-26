@@ -216,6 +216,11 @@ void Film::AddSampleResultColor(const u_int x, const u_int y,
 			channel_CRYPTOMATTE_OBJECT->AddCoverage(x, y, sampleResult.cryptoObjectID, weight);
 		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
 			channel_CRYPTOMATTE_MATERIAL->AddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
+
+		// LPE: per-expression weighted radiance (eye-path contributions
+		// routed by the NFA terminal evaluation)
+		for (u_int i = 0; i < channel_LPEs.size(); ++i)
+			channel_LPEs[i]->AddIfValidWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 	}
 }
 
@@ -457,6 +462,11 @@ void Film::AtomicAddSampleResultColor(const u_int x, const u_int y,
 			channel_CRYPTOMATTE_OBJECT->AtomicAddCoverage(x, y, sampleResult.cryptoObjectID, weight);
 		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
 			channel_CRYPTOMATTE_MATERIAL->AtomicAddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
+
+		// LPE: per-expression weighted radiance (eye-path contributions
+		// routed by the NFA terminal evaluation)
+		for (u_int i = 0; i < channel_LPEs.size(); ++i)
+			channel_LPEs[i]->AtomicAddWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 	}
 }
 

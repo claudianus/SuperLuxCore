@@ -18,6 +18,8 @@
 
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
+#include <cstring>
+
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/replace.hpp>
 
@@ -93,7 +95,9 @@ PathOCLBaseOCLRenderThread::ThreadFilm::ThreadFilm(PathOCLBaseOCLRenderThread *t
 	channel_MOTION_VECTOR_Buff = NULL;
 	channel_CRYPTOMATTE_OBJECT_Buff = NULL;
 	channel_CRYPTOMATTE_MATERIAL_Buff = NULL;
-	
+	channel_LPE_Buff = NULL;
+	lpeAutomataBuff = NULL;
+
 	// Denoiser sample accumulator buffers
 	denoiser_NbOfSamplesImage_Buff = NULL;
 	denoiser_SquaredWeightSumsImage_Buff = NULL;
@@ -392,6 +396,26 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 		renderThread->intersectionDevice.AllocBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff, memTypeFlags, nullptr, sizeof(float) * CryptoFrameBuffer6::STRIDE * filmPixelCount, "CRYPTOMATTE_MATERIAL");
 	else
 		renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff);
+	//--------------------------------------------------------------------------
+	// LPE: one flat device buffer, expression-blocked (lpeCount sections
+	// of RGB+weight per pixel) so a single kernel arg covers every
+	// expression; the compiled NFA table is uploaded once, read-only
+	const u_int lpeCount = film->GetLPECount();
+	if (lpeCount) {
+		// The device LPEAutomaton (lpe_types.cl) is a verbatim POD twin:
+		// guard the host layout so the raw upload stays valid
+		static_assert(sizeof(LPEAutomaton) ==
+				(3 + SLG_LPE_MAX_STATES * LPE_NUM_SYMBOLS) * sizeof(u_int),
+				"Host/device LPE automaton layouts must match");
+		renderThread->intersectionDevice.AllocBuffer(&channel_LPE_Buff, memTypeFlags, nullptr,
+				sizeof(float) * 4 * lpeCount * filmPixelCount, "LPE");
+		renderThread->intersectionDevice.AllocBufferRO(&lpeAutomataBuff,
+				(void *)film->GetLPEAutomata(),
+				sizeof(LPEAutomaton) * lpeCount, "LPE automata");
+	} else {
+		renderThread->intersectionDevice.FreeBuffer(&channel_LPE_Buff);
+		renderThread->intersectionDevice.FreeBuffer(&lpeAutomataBuff);
+	}
 
 	//--------------------------------------------------------------------------
 	// Film denoiser sample accumulator buffers
@@ -469,6 +493,8 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::FreeAllOCLBuffers() {
 	renderThread->intersectionDevice.FreeBuffer(&channel_MOTION_VECTOR_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_OBJECT_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&channel_LPE_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&lpeAutomataBuff);
 
 	// Film denoiser sample accumulator buffers
 	renderThread->intersectionDevice.FreeBuffer(&denoiser_NbOfSamplesImage_Buff);
@@ -541,6 +567,9 @@ u_int PathOCLBaseOCLRenderThread::ThreadFilm::SetFilmKernelArgs(HardwareIntersec
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_MOTION_VECTOR_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_CRYPTOMATTE_OBJECT_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_CRYPTOMATTE_MATERIAL_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_LPE_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, lpeAutomataBuff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, film->GetLPECount());
 
 	// Film denoiser sample accumulator parameters
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -930,6 +959,21 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 			channel_CRYPTOMATTE_MATERIAL_Buff->GetSize(),
 			film->channel_CRYPTOMATTE_MATERIAL->GetPixels());
 	}
+	if (channel_LPE_Buff) {
+		// Blocking read + staging: the flat device sections are sliced
+		// into the per-expression frame buffers on the host
+		const u_int lpeCount = film->GetLPECount();
+		const size_t sectionFloats = (size_t)film->GetWidth() * film->GetHeight() * 4;
+		vector<float> staging(sectionFloats * lpeCount);
+		intersectionDevice.EnqueueReadBuffer(
+			channel_LPE_Buff,
+			CL_TRUE,
+			channel_LPE_Buff->GetSize(),
+			staging.data());
+		for (u_int i = 0; i < lpeCount; ++i)
+			memcpy(film->channel_LPEs[i]->GetPixels(),
+					&staging[i * sectionFloats], sectionFloats * sizeof(float));
+	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -1292,6 +1336,21 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDevice
 			CL_FALSE,
 			channel_CRYPTOMATTE_MATERIAL_Buff->GetSize(),
 			film->channel_CRYPTOMATTE_MATERIAL->GetPixels());
+	}
+	if (channel_LPE_Buff) {
+		// Gather the per-expression buffers into the flat device
+		// layout; blocking write so the staging can stay local
+		const u_int lpeCount = film->GetLPECount();
+		const size_t sectionFloats = (size_t)film->GetWidth() * film->GetHeight() * 4;
+		vector<float> staging(sectionFloats * lpeCount);
+		for (u_int i = 0; i < lpeCount; ++i)
+			memcpy(&staging[i * sectionFloats],
+					film->channel_LPEs[i]->GetPixels(), sectionFloats * sizeof(float));
+		intersectionDevice.EnqueueWriteBuffer(
+			channel_LPE_Buff,
+			CL_TRUE,
+			channel_LPE_Buff->GetSize(),
+			staging.data());
 	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers

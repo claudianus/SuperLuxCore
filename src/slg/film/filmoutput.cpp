@@ -147,6 +147,8 @@ size_t Film::GetOutputSize(const FilmOutputs::FilmOutputType type) const {
 		case FilmOutputs::CRYPTOMATTE_OBJECT:
 		case FilmOutputs::CRYPTOMATTE_MATERIAL:
 			return SLG_CRYPTO_LEVELS * 2 * pixelCount;
+		case FilmOutputs::LPE:
+			return 3 * pixelCount;
 		default:
 			throw runtime_error("Unknown FilmOutputType in Film::GetOutputSize(): " + ToString(type));
 	}
@@ -256,6 +258,8 @@ bool Film::HasOutput(const FilmOutputs::FilmOutputType type) const {
 			return HasChannel(CRYPTOMATTE_OBJECT);
 		case FilmOutputs::CRYPTOMATTE_MATERIAL:
 			return HasChannel(CRYPTOMATTE_MATERIAL);
+		case FilmOutputs::LPE:
+			return channel_LPEs.size() > 0;
 		default:
 			throw runtime_error("Unknown film output type in Film::HasOutput(): " + ToString(type));
 	}
@@ -301,6 +305,7 @@ void Film::Output(
 	u_int byObjectIDsIndex = 0;
 	u_int radianceGroupIndex = 0;
 	u_int imagePipelineIndex = 0;
+	u_int lpeIndex = 0;
 	u_int channelCount = 3;
 
 	switch (type) {
@@ -586,6 +591,14 @@ void Film::Output(
 				return;
 			channelCount = SLG_CRYPTO_LEVELS * 2;
 			break;
+		case FilmOutputs::LPE:
+			if (!props || channel_LPEs.empty())
+				return;
+			lpeIndex = props->Get(Property("index")(0)).Get<u_int>();
+			if (lpeIndex >= channel_LPEs.size())
+				return;
+			channelCount = 3;
+			break;
 		default:
 			throw runtime_error("Unknown film output type in Film::Output(): " + ToString(type));
 	}
@@ -668,6 +681,16 @@ void Film::Output(
 				spec.attribute("cryptomatte/" + cryptoKey + "/conversion", "uint32_to_float32");
 			for (const auto &kv : filmMetadata)
 				spec.attribute(kv.first, kv.second);
+		}
+
+		if (type == FilmOutputs::LPE) {
+			// Layer name: LPE.<expression name>; the expression itself
+			// goes into the metadata for downstream tooling
+			const string layerName = "LPE." + lpeExpressions[lpeIndex].name;
+			for (u_int i = 0; i < channelCount; ++i)
+				spec.channelnames[i] = layerName + "." + "RGBA"[i];
+			spec.attribute("lpe/" + lpeExpressions[lpeIndex].name + "/expression",
+					lpeExpressions[lpeIndex].expression);
 		}
 
 		buffer.reset(spec);
@@ -931,6 +954,10 @@ void Film::Output(
 					}
 					break;
 				}
+				case FilmOutputs::LPE: {
+					channel_LPEs[lpeIndex]->GetWeightedPixel(x, y, pixel);
+					break;
+				}
 				default:
 					throw runtime_error("Unknown film output type in Film::Output(): " + ToString(type));
 			}
@@ -975,6 +1002,8 @@ u_int Film::GetOutputCount(const FilmOutputs::FilmOutputType type) const {
 			return channel_OBJECT_ID_MASKs.size();
 		case FilmOutputs::BY_OBJECT_ID:
 			return channel_BY_OBJECT_IDs.size();
+		case FilmOutputs::LPE:
+			return channel_LPEs.size();
 		default:
 			if (HasOutput(type))
 				return 1;
@@ -1278,6 +1307,11 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 					dst[j * 2 + 1] = (j < n) ? covs[j] * k : 0.f;
 				}
 			}
+			break;
+		}
+		case FilmOutputs::LPE: {
+			for (u_int i = 0; i < pixelCount; ++i)
+				channel_LPEs[index]->GetWeightedPixel(i, &buffer[i * 3]);
 			break;
 		}
 		default:

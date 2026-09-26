@@ -220,6 +220,8 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelcolor_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelconst_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/utils/evalstack_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/utils/lpe_types.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/utils/lpe_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/utils/mortoncurve_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/utils/pathdepthinfo_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/utils/pathdepthinfo_funcs.cl
@@ -507,6 +509,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/utils/harlequincolors.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/utils/meshutils.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/utils/scenevisibility.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/utils/lpe.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/utils/pathdepthinfo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/utils/pathinfo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/utils/pathvolumeinfo.cpp
@@ -688,6 +691,8 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/pathoclbase_funcs_kernel.cpp
   ${generated_kernels_dir}/pathoclbase_kernels_micro_kernel.cpp
   ${generated_kernels_dir}/pathtracer_types_kernel.cpp
+  ${generated_kernels_dir}/lpe_types_kernel.cpp
+  ${generated_kernels_dir}/lpe_funcs_kernel.cpp
 )
 
 SOURCE_GROUP("Source Files\\SLG Kernels\\Generated" FILES ${SLG_KERNEL_SRCS})

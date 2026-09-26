@@ -62,6 +62,55 @@ using namespace luxrays;
 using namespace slg;
 
 //------------------------------------------------------------------------------
+// ParseLPEs
+//------------------------------------------------------------------------------
+
+void Film::ParseLPEs(const Properties &props) {
+	// Re-parsing replaces the expression set (like filmOutputs.Reset())
+	lpeExpressions.clear();
+	lpeAutomata.clear();
+
+	// film.lpe.N.expression: light path expression text (required);
+	// film.lpe.N.name: output channel name (optional, defaults to "lpeN").
+	// Each expression compiles to a fixed-size NFA (see slg/utils/lpe.h);
+	// LPE outputs then select the expression via film.outputs.*.index.
+	vector<string> lpeKeys = props.GetAllNamesRE("film\\.lpe\\.[0-9]+\\.expression");
+	std::sort(lpeKeys.begin(), lpeKeys.end());
+
+	for (const string &key : lpeKeys) {
+		// "film.lpe.N.expression" -> prefix "film.lpe.N"
+		const string prefix = key.substr(0, key.rfind('.'));
+		const string index = Property::ExtractField(key, 2);
+
+		LPEExpression e;
+		e.expression = props.Get(Property(key)("")).Get<string>();
+		e.name = props.Get(Property(prefix + ".name")("lpe" + index)).Get<string>();
+		e.automaton = LPECompileExpression(e.expression);
+		lpeExpressions.push_back(e);
+		lpeAutomata.push_back(e.automaton);
+	}
+
+	if (lpeExpressions.size() > SLG_LPE_MAX_EXPRESSIONS)
+		throw runtime_error("Too many LPE expressions: " + ToString(lpeExpressions.size()) +
+				" (max " + ToString(SLG_LPE_MAX_EXPRESSIONS) + ")");
+
+	for (const LPEExpression &e : lpeExpressions)
+		SDL_LOG("Film LPE expression '" << e.name << "': " << e.expression);
+
+	// On a live film (RenderSession::Parse re-runs Film::Parse after
+	// Init) resize the channel set in place instead of wiping the film
+	if (initialized) {
+		channel_LPEs.resize(lpeExpressions.size());
+		for (u_int i = 0; i < channel_LPEs.size(); ++i) {
+			if (!channel_LPEs[i]) {
+				channel_LPEs[i] = std::make_unique<GenericFrameBuffer<4, 1, float>>(width, height);
+				channel_LPEs[i]->Clear();
+			}
+		}
+	}
+}
+
+//------------------------------------------------------------------------------
 // ParseOutputs
 //------------------------------------------------------------------------------
 
@@ -535,6 +584,18 @@ void Film::ParseOutputs(const Properties &props) {
 					throw runtime_error("Cryptomatte can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case FilmOutputs::LPE: {
+				if (hdrImage) {
+					const u_int index = props.Get(Property("film.outputs." + outputName + ".index")(0u)).Get<u_int>();
+					if (index >= lpeExpressions.size())
+						throw runtime_error("LPE output index out of bound: " + outputName);
+					auto prop = std::make_unique<Properties>();
+					prop->Set(Property("index")(index));
+					filmOutputs.Add(FilmOutputs::LPE, fileName, std::move(prop));
+				} else
+					throw runtime_error("LPE outputs can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown type in film output: " + type);
 		}
@@ -944,6 +1005,14 @@ void Film::Parse(PropertiesRPtr props) {
 	if (props->HaveNames("film.imagepipeline.radiancescales.") ||
 			props->HaveNamesRE("film\\.imagepipelines\\.[0-9]+\\.radiancescales\\..*"))
 		ParseRadianceGroupsScales(*props);
+
+	//--------------------------------------------------------------------------
+	// Check if there are new LPE expression definitions (must precede the
+	// outputs parsing: LPE outputs index into lpeExpressions)
+	//--------------------------------------------------------------------------
+
+	if (props->HaveNamesRE("film\\.lpe\\.[0-9]+\\.expression"))
+		ParseLPEs(*props);
 
 	//--------------------------------------------------------------------------
 	// Check if there are new output definitions

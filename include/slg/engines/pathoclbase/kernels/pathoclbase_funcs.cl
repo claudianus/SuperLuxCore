@@ -112,11 +112,19 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 		, const uint cameraFilmWidth, const uint cameraFilmHeight,
 		const uint tileStartX, const uint tileStartY
 #endif
+		LPE_PARAM_DECL
 		SAMPLER_PARAM_DECL) {
 	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	EyePathInfo_Init(pathInfo);
+
+	// LPE: seed each expression's NFA with its camera-stepped start set
+	// (EyePathInfo::InitLPE)
+	if (lpeAutomata) {
+		for (uint i = 0; i < lpeCount; ++i)
+			pathInfo->lpeStates[i] = lpeAutomata[i].startAfterC;
+	}
 
 	InitSampleResult(taskConfig,
 			filmWidth, filmHeight,
@@ -225,6 +233,7 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		__global const float* restrict emitLightsDistribution,
 		__global EyePathInfo *pathInfo, __global const Spectrum* restrict pathThroughput,
 		const __global Ray *ray, __global const BSDF *bsdf, __global SampleResult *sampleResult
+		LPE_PARAM_DECL
 		LIGHTS_PARAM_DECL) {
 	// If the material is shadow transparent, Direct Light sampling
 	// will take care of transporting all emitted light
@@ -303,6 +312,11 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 				weight = 1.f;
 
 			SampleResult_AddEmission(film, sampleResult, light->lightID, throughput, weight * envRadiance);
+			// LPE terminal: environment light hit
+			// (PathTracer::DirectHitInfiniteLight)
+			LPE_Accumulate(sampleResult, pathInfo, LPE_SYM_E,
+					throughput * (weight * envRadiance)
+					LPE_PARAM);
 		}
 	}
 }
@@ -314,6 +328,7 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 		__global const Spectrum* restrict pathThroughput, const __global Ray *ray,
 		const float distance, __global const BSDF *bsdf,
 		__global SampleResult *sampleResult
+		LPE_PARAM_DECL
 		LIGHTS_PARAM_DECL) {
 	__global const LightSource* restrict light = &lights[bsdf->triangleLightSourceIndex];
 
@@ -389,6 +404,10 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 
 		SampleResult_AddEmission(film, sampleResult, BSDF_GetLightID(bsdf
 				MATERIALS_PARAM), VLOAD3F(pathThroughput->c), weight * emittedRadiance);
+		// LPE terminal: emitter hit (PathTracer::DirectHitFiniteLight)
+		LPE_Accumulate(sampleResult, pathInfo, LPE_SYM_L,
+				VLOAD3F(pathThroughput->c) * (weight * emittedRadiance)
+				LPE_PARAM);
 	}
 }
 
@@ -4766,6 +4785,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		const float worldCenterX, const float worldCenterY,
 		const float worldCenterZ, const float worldRadius,
 		__global MneeSeedEntry *mneeSeeds
+		LPE_PARAM_DECL
 		LIGHTS_PARAM_DECL
 		) {
 	__global MneeState *mnee = &taskDirectLight->mnee;
@@ -5029,6 +5049,14 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 				taskDirectLight->illumInfo.lightID,
 				(BSDFEvent)mnee->specEvent,
 				VLOAD3F(taskState->throughput.c), incomingRadiance, 1.f);
+		// LPE terminal: MNEE connects to a positional delta emitter -
+		// treated as L like the CPU AccumulateLPE sites in
+		// pathtracer_mnee.cpp (receiver vertex event steps first)
+		LPE_AccumulateVertex(sampleResult, pathInfo,
+				LPE_VertexEvent((BSDFEvent)mnee->specEvent, false),
+				LPE_SYM_L,
+				VLOAD3F(taskState->throughput.c) * incomingRadiance
+				LPE_PARAM);
 
 		// E4: publish the converged vertex as a warm-start seed only now
 		// that the full connect validated (seg2 visibility + receiver
@@ -6707,6 +6735,7 @@ __kernel void Init(
 				, cameraFilmWidth, cameraFilmHeight,
 				tileStartX, tileStartY
 #endif
+				LPE_PARAM
 				SAMPLER_PARAM);
 	} else {
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)

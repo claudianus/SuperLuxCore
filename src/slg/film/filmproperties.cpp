@@ -46,6 +46,8 @@ PropertiesUPtr Film::ToProperties(const Properties &cfg) {
 	// Add also all image pipeline definitions
 	*props << *cfg.GetAllProperties("film.imagepipeline.");
 	*props << *cfg.GetAllProperties("film.imagepipelines.");
+	// Add all LPE expression definitions (film.lpe.N.*)
+	*props << *cfg.GetAllProperties("film.lpe.");
 
 	return props;
 }

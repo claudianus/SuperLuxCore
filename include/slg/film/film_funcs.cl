@@ -305,6 +305,17 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultColor(const uint x, const uint y,
 	if (film->hasChannelCryptoMaterial)
 		Film_CryptoAddCoverage(&filmCryptoMaterial[index1 * SLG_CRYPTO_STRIDE],
 				sampleResult->cryptoMaterialID, weight);
+
+	// LPE channels: expression-blocked sections of the flat buffer
+	// (section e at e * 4 * pixelCount), RGB + accumulated weight like
+	// every other weighted channel
+	if (filmLPE) {
+		const uint lpeStride = filmWidth * filmHeight * 4;
+		for (uint i = 0; i < lpeCount; ++i)
+			Film_AddIfValidWeightedPixel4(usePixelAtomics,
+					&filmLPE[i * lpeStride + index4],
+					sampleResult->lpeRadiance[i].c, weight);
+	}
 }
 
 OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
@@ -605,6 +616,12 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		, __global float *filmMotionVector \
 		, __global float *filmCryptoObject \
 		, __global float *filmCryptoMaterial \
+		/* LPE: flat expression-blocked radiance+weight buffer \
+		 * (lpeCount sections of 4 floats/pixel) + the compiled NFA \
+		 * table + expression count. NULL/0 when no film.lpe.N */ \
+		, __global float *filmLPE \
+		, __global const LPEAutomaton* restrict lpeAutomata \
+		, const uint lpeCount \
 		KERNEL_ARGS_FILM_DENOISER
 
 //------------------------------------------------------------------------------
@@ -816,6 +833,17 @@ __kernel void Film_Clear(
 	if (filmCryptoMaterial) {
 		for (uint i = 0; i < SLG_CRYPTO_STRIDE; ++i)
 			filmCryptoMaterial[gid * SLG_CRYPTO_STRIDE + i] = 0.f;
+	}
+
+	if (filmLPE) {
+		const uint lpeStride = filmWidth * filmHeight * 4;
+		for (uint e = 0; e < lpeCount; ++e) {
+			const uint base = e * lpeStride + gid * 4;
+			filmLPE[base] = 0.f;
+			filmLPE[base + 1] = 0.f;
+			filmLPE[base + 2] = 0.f;
+			filmLPE[base + 3] = 0.f;
+		}
 	}
 
 	//--------------------------------------------------------------------------

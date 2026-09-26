@@ -45,6 +45,9 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	cryptoObjectID = 0.f;
 	cryptoMaterialID = 0.f;
 
+	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		lpeRadiance[i] = Spectrum();
+
 	firstPathVertexEvent = NONE;
 	firstPathVertex = true;
 	// lastPathVertex can not be really initialized here without knowing

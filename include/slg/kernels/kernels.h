@@ -121,6 +121,8 @@ extern std::string KernelSource_pathdepthinfo_types;
 extern std::string KernelSource_pathdepthinfo_funcs;
 extern std::string KernelSource_pathvolumeinfo_types;
 extern std::string KernelSource_pathvolumeinfo_funcs;
+extern std::string KernelSource_lpe_types;
+extern std::string KernelSource_lpe_funcs;
 extern std::string KernelSource_pathinfo_types;
 extern std::string KernelSource_pathinfo_funcs;
 extern std::string KernelSource_varianceclamping_funcs;

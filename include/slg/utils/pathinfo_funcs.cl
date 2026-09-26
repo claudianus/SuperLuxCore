@@ -50,6 +50,11 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->dVM = 0.f;
 	pathInfo->vcFoldVCM = 1.f;
 	pathInfo->vcFoldVC = 1.f;
+
+	// LPE state sets are seeded (startAfterC) by GenerateEyePath; a
+	// path without registered LPEs keeps them all dead
+	for (uint i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+		pathInfo->lpeStates[i] = 0;
 }
 
 OPENCL_FORCE_INLINE bool EyePathInfo_UseRR(__global EyePathInfo *pathInfo, const uint rrDepth) {
@@ -73,6 +78,7 @@ OPENCL_FORCE_INLINE bool EyePathInfo_CanBeNearlySpecular(__global EyePathInfo *p
 OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 		__global const BSDF *bsdf, const BSDFEvent event, const float pdfW,
 		const float glossinessThreshold
+		LPE_PARAM_DECL
 		MATERIALS_PARAM_DECL) {
 	//--------------------------------------------------------------------------
 	// PathInfo::AddVertex() inlined here for performances
@@ -135,7 +141,15 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	// Light linking: the new vertex becomes the receiver for the next
 	// segment's emitter hit (volume bsdf carries ~0 = accepts all)
 	pathInfo->linkAcceptMask = bsdf->hitPoint.linkAcceptMask;
-	
+
+	// LPE: advance every expression's NFA by this vertex's event symbol
+	// (EyePathInfo::AddVertex)
+	if (lpeAutomata && lpeCount) {
+		const uint sym = LPE_VertexEvent(event, bsdf->isVolume);
+		for (uint i = 0; i < lpeCount; ++i)
+			pathInfo->lpeStates[i] = LPE_Step(&lpeAutomata[i], pathInfo->lpeStates[i], sym);
+	}
+
 	pathInfo->isTransmittedPath = pathInfo->isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }
 

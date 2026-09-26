@@ -175,6 +175,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_bsdf_types <<
 			slg::ocl::KernelSource_material_types <<
 			slg::ocl::KernelSource_volume_types <<
+			slg::ocl::KernelSource_lpe_types <<
 			slg::ocl::KernelSource_sampleresult_types <<
 			slg::ocl::KernelSource_film_types <<
 			slg::ocl::KernelSource_filter_types <<
@@ -268,6 +269,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_volume_funcs <<
 			slg::ocl::KernelSource_pathdepthinfo_funcs <<
 			slg::ocl::KernelSource_pathvolumeinfo_funcs <<
+			slg::ocl::KernelSource_lpe_funcs <<
 			slg::ocl::KernelSource_pathinfo_funcs <<
 			slg::ocl::KernelSource_camera_funcs <<
 			slg::ocl::KernelSource_dlsc_funcs <<

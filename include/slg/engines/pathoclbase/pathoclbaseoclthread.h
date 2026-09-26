@@ -148,6 +148,10 @@ public:
 		luxrays::HardwareDeviceBuffer *channel_MOTION_VECTOR_Buff;
 		luxrays::HardwareDeviceBuffer *channel_CRYPTOMATTE_OBJECT_Buff;
 		luxrays::HardwareDeviceBuffer *channel_CRYPTOMATTE_MATERIAL_Buff;
+		// LPE: flat expression-blocked buffer (lpeCount sections of
+		// RGB+weight per pixel) + the compiled NFA table upload
+		luxrays::HardwareDeviceBuffer *channel_LPE_Buff;
+		luxrays::HardwareDeviceBuffer *lpeAutomataBuff;
 
 		// Denoiser sample accumulator buffers
 		luxrays::HardwareDeviceBuffer *denoiser_NbOfSamplesImage_Buff;

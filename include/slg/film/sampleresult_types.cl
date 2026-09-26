@@ -54,6 +54,11 @@ typedef struct {
 	Spectrum irradiance, irradiancePathThroughput;
 	Spectrum albedo;
 
+	// LPE: radiance accumulated on the terminal evaluation of every
+	// film.lpe.N.expression NFA that accepted this path (slg::
+	// SampleResult::lpeRadiance twin; only the first lpeCount slots used)
+	Spectrum lpeRadiance[SLG_LPE_MAX_EXPRESSIONS];
+
 	// MOTION_VECTOR channel payload: {vx, vy, valid, objectMotion} in
 	// pixels per frame (see slg::SampleResult::motionVector)
 	float motionVector[4];

@@ -1127,6 +1127,8 @@ bool PathTracer::MNEEDirectSampling(
 
 	sampleResult->AddDirectLight(light.GetID(), specEvent, pathThroughput,
 			incomingRadiance, 1.f);
+	AccumulateLPE(sampleResult, pathInfo,
+			LPEVertexEvent(specEvent, false), LPE_SYM_L, pathThroughput * incomingRadiance);
 
 	// Publish the converged vertex as a warm-start seed only after the full
 	// connect validated (seg2 visibility + receiver BSDF): a vertex that
@@ -2049,6 +2051,9 @@ bool PathTracer::MNEEMultiDirectSampling(
 
 	sampleResult->AddDirectLight(light.GetID(), chain[n - 1].specEvent,
 			pathThroughput, incomingRadiance, 1.f);
+	AccumulateLPE(sampleResult, pathInfo,
+			LPEVertexEvent(chain[n - 1].specEvent, false), LPE_SYM_L,
+			pathThroughput * incomingRadiance);
 
 	return true;
 }

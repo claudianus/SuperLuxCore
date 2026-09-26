@@ -45,6 +45,7 @@
 #include "slg/film/noiseestimation/filmnoiseestimation.h"
 #include "slg/film/denoiser/filmdenoiser.h"
 #include "slg/utils/varianceclamping.h"
+#include "slg/utils/lpe.h"
 
 namespace slg {
 
@@ -245,6 +246,8 @@ public:
 	}
 
 	u_int GetRadianceGroupCount() const { return radianceGroupCount; }
+	u_int GetLPECount() const { return (u_int)lpeExpressions.size(); }
+	const LPEAutomaton *GetLPEAutomata() const { return lpeAutomata.data(); }
 	u_int GetMaskMaterialID(const u_int index) const { return maskMaterialIDs[index]; }
 	u_int GetByMaterialID(const u_int index) const { return byMaterialIDs[index]; }
 	u_int GetMaskObjectID(const u_int index) const { return maskObjectIDs[index]; }
@@ -490,6 +493,15 @@ public:
 	std::unique_ptr<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>> channel_CRYPTOMATTE_OBJECT;
 	std::unique_ptr<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>> channel_CRYPTOMATTE_MATERIAL;
 
+	// LPE channels (light path expressions): one buffer per registered
+	// film.lpe.N.expression; the compiled NFAs ride along in
+	// lpeExpressions for the path-side state stepping (EyePathInfo).
+	std::vector<LPEExpression> lpeExpressions;
+	// Flat POD copy of the compiled NFAs: the layout uploaded to the
+	// device and the table EyePathInfo states step against
+	std::vector<LPEAutomaton> lpeAutomata;
+	std::vector<std::unique_ptr<GenericFrameBuffer<4, 1, float>>> channel_LPEs;
+
 	// Opaque EXR metadata injected by the session (Cryptomatte
 	// manifests, ...). Written verbatim as attributes on .exr outputs.
 	std::map<std::string, std::string> filmMetadata;
@@ -561,6 +573,7 @@ private:
 	void ParseRadianceGroupsScale(const luxrays::Properties &props, const u_int imagePipelineIndex,
 			const std::string &radianceGroupsScalePrefix);
 	void ParseRadianceGroupsScales(const luxrays::Properties &props);
+	void ParseLPEs(const luxrays::Properties &props);
 	void ParseOutputs(const luxrays::Properties &props);
 	ImagePipeline *CreateImagePipeline(const luxrays::Properties &props,
 			const std::string &imagePipelinePrefix);
@@ -629,7 +642,7 @@ template<> void Film::GetOutput<u_int>(const FilmOutputs::FilmOutputType type, u
 
 }
 
-BOOST_CLASS_VERSION(slg::Film, 28)
+BOOST_CLASS_VERSION(slg::Film, 29)
 BOOST_CLASS_VERSION(slg::FilmSamplesCounts, 1)
 
 BOOST_CLASS_EXPORT_KEY(slg::Film)

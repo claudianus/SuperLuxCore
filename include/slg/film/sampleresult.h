@@ -99,6 +99,10 @@ public:
 	// Irradiance requires to store some additional information to be computed
 	luxrays::Spectrum irradiancePathThroughput;
 	luxrays::Spectrum albedo;
+	// LPE: radiance accumulated on the terminal evaluation of every
+	// film.lpe.N.expression NFA that accepted this path (fixed-size,
+	// zeroed in Init; only the first GetLPECount() slots are used)
+	luxrays::Spectrum lpeRadiance[SLG_LPE_MAX_EXPRESSIONS];
 
 	// MOTION_VECTOR channel payload: screen-space velocity of the first
 	// camera-visible surface point in pixels per scene time unit

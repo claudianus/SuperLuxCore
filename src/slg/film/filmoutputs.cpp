@@ -382,6 +382,14 @@ PropertiesUPtr FilmOutputs::ToProperties(const Properties &cfg) {
 					throw runtime_error("Cryptomatte can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case LPE: {
+				if (hdrImage) {
+					const Property lpeIndex = cfg.Get(Property("film.outputs." + outputName + ".index")(0));
+					*props << type << fileName << lpeIndex;
+				} else
+					throw runtime_error("LPE outputs can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown film output type: " + type.Get<string>());
 		}
@@ -491,6 +499,8 @@ FilmOutputs::FilmOutputType FilmOutputs::String2FilmOutputType(const string &typ
 		return CRYPTOMATTE_OBJECT;
 	else if (type == "CRYPTOMATTE_MATERIAL")
 		return CRYPTOMATTE_MATERIAL;
+	else if (type == "LPE")
+		return LPE;
 	else
 		throw runtime_error("Unknown film output type: " + type);
 }
@@ -597,6 +607,8 @@ const string FilmOutputs::FilmOutputType2String(const FilmOutputs::FilmOutputTyp
 			return "CRYPTOMATTE_OBJECT";
 		case CRYPTOMATTE_MATERIAL:
 			return "CRYPTOMATTE_MATERIAL";
+		case LPE:
+			return "LPE";
 		default:
 			throw runtime_error("Unknown film output type: " + ToString(type));
 	}

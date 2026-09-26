@@ -206,6 +206,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 				&rays[gid],
 				sampleResult->firstPathVertex ? NULL : &taskState->bsdf,
 				sampleResult
+				LPE_PARAM
 				LIGHTS_PARAM);
 	}
 
@@ -392,6 +393,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 				rayHits[gid].t,
 				bsdf,
 				sampleResult
+				LPE_PARAM
 				LIGHTS_PARAM);
 	}
 
@@ -783,6 +785,23 @@ __kernel void AdvancePaths_MK_RT_DL(
 							MATERIALS_PARAM),
 						VLOAD3F(taskState->throughput.c), lightRadiance,
 						1.f);
+				// LPE terminal: next-event estimation at this vertex
+				// (env lights classify as E, all other emitters as L -
+				// CPU PathTracer::DirectLightSampling parity). The
+				// direction bit comes from the shadow ray's hemisphere
+				// vs the incoming direction (bsdf->hitPoint.fixedDir).
+				const float3 lpeGN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+				const bool lpeTransmit = (dot(lpeGN, VLOAD3F(&bsdf->hitPoint.fixedDir.x)) *
+						dot(lpeGN, VLOAD3F(&rays[gid].d.x))) < 0.f;
+				LPE_AccumulateVertex(sampleResult, &eyePathInfos[gid],
+						LPE_VertexEvent(
+							(BSDF_GetEventTypes(bsdf MATERIALS_PARAM) & (DIFFUSE | GLOSSY | SPECULAR)) |
+								(lpeTransmit ? TRANSMIT : REFLECT),
+							bsdf->isVolume),
+						Light_IsEnvironmental(&lights[taskDirectLight->illumInfo.lightIndex]) ?
+							LPE_SYM_E : LPE_SYM_L,
+						VLOAD3F(taskState->throughput.c) * lightRadiance
+						LPE_PARAM);
 
 				// The first path vertex is not handled by AddDirectLight(). This is valid
 				// for irradiance AOV only if it is not a SPECULAR material.
@@ -1483,6 +1502,7 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 			sampleResult, (uint)gid,
 			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 			mneeSeeds
+			LPE_PARAM
 			LIGHTS_PARAM);
 }
 
@@ -1932,6 +1952,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 	EyePathInfo_AddVertex(pathInfo, bsdf, bsdfEvent, bsdfPdfW,
 			taskConfig->pathTracer.hybridBackForward.glossinessThreshold
+			LPE_PARAM
 			MATERIALS_PARAM);
 
 	// Russian Roulette
@@ -2271,6 +2292,7 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 			pixelFilterDistribution,
 			ray,
 			pathInfo
+			LPE_PARAM
 			SAMPLER_PARAM);
 	// taskState->state is set to RT_NEXT_VERTEX inside GenerateEyePath()
 
@@ -3567,6 +3589,11 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 					sampleResult, taskState->vcPendingLightID,
 					taskState->vcPendingEvent,
 					eyeThroughput, landed, 1.f);
+			// LPE terminal: light-vertex connect at this eye vertex
+			LPE_AccumulateVertex(sampleResult, &eyePathInfos[gid],
+					LPE_VertexEvent((BSDFEvent)taskState->vcPendingEvent,
+						eyeBsdf->isVolume),
+					LPE_SYM_L, eyeThroughput * landed LPE_PARAM);
 			const float l = fabs(landed.x) + fabs(landed.y) +
 					fabs(landed.z);
 			// Efficiency map: landed connect luminance on this tile.
@@ -3674,6 +3701,10 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 				SampleResult_AddDirectLight(&taskConfig->film,
 						sampleResult, lv->lightID, eyeEvent,
 						eyeThroughput, contrib, 1.f);
+				// LPE terminal: vertex-merge connect at this eye vertex
+				LPE_AccumulateVertex(sampleResult, &eyePathInfos[gid],
+						LPE_VertexEvent(eyeEvent, eyeBsdf->isVolume),
+						LPE_SYM_L, eyeThroughput * contrib LPE_PARAM);
 			}
 		}
 	}

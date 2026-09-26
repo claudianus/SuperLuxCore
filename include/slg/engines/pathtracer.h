@@ -176,6 +176,15 @@ public:
 	static luxrays::PropertiesUPtr ToProperties(const luxrays::Properties &cfg);
 	static luxrays::PropertiesUPtr GetDefaultProps();
 
+	// LPE: accumulate r into the lpeRadiance slots of every expression
+	// whose NFA accepts the terminal symbol sym (see slg/utils/lpe.h).
+	// The (vSym, sym) overload is for next-event connections: the
+	// receiving vertex's own event steps before the terminal.
+	static void AccumulateLPE(SampleResult *sampleResult, const EyePathInfo &pathInfo,
+			const u_int sym, const luxrays::Spectrum &r);
+	static void AccumulateLPE(SampleResult *sampleResult, const EyePathInfo &pathInfo,
+			const u_int vSym, const u_int sym, const luxrays::Spectrum &r);
+
 	// Used for Sampler indices
 	u_int eyeSampleBootSize, eyeSampleStepSize, eyeSampleSize;
 	u_int lightSampleBootSize, lightSampleStepSize, lightSampleSize;

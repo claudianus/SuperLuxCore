@@ -242,6 +242,8 @@ void Film::CopyDynamicSettings(const Film &film) {
 	maskObjectIDs = film.maskObjectIDs;
 	byObjectIDs = film.byObjectIDs;
 	radianceGroupCount = film.radianceGroupCount;
+	lpeExpressions = film.lpeExpressions;
+	lpeAutomata = film.lpeAutomata;
 
 	// Copy the image pipeline
 	imagePipelines.resize(0);
@@ -634,6 +636,13 @@ void Film::Resize(const u_int w, const u_int h) {
 		hasComposingChannel = true;
 	}
 
+	// LPE channels: one weighted radiance buffer per expression
+	channel_LPEs.resize(lpeExpressions.size());
+	for (u_int i = 0; i < lpeExpressions.size(); ++i) {
+		channel_LPEs[i] = std::make_unique<GenericFrameBuffer<4, 1, float>>(width, height);
+		channel_LPEs[i]->Clear();
+	}
+
 	// Per-pixel luminance moments for the samplers' second-moment
 	// adaptive convergence estimate (2 floats per pixel; not cleared by
 	// Clear(), same as the NOISE channel, so the estimate survives film
@@ -749,6 +758,8 @@ void Film::Clear() {
 		channel_CRYPTOMATTE_OBJECT->Clear();
 	if (HasChannel(CRYPTOMATTE_MATERIAL))
 		channel_CRYPTOMATTE_MATERIAL->Clear();
+	for (u_int i = 0; i < channel_LPEs.size(); ++i)
+		channel_LPEs[i]->Clear();
 
 	// denoiser is not cleared otherwise the collected data would be lost
 
@@ -1368,6 +1379,20 @@ void Film::AddFilmImpl(const Film &film,
 					channel_CRYPTOMATTE_MATERIAL->SetPixel(dstIndex, srcPixel);
 				else
 					channel_CRYPTOMATTE_MATERIAL->MergePixel(dstIndex, srcPixel);
+			}
+		}
+	}
+
+	// LPE channels merge index-wise like radiance groups (both films
+	// are built from the same film.lpe.* properties)
+	for (u_int i = 0; i < Min<u_int>(channel_LPEs.size(), film.channel_LPEs.size()); ++i) {
+		for (u_int y = 0; y < srcHeight; ++y) {
+			for (u_int x = 0; x < srcWidth; ++x) {
+				const float *srcPixel = film.channel_LPEs[i]->GetPixel(srcOffsetX + x, srcOffsetY + y);
+				if (overwrite)
+					channel_LPEs[i]->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+				else
+					channel_LPEs[i]->AddPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
 			}
 		}
 	}

@@ -57,6 +57,10 @@ public:
 		// Cryptomatte: SLG_CRYPTO_LEVELS x (id, coverage) float pairs in
 		// named EXR layers + JSON manifest in the metadata
 		CRYPTOMATTE_OBJECT, CRYPTOMATTE_MATERIAL,
+		// LPE: weighted radiance of the paths matching a light path
+		// expression (film.lpe.N.expression); output index selects the
+		// expression, EXR layer name is "LPE.<expression-name>"
+		LPE,
 		FILMOUTPUT_TYPE_COUNT
 	} FilmOutputType;
 

@@ -160,6 +160,8 @@ typedef struct {
 	, __global float *filmMotionVector \
 	, __global float *filmCryptoObject \
 	, __global float *filmCryptoMaterial \
+	, __global float *filmLPE \
+	, const uint lpeCount \
 	FILM_DENOISER_PARAM_DECL
 
 #define FILM_PARAM \
@@ -210,6 +212,8 @@ typedef struct {
 	, filmMotionVector \
 	, filmCryptoObject \
 	, filmCryptoMaterial \
+	, filmLPE \
+	, lpeCount \
 	FILM_DENOISER_PARAM
 
 #endif
