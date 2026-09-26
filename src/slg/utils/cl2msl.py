@@ -1195,8 +1195,15 @@ def translate(cl_source: str, params: list) -> str:
     # A body whose decl line was rewritten to 'gid' by the stub
     # replacement BEFORE removal shows up as a self-init - the
     # parameter already carries the value, so drop the line too.
-    assembled = assembled.replace(
-        "\tconst size_t gid = get_global_id(0);\n", ""
+    # Skip lines inside a multi-line macro body (previous line ends
+    # with '\') - WAVEFRONT_GUARD's dense-mode branch is exactly this
+    # declaration, and eating it makes the trailing '\' swallow the
+    # '#endif', leaving the enclosing '#if' unterminated. Reached only
+    # when cpp failed and the #define/#if lines are still in the text.
+    assembled = re.sub(
+        r"(?m)^(?P<prev>[^\n]*)\n\tconst size_t gid = get_global_id\(0\);\n",
+        lambda m: m.group(0) if m.group("prev").rstrip().endswith("\\") else m.group("prev") + "\n",
+        assembled,
     )
     assembled = assembled.replace("\tconst size_t gid = gid;\n", "")
 

@@ -431,6 +431,18 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		}
 	}
 
+	// Vertex connection (M6): eye-state kernel, compiled only when the
+	// vertex cache exists (enabled implies a light-task population -
+	// see InitGPUTaskBuffer). It carries the KERNEL_ARGS tail plus the
+	// light path infos + vertex cache (2 extra args, not the full
+	// KERNEL_ARGS_LIGHT tail - same Apple argument-limit concern).
+	if (renderEngine->taskConfig.pathTracer.vertexConnect.enabled) {
+		auto [kernel, workGroupSize] = CompileKernel(intersectionDevice,
+				*program, "AdvancePaths_MK_VC_CONNECT");
+		advancePathsKernel_MK_VC_CONNECT = std::move(kernel);
+		advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
+	}
+
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex
 			<< "] AdvancePaths_MK_* workgroup size: "
 			<< advancePathsWorkGroupSize
@@ -631,6 +643,10 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
 		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, b);
 	}
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightFilterLUTBuff);
+	// Vertex connection (M6): the light vertex cache (NULL when
+	// disabled - MK_LIGHT_VERTEX skips the store under the
+	// vertexConnect.enabled gate)
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, vcVerticesBuff);
 }
 
 // Mirror of the PathState enum in
@@ -654,15 +670,28 @@ constexpr u_int MK_RT_GI_BOUNCE = 13;
 constexpr u_int MK_RT_GI_RESOLVE = 14;
 constexpr u_int MK_LIGHT_INIT = 15;
 constexpr u_int MK_LIGHT_VERTEX = 16;
+constexpr u_int MK_VC_CONNECT = 17;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
 	if (advancePathsKernel_MK_RT_NEXT_VERTEX)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_NEXT_VERTEX, filmIndex, MK_RT_NEXT_VERTEX);
-	if (advancePathsKernel_MK_HIT_NOTHING)
-		SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_NOTHING, filmIndex, MK_HIT_NOTHING);
-	if (advancePathsKernel_MK_HIT_OBJECT)
-		SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_OBJECT, filmIndex, MK_HIT_OBJECT);
+	// Vertex connection (M6): MK_HIT_NOTHING and MK_HIT_OBJECT take the
+	// KERNEL_ARGS_VC tail (emit-strategy distribution for the CPU
+	// DirectHitLight weightCamera pick pdf). NULL-safe: the kernels gate
+	// it on vertexConnect.enabled.
+	if (advancePathsKernel_MK_HIT_NOTHING) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_NOTHING,
+				filmIndex, MK_HIT_NOTHING);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_NOTHING,
+				argIndex++, emitLightsDistributionBuff);
+	}
+	if (advancePathsKernel_MK_HIT_OBJECT) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_OBJECT,
+				filmIndex, MK_HIT_OBJECT);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_OBJECT,
+				argIndex++, emitLightsDistributionBuff);
+	}
 	if (advancePathsKernel_MK_RT_DL)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_DL, filmIndex, MK_RT_DL);
 	if (advancePathsKernel_MK_RT_RESTIR)
@@ -691,6 +720,17 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_INIT, filmIndex, MK_LIGHT_INIT);
 	if (advancePathsKernel_MK_LIGHT_VERTEX)
 		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_VERTEX, filmIndex, MK_LIGHT_VERTEX);
+	// Vertex connection (M6): KERNEL_ARGS + lightPathInfos + the vertex
+	// cache (the eye side reads the paired light task's slot count and
+	// stored vertices).
+	if (advancePathsKernel_MK_VC_CONNECT) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_VC_CONNECT,
+				filmIndex, MK_VC_CONNECT);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
+				argIndex++, lightPathInfosBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
+				argIndex++, vcVerticesBuff);
+	}
 }
 
 void PathOCLBaseOCLRenderThread::SetKernelArgs() {
@@ -782,6 +822,13 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	if (advancePathsKernel_MK_RT_GI_RESOLVE && giEnabled)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_RESOLVE,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// Vertex connection (M6): connects the just-resolved eye vertex to
+	// the paired light subpath's stored vertices. Runs after the
+	// direct-light stage (the eye vertex exists once MK_RT_DL /
+	// MK_DL_SAMPLE_BSDF have run) and before the next-bounce emission.
+	if (advancePathsKernel_MK_VC_CONNECT)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_VC_CONNECT,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
@@ -923,6 +970,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_MNEE_NEXT_VERTEX, MK_MNEE_NEXT_VERTEX},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_BOUNCE, MK_RT_GI_BOUNCE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_RESOLVE, MK_RT_GI_RESOLVE},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_VC_CONNECT, MK_VC_CONNECT},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, MK_GENERATE_NEXT_VERTEX_RAY},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_SPLAT_SAMPLE, MK_SPLAT_SAMPLE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_NEXT_SAMPLE, MK_NEXT_SAMPLE},

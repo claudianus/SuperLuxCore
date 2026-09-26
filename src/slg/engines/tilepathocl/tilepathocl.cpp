@@ -103,6 +103,16 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 		SLG_LOG("WARNING: path.hybridbackforward without native threads has "
 				"no light pass; enabling GPU light tracing");
 	}
+	// Vertex connection (M6) hosts the light vertex cache on the GPU
+	// light-task population - it needs the tasks even when native
+	// threads exist (a CPU light pass can not feed a GPU-side cache).
+	if (!lightTracingEnable &&
+			cfg.Get(PathTracer::GetDefaultProps()->
+			Get("path.vertexconnection.enable")).Get<bool>()) {
+		lightTracingEnable = true;
+		SLG_LOG("WARNING: path.vertexconnection requires the GPU light "
+				"task population; enabling GPU light tracing");
+	}
 	if (lightTracingEnable) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
 		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
@@ -206,9 +216,10 @@ void TilePathOCLRenderEngine::StartLockLess() {
 	// Mirror of the InitTaskCount() handling for hybrid-without-light-
 	// pass (no native threads to run the CPU light pass): promoted to
 	// GPU light tracing in InitTaskCount, so mark the parsed
-	// configuration the same way.
-	if (pathTracer.hybridBackForwardEnable && !pathTracer.lightTracingEnable &&
-			(nativeRenderThreadCount == 0)) {
+	// configuration the same way. Vertex connection is promoted
+	// unconditionally - its vertex cache lives on the GPU light tasks.
+	if ((pathTracer.hybridBackForwardEnable && (nativeRenderThreadCount == 0) ||
+			pathTracer.vertexConnectEnable) && !pathTracer.lightTracingEnable) {
 		pathTracer.lightTracingEnable = true;
 		if (!cfg.IsDefined("path.lighttracing.taskfraction"))
 			pathTracer.lightTracingTaskFraction = Clamp(

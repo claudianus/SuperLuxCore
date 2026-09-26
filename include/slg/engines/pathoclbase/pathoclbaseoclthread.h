@@ -44,9 +44,10 @@ namespace ocl { namespace pathoclbase {
 class PathOCLBaseRenderEngine;
 
 // Number of per-state wavefront task queues: mirrors the PathState
-// enum in pathoclbase_datatypes.cl (0..14 eye states + MK_LIGHT_INIT
-// and MK_LIGHT_VERTEX of the GPU light-tracing task population).
-inline constexpr u_int WAVEFRONT_NUM_STATES = 17;
+// enum in pathoclbase_datatypes.cl (0..14 eye states + MK_LIGHT_INIT/
+// MK_LIGHT_VERTEX of the light-task population + MK_VC_CONNECT of the
+// vertex-connection eye state).
+inline constexpr u_int WAVEFRONT_NUM_STATES = 18;
 // Spectral hero-wavelength buckets per state queue (B2/E3 M2). Matches
 // SLG_SPECTRAL_BINS (3 spectral bins ride in the float3 channels).
 // Non-spectral builds bucket everything into lambda 0, which reproduces
@@ -335,6 +336,11 @@ protected:
 	// MNEE manifold seed cache (E4): fixed-size hashed grid of converged
 	// single-vertex solutions used as Newton warm-start seeds.
 	luxrays::HardwareDeviceBuffer *mneeSeedsBuff;
+	// Vertex connection (M6): light vertex cache, lightTaskCount *
+	// vertexConnect.slotsPerTask VCLightVertex records, slot k of task t
+	// at [t * slotsPerTask + k]. Written by MK_LIGHT_VERTEX, read by
+	// MK_VC_CONNECT (paired eye task g reads task g % lightTaskCount).
+	luxrays::HardwareDeviceBuffer *vcVerticesBuff;
 	luxrays::HardwareDeviceBuffer *directLightVolInfosBuff;
 	luxrays::HardwareDeviceBuffer *pixelFilterBuff;
 
@@ -369,6 +375,9 @@ protected:
 	// light-task population's state machine kernels
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_LIGHT_INIT;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_LIGHT_VERTEX;
+	// Vertex connection (M6): eye-state kernel connecting the current
+	// eye vertex to the paired light task's stored vertices
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_VC_CONNECT;
 	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
 	// queues once per iteration from the authoritative taskState->state;
 	// BucketHistogram counts the per-(state, lambda) task population

@@ -85,8 +85,37 @@ typedef enum {
 	// lightVisRayBase tail slot and continues the path - one iteration
 	// per vertex, self-loop state.
 	MK_LIGHT_INIT = 15,
-	MK_LIGHT_VERTEX = 16
+	MK_LIGHT_VERTEX = 16,
+	// Vertex connection (M6, GPU BDPT): sits between MK_RT_DL and
+	// MK_GENERATE_NEXT_VERTEX_RAY. At every non-delta eye vertex the
+	// kernel connects to the stored vertices of the paired light task's
+	// subpath (the light vertex cache lightVertices[]) and traces each
+	// connect shadow ray inline through Scene_Intersect - the rays[]
+	// slot is free because the next bounce ray has not been generated
+	// yet. Weighted by the SmallVCM MIS terms (misVm/misVc = 0 -> BPT).
+	MK_VC_CONNECT = 17
 } PathState;
+
+// VC light vertex cache record: slot (t, k) of lightVertices[] holds
+// the depth-(k+1) non-delta vertex of light task t's current subpath.
+// Stale-but-consistent records (from an earlier, longer subpath) are
+// still unbiased vertex samples - only field-level tearing is a hazard,
+// which the seqlock excludes (odd seq = mid-write, changed seq = torn).
+typedef struct {
+	// Full vertex state (hitPoint + material index + frame): BSDF_Evaluate
+	// on the stored copy reproduces the vertex's scattering response
+	BSDF bsdf;
+	// Light-subpath throughput up to this vertex (excludes the connect edge)
+	float throughputR, throughputG, throughputB;
+	// SmallVCM MIS bookkeeping of the light prefix (misVmWeightFactor and
+	// misVcWeightFactor are 0 - pure BDPT; dVM is not carried)
+	float dVCM, dVC;
+	unsigned int lightID;
+	// 1-based light-subpath depth (mirrors PathVertexVM::depth)
+	unsigned int depth;
+	// Seqlock: 0 = never written, odd = write in flight, even = stable
+	unsigned int seq;
+} VCLightVertex;
 
 // Caustic focus cache: per-light ring of the last LIGHT_FOCUS_K world
 // positions where a successfully-splatted light path crossed its first
@@ -144,6 +173,14 @@ typedef struct {
 	// The path terminated (miss/depth/RR); the pending splat still has
 	// to be resolved before the task moves to the next light sample
 	int pathDone;
+
+	// Vertex connection (M6) light-prefix MIS bookkeeping, updated per
+	// CPU BiDirCPURenderThread::TraceLightPath/Bounce. Snapshotted into
+	// each VCLightVertex record. vcVertexCount is the number of valid
+	// slots of this task's current subpath inside lightVertices[]
+	// (the paired eye task connects to slots [0, vcVertexCount)).
+	float dVCM, dVC;
+	unsigned int vcVertexCount;
 
 	// A camera connect blocked by a delta occluder is being solved by
 	// the light-side manifold walk (LMNEE, doc/features/gpu_lighttracing.md);
@@ -214,6 +251,16 @@ typedef struct {
 	// direct-hit side); the RIS factor multiplies the final factor in
 	// DirectLight_BSDFSampling(). Always 1.f when ReSTIR is disabled.
 	float risScale;
+
+	// Vertex connection (M6): the emission-hit densities returned by
+	// Illuminate() - CPU DirectLightSampling weightCamera terms
+	// (emissionPdfW / cosThetaAtLight).
+	float emissionPdfW, cosThetaAtLight;
+	// Vertex connection (M6): the BDPT misWeight applied to
+	// lightRadiance - stored so MK_RT_DL can lift it when the shadow ray
+	// crossed a shadow-transparent occluder (CPU overrides misWeight to
+	// 1 in that case).
+	float vcMisWeight;
 } DirectLightIlluminateInfo;
 
 // ReSTIR DI per-pixel reservoir state for temporal reuse (persisted
@@ -426,7 +473,20 @@ typedef struct {
 	// vertex); portalTake is the hashed selector outcome.
 	float portalW;
 	unsigned int portalTake;
-	
+
+	// Vertex connection (M6): one light-vertex connect per advance
+	// iteration (the rays[gid] slot resolves in the next trace pass,
+	// same contract as the DL shadow ray). vcCursor is the next light
+	// vertex slot of the paired light task to evaluate; vcPending marks
+	// a connect shadow ray in flight. The pending record carries
+	// misWeight*geometryTerm*eyeBsdfEval*lightBsdfEval*lightThroughput -
+	// folded with the shadow ray's connectionThroughput at resolve time.
+	unsigned int vcCursor;
+	unsigned int vcPending;
+	unsigned int vcPendingLightID;
+	unsigned int vcPendingEvent;
+	float vcPendingR, vcPendingG, vcPendingB;
+
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,
 			// The shadow transparency lag used by Scene_Intersect()

@@ -54,9 +54,19 @@ OPENCL_FORCE_INLINE void EnvLightSource_FromLatLongMapping(const float s, const 
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_GetRadiance(__global const LightSource *constantInfiniteLight,
-		__global const BSDF *bsdf, const float3 dir, float *directPdfA
+		const float sceneRadius,
+		__global const BSDF *bsdf, const float3 dir, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	const bool useVisibilityMapCache = constantInfiniteLight->notIntersectable.constantInfinite.useVisibilityMapCache;
+
+	// Vertex connection (M6): CPU ConstantInfiniteLight::GetRadiance
+	// contract - the emission density is uniform-direction over the
+	// scene sphere cap in both branches
+	if (emissionPdfW) {
+		const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
+		*emissionPdfW = UniformSpherePdf() / (M_PI_F * envRadius * envRadius);
+	}
 
 	if (useVisibilityMapCache && (!bsdf || EnvLightVisibilityCache_IsCacheEnabled(bsdf MATERIALS_PARAM))) {
 		const float3 localDir = normalize(Transform_InvApplyVector(&constantInfiniteLight->notIntersectable.light2World, -dir));
@@ -82,11 +92,13 @@ OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Illuminate(__global const Light
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	const bool useVisibilityMapCache = constantInfiniteLight->notIntersectable.constantInfinite.useVisibilityMapCache;
 
 	float3 shadowRayDir;
+	float samplePdf;
 	if (useVisibilityMapCache && EnvLightVisibilityCache_IsCacheEnabled(bsdf MATERIALS_PARAM)) {
 		float2 sampleUV;
 		float distPdf;
@@ -101,10 +113,12 @@ OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Illuminate(__global const Light
 			return BLACK;
 
 		*directPdfW = distPdf * latLongMappingPdf;
+		samplePdf = *directPdfW;
 	} else {
 		shadowRayDir = UniformSampleSphere(u0, u1);
 
 		*directPdfW = UniformSpherePdf();
+		samplePdf = *directPdfW;
 	}
 
 	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
@@ -124,6 +138,14 @@ OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Illuminate(__global const Light
 	if (cosAtLight < DEFAULT_COS_EPSILON_STATIC)
 		return BLACK;
 
+	// Vertex connection (M6): CPU ConstantInfiniteLight::Illuminate
+	// contract - the emission pdf is the directional sample density
+	// normalized by the emitting sphere cap area
+	if (cosThetaAtLight)
+		*cosThetaAtLight = cosAtLight;
+	if (emissionPdfW)
+		*emissionPdfW = samplePdf / (M_PI_F * envRadius * envRadius);
+
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
 	Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
@@ -138,7 +160,9 @@ OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Illuminate(__global const Light
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 InfiniteLight_GetRadiance(__global const LightSource *infiniteLight,
-		__global const BSDF *bsdf, const float3 dir, float *directPdfA
+		const float sceneRadius,
+		__global const BSDF *bsdf, const float3 dir, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	const float3 localDir = normalize(Transform_InvApplyVector(&infiniteLight->notIntersectable.light2World, -dir));
 
@@ -147,16 +171,26 @@ OPENCL_FORCE_INLINE float3 InfiniteLight_GetRadiance(__global const LightSource 
 	if (latLongMappingPdf == 0.f)
 		return BLACK;
 
+	// The emission pdf uses the base image-map distribution even when the
+	// visibility cache drives directPdfA (CPU parity) - always computed
+	const float distPdf = Distribution2D_Pdf(&envLightDistribution[
+			infiniteLight->notIntersectable.infinite.distributionOffset], u, v);
 	if (!bsdf)
 		*directPdfA = 0.f;
 	else if (infiniteLight->notIntersectable.infinite.useVisibilityMapCache &&
 			EnvLightVisibilityCache_IsCacheEnabled(bsdf MATERIALS_PARAM)) {
 		*directPdfA = EnvLightVisibilityCache_Pdf(bsdf, u, v LIGHTS_PARAM) * latLongMappingPdf;
 	} else {
-		__global const float *infiniteLightDist = &envLightDistribution[infiniteLight->notIntersectable.infinite.distributionOffset];
-
-		const float distPdf = Distribution2D_Pdf(infiniteLightDist, u, v);
 		*directPdfA = distPdf * latLongMappingPdf;
+	}
+
+	// Vertex connection (M6): CPU InfiniteLight::GetRadiance contract -
+	// the emission density uses the base image-map distribution (not the
+	// visibility-cache one)
+	if (emissionPdfW) {
+		const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
+		*emissionPdfW = distPdf * latLongMappingPdf /
+				(M_PI_F * envRadius * envRadius);
 	}
 
 	__global const ImageMap *imageMap = &imageMapDescs[infiniteLight->notIntersectable.infinite.imageMapIndex];
@@ -172,7 +206,8 @@ OPENCL_FORCE_INLINE float3 InfiniteLight_Illuminate(__global const LightSource *
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	float2 sampleUV;
 	float distPdf;
@@ -214,6 +249,11 @@ OPENCL_FORCE_INLINE float3 InfiniteLight_Illuminate(__global const LightSource *
 		return BLACK;
 
 	*directPdfW = distPdf * latLongMappingPdf;
+	// Vertex connection (M6): CPU InfiniteLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = cosAtLight;
+	if (emissionPdfW)
+		*emissionPdfW = *directPdfW / (M_PI_F * envRadius * envRadius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -281,7 +321,9 @@ OPENCL_FORCE_INLINE float3 Sky2Light_ComputeRadiance(__global const LightSource 
 }
 
 OPENCL_FORCE_INLINE float3 Sky2Light_GetRadiance(__global const LightSource *sky2Light,
-		__global const BSDF *bsdf, const float3 dir, float *directPdfA
+		const float sceneRadius,
+		__global const BSDF *bsdf, const float3 dir, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	const float3 w = -dir;
 	float u, v, latLongMappingPdf;
@@ -289,16 +331,24 @@ OPENCL_FORCE_INLINE float3 Sky2Light_GetRadiance(__global const LightSource *sky
 	if (latLongMappingPdf == 0.f)
 		return BLACK;
 
+	// The emission pdf uses the base distribution even when the
+	// visibility cache drives directPdfA (CPU parity) - always computed
+	const float distPdf = Distribution2D_Pdf(&envLightDistribution[
+			sky2Light->notIntersectable.sky2.distributionOffset], u, v);
 	if (!bsdf)
 		*directPdfA = 0.f;
 	else if (sky2Light->notIntersectable.sky2.useVisibilityMapCache &&
 			EnvLightVisibilityCache_IsCacheEnabled(bsdf MATERIALS_PARAM)) {
 		*directPdfA = EnvLightVisibilityCache_Pdf(bsdf, u, v LIGHTS_PARAM) * latLongMappingPdf;
 	} else {
-		__global const float *skyLightDist = &envLightDistribution[sky2Light->notIntersectable.sky2.distributionOffset];
-
-		const float distPdf = Distribution2D_Pdf(skyLightDist, u, v);
 		*directPdfA = distPdf * latLongMappingPdf;
+	}
+
+	// Vertex connection (M6): CPU SkyLight2::GetRadiance contract
+	if (emissionPdfW) {
+		const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
+		*emissionPdfW = distPdf * latLongMappingPdf /
+				(M_PI_F * envRadius * envRadius);
 	}
 
 	return Sky2Light_ComputeRadiance(sky2Light, w);
@@ -308,7 +358,8 @@ OPENCL_FORCE_INLINE float3 Sky2Light_Illuminate(__global const LightSource *sky2
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	float2 sampleUV;
 	float distPdf;
@@ -348,6 +399,11 @@ OPENCL_FORCE_INLINE float3 Sky2Light_Illuminate(__global const LightSource *sky2
 		return BLACK;
 
 	*directPdfW = distPdf * latLongMappingPdf;
+	// Vertex connection (M6): CPU SkyLight2::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = cosAtLight;
+	if (emissionPdfW)
+		*emissionPdfW = *directPdfW / (M_PI_F * envRadius * envRadius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -361,7 +417,9 @@ OPENCL_FORCE_INLINE float3 Sky2Light_Illuminate(__global const LightSource *sky2
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 SunLight_GetRadiance(__global const LightSource *sunLight,
-		__global const BSDF *bsdf, const float3 dir, float *directPdfA) {
+		const float sceneRadius,
+		__global const BSDF *bsdf, const float3 dir, float *directPdfA,
+		float *emissionPdfW) {
 	const float cosThetaMax = sunLight->notIntersectable.sun.cosThetaMax;
 	const float sin2ThetaMax = sunLight->notIntersectable.sun.sin2ThetaMax;
 	const float3 x = VLOAD3F(&sunLight->notIntersectable.sun.x.x);
@@ -377,6 +435,13 @@ OPENCL_FORCE_INLINE float3 SunLight_GetRadiance(__global const LightSource *sunL
 	if (directPdfA)
 		*directPdfA = UniformConePdf(cosThetaMax);
 
+	// Vertex connection (M6): CPU SunLight::GetRadiance contract
+	if (emissionPdfW) {
+		const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
+		*emissionPdfW = UniformConePdf(cosThetaMax) /
+				(M_PI_F * envRadius * envRadius);
+	}
+
 	return VLOAD3F(sunLight->notIntersectable.sun.color.c);
 }
 
@@ -384,7 +449,8 @@ OPENCL_FORCE_INLINE float3 SunLight_Illuminate(__global const LightSource *sunLi
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 
 	const float cosThetaMax = sunLight->notIntersectable.sun.cosThetaMax;
 	const float3 sunDir = VLOAD3F(&sunLight->notIntersectable.sun.absoluteDir.x);
@@ -406,6 +472,11 @@ OPENCL_FORCE_INLINE float3 SunLight_Illuminate(__global const LightSource *sunLi
 		centerDistance + approach * approach));
 
 	*directPdfW = UniformConePdf(cosThetaMax);
+	// Vertex connection (M6): CPU SunLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = cosAtLight;
+	if (emissionPdfW)
+		*emissionPdfW = *directPdfW / (M_PI_F * envRadius * envRadius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -419,8 +490,9 @@ OPENCL_FORCE_INLINE float3 SunLight_Illuminate(__global const LightSource *sunLi
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource *triLight,
-		 __global const HitPoint *hitPoint, float *directPdfA
-		MATERIALS_PARAM_DECL) {
+		 __global const HitPoint *hitPoint, float *directPdfA,
+		float *emissionPdfW
+		LIGHTS_PARAM_DECL) {
 	const uint materialIndex = sceneObjs[triLight->triangle.meshIndex].materialIndex;
 
 	const float3 dir = VLOAD3F(&hitPoint->fixedDir.x);
@@ -453,6 +525,36 @@ OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource 
 				imageMap,
 				uv.x, uv.y
 				IMAGEMAPS_PARAM) / triLight->triangle.average;
+
+		if (emissionPdfW) {
+			// Vertex connection (M6): CPU TriangleLight::GetRadiance
+			// contract - emissionFuncPdf * invTriangleArea
+			__global const Material *emitMat = &mats[materialIndex];
+			if (emitMat->emissionFuncDistOffset != NULL_INDEX) {
+				__global const float* restrict dist =
+						&envLightDistribution[emitMat->emissionFuncDistOffset];
+				const float distPdf = Distribution2D_Pdf(dist, uv.x, uv.y);
+				const float sinTheta = sin(uv.y * M_PI_F);
+				const float emissionFuncPdf = (sinTheta > 0.f) ?
+						distPdf / (2.f * M_PI_F * M_PI_F * sinTheta) : 0.f;
+				if (emissionFuncPdf == 0.f)
+					return BLACK;
+				*emissionPdfW = emissionFuncPdf *
+						triLight->triangle.invTriangleArea;
+			} else
+				*emissionPdfW = 0.f;
+		}
+	} else if (emissionPdfW) {
+		// Vertex connection (M6): CPU emittedTheta branches (note: CPU
+		// GetRadiance does NOT multiply by invTriangleArea in the first
+		// two cases - mirrored as-is for parity)
+		if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC)
+			*emissionPdfW = 1.f;
+		else if (cosThetaMax > 0.f)
+			*emissionPdfW = UniformConePdf(cosThetaMax);
+		else
+			*emissionPdfW = triLight->triangle.invTriangleArea *
+					fabs(cosOutLight) * M_1_PI_F;
 	}
 
 	return Material_GetEmittedRadiance(materialIndex,
@@ -464,8 +566,9 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 		__global HitPoint *tmpHitPoint, __global const BSDF *bsdf,
 		const float time, const float u0, const float u1,
 		const float passThroughEvent,
-		__global Ray *shadowRay, float *directPdfW
-		MATERIALS_PARAM_DECL) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
+		LIGHTS_PARAM_DECL) {
 	// A safety check to avoid NaN/Inf
 	if ((triLight->triangle.invTriangleArea == 0.f) || (triLight->triangle.invMeshArea == 0.f))
 		return BLACK;
@@ -520,6 +623,10 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 	if ((triLight->triangle.imageMapIndex == NULL_INDEX) && (cosAtLight < cosThetaMax + DEFAULT_COS_EPSILON_STATIC))
 		return BLACK;
 
+	// Vertex connection (M6): CPU TriangleLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = fabs(cosAtLight);
+
 	//--------------------------------------------------------------------------
 	// Initialize the shadow ray
 	//--------------------------------------------------------------------------
@@ -555,9 +662,41 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 				uv.x, uv.y
 				IMAGEMAPS_PARAM) / triLight->triangle.average;
 
+		if (emissionPdfW) {
+			// Vertex connection (M6): emissionFuncPdf = the spherical
+			// function distribution density at localFromLight
+			// (SampleableSphericalFunction::Pdf), times the area density
+			__global const Material *emitMat = &mats[materialIndex];
+			if (emitMat->emissionFuncDistOffset != NULL_INDEX) {
+				__global const float* restrict dist =
+						&envLightDistribution[emitMat->emissionFuncDistOffset];
+				const float distPdf = Distribution2D_Pdf(dist, uv.x, uv.y);
+				const float sinTheta = sin(uv.y * M_PI_F);
+				const float emissionFuncPdf = (sinTheta > 0.f) ?
+						distPdf / (2.f * M_PI_F * M_PI_F * sinTheta) : 0.f;
+				if (emissionFuncPdf == 0.f)
+					return BLACK;
+				*emissionPdfW = emissionFuncPdf *
+						triLight->triangle.invTriangleArea;
+			}
+		}
+
 		*directPdfW = triLight->triangle.invTriangleArea * shadowRayDistanceSquared ;
-	} else
+	} else {
+		if (emissionPdfW) {
+			// Vertex connection (M6): CPU emittedTheta branches
+			if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC)
+				*emissionPdfW = triLight->triangle.invTriangleArea;
+			else if (cosThetaMax > 0.f)
+				*emissionPdfW = triLight->triangle.invTriangleArea *
+						UniformConePdf(cosThetaMax);
+			else
+				*emissionPdfW = triLight->triangle.invTriangleArea *
+						fabs(cosAtLight) * M_1_PI_F;
+		}
+
 		*directPdfW = triLight->triangle.invTriangleArea * shadowRayDistanceSquared / fabs(cosAtLight);
+	}
 
 	// Setup the shadow ray
 	Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
@@ -573,8 +712,9 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 
 OPENCL_FORCE_INLINE float3 PointLight_Illuminate(__global const LightSource *pointLight,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW) {
-	const float3 pLight = VLOAD3F(&pointLight->notIntersectable.point.absolutePos.x);	
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
+	const float3 pLight = VLOAD3F(&pointLight->notIntersectable.point.absolutePos.x);
 	const float3 pSurface = BSDF_GetRayOrigin(bsdf, pLight - VLOAD3F(&bsdf->hitPoint.p.x));
 
 	const float3 toLight = pLight - pSurface;
@@ -583,6 +723,11 @@ OPENCL_FORCE_INLINE float3 PointLight_Illuminate(__global const LightSource *poi
 	const float3 shadowRayDir = toLight / shadowRayDistance;
 
 	*directPdfW = shadowRayDistanceSquared;
+	// Vertex connection (M6): CPU PointLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = 1.f;
+	if (emissionPdfW)
+		*emissionPdfW = UniformSpherePdf();
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -626,7 +771,8 @@ OPENCL_FORCE_INLINE bool SphereLight_SphereIntersect(const float3 absolutePos, c
 
 OPENCL_FORCE_INLINE float3 SphereLight_Illuminate(__global const LightSource *sphereLight,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 	const float3 absolutePos = VLOAD3F(&sphereLight->notIntersectable.sphere.absolutePos.x);
 	const float3 toLight = absolutePos - VLOAD3F(&bsdf->hitPoint.p.x);
 	const float centerDistanceSquared = dot(toLight, toLight);
@@ -668,6 +814,12 @@ OPENCL_FORCE_INLINE float3 SphereLight_Illuminate(__global const LightSource *sp
 		// directPdfW  and return factor with that of a point light source in
 		// order to avoiding banding due to (lack of) numerical precision.
 		*directPdfW = shadowRayDistance * shadowRayDistance;
+		// Vertex connection (M6): CPU SphereLight::Illuminate contract
+		// (point-light branch)
+		if (cosThetaAtLight)
+			*cosThetaAtLight = 1.f;
+		if (emissionPdfW)
+			*emissionPdfW = UniformSpherePdf();
 
 		// Setup the shadow ray
 		Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
@@ -675,11 +827,16 @@ OPENCL_FORCE_INLINE float3 SphereLight_Illuminate(__global const LightSource *sp
 		return VLOAD3F(sphereLight->notIntersectable.sphere.emittedFactor.c) * (1.f / (4.f * M_PI_F));
 	} else {
 		*directPdfW = UniformConePdf(cosThetaMax);
+		const float invArea = 1.f / (4.f * M_PI_F * radiusSquared);
+		// Vertex connection (M6): CPU SphereLight::Illuminate contract
+		// (cone-sample branch: cosine-weighted surface emission)
+		if (cosThetaAtLight)
+			*cosThetaAtLight = CosTheta(localShadowRayDir);
+		if (emissionPdfW)
+			*emissionPdfW = invArea * CosTheta(localShadowRayDir) * M_1_PI_F;
 
 		// Setup the shadow ray
 		Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
-
-		const float invArea = 1.f / (4.f * M_PI_F * radiusSquared);
 
 		return VLOAD3F(sphereLight->notIntersectable.sphere.emittedFactor.c) * invArea * M_1_PI_F;
 	}
@@ -691,7 +848,8 @@ OPENCL_FORCE_INLINE float3 SphereLight_Emit(
 		__global const LightSource *sphereLight,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 absolutePos = VLOAD3F(&sphereLight->notIntersectable.sphere.absolutePos.x);
 	const float radius = sphereLight->notIntersectable.sphere.radius;
 	const float invArea = 1.f / (4.f * M_PI_F * radius * radius);
@@ -709,6 +867,8 @@ OPENCL_FORCE_INLINE float3 SphereLight_Emit(
 	localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
 
 	*emissionPdfW = pdf * invArea;
+	*directPdfA = invArea;
+	*cosThetaAtLight = CosTheta(localDirOut);
 
 	const float3 rayDir = Frame_ToWorld_Private(&localFrame, localDirOut);
 
@@ -724,8 +884,9 @@ OPENCL_FORCE_INLINE float3 SphereLight_Emit(
 
 OPENCL_FORCE_INLINE float3 MapPointLight_Illuminate(__global const LightSource *mapPointLight,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW
-		IMAGEMAPS_PARAM_DECL) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
+		LIGHTS_PARAM_DECL) {
 	const float3 pLight = VLOAD3F(&mapPointLight->notIntersectable.mapPoint.absolutePos.x);
 	const float3 toLight = pLight - VLOAD3F(&bsdf->hitPoint.p.x);
 	const float shadowRayDistanceSquared = dot(toLight, toLight);
@@ -749,6 +910,22 @@ OPENCL_FORCE_INLINE float3 MapPointLight_Illuminate(__global const LightSource *
 			uv.x, uv.y
 			IMAGEMAPS_PARAM) / (4.f * M_PI_F * mapPointLight->notIntersectable.mapPoint.average);
 
+	// Vertex connection (M6): CPU MapPointLight::Illuminate contract -
+	// emissionPdfW is the spherical-function density at localFromLight
+	if (cosThetaAtLight)
+		*cosThetaAtLight = 1.f;
+	if (emissionPdfW) {
+		const uint distOffset = mapPointLight->notIntersectable.mapPoint.distributionOffset;
+		if (distOffset != NULL_INDEX) {
+			__global const float* restrict dist = &envLightDistribution[distOffset];
+			const float distPdf = Distribution2D_Pdf(dist, uv.x, uv.y);
+			const float sinTheta = sin(uv.y * M_PI_F);
+			*emissionPdfW = (sinTheta > 0.f) ?
+					distPdf / (2.f * M_PI_F * M_PI_F * sinTheta) : 0.f;
+		} else
+			*emissionPdfW = 0.f;
+	}
+
 	return VLOAD3F(mapPointLight->notIntersectable.mapPoint.emittedFactor.c) * emissionColor;
 }
 
@@ -757,7 +934,8 @@ OPENCL_FORCE_INLINE float3 MapPointLight_Illuminate(__global const LightSource *
 OPENCL_FORCE_INLINE float3 MapPointLight_Emit(
 		__global const LightSource *mapPointLight,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	const uint distOffset = mapPointLight->notIntersectable.mapPoint.distributionOffset;
 	if (distOffset == NULL_INDEX)
@@ -781,6 +959,8 @@ OPENCL_FORCE_INLINE float3 MapPointLight_Emit(
 
 	// pdf w.r.t. solid angle
 	*emissionPdfW = distPdf / (2.f * M_PI_F * M_PI_F * sinTheta);
+	*directPdfA = 1.f;
+	*cosThetaAtLight = 1.f;
 
 	// light2World is the true lightToWorld transform for map point lights
 	const float3 rayDir = normalize(Transform_ApplyVector(
@@ -802,10 +982,13 @@ OPENCL_FORCE_INLINE float3 MapPointLight_Emit(
 
 OPENCL_FORCE_INLINE float3 MapSphereLight_Illuminate(__global const LightSource *mapSphereLight,
 		__global const BSDF *bsdf,	const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		IMAGEMAPS_PARAM_DECL) {
+	// CPU MapSphereLight::Illuminate delegates the pdf outputs to
+	// SphereLight::Illuminate (the map scales the returned radiance only)
 	const float3 result = SphereLight_Illuminate(mapSphereLight, bsdf, time, u0, u1,
-			shadowRay, directPdfW);
+			shadowRay, directPdfW, emissionPdfW, cosThetaAtLight);
 
 	// Retrieve the image map information
 	__global const ImageMap *imageMap = &imageMapDescs[mapSphereLight->notIntersectable.mapSphere.imageMapIndex];
@@ -828,11 +1011,12 @@ OPENCL_FORCE_INLINE float3 MapSphereLight_Emit(
 		__global const LightSource *mapSphereLight,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		IMAGEMAPS_PARAM_DECL) {
 	const float3 result = SphereLight_Emit(mapSphereLight,
 			time, u0, u1, u2, u3,
-			ray, emissionPdfW);
+			ray, emissionPdfW, directPdfA, cosThetaAtLight);
 	if (Spectrum_IsBlack(result))
 		return BLACK;
 
@@ -867,7 +1051,8 @@ OPENCL_FORCE_INLINE float SpotLight_LocalFalloff(const float3 w, const float cos
 
 OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spotLight,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 	const float3 pLight = VLOAD3F(&spotLight->notIntersectable.spot.absolutePos.x);
 	const float3 pSurface = BSDF_GetRayOrigin(bsdf, pLight - VLOAD3F(&bsdf->hitPoint.p.x));
 
@@ -885,6 +1070,11 @@ OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spot
 		return BLACK;
 
 	*directPdfW = shadowRayDistanceSquared;
+	// Vertex connection (M6): CPU SpotLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = CosTheta(localFromLight);
+	if (emissionPdfW)
+		*emissionPdfW = UniformConePdf(spotLight->notIntersectable.spot.cosTotalWidth);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -900,7 +1090,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spot
 
 OPENCL_FORCE_INLINE float3 ProjectionLight_Illuminate(__global const LightSource *projectionLight,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		IMAGEMAPS_PARAM_DECL) {
 	const float3 pLight = VLOAD3F(&projectionLight->notIntersectable.projection.absolutePos.x);
 	const float3 pSurface = BSDF_GetRayOrigin(bsdf, pLight - VLOAD3F(&bsdf->hitPoint.p.x));
@@ -928,6 +1119,12 @@ OPENCL_FORCE_INLINE float3 ProjectionLight_Illuminate(__global const LightSource
 		return BLACK;
 
 	*directPdfW = shadowRayDistanceSquared;
+	// Vertex connection (M6): CPU ProjectionLight::Illuminate contract -
+	// the projected-emission density is not defined (0 on the CPU too)
+	if (cosThetaAtLight)
+		*cosThetaAtLight = 1.f;
+	if (emissionPdfW)
+		*emissionPdfW = 0.f;
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -957,7 +1154,8 @@ OPENCL_FORCE_INLINE float3 ProjectionLight_Illuminate(__global const LightSource
 OPENCL_FORCE_INLINE float3 ProjectionLight_Emit(
 		__global const LightSource *projectionLight,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		IMAGEMAPS_PARAM_DECL) {
 	const float screenX0 = projectionLight->notIntersectable.projection.screenX0;
 	const float screenX1 = projectionLight->notIntersectable.projection.screenX1;
@@ -980,6 +1178,8 @@ OPENCL_FORCE_INLINE float3 ProjectionLight_Emit(
 	if (cos <= 0.f)
 		return BLACK;
 	*emissionPdfW = 1.f / (projectionLight->notIntersectable.projection.area * cos2 * cos);
+	*directPdfA = 1.f;
+	*cosThetaAtLight = 1.f;
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1002,7 +1202,8 @@ OPENCL_FORCE_INLINE float3 SharpDistantLight_Illuminate(__global const LightSour
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 	const float3 shadowRayDir = -VLOAD3F(&sharpDistantLight->notIntersectable.sharpDistant.absoluteLightDir.x);
 
 	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
@@ -1016,6 +1217,11 @@ OPENCL_FORCE_INLINE float3 SharpDistantLight_Illuminate(__global const LightSour
 		centerDistance + approach * approach));
 
 	*directPdfW = 1.f;
+	// Vertex connection (M6): CPU SharpDistantLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = 1.f;
+	if (emissionPdfW)
+		*emissionPdfW = 1.f / (M_PI_F * envRadius * envRadius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -1034,7 +1240,8 @@ OPENCL_FORCE_INLINE float3 DistantLight_Illuminate(__global const LightSource *d
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float sceneRadius,
 		__global const BSDF *bsdf, const float time, const float u0, const float u1,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 	const float3 absoluteLightDir = VLOAD3F(&distantLight->notIntersectable.distant.absoluteLightDir.x);
 	const float3 x = VLOAD3F(&distantLight->notIntersectable.distant.x.x);
 	const float3 y = VLOAD3F(&distantLight->notIntersectable.distant.y.x);
@@ -1053,6 +1260,11 @@ OPENCL_FORCE_INLINE float3 DistantLight_Illuminate(__global const LightSource *d
 
 	const float uniformConePdf = UniformConePdf(cosThetaMax);
 	*directPdfW = uniformConePdf;
+	// Vertex connection (M6): CPU DistantLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = dot(-absoluteLightDir, shadowRayDir);
+	if (emissionPdfW)
+		*emissionPdfW = uniformConePdf / (M_PI_F * envRadius * envRadius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -1069,7 +1281,8 @@ OPENCL_FORCE_INLINE float3 DistantLight_Illuminate(__global const LightSource *d
 
 OPENCL_FORCE_INLINE float3 LaserLight_Illuminate(__global const LightSource *laserLight,
 		__global const BSDF *bsdf, const float time,
-		__global Ray *shadowRay, float *directPdfW) {
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight) {
 	const float3 absoluteLightPos = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightPos.x);
 	const float3 absoluteLightDir = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightDir.x);
 
@@ -1101,8 +1314,13 @@ OPENCL_FORCE_INLINE float3 LaserLight_Illuminate(__global const LightSource *las
 		return BLACK;
 	
 	// Ok, the light is visible
-	
+
 	*directPdfW = 1.f;
+	// Vertex connection (M6): CPU LaserLight::Illuminate contract
+	if (cosThetaAtLight)
+		*cosThetaAtLight = 1.f;
+	if (emissionPdfW)
+		*emissionPdfW = 1.f / (M_PI_F * radius * radius);
 
 	// Setup the shadow ray
 	const float3 shadowRayOrig = BSDF_GetRayOrigin(bsdf, shadowRayDir);
@@ -1116,28 +1334,30 @@ OPENCL_FORCE_INLINE float3 LaserLight_Illuminate(__global const LightSource *las
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_NOT_INLINE float3 EnvLight_GetRadiance(__global const LightSource *light,
-		__global const BSDF *bsdf, const float3 dir, float *directPdfA
+		const float sceneRadius,
+		__global const BSDF *bsdf, const float3 dir, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	switch (light->type) {
 		case TYPE_IL_CONSTANT:
-			return ConstantInfiniteLight_GetRadiance(light,
+			return ConstantInfiniteLight_GetRadiance(light, sceneRadius,
 					bsdf,
-					dir, directPdfA
+					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
 		case TYPE_IL:
-			return InfiniteLight_GetRadiance(light,
+			return InfiniteLight_GetRadiance(light, sceneRadius,
 					bsdf,
-					dir, directPdfA
+					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
 		case TYPE_IL_SKY2:
-			return Sky2Light_GetRadiance(light,
+			return Sky2Light_GetRadiance(light, sceneRadius,
 					bsdf,
-					dir, directPdfA
+					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
 		case TYPE_SUN:
-			return SunLight_GetRadiance(light,
+			return SunLight_GetRadiance(light, sceneRadius,
 					bsdf,
-					dir, directPdfA);
+					dir, directPdfA, emissionPdfW);
 		case TYPE_SHARPDISTANT:
 			// Just return Black
 		case TYPE_DISTANT:
@@ -1148,10 +1368,12 @@ OPENCL_FORCE_NOT_INLINE float3 EnvLight_GetRadiance(__global const LightSource *
 }
 
 OPENCL_FORCE_INLINE float3 IntersectableLight_GetRadiance(__global const LightSource *light,
-		 __global const HitPoint *hitPoint, float *directPdfA
+		 __global const HitPoint *hitPoint, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
-	return TriangleLight_GetRadiance(light, hitPoint, directPdfA
-			MATERIALS_PARAM);
+	return TriangleLight_GetRadiance(light, hitPoint, directPdfA,
+			emissionPdfW
+			LIGHTS_PARAM);
 }
 
 // Cuda reports large argument size, so overrides noinline attribute anyway
@@ -1165,7 +1387,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 		const float worldCenterZ,
 		const float envRadius,
 		__global HitPoint *tmpHitPoint,
-		__global Ray *shadowRay, float *directPdfW
+		__global Ray *shadowRay, float *directPdfW,
+		float *emissionPdfW, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	float3 radiance;
 	switch (light->type) {
@@ -1174,7 +1397,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_IL:
@@ -1182,7 +1406,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_IL_SKY2:
@@ -1190,7 +1415,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_SUN:
@@ -1198,7 +1424,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_TRIANGLE:
 			radiance = TriangleLight_Illuminate(
@@ -1206,33 +1433,38 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					tmpHitPoint,
 					bsdf, time ,u0, u1,
 					passThroughEvent,
-					shadowRay, directPdfW
-					MATERIALS_PARAM);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
+					LIGHTS_PARAM);
 			break;
 		case TYPE_POINT:
 			radiance = PointLight_Illuminate(
 					light,
 					bsdf, time,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_MAPPOINT:
 			radiance = MapPointLight_Illuminate(
 					light,
 					bsdf, time,
-					shadowRay, directPdfW
-					IMAGEMAPS_PARAM);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
+					LIGHTS_PARAM);
 			break;
 		case TYPE_SPOT:
 			radiance = SpotLight_Illuminate(
 					light,
 					bsdf, time,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_PROJECTION:
 			radiance = ProjectionLight_Illuminate(
 					light,
 					bsdf, time,
-					shadowRay, directPdfW
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
 		case TYPE_SHARPDISTANT:
@@ -1240,32 +1472,37 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_DISTANT:
 			radiance = DistantLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_LASER:
 			radiance = LaserLight_Illuminate(
 					light,
 					bsdf, time,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_SPHERE:
 			radiance = SphereLight_Illuminate(
 					light,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW);
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight);
 			break;
 		case TYPE_MAPSPHERE:
 			radiance = MapSphereLight_Illuminate(
 					light,
 					bsdf, time, u0, u1,
-					shadowRay, directPdfW
+					shadowRay, directPdfW,
+					emissionPdfW, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
 		default:
@@ -1287,10 +1524,12 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 // LightSource::Emit() device ports (GPU light tracing,
 // doc/features/gpu_lighttracing.md)
 //
-// Each port mirrors the CPU LightSource::Emit() signature minus the
-// directPdfA/cosThetaAtLight outputs (unused by the light task state
-// machine). Unsupported light types never reach the dispatcher: the host
-// zeroes their weight in emitLightsDistribution (compilelights.cpp).
+// Each port mirrors the full CPU LightSource::Emit() signature: the
+// directPdfA/cosThetaAtLight outputs feed the vertex-connection (M6)
+// light-prefix MIS terms (dVCM = directPdfA/emissionPdfW etc., see
+// BiDirCPURenderThread::TraceLightPath). Unsupported light types never
+// reach the dispatcher: the host zeroes their weight in
+// emitLightsDistribution (compilelights.cpp).
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Emit(
@@ -1299,16 +1538,19 @@ OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Emit(
 		const float envRadius,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
 
 	// Uniform sphere pdf over directions, disk pdf over the scene sphere
 	*emissionPdfW = UniformSpherePdf() / (M_PI_F * envRadius * envRadius);
+	*directPdfA = UniformSpherePdf();
 
 	// Ray between two random points on the scene bounding sphere
 	const float3 p1 = worldCenter + envRadius * UniformSampleSphere(u0, u1);
 	const float3 p2 = worldCenter + envRadius * UniformSampleSphere(u2, u3);
 	Ray_Init2(ray, p1, normalize(p2 - p1), time);
+	*cosThetaAtLight = dot(normalize(worldCenter - p1), VLOAD3F(&ray->d.x));
 
 	return VLOAD3F(constantInfiniteLight->notIntersectable.temperatureScale.c) *
 			VLOAD3F(constantInfiniteLight->notIntersectable.gain.c) *
@@ -1321,7 +1563,8 @@ OPENCL_FORCE_INLINE float3 InfiniteLight_Emit(
 		const float envRadius,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	__global const float* restrict infiniteLightDistribution =
 			&envLightDistribution[infiniteLight->notIntersectable.infinite.distributionOffset];
@@ -1353,6 +1596,10 @@ OPENCL_FORCE_INLINE float3 InfiniteLight_Emit(
 	const float3 rayOrig = pDisk - envRadius * rayDir;
 
 	*emissionPdfW = distPdf * latLongMappingPdf / (M_PI_F * envRadius * envRadius);
+	// CPU InfiniteLight::Emit stores the direction pdf in directPdfA
+	// (environment lights have no surface area measure)
+	*directPdfA = distPdf * latLongMappingPdf;
+	*cosThetaAtLight = dot(normalize(worldCenter - rayOrig), rayDir);
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1368,7 +1615,8 @@ OPENCL_FORCE_INLINE float3 Sky2Light_Emit(
 		const float envRadius,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	__global const float* restrict skyLightDistribution =
 			&envLightDistribution[sky2Light->notIntersectable.sky2.distributionOffset];
@@ -1397,6 +1645,8 @@ OPENCL_FORCE_INLINE float3 Sky2Light_Emit(
 	const float3 rayOrig = pDisk - envRadius * rayDir;
 
 	*emissionPdfW = distPdf * latLongMappingPdf / (M_PI_F * envRadius * envRadius);
+	*directPdfA = distPdf * latLongMappingPdf;
+	*cosThetaAtLight = dot(normalize(worldCenter - rayOrig), rayDir);
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1409,7 +1659,8 @@ OPENCL_FORCE_INLINE float3 SunLight_Emit(
 		const float envRadius,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
 
 	const float3 absoluteSunDir = VLOAD3F(&sunLight->notIntersectable.sun.absoluteDir.x);
@@ -1425,6 +1676,8 @@ OPENCL_FORCE_INLINE float3 SunLight_Emit(
 
 	const float uniformConePdf = UniformConePdf(cosThetaMax);
 	*emissionPdfW = uniformConePdf / (M_PI_F * envRadius * envRadius);
+	*directPdfA = uniformConePdf;
+	*cosThetaAtLight = dot(absoluteSunDir, -rayDir);
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1436,7 +1689,8 @@ OPENCL_FORCE_INLINE float3 SharpDistantLight_Emit(
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
 		const float envRadius,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	// CPU SharpDistantLight::Emit parity: fixed direction, origin sampled
 	// on the scene emit disc (u0, u1 are the disc coordinates here)
 	const float3 absoluteLightDir = VLOAD3F(&sharpDistantLight->notIntersectable.sharpDistant.absoluteLightDir.x);
@@ -1449,6 +1703,8 @@ OPENCL_FORCE_INLINE float3 SharpDistantLight_Emit(
 	const float3 rayOrig = worldCenter - envRadius * (absoluteLightDir + d1 * x + d2 * y);
 
 	*emissionPdfW = 1.f / (M_PI_F * envRadius * envRadius);
+	*directPdfA = 1.f;
+	*cosThetaAtLight = 1.f;
 
 	Ray_Init2(ray, rayOrig, absoluteLightDir, time);
 
@@ -1463,7 +1719,8 @@ OPENCL_FORCE_INLINE float3 DistantLight_Emit(
 		const float envRadius,
 		const float time, const float u0, const float u1,
 		const float u2, const float u3,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 absoluteLightDir = VLOAD3F(&distantLight->notIntersectable.distant.absoluteLightDir.x);
 	const float3 x = VLOAD3F(&distantLight->notIntersectable.distant.x.x);
 	const float3 y = VLOAD3F(&distantLight->notIntersectable.distant.y.x);
@@ -1479,6 +1736,8 @@ OPENCL_FORCE_INLINE float3 DistantLight_Emit(
 	const float3 rayOrig = worldCenter - envRadius * (absoluteLightDir + d1 * x + d2 * y);
 
 	*emissionPdfW = uniformConePdf / (M_PI_F * envRadius * envRadius);
+	*directPdfA = uniformConePdf;
+	*cosThetaAtLight = dot(rayDir, absoluteLightDir);
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1490,10 +1749,13 @@ OPENCL_FORCE_INLINE float3 DistantLight_Emit(
 OPENCL_FORCE_INLINE float3 PointLight_Emit(
 		__global const LightSource *pointLight,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 rayOrig = VLOAD3F(&pointLight->notIntersectable.point.absolutePos.x);
 	const float3 rayDir = UniformSampleSphere(u0, u1);
 	*emissionPdfW = 1.f / (4.f * M_PI_F);
+	*directPdfA = 1.f;
+	*cosThetaAtLight = 1.f;
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1504,7 +1766,8 @@ OPENCL_FORCE_INLINE float3 PointLight_Emit(
 OPENCL_FORCE_INLINE float3 SpotLight_Emit(
 		__global const LightSource *spotLight,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float cosTotalWidth = spotLight->notIntersectable.spot.cosTotalWidth;
 	const float cosFalloffStart = spotLight->notIntersectable.spot.cosFalloffStart;
 
@@ -1517,6 +1780,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Emit(
 	// light2World.m here
 	const float3 rayDir = normalize(Transform_ApplyVector(&spotLight->notIntersectable.light2World, localFromLight));
 	*emissionPdfW = UniformConePdf(cosTotalWidth);
+	*directPdfA = 1.f;
+	*cosThetaAtLight = CosTheta(localFromLight);
 
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
@@ -1530,7 +1795,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Emit(
 OPENCL_FORCE_INLINE float3 LaserLight_Emit(
 		__global const LightSource *laserLight,
 		const float time, const float u0, const float u1,
-		__global Ray *ray, float *emissionPdfW) {
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight) {
 	const float3 lightDir = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightDir.x);
 	const float3 lightPos = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightPos.x);
 	const float radius = laserLight->notIntersectable.laser.radius;
@@ -1542,6 +1808,8 @@ OPENCL_FORCE_INLINE float3 LaserLight_Emit(
 	const float3 rayOrig = lightPos - radius * (d1 * x + d2 * y);
 
 	*emissionPdfW = 1.f / (M_PI_F * Sqr(radius));
+	*directPdfA = 1.f;
+	*cosThetaAtLight = 1.f;
 
 	Ray_Init2(ray, rayOrig, lightDir, time);
 
@@ -1553,7 +1821,8 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 		const float time, const float u0, const float u1,
 		const float u2, const float u3, const float passThroughEvent,
 		__global HitPoint *tmpHitPoint,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	// A safety check to avoid NaN/Inf
 	if ((triLight->triangle.invTriangleArea == 0.f) || (triLight->triangle.invMeshArea == 0.f))
@@ -1617,6 +1886,8 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 	if (dirPdfW == 0.f)
 		return BLACK;
 	*emissionPdfW = dirPdfW * triLight->triangle.invTriangleArea;
+	*directPdfA = triLight->triangle.invTriangleArea;
+	*cosThetaAtLight = fabs(localDirOut.z);
 
 	// Initialized local to world object space transformation
 	ExtMesh_GetLocal2World(time, meshIndex, triangleIndex, &tmpHitPoint->localToWorld EXTMESH_PARAM);
@@ -1669,7 +1940,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 		const float worldCenterZ,
 		const float envRadius,
 		__global HitPoint *tmpHitPoint,
-		__global Ray *ray, float *emissionPdfW
+		__global Ray *ray, float *emissionPdfW,
+		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
 	float3 flux;
 	switch (light->type) {
@@ -1678,14 +1950,14 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1, u2, u3,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_IL:
 			flux = InfiniteLight_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1, u2, u3,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_IL_SKY2:
@@ -1693,7 +1965,7 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1, u2, u3,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_SUN:
@@ -1701,66 +1973,66 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1, u2, u3,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_DISTANT:
 			flux = DistantLight_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1, u2, u3,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_SHARPDISTANT:
 			flux = SharpDistantLight_Emit(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					time, u0, u1,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_TRIANGLE:
 			flux = TriangleLight_Emit(
 					light,
 					time, u0, u1, u2, u3, passThroughEvent,
 					tmpHitPoint,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_POINT:
 			flux = PointLight_Emit(
 					light, time, u0, u1,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_SPOT:
 			flux = SpotLight_Emit(
 					light, time, u0, u1,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_LASER:
 			flux = LaserLight_Emit(
 					light, time, u0, u1,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_SPHERE:
 			flux = SphereLight_Emit(
 					light, time, u0, u1, u2, u3,
-					ray, emissionPdfW);
+					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
 		case TYPE_MAPSPHERE:
 			flux = MapSphereLight_Emit(
 					light, time, u0, u1, u2, u3,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
 		case TYPE_MAPPOINT:
 			flux = MapPointLight_Emit(
 					light, time, u0, u1,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
 		case TYPE_PROJECTION:
 			flux = ProjectionLight_Emit(
 					light, time, u0, u1,
-					ray, emissionPdfW
+					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
 		default:
@@ -1769,6 +2041,20 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 			flux = BLACK;
 	}
 	return flux;
+}
+
+// CPU LightSource::IsEnvironmental() (light.h:228): the EnvLightSource
+// subclasses - constant-infinite, infinite, sky2 and sun
+OPENCL_FORCE_INLINE bool Light_IsEnvironmental(__global const LightSource *light) {
+	switch (light->type) {
+		case TYPE_IL_CONSTANT:
+		case TYPE_IL:
+		case TYPE_IL_SKY2:
+		case TYPE_SUN:
+			return true;
+		default:
+			return false;
+	}
 }
 
 OPENCL_FORCE_INLINE bool Light_IsEnvOrIntersectable(__global const LightSource *light) {

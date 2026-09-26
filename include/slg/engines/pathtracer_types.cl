@@ -171,6 +171,21 @@ typedef struct {
 	float portalSideGate;
 	unsigned int portalAdapt;
 
+	// Vertex connection (M6, path.vertexconnection.enable): GPU port of
+	// the BIDIRCPU eye x light vertex connect. Requires a light-task
+	// population (the light vertex cache lives on light tasks); when set
+	// the caustic-only splat gate and the hybrid diffuse-cut are replaced
+	// by the SmallVCM MIS weights (misVm/misVc = 0 -> pure BPT).
+	struct {
+		int enabled;
+		// Slots per light task inside lightVertices[]
+		// (== maxPathDepth.depth, a bound on stored non-delta vertices)
+		unsigned int slotsPerTask;
+		// Total records in lightVertices[] (lightTaskCount*slotsPerTask;
+		// 0 when the buffer is absent)
+		unsigned int vertexCount;
+	} vertexConnect;
+
 	// PhotonGI cache settings
 	struct {
 		float glossinessUsageThreshold;

@@ -98,6 +98,7 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
 		guidingEnable(false), guidingRisK(0), spectralEnable(false),
+		vertexConnectEnable(false),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true) {
@@ -2648,6 +2649,15 @@ void PathTracer::ParseOptions(
 		hybridBackForwardPartition = cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>();
 	}
 
+	// Vertex connection (M6): needs a light-task population to build the
+	// vertex cache on; force one through the same promotion light
+	// tracing uses when the user enabled neither.
+	vertexConnectEnable = cfg.Get(defaultProps.Get("path.vertexconnection.enable")).Get<bool>();
+	if (vertexConnectEnable && !hybridBackForwardEnable) {
+		hybridBackForwardEnable = true;
+		hybridBackForwardPartition = cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>();
+	}
+
 	// Albedo AOV settings
 	albedoSpecularSetting = String2AlbedoSpecularSetting(cfg.Get(defaultProps.Get("path.albedospecular.type")).Get<string>());
 	albedoSpecularGlossinessThreshold = Max(cfg.Get(defaultProps.Get("path.albedospecular.glossinessthreshold")).Get<double>(), 0.0);
@@ -2884,6 +2894,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.guiding.risk")(0) <<
 			Property("path.portal.count")(0) <<
 			Property("path.portal.weight")(.3f) <<
+			Property("path.vertexconnection.enable")(false) <<
 			Property("path.restir.gi.enable")(false) <<
 			Property("path.restir.gi.candidates")(4) <<
 			Property("path.restir.gi.temporal.enable")(true) <<

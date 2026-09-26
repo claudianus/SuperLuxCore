@@ -607,6 +607,44 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	lt.lightVisRayBase = taskCount;
 	const u_int rayTailBase = taskCount + renderEngine->lightTaskCount;
 
+	// Vertex connection (M6): the light vertex cache is a fixed-stride
+	// region over the light-task population - slot (t, k) holds the
+	// depth-(k+1) non-delta vertex of task t's current subpath.
+	// slotsPerTask defaults to the full light-path depth bound (same
+	// coverage as BIDIRCPU's vertex vector); a byte-budget guard shrinks
+	// it like the ReSTIR tails - a truncated store drops connect
+	// strategies but stays unbiased (each exercised strategy is weighted
+	// by its own densities, no renormalization).
+	auto &vc = renderEngine->taskConfig.pathTracer.vertexConnect;
+	if (vc.enabled && (renderEngine->lightTaskCount > 0)) {
+		vc.slotsPerTask = renderEngine->taskConfig.pathTracer.maxPathDepth.depth;
+		const size_t vcBytesPerSlot = sizeof(slg::ocl::pathoclbase::VCLightVertex);
+		const size_t vcByteBudget = (size_t)384 * 1024 * 1024;
+		const u_int maxSlots = (u_int)(vcByteBudget /
+				((size_t)renderEngine->lightTaskCount * vcBytesPerSlot));
+		if (vc.slotsPerTask > maxSlots) {
+			SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+					"] Vertex connection slots clamped from " <<
+					vc.slotsPerTask << " to " << maxSlots <<
+					" (lightTaskCount=" << renderEngine->lightTaskCount <<
+					", budget=" << vcByteBudget / 1024 / 1024 << "MB)");
+			vc.slotsPerTask = maxSlots;
+		}
+		vc.vertexCount = renderEngine->lightTaskCount * vc.slotsPerTask;
+		if (vc.vertexCount == 0)
+			vc.enabled = false;
+	} else {
+		if (vc.enabled)
+			SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+					"] WARNING: path.vertexconnection needs GPU light "
+					"tasks; the task population reserved all " << taskCount <<
+					" tasks for the eye pass (opencl.task.count must "
+					"exceed 8192). Vertex connection disabled.");
+		vc.enabled = false;
+		vc.slotsPerTask = 0;
+		vc.vertexCount = 0;
+	}
+
 	// ReSTIR visibility-weighted target (E2a): the K candidate shadow
 	// rays per task share the tail of raysBuff/hitsBuff starting at
 	// taskCount, so a single EnqueueTraceRayBuffer pass over
@@ -1178,6 +1216,19 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 				"LightPathInfo");
 	else
 		intersectionDevice.FreeBuffer(&lightPathInfosBuff);
+
+	// Vertex connection (M6): the light vertex cache. Uninitialized -
+	// MK_VC_CONNECT only ever reads slots [0, vcVertexCount) of the
+	// paired task, and vcVertexCount is rewritten by MK_LIGHT_INIT on
+	// every new light subpath before any eye task can reach the
+	// connect state (several iterations of lead time).
+	if (renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount > 0)
+		intersectionDevice.AllocBufferRW(&vcVerticesBuff, nullptr,
+				sizeof(slg::ocl::pathoclbase::VCLightVertex) *
+				renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount,
+				"VCLightVertices");
+	else
+		intersectionDevice.FreeBuffer(&vcVerticesBuff);
 
 	// Caustic focus cache (guided emission): per-light ring of the last
 	// LIGHT_FOCUS_K productive target positions (float4: xyz + aim

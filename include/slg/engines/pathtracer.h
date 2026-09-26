@@ -261,6 +261,13 @@ public:
 	// the eye side (caustic suppression, same contract as CPU hybrid).
 	bool lightTracingEnable;
 	float lightTracingTaskFraction;
+
+	// Vertex connection (M6, path.vertexconnection.enable): GPU port of
+	// the BIDIRCPU eye x light vertex connect against a per-light-task
+	// vertex cache. Requires a light-task population; when set, the
+	// caustic-only splat gate and the hybrid diffuse-cut are replaced by
+	// the SmallVCM MIS weights (misVm/misVc = 0 -> pure BPT).
+	bool vertexConnectEnable;
 	// Caustic focus cache: guided light emission toward remembered
 	// productive targets (see LIGHT_FOCUS_K in pathoclbase_datatypes.cl
 	// for the GPU ring; the CPU table below mirrors it). Unbiased

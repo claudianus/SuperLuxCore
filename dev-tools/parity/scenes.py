@@ -171,6 +171,35 @@ SCENES = {
         "expect": {"ratio_min": 0.93, "ratio_max": 1.10,
                 "rmse_max": 0.14, "black_max": 0.25},
     },
+    # Phase 2.4: GPU vertex connection (BDPT-style eye<->light vertex
+    # connects, SmallVCM MIS bookkeeping mirrored from BIDIRCPU). The
+    # area-caustic scene is the canonical VC case: refracted caustics
+    # under the glass spheres are only reachable by light-side vertices
+    # connecting to diffuse eye vertices. VC auto-promotes the GPU
+    # light-task population; task count is raised so the light tasks
+    # actually exist (lightTaskCount = taskCount - 8192 floor).
+    # The CPU reference keeps hybridbackforward (native light pass) but
+    # drops the GPU-only lighttracing/vertexconnection keys; PATHCPU
+    # still renders ~18% below BIDIRCPU on this scene, so the gate is
+    # calibrated for energy/structure, not exact equality.
+    "vc_caustic": {
+        "props_file": "scenes/cornell/cornell-area-caustic.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "cfg_extra": "path.hybridbackforward.enable = 1\n"
+            "path.lighttracing.enable = 1\n"
+            "path.lighttracing.taskfraction = 0.3\n"
+            "path.vertexconnection.enable = 1\n"
+            "opencl.task.count = 32768\n",
+        "spp": 96,
+        # ratio_max is lifted above the generic 1.05: VC recovers
+        # caustic energy the PATHCPU reference can not sample, so a
+        # correct implementation sits a few % ABOVE the CPU reference
+        # (measured 1.04 metal / 1.06 opencl at 96spp). A broken connect
+        # weight still trips on rmse/black_frac.
+        "expect": {"ratio_min": 0.90, "ratio_max": 1.15,
+                "rmse_max": 0.05, "black_max": 0.01},
+    },
     # Vertex motion + shared-mesh instancing across accel paths
     "vertex_motion": {
         "builder": build_vertex_motion,

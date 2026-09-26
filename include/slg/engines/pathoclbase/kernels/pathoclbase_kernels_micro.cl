@@ -141,6 +141,7 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 
 __kernel void AdvancePaths_MK_HIT_NOTHING(
 		KERNEL_ARGS
+		KERNEL_ARGS_VC
 		) {
 	WAVEFRONT_GUARD
 
@@ -197,6 +198,9 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 	if (checkDirectLightHit) {
 		DirectHitInfiniteLight(
 				&taskConfig->film,
+				taskConfig,
+				worldRadius,
+				emitLightsDistribution,
 				pathInfo,
 				&taskState->throughput,
 				&rays[gid],
@@ -245,6 +249,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 
 __kernel void AdvancePaths_MK_HIT_OBJECT(
 		KERNEL_ARGS
+		KERNEL_ARGS_VC
 		) {
 	WAVEFRONT_GUARD
 
@@ -307,6 +312,22 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 					rays[gid].time, filmHeight, sampleResult->motionVector);
 	}
 
+	if (taskConfig->pathTracer.vertexConnect.enabled) {
+		// Vertex connection (M6) eye-vertex MIS fold (BiDirCPURenderThread
+		// eye loop): dVCM *= MIS(t^2)/MIS(cos), dVC *= 1/MIS(cos). The
+		// first-vertex t gains the clipHither offset (CPU t_MIS: the hit
+		// t is measured from the clip start).
+		const float t_MIS = rayHits[gid].t +
+				((pathInfo->depth.depth == 0) ? camera->base.hither : 0.f);
+		const float factor = 1.f / VCMis(fabs(dot(
+				VLOAD3F(&bsdf->hitPoint.shadeN.x),
+				VLOAD3F(&rays[gid].d.x))));
+		pathInfo->vcFoldVCM = VCMis(t_MIS * t_MIS) * factor;
+		pathInfo->vcFoldVC = factor;
+		pathInfo->dVCM *= pathInfo->vcFoldVCM;
+		pathInfo->dVC *= pathInfo->vcFoldVC;
+	}
+
 	//----------------------------------------------------------------------
 	// Check if it is a baked material
 	//----------------------------------------------------------------------
@@ -355,6 +376,8 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	if (BSDF_IsLightSource(bsdf) && checkDirectLightHit) {
 		DirectHitFiniteLight(
 				&taskConfig->film,
+				taskConfig,
+				emitLightsDistribution,
 				pathInfo,
 				&taskState->throughput,
 				&rays[gid],
@@ -599,6 +622,11 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	// first vertex (giPdfW owns the books there).
 	taskState->portalW = 0.f;
 	taskState->portalTake = 0u;
+
+	// Vertex connection (M6): a fresh eye vertex starts a fresh connect
+	// pass over the paired light task's vertex cache
+	taskState->vcCursor = 0u;
+	taskState->vcPending = 0u;
 	{
 		const uint portalCount = taskConfig->pathTracer.portalCount;
 		if ((portalCount > 0u) && !BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
@@ -641,8 +669,11 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	//
 	// I handle as a special case when the path vertex is both the first
 	// and the last: I do direct light sampling without MIS.
+	// Vertex connection (M6): the last vertex still connects to the light
+	// sub-path vertices before splatting (CPU BIDIR parity)
 	taskState->state = (sampleResult->lastPathVertex && !sampleResult->firstPathVertex) ?
-		MK_SPLAT_SAMPLE : MK_DL_ILLUMINATE;
+		(taskConfig->pathTracer.vertexConnect.enabled ?
+			MK_VC_CONNECT : MK_SPLAT_SAMPLE) : MK_DL_ILLUMINATE;
 }
 
 //------------------------------------------------------------------------------
@@ -716,6 +747,17 @@ __kernel void AdvancePaths_MK_RT_DL(
 	VSTORE3F(connectionThroughput * VLOAD3F(taskDirectLight->illumInfo.lightRadiance.c), taskDirectLight->illumInfo.lightRadiance.c);
 	VSTORE3F(connectionThroughput * VLOAD3F(taskDirectLight->illumInfo.lightIrradiance.c), taskDirectLight->illumInfo.lightIrradiance.c);
 
+	// Vertex connection (M6): CPU DirectLightSampling lifts the MIS
+	// weight to 1 when the shadow ray crossed a shadow-transparent
+	// occluder (throughShadowTransparency of the last shadow hit)
+	if (taskConfig->pathTracer.vertexConnect.enabled &&
+			throughShadowTransparency &&
+			(taskDirectLight->illumInfo.vcMisWeight > 0.f) &&
+			(taskDirectLight->illumInfo.vcMisWeight < 1.f))
+		VSTORE3F(VLOAD3F(taskDirectLight->illumInfo.lightRadiance.c) /
+				taskDirectLight->illumInfo.vcMisWeight,
+				taskDirectLight->illumInfo.lightRadiance.c);
+
 	const bool rayMiss = (rayHits[gid].meshIndex == NULL_INDEX);
 
 	// If continueToTrace, there is nothing to do, just keep the same state
@@ -784,7 +826,11 @@ __kernel void AdvancePaths_MK_RT_DL(
 			taskState->state = MK_MNEE_NEXT_VERTEX;
 		} else {
 			// Check if this is the last path vertex
-			if (sampleResult->lastPathVertex)
+			// Vertex connection (M6): the connect stage sits between the
+			// DL resolve and the bounce (CPU BIDIR parity)
+			if (taskConfig->pathTracer.vertexConnect.enabled)
+				pathState = MK_VC_CONNECT;
+			else if (sampleResult->lastPathVertex)
 				pathState = MK_SPLAT_SAMPLE;
 			else
 				pathState = MK_GENERATE_NEXT_VERTEX_RAY;
@@ -912,7 +958,10 @@ __kernel void AdvancePaths_MK_RT_RESTIR(
 	} else {
 		// No visible candidate: move to the next vertex ray, or splat
 		// if this was the last path vertex
-		taskState->state = (sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
+		// Vertex connection (M6): the connect stage precedes the bounce
+		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+				MK_VC_CONNECT :
+				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
 
 	// Save the seed
@@ -1222,8 +1271,10 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				restirReservoirs
 				LIGHTS_PARAM);
 
+		// Vertex connection (M6): the connect stage precedes the bounce
 		taskState->state = anyCandidate ? MK_RT_RESTIR :
-				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
+				(taskConfig->pathTracer.vertexConnect.enabled ? MK_VC_CONNECT :
+				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY));
 
 		// Save the seed
 		task->seed = seedValue;
@@ -1271,7 +1322,10 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 	} else {
 		// No shadow ray to trace, move to the next vertex ray
 		// however, I have to Check if this is the last path vertex
-		taskState->state = (sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
+		// Vertex connection (M6): the connect stage precedes the bounce
+		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+				MK_VC_CONNECT :
+				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
 
 	//--------------------------------------------------------------------------
@@ -1360,7 +1414,10 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 	} else {
 		// No shadow ray to trace, move to the next vertex ray
 		// however, I have to check if this is the last path vertex
-		taskState->state = (sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
+		// Vertex connection (M6): the connect stage precedes the bounce
+		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+				MK_VC_CONNECT :
+				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
 }
 
@@ -1890,6 +1947,40 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 		VSTORE3F(throughputFactor * VLOAD3F(taskState->throughput.c), taskState->throughput.c);
 
+		if (taskConfig->pathTracer.vertexConnect.enabled) {
+			if (cosSampledDir < 0.f) {
+				// Pass-through vertex (shadowTransparency): not a real
+				// vertex on the CPU side - undo the hit fold
+				pathInfo->dVCM /= pathInfo->vcFoldVCM;
+				pathInfo->dVC /= pathInfo->vcFoldVC;
+			} else {
+				// CPU Bounce() MIS update (misVm/misVc = 0):
+				//   specular: dVCM = 0, dVC *= MIS(cosSampledDir)
+				//   else:     dVC  = MIS(cos/pdfW) *
+				//                (dVC * MIS(revPdfW) + dVCM)
+				//             dVCM = MIS(1/pdfW)
+				// NOTE: under guiding/portal/RIS proposals bsdfPdfW is the
+				// mixture density while bsdfRevPdfW stays the pure-BSDF
+				// reverse density (no CPU reference exists for that
+				// combination - approximation, documented).
+				float bsdfRevPdfW;
+				if (bsdfEvent & SPECULAR)
+					bsdfRevPdfW = bsdfPdfW;
+				else
+					BSDF_Pdf(bsdf, sampledDir, NULL, &bsdfRevPdfW
+							MATERIALS_PARAM);
+				if (bsdfEvent & SPECULAR) {
+					pathInfo->dVCM = 0.f;
+					pathInfo->dVC *= VCMis(cosSampledDir);
+				} else {
+					pathInfo->dVC = VCMis(cosSampledDir / bsdfPdfW) *
+							(pathInfo->dVC * VCMis(bsdfRevPdfW) +
+							pathInfo->dVCM);
+					pathInfo->dVCM = VCMis(1.f / bsdfPdfW);
+				}
+			}
+		}
+
 		// This is valid for irradiance AOV only if it is not a SPECULAR material and
 		// first path vertex. Set or update sampleResult.irradiancePathThroughput
 		if (sampleResult->firstPathVertex) {
@@ -2192,6 +2283,11 @@ OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
 	lpi->hasDeltaVertex = false;
 	lpi->pathDone = false;
 	lpi->mneeActive = false;
+	// Vertex connection (M6): a new light subpath owns no cached
+	// vertices yet
+	lpi->dVCM = 0.f;
+	lpi->dVC = 0.f;
+	lpi->vcVertexCount = 0;
 	lpi->pendingSplat.fromMnee = false;
 	lpi->pendingSplat.valid = false;
 }
@@ -2351,7 +2447,7 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 	if ((emitLightIndex != NULL_INDEX) && (pickPdf > 0.f)) {
 		__global const LightSource* restrict light = &lights[emitLightIndex];
 
-		float emissionPdfW;
+		float emissionPdfW, directPdfA, cosThetaAtLight;
 #if defined(SLG_SPECTRAL)
 		// Emission textures evaluate at the path wavelengths
 		task->tmpHitPoint.spectralW[0] = sampleResult->spectralW[0];
@@ -2366,7 +2462,8 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 				Sampler_GetLightSample(taskConfig, 4 SAMPLER_PARAM),
 				Sampler_GetLightSample(taskConfig, 5 SAMPLER_PARAM),
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-				&task->tmpHitPoint, &rays[gid], &emissionPdfW
+				&task->tmpHitPoint, &rays[gid], &emissionPdfW,
+				&directPdfA, &cosThetaAtLight
 				LIGHTS_PARAM);
 
 		// Caustic focus cache (doc/features/gpu_lighttracing.md): with
@@ -2594,9 +2691,26 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 					spectralUpsamplingTable);
 #endif
 
-		if (!Spectrum_IsBlack(flux) && (emissionPdfW > 0.f))
+		if (!Spectrum_IsBlack(flux) && (emissionPdfW > 0.f)) {
 			flux /= emissionPdfW * pickPdf;
-		else
+
+			if (pathTracer->vertexConnect.enabled) {
+				// Vertex connection (M6): light-prefix MIS bookkeeping,
+				// mirroring BiDirCPURenderThread::TraceLightPath. Both
+				// pdfs are scaled by pickPdf on the CPU - it cancels in
+				// the dVCM ratio. emissionPdfW here is the (possibly
+				// focus-mixed) density of the emitted ray.
+				lpi->dVCM = VCMis(directPdfA / emissionPdfW);
+				// If the light source is not intersectable, it can not
+				// be sampled with BSDF
+				if (Light_IsEnvOrIntersectable(light)) {
+					const float usedCosLight = Light_IsEnvironmental(light) ?
+							1.f : cosThetaAtLight;
+					lpi->dVC = VCMis(usedCosLight / (emissionPdfW * pickPdf));
+				} else
+					lpi->dVC = 0.f;
+			}
+		} else
 			flux = BLACK;
 
 		lpi->lightIndex = emitLightIndex;
@@ -2918,6 +3032,27 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			VSTORE3F(connectionThroughput * VLOAD3F(taskState->throughput.c),
 					taskState->throughput.c);
 
+			if (pathTracer->vertexConnect.enabled) {
+				// Vertex connection (M6) light-prefix MIS fold
+				// (BiDirCPURenderThread::TraceLightPath:691-696):
+				//   dVCM *= t^2 / |cos theta|^2
+				//   dVC  *=       1 / |cos theta|^2
+				// lpi->depth.depth counts the completed vertices, so the
+				// vertex just hit has CPU depth = lpi->depth.depth + 1;
+				// the t^2 factor is skipped for the first vertex of an
+				// environmental light (its "position" is the scene
+				// sphere, t is meaningless there).
+				__global const LightSource* restrict emitLight =
+						&lights[lpi->lightIndex];
+				if ((lpi->depth.depth > 0) || !Light_IsEnvironmental(emitLight))
+					lpi->dVCM *= VCMis(rayHits[gid].t * rayHits[gid].t);
+				const float factor = 1.f / VCMis(fabs(dot(
+						VLOAD3F(&bsdf->hitPoint.shadeN.x),
+						VLOAD3F(&rays[gid].d.x))));
+				lpi->dVCM *= factor;
+				lpi->dVC *= factor;
+			}
+
 			// Caustic focus cache: remember the first delta-specular
 			// vertex of this path - a successful camera connect credits
 			// it into the emitting light's hotspot ring
@@ -2929,6 +3064,38 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 				lpi->hasDeltaVertex = true;
 			}
 
+			const bool isDeltaBsdf = BSDF_IsDelta(bsdf MATERIALS_PARAM);
+
+			//--------------------------------------------------------------
+			// Vertex connection (M6): append the non-delta vertex to the
+			// light vertex cache (CPU pushes it even for camera-invisible
+			// objects - only ConnectToEye is skipped there)
+			//--------------------------------------------------------------
+
+			if (pathTracer->vertexConnect.enabled && !isDeltaBsdf) {
+				const uint slot = lpi->vcVertexCount;
+				const uint slotsPerTask = pathTracer->vertexConnect.slotsPerTask;
+				if ((slot < slotsPerTask) && lightVertices) {
+					__global VCLightVertex *v = &lightVertices[lightIndex * slotsPerTask + slot];
+					// Kernel launches on the device queue are
+					// serialized, so a paired MK_VC_CONNECT pass always
+					// reads the record whole; seq only marks the slot
+					// as written (0 = never, used by the reader skip)
+					v->bsdf = *bsdf;
+					const float3 tp = VLOAD3F(taskState->throughput.c);
+					v->throughputR = tp.x;
+					v->throughputG = tp.y;
+					v->throughputB = tp.z;
+					v->dVCM = lpi->dVCM;
+					v->dVC = lpi->dVC;
+					v->lightID = lpi->lightGroupID;
+					// 1-based depth (PathVertexVM::depth convention)
+					v->depth = lpi->depth.depth + 1;
+					v->seq = 1u;
+					lpi->vcVertexCount = slot + 1;
+				}
+			}
+
 			//--------------------------------------------------------------
 			// Connect the light path vertex to the camera
 			//--------------------------------------------------------------
@@ -2937,7 +3104,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					sceneObjs[bsdf->sceneObjectIndex].cameraInvisible;
 			// CPU ConnectToEye: skip camera-invisible objects and delta
 			// BSDF vertices
-			if (!cameraInvisible && !BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+			if (!cameraInvisible && !isDeltaBsdf) {
 				const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
 				const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX,
 						lpi->lensPointY, lpi->lensPointZ);
@@ -3000,8 +3167,13 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						// probe so a delta occluder can start a solve.
 						const bool mneeProbe = evalBlack &&
 								taskConfig->pathTracer.mnee.enabled;
-						if ((!evalBlack &&
-								((pathTracer->lightTracing.eyeTaskCount == 0) ||
+						// Vertex connection (M6): in BDPT mode the camera
+						// connect is the s=0 strategy - CPU ConnectToEye
+						// splats every non-delta connection (the caustic
+						// gate is a hybrid back-forward concept only)
+						const bool vcEnabled = pathTracer->vertexConnect.enabled;
+						if ((!evalBlack && (vcEnabled ||
+								(pathTracer->lightTracing.eyeTaskCount == 0) ||
 								(pathTracer->hybridBackForward.adaptiveCaustic ?
 								LightPathInfo_IsAdaptiveCausticPath(lpi, event,
 								pathTracer->hybridBackForward.terminalGlossiness,
@@ -3024,11 +3196,40 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 								const float maxt = eyeDistance - visRay->mint;
 								Ray_Init4(visRay, origin, -eyeRayD, mint, maxt, time);
 
+								float misWeight = 1.f;
+								if (vcEnabled) {
+									// CPU ConnectToEye MIS
+									// (misVmWeightFactor = 0 in BIDIR):
+									// weightLight = MIS(cameraPdfA) *
+									//   (dVCM + dVC * MIS(bsdfRevPdfW))
+									float bsdfRevPdfW;
+									BSDF_Pdf(bsdf, -eyeRayD, NULL,
+											&bsdfRevPdfW MATERIALS_PARAM);
+									const uint vDepth = lpi->depth.depth + 1;
+									if (vDepth >= pathTracer->rrDepth)
+										bsdfRevPdfW *= RussianRouletteProb(
+												pathTracer->rrImportanceCap,
+												bsdfEval);
+									const float cosToCamera = dot(
+											VLOAD3F(&bsdf->hitPoint.shadeN.x),
+											-eyeRayD);
+									const float cameraPdfA = PdfWtoA(pdfW,
+											eyeDistance, cosToCamera);
+									const float weightLight =
+											VCMis(cameraPdfA) * (lpi->dVCM +
+											lpi->dVC * VCMis(bsdfRevPdfW));
+									misWeight = 1.f / (weightLight + 1.f);
+									// Volumes do not carry the cosine in
+									// Evaluate - fold it back
+									fluxToRadianceFactor *= bsdf->isVolume ?
+											fabs(cosToCamera) : 1.f;
+								}
+
 								lpi->pendingSplat.filmX = filmX;
 								lpi->pendingSplat.filmY = filmY;
 								const float3 radiance =
 										VLOAD3F(taskState->throughput.c) *
-										bsdfEval * fluxToRadianceFactor;
+										bsdfEval * (misWeight * fluxToRadianceFactor);
 								lpi->pendingSplat.radianceR = radiance.x;
 								lpi->pendingSplat.radianceG = radiance.y;
 								lpi->pendingSplat.radianceB = radiance.z;
@@ -3088,7 +3289,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					// (eyeTaskCount == 0) the light path is the sole
 					// estimator and must run full depth, matching CPU
 					// LIGHTCPU.
+					// Vertex connection (M6): BDPT needs the full-depth
+					// light path - the diffuse cut is a hybrid
+					// back-forward concept VC supersedes
 					if (pathTracer->hybridBackForward.enabled &&
+							!pathTracer->vertexConnect.enabled &&
 							(pathTracer->lightTracing.eyeTaskCount > 0) &&
 							(pathTracer->hybridBackForward.adaptiveCaustic ?
 								!lpi->isAdaptiveS : !lpi->isNearlyS) &&
@@ -3109,6 +3314,29 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 				if (!terminate) {
 					VSTORE3F(VLOAD3F(taskState->throughput.c) * bsdfSample,
 							taskState->throughput.c);
+
+					if (pathTracer->vertexConnect.enabled) {
+						// CPU Bounce() MIS update (misVm/misVc = 0):
+						//   specular: dVCM = 0, dVC *= MIS(cosSampledDir)
+						//   else:     dVC  = MIS(cos/pdfW) *
+						//                (dVC * MIS(revPdfW) + dVCM)
+						//             dVCM = MIS(1/pdfW)
+						float bsdfRevPdfW;
+						if (bsdfEvent & SPECULAR)
+							bsdfRevPdfW = bsdfPdfW;
+						else
+							BSDF_Pdf(bsdf, sampledDir, NULL, &bsdfRevPdfW
+									MATERIALS_PARAM);
+						if (bsdfEvent & SPECULAR) {
+							lpi->dVCM = 0.f;
+							lpi->dVC *= VCMis(cosSampledDir);
+						} else {
+							lpi->dVC = VCMis(cosSampledDir / bsdfPdfW) *
+									(lpi->dVC * VCMis(bsdfRevPdfW) + lpi->dVCM);
+							lpi->dVCM = VCMis(1.f / bsdfPdfW);
+						}
+					}
+
 					if (isnan(taskState->throughput.c[0]) ||
 							isnan(taskState->throughput.c[1]) ||
 							isnan(taskState->throughput.c[2]))
@@ -3133,6 +3361,250 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 
 	// Save the seed
 	task->seed = seedValue;
+}
+
+//------------------------------------------------------------------------------
+// Evaluation of the Path finite state machine.
+//
+// From: MK_VC_CONNECT
+// To: MK_GENERATE_NEXT_VERTEX_RAY
+//
+// Vertex connection (M6, GPU BDPT): connects the current eye vertex to
+// the stored non-delta vertices of the paired light task's subpath
+// (lightVertices[lightTask * slotsPerTask + k], k < vcVertexCount).
+// Each connect is weighted by the SmallVCM MIS terms carried on the
+// vertex records (misVm/misVc = 0 -> pure BPT); the shadow ray is
+// marched inline through Scene_Intersect exactly like MK_RT_DL.
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_VC_CONNECT(
+		KERNEL_ARGS
+		// Vertex connection tail: the paired task's LightPathInfo (for
+		// vcVertexCount) and the vertex cache itself
+		, __global LightPathInfo *lightPathInfos
+		, __global const VCLightVertex* restrict lightVertices
+		) {
+	WAVEFRONT_GUARD
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_VC_CONNECT(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_VC_CONNECT)
+		return;
+
+	INIT_IMAGEMAPS_PAGES
+
+	__global GPUTask *task = &tasks[gid];
+	__global EyePathInfo *pathInfo = &eyePathInfos[gid];
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+	__global BSDF *eyeBsdf = &taskState->bsdf;
+	__constant const Scene* restrict scene = &taskConfig->scene;
+
+	const uint vcSlotsPerTask = taskConfig->pathTracer.vertexConnect.slotsPerTask;
+	const uint lightTaskCount = taskConfig->pathTracer.lightTracing.lightTaskCount;
+	const bool vcLive = lightVertices && (vcSlotsPerTask > 0u) &&
+			(lightTaskCount > 0u);
+	// Each eye task pairs with a fixed light task's subpath cache:
+	// unbiased (the light sub-path is independent of the eye path),
+	// deterministic and read-only
+	const uint lightTask = vcLive ? (uint)(gid % lightTaskCount) : 0u;
+	const uint count = vcLive ?
+			min(lightPathInfos[lightTask].vcVertexCount, vcSlotsPerTask) : 0u;
+
+	const float3 eyeP = VLOAD3F(&eyeBsdf->hitPoint.p.x);
+	const float3 eyeShadeN = VLOAD3F(&eyeBsdf->hitPoint.shadeN.x);
+	const float3 eyeThroughput = VLOAD3F(taskState->throughput.c);
+
+	//----------------------------------------------------------------------
+	// Resolve the connect shadow ray queued by the previous pass
+	//----------------------------------------------------------------------
+	if (taskState->vcPending) {
+		// Same per-segment pass-through draw as the DL shadow ray path
+		Seed seedPassThroughEvent = taskState->seedPassThroughEvent;
+		const float passThroughEvent = Rnd_FloatValue(&seedPassThroughEvent);
+		taskState->seedPassThroughEvent = seedPassThroughEvent;
+		int throughShadowTransparency = 0;
+		float3 connectionThroughput;
+		const bool continueToTrace = Scene_Intersect(taskConfig,
+				LIGHT_RAY | INDIRECT_RAY | SHADOW_RAY,
+				NULL, NONE,
+				&throughShadowTransparency,
+				&directLightVolInfos[gid],
+				&task->tmpHitPoint,
+				passThroughEvent,
+				&rays[gid], &rayHits[gid], &task->tmpBsdf,
+				&connectionThroughput, WHITE,
+				sampleResult,
+				true
+				MATERIALS_PARAM);
+		// Still marching through pass-through occluders: resolve the
+		// next segment in the following trace pass
+		if (continueToTrace)
+			return;
+
+		taskState->vcPending = 0u;
+		++taskState->vcCursor;
+
+		if (rayHits[gid].meshIndex == NULL_INDEX) {
+			// The light path vertex is visible - accumulate the deferred
+			// contribution (misWeight*geometryTerm*eyeEval*lightEval*
+			// lightThroughput) folded with the segment's volume transport
+			SampleResult_AddDirectLight(&taskConfig->film,
+					sampleResult, taskState->vcPendingLightID,
+					taskState->vcPendingEvent,
+					eyeThroughput,
+					connectionThroughput * MAKE_FLOAT3(
+						taskState->vcPendingR, taskState->vcPendingG,
+						taskState->vcPendingB),
+					1.f);
+		}
+	}
+
+	//----------------------------------------------------------------------
+	// Queue the next connect (the CPU ConnectVertices loop body runs one
+	// vertex per iteration - the rays[gid] slot resolves in the next
+	// trace pass like the DL shadow ray)
+	//----------------------------------------------------------------------
+	bool queued = false;
+	// CPU ConnectVertices gate: delta eye vertices can not connect
+	if ((count > 0u) && !BSDF_IsDelta(eyeBsdf MATERIALS_PARAM)) {
+		uint k = taskState->vcCursor;
+		for (; k < count; ++k) {
+			__global const VCLightVertex *lv =
+					&lightVertices[lightTask * vcSlotsPerTask + k];
+
+			// Skip never-written slots (clamped-region guard - kernel
+			// launches are serialized so a written record is whole)
+			if (lv->seq == 0u)
+				continue;
+
+			const float3 p2p = VLOAD3F(&lv->bsdf.hitPoint.p.x) - eyeP;
+			const float p2pDistance2 = dot(p2p, p2p);
+			if (p2pDistance2 <= 0.f)
+				continue;
+			const float p2pDistance = sqrt(p2pDistance2);
+			const float3 p2pDir = p2p / p2pDistance;
+
+			// Check eye vertex BSDF
+			BSDFEvent eyeEvent;
+			float eyeBsdfPdfW;
+			const float3 eyeBsdfEval = BSDF_Evaluate(eyeBsdf,
+					p2pDir, &eyeEvent, &eyeBsdfPdfW
+					MATERIALS_PARAM);
+			if (Spectrum_IsBlack(eyeBsdfEval))
+				continue;
+			float eyeBsdfRevPdfW;
+			BSDF_Pdf(eyeBsdf, p2pDir, NULL, &eyeBsdfRevPdfW
+					MATERIALS_PARAM);
+
+			// Check light vertex BSDF (evaluated on the stored copy)
+			BSDFEvent lightEvent;
+			float lightBsdfPdfW;
+			const float3 lightBsdfEval = BSDF_Evaluate(&lv->bsdf,
+					-p2pDir, &lightEvent, &lightBsdfPdfW
+					MATERIALS_PARAM);
+			if (Spectrum_IsBlack(lightBsdfEval))
+				continue;
+			float lightBsdfRevPdfW;
+			BSDF_Pdf(&lv->bsdf, -p2pDir, NULL, &lightBsdfRevPdfW
+					MATERIALS_PARAM);
+
+			const float cosThetaAtCamera = dot(eyeShadeN, p2pDir);
+			const float cosThetaAtLight =
+					dot(VLOAD3F(&lv->bsdf.hitPoint.shadeN.x), -p2pDir);
+			// The cosine terms are inside the Evaluate()s (CPU parity)
+			const float geometryTerm = 1.f / p2pDistance2;
+
+			//--------------------------------------------------------------
+			// MIS weights (CPU ConnectVertices - misVm/misVc = 0)
+			//--------------------------------------------------------------
+			float eyePdfW = eyeBsdfPdfW;
+			float eyeRevPdfW = eyeBsdfRevPdfW;
+			float lightPdfW = lightBsdfPdfW;
+			float lightRevPdfW = lightBsdfRevPdfW;
+			// Eye depth is 0-based here, CPU eyeVertex.depth is +1
+			if (pathInfo->depth.depth + 1u >= taskConfig->pathTracer.rrDepth) {
+				const float prob = RussianRouletteProb(
+						taskConfig->pathTracer.rrImportanceCap, eyeBsdfEval);
+				eyePdfW *= prob;
+				eyeRevPdfW *= prob;
+			}
+			// lv->depth is stored in the CPU 1-based convention
+			if (lv->depth >= taskConfig->pathTracer.rrDepth) {
+				const float prob = RussianRouletteProb(
+						taskConfig->pathTracer.rrImportanceCap, lightBsdfEval);
+				lightPdfW *= prob;
+				lightRevPdfW *= prob;
+			}
+
+			const float eyeBsdfPdfA = PdfWtoA(eyePdfW, p2pDistance,
+					cosThetaAtLight);
+			const float lightBsdfPdfA = PdfWtoA(lightPdfW, p2pDistance,
+					cosThetaAtCamera);
+
+			const float lightWeight = VCMis(eyeBsdfPdfA) *
+					(lv->dVCM + lv->dVC * VCMis(lightRevPdfW));
+			const float eyeWeight = VCMis(lightBsdfPdfA) *
+					(pathInfo->dVCM + pathInfo->dVC * VCMis(eyeRevPdfW));
+			const float misWeight = 1.f / (lightWeight + 1.f + eyeWeight);
+
+			//--------------------------------------------------------------
+			// Queue the visibility ray and defer the contribution to the
+			// resolve phase (CPU folds connectionThroughput in after the
+			// unblocked test - the throughput is unknown until then)
+			//--------------------------------------------------------------
+			const float3 shadowRayOrig = BSDF_GetRayOrigin(eyeBsdf, p2pDir);
+			const float3 shadowRayOrigP2P =
+					VLOAD3F(&lv->bsdf.hitPoint.p.x) - shadowRayOrig;
+			const float shadowRayDistance2 = dot(shadowRayOrigP2P, shadowRayOrigP2P);
+			if (shadowRayDistance2 <= 0.f)
+				continue;
+			const float shadowRayDistance = sqrt(shadowRayDistance2);
+			const float3 shadowRayDir = shadowRayOrigP2P / shadowRayDistance;
+
+			Ray_Init4(&rays[gid], shadowRayOrig, shadowRayDir,
+					0.f, shadowRayDistance, rays[gid].time);
+
+			// Volume state of the connect ray: a copy of the eye
+			// prefix's, with the current volume set by the arrival side
+			// of the light vertex (CPU parity)
+			directLightVolInfos[gid] = pathInfo->volume;
+			const bool connectionIntoObject =
+					(dot(VLOAD3F(&lv->bsdf.hitPoint.geometryN.x),
+					-shadowRayDir) < 0.f);
+			directLightVolInfos[gid].currentVolumeIndex = connectionIntoObject ?
+					lv->bsdf.hitPoint.interiorVolumeIndex :
+					lv->bsdf.hitPoint.exteriorVolumeIndex;
+
+			const float3 pending = (misWeight * geometryTerm) *
+					eyeBsdfEval * lightBsdfEval *
+					MAKE_FLOAT3(lv->throughputR, lv->throughputG,
+							lv->throughputB);
+			taskState->vcPendingR = pending.x;
+			taskState->vcPendingG = pending.y;
+			taskState->vcPendingB = pending.z;
+			taskState->vcPendingLightID = lv->lightID;
+			taskState->vcPendingEvent = eyeEvent;
+			taskState->vcPending = 1u;
+			taskState->vcCursor = k;
+			queued = true;
+			break;
+		}
+		if (!queued)
+			taskState->vcCursor = count;
+	}
+
+	if (!queued) {
+		// Done connecting: mask the free ray slot and move on - the last
+		// vertex splats instead of bouncing (its DL stage was skipped)
+		rays[gid].flags = RAY_FLAGS_MASKED;
+		taskState->state = sampleResult->lastPathVertex ?
+				MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
+	}
 }
 
 //------------------------------------------------------------------------------

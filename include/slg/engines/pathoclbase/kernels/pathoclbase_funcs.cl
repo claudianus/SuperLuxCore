@@ -78,6 +78,12 @@ OPENCL_FORCE_INLINE void InitSampleResult(
 	sampleResult->lastPathVertex = (taskConfig->pathTracer.maxPathDepth.depth == 1);
 }
 
+// Vertex connection (M6): the BiDirCPU MIS weighting function - power
+// heuristic with beta=2 (bidircpu.h:71, SmallVCM convention)
+OPENCL_FORCE_INLINE float VCMis(const float a) {
+	return a * a;
+}
+
 OPENCL_FORCE_INLINE void GenerateEyePath(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global GPUTaskDirectLight *taskDirectLight,
@@ -130,6 +136,18 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 			timeSample,
 			dofSampleX, dofSampleY);
 #endif
+
+	if (taskConfig->pathTracer.vertexConnect.enabled) {
+		// Vertex connection (M6) eye-prefix init (CPU BIDIR eye loop):
+		// dVCM = MIS(1/cameraPdfW), dVC = 0. The GPU cameraPdfW is the
+		// importance density only - the DoF lens pdf term of the CPU
+		// GetPDF is not folded (exact for pinhole cameras).
+		float cameraPdfW, fluxToRadianceFactor;
+		if (Camera_GetPDF(camera, ray, 0.f, &cameraPdfW,
+				&fluxToRadianceFactor) && (cameraPdfW > 0.f))
+			pathInfo->dVCM = VCMis(1.f / cameraPdfW);
+		pathInfo->dVC = 0.f;
+	}
 
 	// Initialize the path state
 	taskState->state = MK_RT_NEXT_VERTEX;
@@ -186,6 +204,9 @@ OPENCL_FORCE_INLINE bool CheckDirectHitVisibilityFlags(__global const LightSourc
 }
 
 OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict film,
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		const float sceneRadius,
+		__global const float* restrict emitLightsDistribution,
 		__global EyePathInfo *pathInfo, __global const Spectrum* restrict pathThroughput,
 		const __global Ray *ray, __global const BSDF *bsdf, __global SampleResult *sampleResult
 		LIGHTS_PARAM_DECL) {
@@ -195,6 +216,7 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		return;
 
 	const float3 throughput = VLOAD3F(pathThroughput->c);
+	const bool vcEnabled = taskConfig->pathTracer.vertexConnect.enabled;
 
 	for (uint i = 0; i < envLightCount; ++i) {
 		__global const LightSource* restrict light = &lights[envLightIndices[i]];
@@ -204,8 +226,10 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 			continue;
 
 		float directPdfW;
-		const float3 envRadianceRGB = EnvLight_GetRadiance(light, bsdf,
-				-VLOAD3F(&ray->d.x), &directPdfW
+		float emissionPdfW = 0.f;
+		const float3 envRadianceRGB = EnvLight_GetRadiance(light, sceneRadius, bsdf,
+				-VLOAD3F(&ray->d.x), &directPdfW,
+				vcEnabled ? &emissionPdfW : NULL
 				LIGHTS_PARAM);
 #if defined(SLG_SPECTRAL)
 		// Env lights carry baked RGB radiance: upsample to the path bins
@@ -220,7 +244,25 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 
 		if (!Spectrum_IsBlack(envRadiance)) {
 			float weight;
-			if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
+			if (vcEnabled) {
+				// Vertex connection (M6): CPU DirectHitLight - the first
+				// eye vertex (depth == 1) carries no MIS; deeper vertices
+				// use the emit-strategy pick pdf:
+				//   weightCamera = MIS(directPdfA*pick) * dVCM
+				//       + MIS(emissionPdfW*pick) * dVC
+				//   misWeight = 1 / (weightCamera + 1)
+				if (sampleResult->firstPathVertex)
+					weight = 1.f;
+				else {
+					const float lightPickProb = emitLightsDistribution ?
+							Distribution1D_PdfDiscrete(emitLightsDistribution,
+									envLightIndices[i]) : 0.f;
+					const float weightCamera =
+							VCMis(directPdfW * lightPickProb) * pathInfo->dVCM +
+							VCMis(emissionPdfW * lightPickProb) * pathInfo->dVC;
+					weight = 1.f / (weightCamera + 1.f);
+				}
+			} else if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
 				// The previous vertex picked its NEE distribution: a
 				// shadow-catcher-only-infinite vertex used the infinite
 				// distribution (no DLSC lookup - CPU parity)
@@ -238,13 +280,15 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 				weight = PowerHeuristic(pathInfo->lastBSDFPdfW, directPdfW * lightPickProb);
 			} else
 				weight = 1.f;
-			
+
 			SampleResult_AddEmission(film, sampleResult, light->lightID, throughput, weight * envRadiance);
 		}
 	}
 }
 
 OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict film,
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global const float* restrict emitLightsDistribution,
 		__global EyePathInfo *pathInfo,
 		__global const Spectrum* restrict pathThroughput, const __global Ray *ray,
 		const float distance, __global const BSDF *bsdf,
@@ -258,15 +302,33 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 			// will take care of transporting all emitted light
 			bsdf->hitPoint.throughShadowTransparency)
 		return;
-	
+
 	float directPdfA;
-	const float3 emittedRadiance = BSDF_GetEmittedRadiance(bsdf, &directPdfA
+	float emissionPdfW = 0.f;
+	const bool vcEnabled = taskConfig->pathTracer.vertexConnect.enabled;
+	const float3 emittedRadiance = BSDF_GetEmittedRadiance(bsdf, &directPdfA,
+			vcEnabled ? &emissionPdfW : NULL
 			LIGHTS_PARAM);
 
 	if (!Spectrum_IsBlack(emittedRadiance)) {
 		// Add emitted radiance
 		float weight = 1.f;
-		if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
+		if (vcEnabled) {
+			// Vertex connection (M6): CPU DirectHitLight - directPdfA
+			// stays in AREA measure here (CPU parity), the pick pdf is
+			// the emit strategy's
+			if (sampleResult->firstPathVertex)
+				weight = 1.f;
+			else {
+				const float lightPickProb = emitLightsDistribution ?
+						Distribution1D_PdfDiscrete(emitLightsDistribution,
+								bsdf->triangleLightSourceIndex) : 0.f;
+				const float weightCamera =
+						VCMis(directPdfA * lightPickProb) * pathInfo->dVCM +
+						VCMis(emissionPdfW * lightPickProb) * pathInfo->dVC;
+				weight = 1.f / (weightCamera + 1.f);
+			}
+		} else if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
 			// Same distribution the previous vertex's NEE drew from:
 			// shadow-catcher-only-infinite vertices use the infinite
 			// distribution (no DLSC lookup - CPU parity)
@@ -574,7 +636,7 @@ OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
 				time, entry->lsU, entry->lsV, entry->lsP,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 				tmpHitPoint,
-				shadowRay, &nbPdfW
+				shadowRay, &nbPdfW, NULL, NULL
 				LIGHTS_PARAM);
 		if (Spectrum_IsBlack(nbRadiance) || (nbPdfW <= 0.f))
 			continue;
@@ -710,7 +772,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				time, su, sv, sp,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 				tmpHitPoint,
-				&candRays[i], &candPdfW
+				&candRays[i], &candPdfW, NULL, NULL
 				LIGHTS_PARAM);
 		if (Spectrum_IsBlack(candRadiance) || (candPdfW <= 0.f)) {
 			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
@@ -820,7 +882,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				time, entry->lsU, entry->lsV, entry->lsP,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 				tmpHitPoint,
-				&candRays[slot], &nbPdfW
+				&candRays[slot], &nbPdfW, NULL, NULL
 				LIGHTS_PARAM);
 		if (Spectrum_IsBlack(nbRadiance) || (nbPdfW <= 0.f))
 			continue;
@@ -1039,15 +1101,21 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirResolveVisibility(
 		// reconnection shift. The emitted ray is traced through
 		// MK_RT_DL, keeping V/contribution consistent.
 		float directPdfW;
+		// Scalar output params are thread pointers under Metal - they
+		// can not alias device memory like &info->emissionPdfW
+		float emissionPdfW, cosThetaAtLight;
 		lightRadiance = Light_Illuminate(
 				light,
 				bsdf,
 				time, resLSU, resLSV, resLSP,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 				tmpHitPoint,
-				shadowRay, &directPdfW
+				shadowRay, &directPdfW,
+				&emissionPdfW, &cosThetaAtLight
 				LIGHTS_PARAM);
 		info->directPdfW = directPdfW;
+		info->emissionPdfW = emissionPdfW;
+		info->cosThetaAtLight = cosThetaAtLight;
 	}
 
 	if (Spectrum_IsBlack(lightRadiance))
@@ -1167,7 +1235,7 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 					time, u_i, 0.f, 0.f,
 					worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 					tmpHitPoint,
-					shadowRay, &candPdfW
+					shadowRay, &candPdfW, NULL, NULL
 					LIGHTS_PARAM);
 
 			if (Spectrum_IsBlack(candRadiance) || (candPdfW <= 0.f))
@@ -1272,20 +1340,24 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 
 	// Illuminate the point
 	float directPdfW;
+	float emissionPdfW, cosThetaAtLight;
 	const float3 lightRadiance = Light_Illuminate(
 			&lights[lightIndex],
 			bsdf,
 			time, u1, u2,
 			lightPassThroughEvent,
 			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-			tmpHitPoint,		
-			shadowRay, &directPdfW
+			tmpHitPoint,
+			shadowRay, &directPdfW,
+			&emissionPdfW, &cosThetaAtLight
 			LIGHTS_PARAM);
-	
+
 	if (Spectrum_IsBlack(lightRadiance))
 		return false;
 	else {
 		info->directPdfW = directPdfW;
+		info->emissionPdfW = emissionPdfW;
+		info->cosThetaAtLight = cosThetaAtLight;
 		info->risScale = risScale;
 		VSTORE3F(lightRadiance, info->lightRadiance.c);
 		VSTORE3F(lightRadiance, info->lightIrradiance.c);
@@ -1425,7 +1497,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 			float directPdfA;
 			for (uint e = 0; e < envLightCount; ++e)
 				env += EnvLight_GetRadiance(&lights[envLightIndices[e]],
-						x1bsdf, -dir, &directPdfA
+						worldRadius, x1bsdf, -dir, &directPdfA, NULL
 						LIGHTS_PARAM);
 			VSTORE3F(env, &rec->emisR);
 			// The bounce slot is consumed; mask it so the next trace
@@ -1453,7 +1525,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 
 		float directPdfA;
 		float3 lHat = BSDF_IsLightSource(tmpBsdf) ?
-				BSDF_GetEmittedRadiance(tmpBsdf, &directPdfA
+				BSDF_GetEmittedRadiance(tmpBsdf, &directPdfA, NULL
 						LIGHTS_PARAM) : BLACK;
 
 		// One-sample NEE probe (light pick + shadow ray): the binary
@@ -1480,7 +1552,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 					RestirGI_Hash(seed, 0x75u),
 					worldCenterX, worldCenterY, worldCenterZ, worldRadius,
 					tmpHitPoint,
-					&candRays[K + i], &directPdfW
+					&candRays[K + i], &directPdfW, NULL, NULL
 					LIGHTS_PARAM);
 			if (!Spectrum_IsBlack(lightRadiance) && (directPdfW > 0.f)) {
 				BSDFEvent event2;
@@ -2604,16 +2676,16 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 				VLOAD3F(&bsdf->hitPoint.p.x), shadowRayDir) +
 				(1.f - portalW) * bouncePdfW;
 
-	// Russian Roulette
-	bouncePdfW *= (PathDepthInfo_GetRRDepth(tmpDepthInfo) >= taskConfig->pathTracer.rrDepth) ?
-		RussianRouletteProb(taskConfig->pathTracer.rrImportanceCap, bsdfEval) :
-		1.f;
+	// No Russian Roulette factor in the bounce density: RR is orthogonal to
+	// direction sampling and the analog-hit weights don't carry it (see
+	// PathTracer::DirectLightSampling). The old bsdfEval-based factor broke
+	// MIS symmetry and inflated interior volume NEE by ~1/cap.
 
 	// Account for material transparency
 	__global const LightSource* restrict light = &lights[info->lightIndex];
 	bouncePdfW *= Light_GetAvgPassThroughTransparency(light
 			LIGHTS_PARAM);
-	
+
 	// MIS between direct light sampling and BSDF sampling
 	//
 	// Note: I have to avoiding MIS on the last path vertex
@@ -2623,7 +2695,42 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 			CheckDirectHitVisibilityFlags(light, tmpDepthInfo, event) &&
 			!bsdf->hitPoint.throughShadowTransparency;
 
-	const float weight = misEnabled ? PowerHeuristic(directLightSamplingPdfW, bouncePdfW) : 1.f;
+	float weight;
+	if (taskConfig->pathTracer.vertexConnect.enabled) {
+		// Vertex connection (M6): CPU DirectLightSampling MIS -
+		//   weightLight = MIS(bsdfPdfW / directLightSamplingPdfW)
+		//   weightCamera = MIS(emissionPdfW*cosThetaToLight /
+		//       (directPdfW*cosThetaAtLight)) * (dVCM + dVC*MIS(revPdfW))
+		//   misWeight = 1/(weightLight + 1 + weightCamera)
+		float bsdfRevPdfW;
+		BSDF_Pdf(bsdf, shadowRayDir, NULL, &bsdfRevPdfW MATERIALS_PARAM);
+		// Non-intersectable lights can not be sampled by the BSDF
+		// technique (CPU parity)
+		float wLightNum = Light_IsEnvOrIntersectable(light) ?
+				bouncePdfW : 0.f;
+		// CPU checks (eyeVertex.depth + 1 >= rrDepth) where eyeVertex.depth
+		// is 1-based and depth.depth is 0-based here: +2 (CPU parity)
+		const uint vDepth = pathInfo->depth.depth + 2u;
+		if (vDepth >= taskConfig->pathTracer.rrDepth) {
+			const float prob = RussianRouletteProb(
+					taskConfig->pathTracer.rrImportanceCap, bsdfEval);
+			wLightNum *= prob;
+			bsdfRevPdfW *= prob;
+		}
+		const float cosThetaToLight = fabs(dot(shadowRayDir,
+				VLOAD3F(&bsdf->hitPoint.shadeN.x)));
+		const float weightLight = VCMis(wLightNum / directLightSamplingPdfW);
+		const float denom = info->directPdfW * info->cosThetaAtLight;
+		const float weightCamera = (denom > 0.f) ?
+				VCMis(info->emissionPdfW * cosThetaToLight / denom) *
+				(pathInfo->dVCM + pathInfo->dVC * VCMis(bsdfRevPdfW)) : 0.f;
+		weight = 1.f / (weightLight + 1.f + weightCamera);
+	} else
+		weight = misEnabled ? PowerHeuristic(directLightSamplingPdfW,
+				bouncePdfW) : 1.f;
+	// The shadow-transparent override is applied in MK_RT_DL once the
+	// occluder flag is known (CPU parity)
+	info->vcMisWeight = weight;
 
 	const float3 lightRadiance = VLOAD3F(info->lightRadiance.c);
 	VSTORE3F(bsdfEval * (weight * factor) * lightRadiance, info->lightRadiance.c);
@@ -3915,7 +4022,7 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_Seg2Setup(
 			&taskDirectLight->mneeBsdfFinal,
 			ray->time, uSeg1, uSeg2, uSeg3,
 			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-			&task->tmpHitPoint, rayOut, &directPdfW2
+			&task->tmpHitPoint, rayOut, &directPdfW2, NULL, NULL
 			LIGHTS_PARAM);
 
 	if (Spectrum_IsBlack(lightRadiance2) || !isfinite(directPdfW2))
@@ -4543,7 +4650,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 			&taskDirectLight->mneeBsdfFinal,
 			ray->time, uSeg1, uSeg2, uSeg3,
 			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-			&task->tmpHitPoint, ray, &directPdfW2
+			&task->tmpHitPoint, ray, &directPdfW2, NULL, NULL
 			LIGHTS_PARAM);
 
 	if (Spectrum_IsBlack(lightRadiance2) || !isfinite(directPdfW2)) {
@@ -6321,7 +6428,19 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global float *filmScreenRadianceGroup5 \
 		, __global float *filmScreenRadianceGroup6 \
 		, __global float *filmScreenRadianceGroup7 \
-		, __global const float* restrict lightFilterLUTs
+		, __global const float* restrict lightFilterLUTs \
+		/* Vertex connection (M6): the light vertex cache written by \
+		 * MK_LIGHT_VERTEX. NULL when vertexConnect is disabled */ \
+		, __global VCLightVertex *lightVertices
+
+// Vertex connection (M6): eye-side kernels need the emit light strategy
+// distribution for the CPU DirectHitLight weightCamera pick pdf (the
+// light sub-path was picked with it in MK_LIGHT_INIT). Kept out of
+// KERNEL_ARGS for the same Apple argument-limit reason as
+// KERNEL_ARGS_LIGHT. Bound to emitLightsDistributionBuff (NULL-safe:
+// gated on vertexConnect.enabled).
+#define KERNEL_ARGS_VC \
+		, __global const float* restrict emitLightsDistribution
 
 // Wavefront lane -> task index mapping. Under wavefrontEnable, lane
 // gid indexes this kernel's state queue; otherwise the dense mapping

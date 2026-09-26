@@ -46,5 +46,15 @@ typedef struct {
 	// (light-adjacent) vertex is gated separately by connection
 	// difficulty.
 	int isAdaptiveCaustic;
+
+	// Vertex connection (M6) eye-prefix MIS bookkeeping, per CPU
+	// BiDirCPURenderThread (misVmWeightFactor/misVcWeightFactor = 0 ->
+	// pure BDPT; dVM is not carried). dVCM inits to MIS(1/cameraPdfW)
+	// at MK_GENERATE_CAMERA_RAY.
+	float dVCM, dVC;
+	// The MIS fold applied at the last hit (dVCM *= vcFoldVCM,
+	// dVC *= vcFoldVC) - stored so a pass-through vertex (not a real
+	// vertex on the CPU side) can undo it at bounce time.
+	float vcFoldVCM, vcFoldVC;
 } EyePathInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

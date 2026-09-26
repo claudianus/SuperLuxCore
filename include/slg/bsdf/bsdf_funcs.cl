@@ -187,13 +187,28 @@ OPENCL_FORCE_INLINE float BSDF_ShadowTerminatorAvoidanceFactor(const float3 Ni, 
 	return -G3 + G2 + G;
 }
 
-OPENCL_FORCE_INLINE float3 BSDF_Evaluate(__global const BSDF *bsdf,
-		const float3 generatedDir, BSDFEvent *event, float *directPdfW
+// Full BSDF::Evaluate() port including the adjoint (fromLight) convention:
+// a hit point produced by a LIGHT_RAY swaps the eye/light direction roles
+// and the result is adjoint-corrected by absDotEyeDirNG/absDotLightDirNG
+// (bsdf.cpp:345-347). The fromLight flag is not stored - hitPoint.rayFlags
+// carries the generating ray type (HitPoint_SetRayContext).
+//
+// directPdfW is the density of generatedDir (the vertex's forward
+// scattering pdf); reversePdfW is the density of the reversed event
+// (fixedDir). The GPU eval ops have no fromLight parameter, so the
+// reverse density is obtained by a second, direction-swapped
+// Material_Evaluate - exact for the pdf but ~2x the cost, so it is only
+// run when reversePdfW is requested.
+OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
+		const float3 generatedDir, BSDFEvent *event, float *directPdfW,
+		float *reversePdfW
 		MATERIALS_PARAM_DECL) {
+	const bool fromLight = (bsdf->hitPoint.rayFlags & LIGHT_RAY) != 0;
 	//const Vector &eyeDir = fromLight ? generatedDir : hitPoint.fixedDir;
 	//const Vector &lightDir = fromLight ? hitPoint.fixedDir : generatedDir;
-	const float3 eyeDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
-	const float3 lightDir = generatedDir;
+	const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
+	const float3 eyeDir = fromLight ? generatedDir : fixedDir;
+	const float3 lightDir = fromLight ? fixedDir : generatedDir;
 	const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
 	const float3 interpolatedN =  VLOAD3F(&bsdf->hitPoint.interpolatedN.x);
 	const float3 shadeN =  VLOAD3F(&bsdf->hitPoint.shadeN.x);
@@ -229,11 +244,30 @@ OPENCL_FORCE_INLINE float3 BSDF_Evaluate(__global const BSDF *bsdf,
 	__global const Frame *frame = &bsdf->frame;
 	const float3 localLightDir = Frame_ToLocal(frame, lightDir);
 	const float3 localEyeDir = Frame_ToLocal(frame, eyeDir);
+	float pdf0;
 	float3 result = Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
-			localLightDir, localEyeDir,	event, directPdfW
+			localLightDir, localEyeDir,	event, &pdf0
 			MATERIALS_PARAM);
 	if (Spectrum_IsBlack(result))
 		return BLACK;
+
+	// pdf0 is the density of the lightDir argument of the eval call:
+	//   eye path  -> pdf(generatedDir) = directPdfW
+	//   light path -> pdf(fixedDir)    = reversePdfW
+	// (no local pointer aliases - MSL requires explicit address spaces)
+	const bool needSecond = fromLight ? (directPdfW != NULL) :
+			(reversePdfW != NULL);
+	float pdf1 = 0.f;
+	if (needSecond) {
+		BSDFEvent event1;
+		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
+				localEyeDir, localLightDir, &event1, &pdf1
+				MATERIALS_PARAM);
+	}
+	if (directPdfW)
+		*directPdfW = fromLight ? pdf1 : pdf0;
+	if (reversePdfW)
+		*reversePdfW = fromLight ? pdf0 : pdf1;
 
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
@@ -242,9 +276,46 @@ OPENCL_FORCE_INLINE float3 BSDF_Evaluate(__global const BSDF *bsdf,
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z)))
 			result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
 					BSDF_GetLandingShadeN(bsdf), lightDir);
+
+		// Adjoint BSDF (not for volumes)
+		if (fromLight)
+			result *= (absDotEyeDirNG / absDotLightDirNG);
 	}
 
 	return result;
+}
+
+OPENCL_FORCE_INLINE float3 BSDF_Evaluate(__global const BSDF *bsdf,
+		const float3 generatedDir, BSDFEvent *event, float *directPdfW
+		MATERIALS_PARAM_DECL) {
+	return BSDF_EvaluateRev(bsdf, generatedDir, event, directPdfW, 0
+			MATERIALS_PARAM);
+}
+
+// Port of BSDF::Pdf() (bsdf.cpp:408): the pdf of sampling sampledDir
+// (directPdfW) and of the reversed event (reversePdfW). Unlike Evaluate()
+// this applies no side tests or terminator factors - matching the CPU
+// call to material->Pdf(). With the GPU eval ops both densities come from
+// Material_Evaluate's pdf output under the two argument orders:
+// pdf(direct) = Evaluate(localSampled, localFixed).pdf and
+// pdf(reverse) = Evaluate(localFixed, localSampled).pdf. This matches the
+// CPU material->Pdf for both path directions (the CPU fromLight swap
+// only relabels which cosine each density carries).
+OPENCL_FORCE_INLINE void BSDF_Pdf(__global const BSDF *bsdf,
+		const float3 sampledDir, float *directPdfW, float *reversePdfW
+		MATERIALS_PARAM_DECL) {
+	const float3 localSampledDir = Frame_ToLocal(&bsdf->frame, sampledDir);
+	const float3 localFixedDir = Frame_ToLocal(&bsdf->frame,
+			VLOAD3F(&bsdf->hitPoint.fixedDir.x));
+	BSDFEvent event;
+	if (directPdfW)
+		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
+				localSampledDir, localFixedDir, &event, directPdfW
+				MATERIALS_PARAM);
+	if (reversePdfW)
+		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
+				localFixedDir, localSampledDir, &event, reversePdfW
+				MATERIALS_PARAM);
 }
 
 OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0, const float u1,
@@ -265,15 +336,36 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	*absCosSampledDir = fabs(CosTheta(localSampledDir));
 	*sampledDir = Frame_ToWorld(&bsdf->frame, localSampledDir);
 
+	const bool fromLight = (bsdf->hitPoint.rayFlags & LIGHT_RAY) != 0;
+
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
 		const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 		const float3 interpolatedN = VLOAD3F(&bsdf->hitPoint.interpolatedN.x);
+		// CPU BSDF::Sample uses lightDir = fromLight ? fixedDir : sampledDir
+		const float3 lightDir = fromLight ?
+				VLOAD3F(&bsdf->hitPoint.fixedDir.x) : *sampledDir;
 		if ((*event & REFLECT) &&
 				(*event & (DIFFUSE | GLOSSY)) &&
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z)))
 			result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
-					BSDF_GetLandingShadeN(bsdf), *sampledDir);
+					BSDF_GetLandingShadeN(bsdf), lightDir);
+	}
+
+	// Adjoint BSDF (CPU bsdf.cpp:399-403): BSDF::Sample multiplies the
+	// fromLight result by absDot(sampledDir, geometryN) /
+	// absDot(fixedDir, geometryN). On top of that the material-internal
+	// fromLight factor (e.g. MatteMaterial::Sample returns
+	// Kd*|fixedDir.z/sampledDir.z|) is approximated by the shading-frame
+	// cosine ratio - exact for cosine-weighted materials, identity on
+	// flat-shaded geometry.
+	if (fromLight) {
+		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+		const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+		const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
+		result *= fabs(dot(fixedDir, shadeN) * dot(*sampledDir, geometryN)) /
+				fmax(fabs(dot(*sampledDir, shadeN)) * fabs(dot(fixedDir, geometryN)),
+						DEFAULT_COS_EPSILON_STATIC);
 	}
 
 	return result;
@@ -283,14 +375,15 @@ OPENCL_FORCE_INLINE bool BSDF_IsLightSource(__global const BSDF *bsdf) {
 	return (bsdf->triangleLightSourceIndex != NULL_INDEX);
 }
 
-OPENCL_FORCE_INLINE float3 BSDF_GetEmittedRadiance(__global const BSDF *bsdf, float *directPdfA
+OPENCL_FORCE_INLINE float3 BSDF_GetEmittedRadiance(__global const BSDF *bsdf, float *directPdfA,
+		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	const uint triangleLightSourceIndex = bsdf->triangleLightSourceIndex;
 	if (triangleLightSourceIndex == NULL_INDEX)
 		return BLACK;
 	else
 		return IntersectableLight_GetRadiance(&lights[triangleLightSourceIndex],
-				&bsdf->hitPoint, directPdfA
+				&bsdf->hitPoint, directPdfA, emissionPdfW
 				LIGHTS_PARAM);
 }
 

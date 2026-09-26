@@ -103,6 +103,12 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.portalSideGate = pathTracer->portalSideGate;
 	compiledPathTracer.portalAdapt = pathTracer->portalAdapt ? 1u : 0u;
 
+	// Vertex connection (M6): the vertex cache geometry (slotsPerTask,
+	// vertexCount) is filled at device init once lightTaskCount is known.
+	compiledPathTracer.vertexConnect.enabled = pathTracer->vertexConnectEnable;
+	compiledPathTracer.vertexConnect.slotsPerTask = 0;
+	compiledPathTracer.vertexConnect.vertexCount = 0;
+
 	// MNEE specular caustics (pathtracer_mnee.cpp): the kernel port runs the
 	// same single vertex solver (path.mnee.enable / path.mnee.maxiterations).
 	// The multi-specular chain port (MNEEMultiDirectSampling, MNEE_PHASE_MS_*

@@ -40,6 +40,14 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->isNearlySD = false;
 	pathInfo->isNearlySDS = false;
 	pathInfo->isAdaptiveCaustic = false;
+
+	// Vertex connection (M6) eye-prefix MIS bookkeeping - the real init
+	// (dVCM = MIS(1/cameraPdfW)) happens in GenerateEyePath after the
+	// camera ray exists
+	pathInfo->dVCM = 0.f;
+	pathInfo->dVC = 0.f;
+	pathInfo->vcFoldVCM = 1.f;
+	pathInfo->vcFoldVC = 1.f;
 }
 
 OPENCL_FORCE_INLINE bool EyePathInfo_UseRR(__global EyePathInfo *pathInfo, const uint rrDepth) {
