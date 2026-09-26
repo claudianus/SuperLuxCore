@@ -33,7 +33,10 @@ using namespace slg;
 // Tunables (env; cold path only)
 //------------------------------------------------------------------------------
 
-static unsigned long long GuideSwapRecords() {
+// Env fallbacks for the cache Settings fields the engine leaves unset
+// (path.guiding.* property wins; these keep the LUX_PG_* debug knobs
+// working when no property is defined).
+static unsigned long long GuideSwapRecordsDefault() {
 	static const unsigned long long v = []() {
 		const char *e = getenv("LUX_PG_SWAP");
 		return e ? Max(1000ULL, (unsigned long long)atoll(e)) :
@@ -42,18 +45,23 @@ static unsigned long long GuideSwapRecords() {
 	return v;
 }
 
-static float GuideWarmup() {
+// Warmup default when path.guiding.warmup is not set (env fallback).
+// The value is FLOORED at WARMUP_RECORDS: the GPU kernel gate
+// (GUIDE_WARMUP_RECORDS) is hardcoded, so any leaf the builder marks
+// usable must carry a count that also passes the device-side check -
+// a lower host warmup would emit nComp>0 leaves the kernel rejects.
+static float GuideWarmupDefault() {
 	static const float v = []() {
 		const char *e = getenv("LUX_PG_WARMUP");
 		return e ? (float)Max(atof(e), 1.0) : (float)PathGuidingCache::WARMUP_RECORDS;
 	}();
-	return v;
+	return Max(v, (float)PathGuidingCache::WARMUP_RECORDS);
 }
 
 // Split threshold: a leaf refines when its incident-flux share exceeds
-// this fraction of the round's total (env LUX_PG_SPLIT, default
-// SPLIT_FLUX_FRAC).
-static float GuideSplitFrac() {
+// this fraction of the round's total (path.guiding.split; env
+// LUX_PG_SPLIT fallback; default SPLIT_FLUX_FRAC).
+static float GuideSplitFracDefault() {
 	static const float v = []() {
 		const char *e = getenv("LUX_PG_SPLIT");
 		return e ? (float)Clamp(atof(e), 1e-6, 0.5) :
@@ -62,7 +70,7 @@ static float GuideSplitFrac() {
 	return v;
 }
 
-static u_int GuideMaxDepth() {
+static u_int GuideMaxDepthDefault() {
 	static const u_int v = []() {
 		const char *e = getenv("LUX_PG_MAXDEPTH");
 		return e ? (u_int)Clamp(atoi(e), 1, 12) : PathGuidingCache::TREE_MAX_DEPTH;
@@ -70,7 +78,7 @@ static u_int GuideMaxDepth() {
 	return v;
 }
 
-static u_int GuideMaxLeaves() {
+static u_int GuideMaxLeavesDefault() {
 	static const u_int v = []() {
 		const char *e = getenv("LUX_PG_MAXLEAVES");
 		return e ? (u_int)Clamp(atoi(e), 16, 65536) : PathGuidingCache::TREE_MAX_LEAVES;
@@ -109,6 +117,26 @@ static bool GuideNoUni() {
 //------------------------------------------------------------------------------
 // Small helpers
 //------------------------------------------------------------------------------
+
+void PathGuidingCache::AggStats::Add(const LeafStats &ls) {
+	for (u_int i = 0; i < DIR_BINS; ++i) {
+		bins[i] += ls.bins[i].load(std::memory_order_relaxed);
+		binsSq[i] += ls.binsSq[i].load(std::memory_order_relaxed);
+	}
+	count += ls.count.load(std::memory_order_relaxed);
+	nz += ls.nz.load(std::memory_order_relaxed);
+	total += ls.total.load(std::memory_order_relaxed);
+}
+
+void PathGuidingCache::AggStats::Add(const AggStats &o) {
+	for (u_int i = 0; i < DIR_BINS; ++i) {
+		bins[i] += o.bins[i];
+		binsSq[i] += o.binsSq[i];
+	}
+	count += o.count;
+	nz += o.nz;
+	total += o.total;
+}
 
 u_int PathGuidingCache::DirBin(const Vector &dir) {
 	// Equal-area: phi uniform, cosTheta uniform in [-1, 1]
@@ -225,8 +253,20 @@ float PathGuidingCache::CompWeights(const ReadLeaf &leaf,
 // Construction / teardown
 //------------------------------------------------------------------------------
 
-PathGuidingCache::PathGuidingCache(const Point &min, float size) :
-		cubeMin(min), cubeSize(size), invCubeSize(1.f / size) {
+PathGuidingCache::PathGuidingCache(const Point &min, float size,
+		const Settings &s) :
+		cubeMin(min), cubeSize(size), invCubeSize(1.f / size),
+		warmup((u_int)Max((float)(s.warmupRecords ? s.warmupRecords :
+				(u_int)GuideWarmupDefault()), (float)WARMUP_RECORDS)),
+		swapRecords(s.swapRecords ? s.swapRecords : GuideSwapRecordsDefault()),
+		splitFrac(s.splitFrac > 0.f ? s.splitFrac : GuideSplitFracDefault()),
+		maxDepth(s.maxDepth ? Min(s.maxDepth, TREE_MAX_DEPTH) :
+				GuideMaxDepthDefault()),
+		maxLeaves(s.maxLeaves ? Min(s.maxLeaves, 65536u) :
+				GuideMaxLeavesDefault()),
+		maxComponents(Clamp(s.maxComponents ? s.maxComponents : VMF_K,
+				1u, VMF_K)),
+		debug(s.debug) {
 	// Both trees start as a single cold root leaf.
 	WriteTree *wt = new WriteTree();
 	TreeNode root;
@@ -244,6 +284,29 @@ PathGuidingCache::PathGuidingCache(const Point &min, float size) :
 	rt->nodes.push_back(root);
 	rt->leaves.resize(1);
 	readTree.store(rt, std::memory_order_relaxed);
+}
+
+PathGuidingCache::Settings PathGuidingCache::SettingsFromProperties(
+		const Properties &cfg) {
+	// Property wins when defined; an unset field stays 0/empty so the
+	// ctor applies the LUX_PG_* env fallback and then the default.
+	Settings s;
+	s.warmupRecords = cfg.IsDefined("path.guiding.warmup") ?
+			(u_int)Max(0, cfg.Get("path.guiding.warmup").Get<int>()) : 0;
+	s.swapRecords = cfg.IsDefined("path.guiding.swaprecords") ?
+			(u_int)Max(1000, cfg.Get("path.guiding.swaprecords").Get<int>()) : 0;
+	s.splitFrac = cfg.IsDefined("path.guiding.split") ?
+			Clamp(cfg.Get("path.guiding.split").Get<float>(), 1e-6f, .5f) : 0.f;
+	s.maxDepth = cfg.IsDefined("path.guiding.maxdepth") ?
+			(u_int)Clamp(cfg.Get("path.guiding.maxdepth").Get<int>(), 1, 12) : 0;
+	s.maxLeaves = cfg.IsDefined("path.guiding.maxleaves") ?
+			(u_int)Clamp(cfg.Get("path.guiding.maxleaves").Get<int>(), 16, 65536) : 0;
+	s.maxComponents = cfg.IsDefined("path.guiding.components") ?
+			(u_int)Clamp(cfg.Get("path.guiding.components").Get<int>(), 1,
+				(int)VMF_K) : 0;
+	s.debug = cfg.IsDefined("path.guiding.debug") &&
+			cfg.Get("path.guiding.debug").Get<bool>();
+	return s;
 }
 
 PathGuidingCache::~PathGuidingCache() {
@@ -264,7 +327,7 @@ void PathGuidingCache::Record(const Point &p, const Vector &wi, float flux) cons
 	// scenes most arrivals carry ~0 local value and are dropped below, so
 	// counting only keeps would stall rounds forever.
 	writeRecords.fetch_add(1uLL, std::memory_order_relaxed);
-	if (writeRecords.load(std::memory_order_relaxed) > GuideSwapRecords())
+	if (writeRecords.load(std::memory_order_relaxed) > swapRecords)
 		SwapTrees();
 	// Rebuild window: drop the record rather than descend a mutating
 	// tree. Bounded and rare (~ms per ~1M records); training tolerates it.
@@ -329,7 +392,7 @@ void PathGuidingCache::SwapTrees(const bool forced) const {
 	// would publish an empty field for a whole round. Explicit ForceSwap
 	// calls (drain cadence, tests) bypass the check.
 	if (!forced &&
-			writeRecords.load(std::memory_order_relaxed) < GuideSwapRecords() / 2) {
+			writeRecords.load(std::memory_order_relaxed) < swapRecords / 2) {
 		swapFlag.store(false, std::memory_order_relaxed);
 		return;
 	}
@@ -340,20 +403,21 @@ void PathGuidingCache::SwapTrees(const bool forced) const {
 	ReadTree *newR = BuildReadTree(*oldW);
 	WriteTree *newW = BuildWriteTree(*oldW);
 
-	static const bool kDebug = (getenv("LUX_PG_DEBUG") != nullptr);
+	const bool kDebug = debug || (getenv("LUX_PG_DEBUG") != nullptr);
 	if (kDebug) {
 		double cSum = 0.0, tSum = 0.0;
 		u_int warm = 0;
 		for (u_int i = 0; i < newR->leaves.size(); ++i) {
 			cSum += newR->leaves[i].count;
 			tSum += newR->leaves[i].total;
-			if (newR->leaves[i].count >= GuideWarmup())
+			if (newR->leaves[i].count >= warmup)
 				++warm;
 		}
 		// stderr: pysuperluxcore installs no SLG log handler
-		fprintf(stderr, "[PG] swap: leaves=%u kept=%llu attempts=%llu flux=%g warm=%u\n",
+		fprintf(stderr, "[PG] swap: leaves=%u kept=%llu attempts=%llu flux=%g warm=%u borrowed=%u\n",
 				newW->leafCount, (unsigned long long)cSum,
-				writeRecords.load(std::memory_order_relaxed), tSum, warm);
+				writeRecords.load(std::memory_order_relaxed), tSum, warm,
+				newR->borrowedLeaves);
 	}
 	static const char *kDumpBins = getenv("LUX_PG_DUMPBINS");
 	if (kDumpBins) {
@@ -427,10 +491,17 @@ void PathGuidingCache::SwapTrees(const bool forced) const {
 	swapFlag.store(false, std::memory_order_relaxed);
 }
 
-// Fit one leaf's vMF mixture from its directional histogram by weighted
-// EM over the 128 bin centroids (K <= VMF_K). The per-bin target is the
+// Fit one leaf's vMF mixture from a directional histogram by weighted
+// EM over the 128 bin centroids. The per-bin target is the
 // variance-aware sqrt(E[x^2]) (Rath 2020), not the raw mean.
-void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
+//
+// P5 adaptive complexity: the directional-lobe count is chosen per leaf
+// by BIC (weighted log-likelihood - 1/2 * params * log N over the
+// signal-record count) across K_dir in {0..VMF_K-1}. A broad unimodal
+// field no longer pays for phantom extra lobes (overfit noise modes
+// were a measurable regression), while genuinely multimodal leaves
+// still earn the full K.
+void PathGuidingCache::FitLeaf(const AggStats &a, ReadLeaf &out) const {
 	out.nComp = 0;
 	out.peak = 0.f;
 	const bool noVA = GuideNoVA();
@@ -447,9 +518,9 @@ void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
 	for (u_int i = 0; i < DIR_BINS; ++i) {
 		float t;
 		if (noVA) {
-			t = ls.bins[i].load(std::memory_order_relaxed);
+			t = a.bins[i];
 		} else {
-			const float m2 = ls.binsSq[i].load(std::memory_order_relaxed);
+			const float m2 = a.binsSq[i];
 			t = (m2 > 0.f) ? sqrtf(m2) : 0.f;
 		}
 		q[i] = t;
@@ -462,38 +533,26 @@ void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
 	for (u_int i = 0; i < DIR_BINS; ++i)
 		q[i] *= invQ;
 
-	// --- Init: comp 0 is a fixed uniform lobe (kappa = 0, disabled by
-	// LUX_PG_NOUNI). It absorbs the diffuse mass sharp lobes cannot
-	// cover and keeps the fitted density bounded over the sphere:
-	// without it, gaps between lobes inside the empirical support
-	// create near-zero pdf outliers at sampling time. Directional
-	// lobes are seeded greedily on the largest / least-covered bins.
-	float w[VMF_K], kappa[VMF_K];
-	Vector mu[VMF_K];
-	u_int argMax = 0;
-	for (u_int i = 1; i < DIR_BINS; ++i)
-		if (q[i] > q[argMax])
-			argMax = i;
-	u_int kUsed = 0;
 	const bool hasUni = !GuideNoUni();
-	if (hasUni) {
-		mu[0] = Vector(0.f, 0.f, 1.f);
-		w[0] = .05f;
-		kappa[0] = 0.f;
-		kUsed = 1;
-	}
-	mu[kUsed] = centroid[argMax];
-	w[kUsed] = .9f;
-	kappa[kUsed] = 4.f;
-	++kUsed;
-	for (u_int k = kUsed; k < VMF_K; ++k) {
-		// Pick the weighted bin least covered by the current components
-		u_int best = argMax;
+
+	// --- Seed order for the directional lobes: argmax first, then the
+	// weighted bins least covered by the already-seeded lobes. The same
+	// greedy order applies to every candidate K, so it is computed once.
+	Vector seedMu[VMF_K];
+	// path.guiding.components caps the TOTAL lobe count (uni included):
+	// the BIC search only runs up to that budget.
+	const u_int maxDir = Min(hasUni ? VMF_K - 1 : VMF_K,
+			maxComponents - (hasUni ? Min(maxComponents, 1u) : 0u));
+	u_int nSeed = 0;
+	for (u_int k = 0; k < maxDir; ++k) {
+		u_int best = 0;
 		float bestScore = -1.f;
 		for (u_int i = 0; i < DIR_BINS; ++i) {
+			if (q[i] <= 0.f)
+				continue;
 			float cov = 0.f;
-			for (u_int j = 0; j < kUsed; ++j)
-				cov = Max(cov, w[j] * VmfPdf(Dot(centroid[i], mu[j]), kappa[j]));
+			for (u_int j = 0; j < nSeed; ++j)
+				cov = Max(cov, VmfPdf(Dot(centroid[i], seedMu[j]), 4.f));
 			const float score = q[i] * Max(0.f, 1.f - cov / VmfPdf(1.f, 4.f));
 			if (score > bestScore) {
 				bestScore = score;
@@ -502,65 +561,136 @@ void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
 		}
 		if (!(bestScore > 0.f))
 			break;
-		mu[kUsed] = centroid[best];
-		w[kUsed] = 1.f;
-		kappa[kUsed] = 4.f;
-		++kUsed;
+		seedMu[nSeed++] = centroid[best];
 	}
-	if (kUsed == 0)
+	if (nSeed == 0 && !hasUni)
 		return;
 
-	// --- EM over weighted bin centroids
-	float resp[VMF_K];
-	for (u_int it = 0; it < 16u; ++it) {
-		float newW[VMF_K] = {};
-		Vector newS[VMF_K];
+	// --- Candidate model: uniform lobe (if enabled) + kDir seeded
+	// directional lobes, EM-refined, pruned, evaluated.
+	struct Model {
+		u_int nComp;
+		float w[VMF_K], kappa[VMF_K];
+		Vector mu[VMF_K];
+		float logLik;
+	};
+	auto fitK = [&](const u_int kDir, Model &m) {
+		float w[VMF_K], kappa[VMF_K];
+		Vector mu[VMF_K];
+		u_int kUsed = 0;
+		if (hasUni) {
+			mu[0] = Vector(0.f, 0.f, 1.f);
+			w[0] = .05f;
+			kappa[0] = 0.f;
+			kUsed = 1;
+		}
+		for (u_int k = 0; k < kDir; ++k) {
+			mu[kUsed] = seedMu[k];
+			w[kUsed] = .9f;
+			kappa[kUsed] = 4.f;
+			++kUsed;
+		}
+
+		float resp[VMF_K];
+		for (u_int it = 0; it < 16u && kUsed; ++it) {
+			float newW[VMF_K] = {};
+			Vector newS[VMF_K];
+			for (u_int i = 0; i < DIR_BINS; ++i) {
+				if (q[i] <= 0.f)
+					continue;
+				float rSum = 0.f;
+				for (u_int k = 0; k < kUsed; ++k) {
+					resp[k] = w[k] * VmfPdf(Dot(centroid[i], mu[k]), kappa[k]);
+					rSum += resp[k];
+				}
+				if (!(rSum > 0.f))
+					continue;
+				const float invR = q[i] / rSum;
+				for (u_int k = 0; k < kUsed; ++k) {
+					const float r = resp[k] * invR;
+					newW[k] += r;
+					newS[k] += centroid[i] * r;
+				}
+			}
+			bool alive = false;
+			for (u_int k = 0; k < kUsed; ++k) {
+				w[k] = newW[k];
+				if (hasUni && k == 0)
+					continue;  // uniform lobe: weight only, mu/kappa fixed
+				const float len = newS[k].Length();
+				if (len > 0.f && w[k] > 0.f) {
+					mu[k] = newS[k] * (1.f / len);
+					const float r = Min(len / w[k], .9999f);
+					// 128 bins cannot justify arbitrarily sharp lobes:
+					// over-tight kappa leaves near-zero density holes
+					// inside the empirical support -> huge sample weights.
+					kappa[k] = Min(r * (3.f - r * r) / (1.f - r * r),
+							GuideKappaCap());
+					alive = true;
+				}
+			}
+			if (!alive)
+				break;
+		}
+
+		// Prune negligible lobes (the uniform comp is kept at a floor
+		// weight: it is the coverage guarantee), renormalize.
+		if (hasUni)
+			w[0] = Max(w[0], .02f);
+		float wSum = 0.f;
+		for (u_int k = 0; k < kUsed; ++k)
+			wSum += ((hasUni && k == 0) || (w[k] > .02f)) ? w[k] : 0.f;
+		if (!(wSum > 0.f)) {
+			m.nComp = 0;
+			m.logLik = -1e30f;
+			return;
+		}
+		const float invW = 1.f / wSum;
+		u_int dst = 0;
+		for (u_int k = 0; k < kUsed; ++k) {
+			if (!(hasUni && k == 0) && !(w[k] > .02f))
+				continue;
+			m.w[dst] = w[k] * invW;
+			m.mu[dst] = mu[k];
+			m.kappa[dst] = kappa[k];
+			++dst;
+		}
+		m.nComp = dst;
+
+		// Weighted log-likelihood of the fitted model over the raw bin
+		// masses (the EM fit worked on the normalized target; BIC needs
+		// the evidence scale back for a fair penalty comparison).
+		m.logLik = 0.f;
 		for (u_int i = 0; i < DIR_BINS; ++i) {
 			if (q[i] <= 0.f)
 				continue;
-			float rSum = 0.f;
-			for (u_int k = 0; k < kUsed; ++k) {
-				resp[k] = w[k] * VmfPdf(Dot(centroid[i], mu[k]), kappa[k]);
-				rSum += resp[k];
-			}
-			if (!(rSum > 0.f))
-				continue;
-			const float invR = q[i] / rSum;
-			for (u_int k = 0; k < kUsed; ++k) {
-				const float r = resp[k] * invR;
-				newW[k] += r;
-				newS[k] += centroid[i] * r;
-			}
+			float mix = 0.f;
+			for (u_int k = 0; k < dst; ++k)
+				mix += m.w[k] * VmfPdf(Dot(centroid[i], m.mu[k]), m.kappa[k]);
+			m.logLik += q[i] * qSum * logf(Max(mix, 1e-30f));
 		}
-		bool alive = false;
-		for (u_int k = 0; k < kUsed; ++k) {
-			w[k] = newW[k];
-			if (hasUni && k == 0)
-				continue;  // uniform lobe: weight only, mu/kappa fixed
-			const float len = newS[k].Length();
-			if (len > 0.f && w[k] > 0.f) {
-				mu[k] = newS[k] * (1.f / len);
-				const float r = Min(len / w[k], .9999f);
-				// 128 bins cannot justify arbitrarily sharp lobes:
-				// over-tight kappa leaves near-zero density holes
-				// inside the empirical support -> huge sample weights.
-				kappa[k] = Min(r * (3.f - r * r) / (1.f - r * r),
-						GuideKappaCap());
-				alive = true;
-			}
-		}
-		if (!alive)
-			break;
-	}
+	};
 
-	// --- Prune negligible lobes (the uniform comp is kept at a floor
-	// weight: it is the coverage guarantee), renormalize, store
-	if (hasUni)
-		w[0] = Max(w[0], .02f);
-	float wSum = 0.f;
-	for (u_int k = 0; k < kUsed; ++k)
-		wSum += ((hasUni && k == 0) || (w[k] > .02f)) ? w[k] : 0.f;
-	if (!(wSum > 0.f)) {
+	// BIC model selection: p counts free parameters (uni weight + per
+	// directional lobe w, mu 2-dof, kappa); N is the signal-record count
+	// - more evidence justifies more lobes, sparse leaves stay simple.
+	const float logN = logf(Max(a.nz, 1.f));
+	Model best;
+	best.nComp = 0;
+	best.logLik = -1e30f;
+	float bestBic = -1e30f;
+	for (u_int kDir = 0; kDir <= nSeed; ++kDir) {
+		Model m;
+		fitK(kDir, m);
+		const u_int dirComps = m.nComp - (hasUni ? Min(m.nComp, 1u) : 0u);
+		const float p = dirComps * 4.f + (hasUni ? 1.f : 0.f);
+		const float bic = m.logLik - .5f * p * logN;
+		if (bic > bestBic) {
+			bestBic = bic;
+			best = m;
+		}
+	}
+	if (best.nComp == 0) {
 		// Degenerate fit: a single uniform component keeps the leaf warm
 		// (kappa ~ 0 IS the uniform sphere distribution).
 		out.nComp = 1;
@@ -569,19 +699,14 @@ void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
 		out.kappa[0] = 0.f;
 		return;
 	}
-	const float invW = 1.f / wSum;
-	u_int dst = 0;
-	for (u_int k = 0; k < kUsed; ++k) {
-		if (!(hasUni && k == 0) && !(w[k] > .02f))
-			continue;
-		out.w[dst] = w[k] * invW;
-		out.mu[dst][0] = mu[k].x;
-		out.mu[dst][1] = mu[k].y;
-		out.mu[dst][2] = mu[k].z;
-		out.kappa[dst] = kappa[k];
-		++dst;
+	out.nComp = best.nComp;
+	for (u_int k = 0; k < best.nComp; ++k) {
+		out.w[k] = best.w[k];
+		out.mu[k][0] = best.mu[k].x;
+		out.mu[k][1] = best.mu[k].y;
+		out.mu[k][2] = best.mu[k].z;
+		out.kappa[k] = best.kappa[k];
 	}
-	out.nComp = dst;
 
 	// Informativeness of the fit: 4pi * (integral of p^2 over the sphere)
 	// - 1, evaluated on the equal-area bins. ~0 for a uniform field,
@@ -592,7 +717,7 @@ void PathGuidingCache::FitLeaf(const LeafStats &ls, ReadLeaf &out) {
 	for (u_int i = 0; i < DIR_BINS; ++i) {
 		const Vector d = BinDir(i, .5f, .5f);
 		float pd = 0.f;
-		for (u_int k = 0; k < dst; ++k)
+		for (u_int k = 0; k < out.nComp; ++k)
 			pd += out.w[k] * VmfPdf(d.x * out.mu[k][0] +
 					d.y * out.mu[k][1] + d.z * out.mu[k][2],
 					out.kappa[k]);
@@ -607,20 +732,64 @@ PathGuidingCache::ReadTree *PathGuidingCache::BuildReadTree(const WriteTree &wt)
 	                       // collected the stats
 	rt->root = wt.root;
 	rt->leaves.resize(wt.leafCount);
-	const float warmup = GuideWarmup();
-	for (u_int i = 0; i < wt.leafCount; ++i) {
-		const LeafStats &ls = wt.leaves[i];
-		ReadLeaf &rl = rt->leaves[i];
-		rl.total = ls.total.load(std::memory_order_relaxed);
-		rl.count = ls.count.load(std::memory_order_relaxed);
-		rl.nz = ls.nz.load(std::memory_order_relaxed);
+
+	// Hierarchical fallback (P5): a leaf without WARMUP of its own
+	// records borrows the fit of its nearest ancestor whose SUBTREE is
+	// warm. The ancestor's histogram covers a larger region - a coarser
+	// field, still a valid positive pdf, and strictly better than the
+	// previous all-or-nothing cold gate (OpenPGL-style fallback).
+	//
+	// Nodes are emitted post-order (children index below their parent),
+	// so a single forward pass aggregates every subtree and records
+	// parent links.
+	vector<AggStats> agg(wt.nodes.size());
+	vector<u_int> parent(wt.nodes.size(), ~0u);
+	for (u_int i = 0; i < wt.nodes.size(); ++i) {
+		const TreeNode &nd = wt.nodes[i];
+		if (nd.axis == ~0u)
+			agg[i].Add(wt.leaves[nd.leaf]);
+		else {
+			agg[i].Add(agg[nd.child[0]]);
+			agg[i].Add(agg[nd.child[1]]);
+			parent[nd.child[0]] = parent[nd.child[1]] = i;
+		}
+	}
+
+	for (u_int i = 0; i < wt.nodes.size(); ++i) {
+		const TreeNode &nd = wt.nodes[i];
+		if (nd.axis != ~0u)
+			continue;
+		const AggStats &a = agg[i];
+		ReadLeaf &rl = rt->leaves[nd.leaf];
+		rl.total = a.total;
+		rl.count = a.count;
+		rl.nz = a.nz;
 		// Eligibility keys on visitation, not signal count: a leaf visited
 		// by many paths but lit through a narrow bottleneck still learns
 		// a usable lobe from its few nonzero records (the zeros just feed
 		// the uniform component). Signal-only gating starved exactly the
 		// dim receiver surfaces guiding exists for.
-		if (rl.count >= warmup)
-			FitLeaf(ls, rl);
+		if (a.count >= warmup) {
+			FitLeaf(a, rl);
+			continue;
+		}
+		// Cold leaf: ascend to the nearest warm ancestor and fit its
+		// aggregate. The borrowed model is emitted with a DAMPED
+		// synthetic count - the consumers' count-driven warmup gate and
+		// MixWeight then apply a proportionally lower trust with no
+		// contract change (still >= warmup so both backends accept it).
+		for (u_int p = parent[i]; p != ~0u; p = parent[p]) {
+			if (agg[p].count < warmup)
+				continue;
+			FitLeaf(agg[p], rl);
+			if (rl.nComp > 0) {
+				rl.count = Clamp(a.count + .25f * agg[p].count,
+						(float)warmup, 4.f * warmup);
+				rl.nz = a.nz;
+				++rt->borrowedLeaves;
+			}
+			break;
+		}
 	}
 	return rt;
 }
@@ -638,11 +807,6 @@ PathGuidingCache::WriteTree *PathGuidingCache::BuildWriteTree(const WriteTree &w
 			c += wt.leaves[i].count.load(std::memory_order_relaxed);
 		return c;
 	}();
-	const float splitFrac = GuideSplitFrac();
-	const u_int maxDepth = GuideMaxDepth();
-	const u_int maxLeaves = GuideMaxLeaves();
-	const float warmup = GuideWarmup();
-
 	WriteTree *nw = new WriteTree();
 	// Leaf count is known only after the topology is emitted; leaves
 	// allocate at the end. Track emissions against the budget directly.
@@ -845,7 +1009,7 @@ PathGuidingCache::WriteTree *PathGuidingCache::BuildWriteTree(const WriteTree &w
 
 bool PathGuidingCache::CanGuide(const Point &p) const {
 	const ReadLeaf *leaf = ReadLeafAt(p);
-	return leaf && leaf->nComp > 0 && leaf->count >= GuideWarmup();
+	return leaf && leaf->nComp > 0 && leaf->count >= warmup;
 }
 
 float PathGuidingCache::ReadTotal(const Point &p) const {
@@ -855,7 +1019,7 @@ float PathGuidingCache::ReadTotal(const Point &p) const {
 
 float PathGuidingCache::ReadCount(const Point &p) const {
 	const ReadLeaf *leaf = ReadLeafAt(p);
-	return leaf ? leaf->nz : 0.f;
+	return leaf ? leaf->count : 0.f;
 }
 
 float PathGuidingCache::ReadPeak(const Point &p) const {
@@ -891,7 +1055,7 @@ bool PathGuidingCache::Sample(const Point &p, const Normal &n,
 	const float floorW = isotropic ? FLOOR_W_VOLUME : FLOOR_W_SURFACE;
 	const Vector nn(n.x, n.y, n.z);
 	const ReadLeaf *leaf = ReadLeafAt(p);
-	if (!leaf || leaf->nComp == 0 || leaf->count < GuideWarmup()) {
+	if (!leaf || leaf->nComp == 0 || leaf->count < warmup) {
 		// Cold leaf: pure-floor fallback (same density reported by Pdf).
 		if (isotropic) {
 			*sampledDir = UniformSampleSphere(uDir0, uDir1);
@@ -975,7 +1139,7 @@ float PathGuidingCache::Pdf(const Point &p, const Normal &n,
 	const float d = Dot(dir, nn);
 	const float floorPdf = isotropic ? .25f * INV_PI :
 			((d > 0.f) ? d * INV_PI : 0.f);
-	if (!leaf || leaf->nComp == 0 || leaf->count < GuideWarmup())
+	if (!leaf || leaf->nComp == 0 || leaf->count < warmup)
 		return floorPdf;
 
 	float s[VMF_K];
@@ -1120,7 +1284,8 @@ bool PathGuidingCache::Save(const std::string &path) const {
 	return ok;
 }
 
-PathGuidingCache *PathGuidingCache::Load(const std::string &path) {
+PathGuidingCache *PathGuidingCache::Load(const std::string &path,
+		const bool freeze, const Settings &s) {
 	FILE *f = fopen(path.c_str(), "rb");
 	if (!f)
 		return nullptr;
@@ -1135,7 +1300,7 @@ PathGuidingCache *PathGuidingCache::Load(const std::string &path) {
 	ok = ok && (magic == 0x47554944u) && (version == 3u) && (size > 0.f);
 	PathGuidingCache *cache = nullptr;
 	if (ok) {
-		cache = new PathGuidingCache(Point(minx, miny, minz), size);
+		cache = new PathGuidingCache(Point(minx, miny, minz), size, s);
 		u_int nodeCount = 0, leafCount = 0, root = 0;
 		ok = fread(&nodeCount, sizeof(nodeCount), 1, f) == 1 &&
 				fread(&leafCount, sizeof(leafCount), 1, f) == 1 &&
@@ -1171,9 +1336,10 @@ PathGuidingCache *PathGuidingCache::Load(const std::string &path) {
 				cache->readTree.store(rt, std::memory_order_relaxed);
 				// A loaded field replaces online training: the write tree
 				// stays a fresh single leaf and swaps never overwrite it.
-				// LUX_PG_FREEZE=0 opts back into continued training.
-				const char *fe = getenv("LUX_PG_FREEZE");
-				cache->frozen = !fe || (atoi(fe) != 0);
+				// freeze comes resolved from the caller
+				// (path.guiding.freeze / LUX_PG_FREEZE=0 opt back into
+				// continued training).
+				cache->frozen = freeze;
 			} else {
 				delete rt;
 			}

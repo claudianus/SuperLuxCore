@@ -2733,18 +2733,24 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
 		// Mirrors CPU GuidableBsdf(): volume scattering vertices are
 		// always guidable (phase lobes sample blind w.r.t. the incident
-		// field); glossy bounces need enough roughness; pure diffuse is
-		// opt-in on CPU (LUX_PG_DIFFUSE) and stays off here.
+		// field); glossy bounces need enough roughness
+		// (path.guiding.glossythreshold); pure diffuse needs the
+		// path.guiding.diffuse opt-in.
 		const bool guidableBsdf = bsdf->isVolume ||
-				(((eventTypes & GLOSSY) != 0u) &&
-				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
-		// Same gate as CPU CanGuide(): fitted leaf past warmup.
+				(((eventTypes & GLOSSY) != 0u) ?
+				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >=
+					taskConfig->pathTracer.guidingGlossiness) :
+				(taskConfig->pathTracer.guidingDiffuse != 0u));
+		// Same gate as CPU CanGuide(): fitted leaf past warmup
+		// (min depth from path.guiding.mindepth).
 		if (!BSDF_IsDelta(bsdf MATERIALS_PARAM) && guidableBsdf &&
-				(pathInfo->depth.depth >= 2u) && guideLeaf &&
+				(pathInfo->depth.depth >=
+					taskConfig->pathTracer.guidingMinDepth) && guideLeaf &&
 				((uint)guideLeaf[22] > 0u) &&
 				(guideLeaf[20] >= GUIDE_WARMUP_RECORDS)) {
 			const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
-			const float wDl = Guide_MixWeight(guideLeaf[20], guideLeaf[21]);
+			const float wDl = taskConfig->pathTracer.guidingStrength *
+					Guide_MixWeight(guideLeaf[20], guideLeaf[21]);
 			bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl *
 					GuideTree_Pdf(guideLeaf, shadeN, shadowRayDir,
 					bsdf->isVolume);

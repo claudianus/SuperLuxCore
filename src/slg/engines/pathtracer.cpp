@@ -99,7 +99,9 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
-		guidingEnable(false), guidingRisK(0), spectralEnable(false),
+		guidingEnable(false), guidingRisK(0), guidingMinDepth(2),
+		guidingGlossiness(.3f), guidingDiffuse(false),
+		guidingStrength(1.f), spectralEnable(false),
 		vertexConnectEnable(false),
 		vertexConnectBudget(0), vertexConnectPoolTasks(1),
 		vertexConnectAdaptive(true), vertexConnectMergeRadius(0.f),
@@ -114,37 +116,15 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 // dim shares a shift with a jitter dim (correlated triple = biased pdf).
 // Hash (pixel, pass, vertex) instead: uniform, shift-independent,
 // deterministic.
-// M2c: earliest bounce depth at which the guide may sample (env
-// LUX_PG_MINDEPTH, default 2). Early-bounce incident is direct-dominated
-// and DL already covers it, so guiding there only dilutes; the guide's
-// headroom is indirect (deeper bounces). Measured: mindepth 0/1/2 RMSE
-// 0.0088/0.0077/0.0068 at small scale (plain 0.0044).
-static int GuidingMinDepth() {
-	static const int kMinDepth = []() {
-		const char *e = getenv("LUX_PG_MINDEPTH");
-		return e ? atoi(e) : 2;
-	}();
-	return kMinDepth;
-}
-// M2c indirect-only training (default on; LUX_PG_INDIRECT=0 opts out).
-// M2c: skip near-smooth glossy (env LUX_PG_GLOSS, default .3). A 128-bin
-// field cannot resolve a tight lobe; guiding there only dilutes against
-// near-perfect BSDF sampling. Rough-glossy/diffuse keep the guide.
-static float GuidingGloss() {
-	static const float kGloss = []() {
-		const char *e = getenv("LUX_PG_GLOSS");
-		return e ? (float)atof(e) : .3f;
-	}();
-	return kGloss;
-}
-
-// M2c E3: guide diffuse bounces too (default off; LUX_PG_DIFFUSE=1).
-// M1 excluded them (cosine-BSDF near-optimal, blunt field only adds
-// noise); with indirect-only + smoothed + adaptive field it may help.
-static bool GuidingDiffuse() {
-	static const bool kDiffuse = (getenv("LUX_PG_DIFFUSE") != nullptr);
-	return kDiffuse;
-}
+// Guiding artist gates (P5): path.guiding.mindepth (default 2) is the
+// earliest bounce depth the guide may sample - early-bounce incident is
+// direct-dominated and DL already covers it, so guiding there only
+// dilutes (measured RMSE 0.0088/0.0077/0.0068 for mindepth 0/1/2 vs
+// plain 0.0044). path.guiding.glossythreshold (default .3) skips
+// near-smooth lobes the 128-bin field cannot resolve;
+// path.guiding.diffuse opts diffuse bounces in (cosine-BSDF is already
+// near-optimal, so default off). LUX_PG_MINDEPTH/GLOSS/DIFFUSE remain
+// as env fallbacks for unset properties (parsed in ParseProperties).
 
 // M4b: RIS product-guiding candidate count (path.guiding.risk, default
 // 0 = off; >1 resamples K mixture-proposal draws against the product
@@ -181,7 +161,8 @@ static struct ContribDump {
 // resolve any lobe themselves, so the cutoff relaxes to a thin band
 // above delta (the field only has to cover the directions the BSDF
 // would not try).
-static bool GuidableBsdf(const BSDF &bsdf, const bool ris = false) {
+static bool GuidableBsdf(const BSDF &bsdf, const float glossiness,
+		const bool diffuse, const bool ris = false) {
 	// Volume scattering vertices: the phase function ignores the incident
 	// radiance field (isotropic/HG lobes sample blind), so guiding is
 	// always worthwhile; the smooth 128-bin field cannot resolve a
@@ -190,8 +171,8 @@ static bool GuidableBsdf(const BSDF &bsdf, const bool ris = false) {
 	if (bsdf.IsVolume())
 		return true;
 	if ((bsdf.GetEventTypes() & GLOSSY) != 0)
-		return bsdf.GetGlossiness() >= (ris ? .05f : GuidingGloss());
-	return GuidingDiffuse();
+		return bsdf.GetGlossiness() >= (ris ? .05f : glossiness);
+	return diffuse;
 }
 
 static u_int GuidingHash(u_int x) {
@@ -407,7 +388,8 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 								// RISMIXPDF diagnostic: the bounce-side MIS
 								// density is the winner's mixture pdf - the
 								// same function on the DL side.
-								const float wDl = PathGuidingCache::MixWeight(
+								const float wDl = guidingStrength *
+										PathGuidingCache::MixWeight(
 										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
 										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
 								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl *
@@ -441,10 +423,11 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 									lhat = kCapT;
 								bouncePdfW = tEval * lhat / risZhat;
 							} else if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
-								GuidableBsdf(bsdf) &&
-									((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
+								GuidableBsdf(bsdf, guidingGlossiness, guidingDiffuse) &&
+									((int)pathInfo.depth.depth >= guidingMinDepth) &&
 									pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
-								const float wDl = PathGuidingCache::MixWeight(
+								const float wDl = guidingStrength *
+										PathGuidingCache::MixWeight(
 										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
 										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
 								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * pathGuidingCache->Pdf(
@@ -1188,12 +1171,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			bool sideBsdf = false;   // winner came from the BSDF side
 		} ris;
 		if (guidingRisK >= 1 && guidingEnable && pathGuidingCache &&
-				!bsdf.IsDelta() && GuidableBsdf(bsdf, true) &&
+				!bsdf.IsDelta() && GuidableBsdf(bsdf, guidingGlossiness,
+					guidingDiffuse, true) &&
 				!sampleResult.firstPathVertex &&
-				((int)pathInfo.depth.depth >= Max(1, GuidingMinDepth())) &&
+				((int)pathInfo.depth.depth >= Max(1, guidingMinDepth)) &&
 				pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
 			const int K = Min(guidingRisK, 8);
-			const float wG = PathGuidingCache::MixWeight(
+			const float wG = guidingStrength * PathGuidingCache::MixWeight(
 					pathGuidingCache->ReadCount(bsdf.hitPoint.p),
 					pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
 			const u_int salt = (sampleOffset * 2971215073u) ^
@@ -1477,17 +1461,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				// depth on every guided bounce and terminate paths early).
 				bool guided = false;
 				const bool tryGuide = pathGuidingCache && !bsdf.IsDelta() &&
-						GuidableBsdf(bsdf) &&
-						((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
+						GuidableBsdf(bsdf, guidingGlossiness, guidingDiffuse) &&
+						((int)pathInfo.depth.depth >= guidingMinDepth) &&
 						pathGuidingCache->CanGuide(bsdf.hitPoint.p);
 
 				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
 				// M2c adaptive mixture: selection probability from the
 				// read-side (frozen-in-round) leaf record count, so
 				// bounce-time and DL-time weights agree. Any w in (0,1)
-				// is exact.
+				// is exact. path.guiding.strength scales the guide side.
 				const float wGuide = (guidingEnable && tryGuide) ?
-						PathGuidingCache::MixWeight(
+						guidingStrength * PathGuidingCache::MixWeight(
 							pathGuidingCache->ReadCount(bsdf.hitPoint.p),
 							pathGuidingCache->ReadPeak(bsdf.hitPoint.p)) : .5f;
 				// Diagnostic: LUX_PG_NOBOUNCE keeps the DL-side mixture
@@ -2825,6 +2809,22 @@ void PathTracer::ParseOptions(
 	if (const char *e = getenv("LUX_PG_RISK"))
 		guidingRisK = atoi(e);
 
+	// Guiding artist gates (P5): property wins, env is the debug
+	// fallback for unset properties. All four mirror into
+	// taskConfig->pathTracer so the kernels apply the identical gates.
+	guidingMinDepth = cfg.IsDefined("path.guiding.mindepth") ?
+			Max(0, cfg.Get(defaultProps.Get("path.guiding.mindepth")).Get<int>()) :
+			(getenv("LUX_PG_MINDEPTH") ? atoi(getenv("LUX_PG_MINDEPTH")) : 2);
+	guidingGlossiness = cfg.IsDefined("path.guiding.glossythreshold") ?
+			Clamp(cfg.Get(defaultProps.Get(
+				"path.guiding.glossythreshold")).Get<float>(), 0.f, 1.f) :
+			(getenv("LUX_PG_GLOSS") ? (float)atof(getenv("LUX_PG_GLOSS")) : .3f);
+	guidingDiffuse = cfg.IsDefined("path.guiding.diffuse") ?
+			cfg.Get(defaultProps.Get("path.guiding.diffuse")).Get<bool>() :
+			(getenv("LUX_PG_DIFFUSE") != nullptr);
+	guidingStrength = Clamp(cfg.Get(defaultProps.Get(
+			"path.guiding.strength")).Get<float>(), 0.f, 1.f);
+
 	// Hero-wavelength spectral transport (P2-1): Spectrum channels carry
 	// spectral samples at the path wavelengths instead of RGB primaries
 	spectralEnable = cfg.Get(defaultProps.Get("path.spectral.enable")).Get<bool>();
@@ -2863,10 +2863,15 @@ void PathTracer::ParseOptions(
 		}();
 		if (envW >= 0.f)
 			portalShare = envW;
-		portalSideGate = getenv("LUX_PG_PORTALSIDE") ?
-				(float)atof(getenv("LUX_PG_PORTALSIDE")) : 0.f;
-		portalAdapt = getenv("LUX_PG_PORTALADAPT") ?
-				(atoi(getenv("LUX_PG_PORTALADAPT")) != 0) : true;
+		// path.portal.sidegate / path.portal.adapt (P5); env fallbacks
+		portalSideGate = cfg.IsDefined("path.portal.sidegate") ?
+				(float)cfg.Get(defaultProps.Get("path.portal.sidegate")).Get<double>() :
+				(getenv("LUX_PG_PORTALSIDE") ?
+					(float)atof(getenv("LUX_PG_PORTALSIDE")) : 0.f);
+		portalAdapt = cfg.IsDefined("path.portal.adapt") ?
+				cfg.Get(defaultProps.Get("path.portal.adapt")).Get<bool>() :
+				(getenv("LUX_PG_PORTALADAPT") ?
+					(atoi(getenv("LUX_PG_PORTALADAPT")) != 0) : true);
 		const int portalCount = Max(0, cfg.Get(defaultProps.Get("path.portal.count")).Get<int>());
 		for (int i = 0; i < portalCount; ++i) {
 			const Property pp = cfg.Get(Property(
@@ -2967,8 +2972,23 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			Property("path.guiding.risk")(
 				getenv("LUX_PG_RISK") ? atoi(getenv("LUX_PG_RISK")) :
 				cfg.Get(GetDefaultProps()->Get("path.guiding.risk")).Get<int>()) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.mindepth")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.glossythreshold")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.diffuse")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.strength")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.warmup")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.freeze")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.debug")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.swaprecords")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.split")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.maxdepth")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.maxleaves")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.components")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.savetable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.portal.count")) <<
 			cfg.Get(GetDefaultProps()->Get("path.portal.weight")) <<
+			cfg.Get(GetDefaultProps()->Get("path.portal.sidegate")) <<
+			cfg.Get(GetDefaultProps()->Get("path.portal.adapt")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.candidates")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.temporal.enable")) <<
@@ -3030,8 +3050,33 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
 			Property("path.guiding.risk")(0) <<
+			// P5 artist gates: property wins over the LUX_PG_* env
+			// fallbacks; warmup/freeze feed the cache (pathcpu/
+			// pathoclbase), the rest mirror into taskConfig.
+			Property("path.guiding.mindepth")(2) <<
+			Property("path.guiding.glossythreshold")(.3f) <<
+			Property("path.guiding.diffuse")(false) <<
+			Property("path.guiding.strength")(1.f) <<
+			Property("path.guiding.warmup")(256) <<
+			Property("path.guiding.freeze")(true) <<
+			Property("path.guiding.debug")(false) <<
+			// Cache-level knobs (P5): training-round length, split
+			// fraction, tree bounds and the vMF component cap. These feed
+			// PathGuidingCache::Settings (env fallbacks LUX_PG_SWAP/
+			// SPLIT/MAXDEPTH/MAXLEAVES resolved inside the cache).
+			Property("path.guiding.swaprecords")(1000000) <<
+			Property("path.guiding.split")(.004f) <<
+			Property("path.guiding.maxdepth")(12) <<
+			Property("path.guiding.maxleaves")(8192) <<
+			Property("path.guiding.components")(4) <<
+			// Save the trained table on engine stop (env LUX_PG_DUMP
+			// fallback; CPU side, used by the CPU-trains/GPU-samples
+			// flow and for warm restarts via tablefile).
+			Property("path.guiding.savetable")("") <<
 			Property("path.portal.count")(0) <<
 			Property("path.portal.weight")(.3f) <<
+			Property("path.portal.sidegate")(0.f) <<
+			Property("path.portal.adapt")(true) <<
 			Property("path.vertexconnection.enable")(false) <<
 			// M7 probabilistic connection (PCBPT, Popov et al. 2015):
 			// expected connect budget per eye vertex (0 = all candidates)

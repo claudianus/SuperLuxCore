@@ -532,21 +532,25 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	if ((taskConfig->pathTracer.guidingRisK > 0u) && (guidingEnable != 0u) &&
 			!sampleResult->lastPathVertex && !sampleResult->firstPathVertex &&
 			!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
-			(pathInfo->depth.depth >= 2u)) {
+			(pathInfo->depth.depth >=
+				max(1u, taskConfig->pathTracer.guidingMinDepth))) {
 		__global const float *risLeaf = GuideTree_LeafAt(guideNodes,
 				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
 		const BSDFEvent risEventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 		// Mirrors CPU GuidableBsdf(ris = true): the BSDF-side candidates
 		// resolve any lobe themselves, so the glossiness cutoff relaxes
 		// to a thin band above delta; the field only has to cover the
-		// directions the BSDF would not try. Volumes stay guidable.
+		// directions the BSDF would not try. Volumes stay guidable, and
+		// the diffuse opt-in mirrors path.guiding.diffuse.
 		const bool risGuidable = bsdf->isVolume ||
-				(((risEventTypes & GLOSSY) != 0u) &&
-				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .05f));
+				(((risEventTypes & GLOSSY) != 0u) ?
+				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .05f) :
+				(taskConfig->pathTracer.guidingDiffuse != 0u));
 		if (risGuidable && risLeaf && ((uint)risLeaf[22] > 0u) &&
 				(risLeaf[20] >= GUIDE_WARMUP_RECORDS)) {
 			const uint risK = min(taskConfig->pathTracer.guidingRisK, 8u);
-			const float wG = Guide_MixWeight(risLeaf[20], risLeaf[21]);
+			const float wG = taskConfig->pathTracer.guidingStrength *
+					Guide_MixWeight(risLeaf[20], risLeaf[21]);
 			const float3 risShadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 			const bool isVol = bsdf->isVolume;
 			const uint sampleOffset = taskConfig->pathTracer.eyeSampleBootSize +
@@ -1650,24 +1654,32 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 			// Mirrors CPU GuidableBsdf(): volume scattering vertices are
 			// always guidable (phase lobes sample blind w.r.t. the
-			// incident field); glossy bounces need enough roughness;
-			// pure diffuse stays off (CPU LUX_PG_DIFFUSE opt-in).
+			// incident field); glossy bounces need enough roughness
+			// (path.guiding.glossythreshold); pure diffuse needs the
+			// path.guiding.diffuse opt-in.
 			const bool guidableBsdf = bsdf->isVolume ||
-					(((eventTypes & GLOSSY) != 0u) &&
-					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
-			// Same gate as CPU CanGuide(): fitted leaf past warmup.
+					(((eventTypes & GLOSSY) != 0u) ?
+					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >=
+						taskConfig->pathTracer.guidingGlossiness) :
+					(taskConfig->pathTracer.guidingDiffuse != 0u));
+			// Same gate as CPU CanGuide(): fitted leaf past warmup
+			// (min depth from path.guiding.mindepth).
 			const bool tryGuide = (guidingEnable != 0u) &&
 					!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
 					guidableBsdf &&
-					(pathInfo->depth.depth >= 2u) && guideLeaf &&
+					(pathInfo->depth.depth >=
+						taskConfig->pathTracer.guidingMinDepth) &&
+					guideLeaf &&
 					((uint)guideLeaf[22] > 0u) &&
 					(guideLeaf[20] >= GUIDE_WARMUP_RECORDS);
 			// Guiding stats
 			if (tryGuide)
 				guideDbgBuff[0] = 1u;
 			// M2c adaptive mixture (mirrors the CPU side): selection
-			// probability from the leaf record count x PeakGate.
+			// probability from the leaf record count x PeakGate, scaled
+			// by the artist strength dial (path.guiding.strength).
 			const float wGuide = tryGuide ?
+					taskConfig->pathTracer.guidingStrength *
 					Guide_MixWeight(guideLeaf[20], guideLeaf[21]) : .5f;
 			const float uSelRaw = Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM);
 			const bool takeGuideSide = (uSelRaw < wGuide);

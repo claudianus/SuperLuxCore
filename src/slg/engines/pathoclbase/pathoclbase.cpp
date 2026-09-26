@@ -369,9 +369,18 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 	delete guideCache;
 	guideCache = nullptr;
 	if (cfg.Get(Property("path.guiding.enable")(false)).Get<bool>()) {
+		// Cache settings (P5): same property/env resolution as the CPU
+		// engine so both backends train identically.
+		const PathGuidingCache::Settings pgSettings =
+				PathGuidingCache::SettingsFromProperties(cfg);
+		const bool pgFreeze = cfg.IsDefined("path.guiding.freeze") ?
+				cfg.Get(Property("path.guiding.freeze")(true)).Get<bool>() :
+				(!getenv("LUX_PG_FREEZE") ||
+					(atoi(getenv("LUX_PG_FREEZE")) != 0));
 		const string tableFile = cfg.Get(Property("path.guiding.tablefile")("")).Get<string>();
 		if (!tableFile.empty()) {
-			guideCache = PathGuidingCache::Load(tableFile);
+			guideCache = PathGuidingCache::Load(tableFile,
+					pgFreeze, pgSettings);
 			if (!guideCache) {
 				SLG_LOG("WARNING: unable to load path guiding table file: " + tableFile);
 			} else {
@@ -384,7 +393,7 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 					Point(bsphere.center.x - bsphere.rad,
 							bsphere.center.y - bsphere.rad,
 							bsphere.center.z - bsphere.rad),
-					2.f * bsphere.rad);
+					2.f * bsphere.rad, pgSettings);
 		}
 		guideCache->SnapshotTree(&guideNodes, &guideLeaves);
 		guideHasTable = true;
@@ -545,6 +554,21 @@ void PathOCLBaseRenderEngine::StopLockLess() {
 			idev.PopThreadCurrentDevice();
 		}
     }
+
+	// Table export: path.guiding.savetable (env LUX_PG_DUMP fallback)
+	// dumps the trained read side for warm restarts on either backend.
+	if (guideCache) {
+		const string dumpPath = renderConfig.GetConfig().Get(
+				Property("path.guiding.savetable")(
+					getenv("LUX_PG_DUMP") ? getenv("LUX_PG_DUMP") : ""))
+				.Get<string>();
+		if (!dumpPath.empty()) {
+			// Commit the pending write-side records so the dump is
+			// not missing the last training round.
+			guideCache->ForceSwap();
+			guideCache->Save(dumpPath);
+		}
+	}
 
 	delete compiledScene;
 	compiledScene = nullptr;

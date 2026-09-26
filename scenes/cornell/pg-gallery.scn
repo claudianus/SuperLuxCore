@@ -1,0 +1,50 @@
+# Path-guiding showpiece: a gallery hall split by a divider wall pierced
+# by a window. A warm emitter hides in the rear compartment
+# (camera-invisible); the front hall - plaster walls, a bronze statue,
+# a chrome sphere - is lit ONLY by golden light bouncing through the
+# window. Deep-indirect transport: cosine sampling rarely finds the
+# window, the learned guide field steers rays to it.
+#   renderengine.type = PATHOCL, path.guiding.enable = 1
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.05 -2.2 0.85
+scene.camera.lookat.target = 0.05 2.0 1.15
+scene.camera.fieldofview = 50
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+
+scene.materials.Wall.type = glossy2
+scene.materials.Wall.kd = 0.72 0.66 0.56
+scene.materials.Wall.ks = 0.12 0.12 0.12
+scene.materials.Wall.uroughness = 0.55
+scene.materials.Wall.vroughness = 0.55
+scene.materials.Bronze.type = glossy2
+scene.materials.Bronze.kd = 0.10 0.06 0.035
+scene.materials.Bronze.ks = 0.45 0.32 0.20
+scene.materials.Bronze.uroughness = 0.20
+scene.materials.Bronze.vroughness = 0.20
+scene.materials.Chrome.type = glossy2
+scene.materials.Chrome.kd = 0.0 0.0 0.0
+scene.materials.Chrome.ks = 0.9 0.9 0.9
+scene.materials.Chrome.uroughness = 0.03
+scene.materials.Chrome.vroughness = 0.03
+scene.materials.Light.type = matte
+scene.materials.Light.kd = 0.0 0.0 0.0
+scene.materials.Light.emission = 70.0 36.0 14.0
+scene.materials.Light.emission.id = 0
+
+scene.objects.Room.material = Wall
+scene.objects.Room.ply = scenes/cornell/pg-room.ply
+scene.objects.Emitter.material = Light
+scene.objects.Emitter.ply = scenes/cornell/pg-light.ply
+
+# Bronze statue standing in the window's light pool (suzanne is ~3.5
+# tall with feet at z=0.26 -> scale 0.42, dropped on the floor).
+scene.objects.Statue.material = Bronze
+scene.objects.Statue.ply = scenes/bevel/suzanne.ply
+scene.objects.Statue.transformation = 0.30 0.0 0.0 0.0   0.0 0.30 0.0 0.0   0.0 0.0 0.30 0.0   0.05 1.30 -0.08 1.0
+
+# Chrome sphere left of the statue (sphere-mid: r~0.85 at
+# (-2.78,2.76,3.28) -> scale 0.45 gives r~0.38 at (-0.75,0.9,0.38)).
+scene.objects.Ball.material = Chrome
+scene.objects.Ball.ply = scenes/cornell/sphere-mid.ply
+scene.objects.Ball.transformation = 0.45 0.0 0.0 0.0   0.0 0.45 0.0 0.0   0.0 0.0 0.45 0.0   0.349 -0.092 -1.096 1.0

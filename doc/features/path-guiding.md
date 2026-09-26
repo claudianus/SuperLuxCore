@@ -1,7 +1,12 @@
 # Path Guiding — online path-space importance sampling
 
-Status: implemented (M1 CPU + M2/M2b/M2c GPU). Learns a per-region incident
-radiance field during the render and samples it to reduce variance.
+Status: implemented. The current field is a lock-free adaptive SD-tree
+with per-leaf vMF mixtures (M4e), hierarchical cold-leaf fallback and
+BIC-selected component counts (P5), driven by the `path.guiding.*`
+properties on both CPU (PATHCPU) and GPU (PATHOCL/Metal). Learns a
+per-region incident radiance field during the render and samples it to
+reduce variance. The sections below keep the M1–M3 history; the
+production feature set is described in "P5: production hardening".
 
 ## What and why
 
@@ -139,7 +144,92 @@ next steps are product-with-phase guiding (`f * L_i`, not `L_i` alone)
 and a validation scene whose variance is dominated by deep (depth≥2)
 indirect transport with a peaked field.
 
+## P5: production hardening (hierarchical fallback, adaptive K, properties)
+
+### Hierarchical fallback
+
+A leaf whose own statistics are still cold no longer stays unguided while
+its ancestors are already warm. `BuildReadTree` aggregates complete
+subtree statistics (`AggStats`), walks cold leaves toward the root, and
+fits the nearest ancestor whose aggregate record count satisfies warmup.
+The borrowed model is installed on the cold leaf with a damped synthetic
+visitation count, so all consumer gates (warmup, mixture weight, GPU leaf
+layout) accept it unchanged — the GPU contract is identical, only the
+leaf's provenance differs. Debug logs report the borrowed-leaf count per
+swap.
+
+### Adaptive component count
+
+Fixed `K=4` EM fits were replaced by per-leaf model selection: candidate
+lobe counts 0..cap are seeded greedily, each is EM-fitted, and the fit
+with the best BIC (`2*logLik - p*log(N)`, lobe params = weight + 2×mean +
+concentration, uniform adds one) wins. Broad/unimodal fields collapse to
+K=1 instead of overfitting; genuinely multimodal leaves keep their lobes.
+`path.guiding.components` caps the search (default 4). The uniform
+component stays as a coverage floor so the pdf keeps positive support.
+
+### Formal properties
+
+Artist-facing configuration is now `path.guiding.*` (parsed by
+`PathTracer::ParseProperties`, serialized by `ToProperties`, defaults in
+`GetDefaultProps`); `LUX_PG_*` env vars remain as debug fallbacks only.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `path.guiding.enable` | 0 | master switch |
+| `path.guiding.tablefile` | "" | warm-start: load a previously saved tree |
+| `path.guiding.savetable` | "" | dump the trained read tree on Stop (CPU **and** OCL) |
+| `path.guiding.risk` | 0 | RIS product-guiding candidates (0=off) |
+| `path.guiding.mindepth` | 2 | eye-path depth gate |
+| `path.guiding.glossythreshold` | 0.3 | min BSDF glossiness |
+| `path.guiding.diffuse` | 0 | also guide diffuse-only BSDFs |
+| `path.guiding.strength` | 1 | guide-side MIS scale |
+| `path.guiding.warmup` | env/1024 | leaf visitation gate (floored at the GPU constant) |
+| `path.guiding.freeze` | 1 | freeze structure once converged |
+| `path.guiding.debug` | 0 | debug counters/visualization |
+| `path.guiding.swaprecords` | 65536 | training round cadence |
+| `path.guiding.split` | 0.01 | leaf split threshold |
+| `path.guiding.maxdepth` | 10 | SD-tree max depth |
+| `path.guiding.maxleaves` | 4096 | leaf budget |
+| `path.guiding.components` | 4 | max vMF lobes per leaf |
+
+Portal fields: `path.portal.<i>` (12 floats = 4 CCW corners),
+`path.portal.count`, `path.portal.weight`, `path.portal.sidegate`,
+`path.portal.adapt`.
+
+Cache settings resolve once per engine through
+`PathGuidingCache::SettingsFromProperties` — PATHCPU and PATHOCL share the
+identical resolution path, and the OCL task config carries the bounce
+gates (`guidingRisK`, `guidingMinDepth`, `guidingGlossiness`,
+`guidingDiffuse`, `guidingStrength`) so the kernels apply the same policy
+with no host-side constants.
+
+### Validation
+
+- `dev-tools/e43_pathguiding_test.py` — table save/load roundtrip,
+  unbiased mean (~1.000), guided-variance sanity band, env fallback +
+  property precedence, `strength=0`, `components=1`, PATHOCL parity,
+  hierarchical fallback (borrowed-leaf count > 0), cold-start stability.
+- `dev-tools/e43_pathguiding_visual.py` — 1280×720 AgX-Punchy PATHOCL
+  renders of `scenes/cornell/pg-gallery.scn` (a hall lit only through a
+  window from a hidden rear room): guided warm-start measured ~1.1×
+  indirect-RMSE better than unguided at 48 spp and shows the warm-start
+  production flow (`savetable` on the long render → `tablefile` on the
+  shot).
+
+**Measurement caveat (verified):** PATHCPU renders are nondeterministic
+across identical calls — each render thread walks its own Sobol stream
+over normalized pixel space, so pixel/sample assignment follows thread
+scheduling (and external CPU load). Same-seed renders differ by up to
+~4 luminance and 5-run ensemble variance ratios swing 0.5×–1.8× on
+unchanged code (pre-P5 and P5 alike). All quantitative checks therefore
+run on PATHOCL (deterministic task/seed batching). On deterministic GPU
+at test scales (320×180–720p, ≤64 spp) the trained field measures
+**variance-neutral to ~10–20% worse** on the pg-* scenes — guiding's
+benefit needs deeper-indirect scenes and longer budgets; the sanity
+bound is what the regression enforces.
+
 ## Platforms
 
-CPU (M1) and GPU (M2b/M2c: OpenCL + Metal). The GPU diffuse opt-in is not
-yet plumbed (GPU gate is glossy-only); see the roadmap parity note.
+CPU (M1+) and GPU (PATHOCL: OpenCL + Metal) share the same field, gates
+and leaf format; the diffuse opt-in is plumbed on both backends.

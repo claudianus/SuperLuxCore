@@ -269,6 +269,17 @@ public:
 	// f*|cos|*Lhat; K = 1 degenerates to the plain mixture draw.
 	int guidingRisK;
 
+	// Guiding artist gates (P5, path.guiding.*): earliest bounce depth
+	// the guide may sample (early bounces are DL-covered), glossiness
+	// cutoff skipping lobes the coarse field cannot resolve, the
+	// pure-diffuse opt-in, and a strength scale on the guide-side
+	// selection probability. All four mirror into
+	// taskConfig->pathTracer for the kernels.
+	int guidingMinDepth;
+	float guidingGlossiness;
+	bool guidingDiffuse;
+	float guidingStrength;
+
 	// GPU light tracing (path.lighttracing.*): a second task population
 	// on PATHOCL/RTPATHOCL traces light sub-paths and splats their
 	// vertices into RADIANCE_PER_SCREEN_NORMALIZED via camera projection

@@ -27,6 +27,7 @@
 #include "luxrays/core/geometry/point.h"
 #include "luxrays/core/geometry/vector.h"
 #include "luxrays/core/geometry/normal.h"
+#include "luxrays/utils/properties.h"
 #include "luxrays/utils/utils.h"
 #include "luxrays/usings.h"
 
@@ -103,8 +104,31 @@ public:
 	static constexpr float FLOOR_W_SURFACE = .10f;
 	static constexpr float FLOOR_W_VOLUME = .15f;
 
-	PathGuidingCache(const luxrays::Point &cubeMin, float cubeSize);
+	// Cache-level knobs (P5, path.guiding.*): a zero/unset field resolves
+	// to the class default with the matching LUX_PG_* env var as a debug
+	// fallback. Property wins over env when the engine passes a value.
+	struct Settings {
+		u_int warmupRecords = 0;  // path.guiding.warmup
+		u_int swapRecords = 0;    // path.guiding.swaprecords
+		float splitFrac = 0.f;    // path.guiding.split
+		u_int maxDepth = 0;       // path.guiding.maxdepth
+		u_int maxLeaves = 0;      // path.guiding.maxleaves
+		u_int maxComponents = 0;  // path.guiding.components (1..VMF_K)
+		bool debug = false;
+	};
+
+	PathGuidingCache(const luxrays::Point &cubeMin, float cubeSize,
+			const Settings &s);
+	// Default-settings convenience form (Settings NSDMI cannot appear
+	// in a default argument inside the enclosing class).
+	PathGuidingCache(const luxrays::Point &cubeMin, float cubeSize) :
+			PathGuidingCache(cubeMin, cubeSize, Settings()) { }
 	~PathGuidingCache();
+
+	// Resolve the path.guiding.* cache properties: a defined property
+	// wins; unset fields stay 0 so the ctor falls back to the LUX_PG_*
+	// env vars and then the class defaults.
+	static Settings SettingsFromProperties(const luxrays::Properties &cfg);
 
 	// Record arrival value at position p from direction wi (pointing back
 	// toward the previous vertex): caller-provided incident-radiance
@@ -117,9 +141,12 @@ public:
 	bool CanGuide(const luxrays::Point &p) const;
 	// Read-side leaf flux total at p (frozen within a round)
 	float ReadTotal(const luxrays::Point &p) const;
-	// Read-side leaf record count at p: the statistical-confidence input
-	// for MixWeight (flux conflates brightness with sample support; a dim
-	// but well-sampled leaf must still earn guide weight).
+	// Read-side leaf visitation count at p: the statistical-confidence
+	// input for MixWeight. Both backends feed it the SAME field
+	// (visitation, GPU leaf[20]): earlier CPU builds fed nz (signal-only
+	// records) here, which made CPU mix weights systematically lower
+	// than the GPU's - a parity bug, since any w in (0,1) is valid but
+	// the two sides must pick the same one.
 	float ReadCount(const luxrays::Point &p) const;
 	// Read-side leaf informativeness at p (0 for uniform fields).
 	float ReadPeak(const luxrays::Point &p) const;
@@ -181,8 +208,11 @@ public:
 	// Persistent cache: dump/load the frozen read side (tree + leaf
 	// mixtures). Used to train on CPU once and sample on GPU.
 	bool Save(const std::string &path) const;
-	// Returns nullptr (and logs) when the file is missing/incompatible
-	static PathGuidingCache *Load(const std::string &path);
+	// Returns nullptr (and logs) when the file is missing/incompatible.
+	// freeze keeps the loaded field immutable (path.guiding.freeze);
+	// s forwards the same ctor settings.
+	static PathGuidingCache *Load(const std::string &path,
+			bool freeze, const Settings &s);
 
 	// Flattened read tree for direct GPU consumption (M4e). The kernel
 	// descends the same tree the CPU queries and evaluates the fitted
@@ -276,6 +306,22 @@ private:
 		mutable std::atomic<float> dirX, dirY, dirZ;
 	};
 
+	// Non-atomic snapshot of a leaf's (or a subtree's) statistics; the
+	// builder works on these (atomics cannot be summed or copied).
+	struct AggStats {
+		float bins[DIR_BINS];
+		float binsSq[DIR_BINS];
+		float count, nz, total;
+		AggStats() : count(0.f), nz(0.f), total(0.f) {
+			for (u_int i = 0; i < DIR_BINS; ++i) {
+				bins[i] = 0.f;
+				binsSq[i] = 0.f;
+			}
+		}
+		void Add(const LeafStats &ls);
+		void Add(const AggStats &o);
+	};
+
 	struct WriteTree {
 		std::vector<TreeNode> nodes;
 		// Fixed-size per round: non-copyable atomics forbid vector growth
@@ -287,7 +333,9 @@ private:
 
 	struct ReadLeaf {
 		float total = 0.f;   // round flux sum
-		float count = 0.f;   // visitation count (all arrivals)
+		float count = 0.f;   // visitation count (all arrivals); for a
+		                     // borrowed fit, a damped synthetic value
+		                     // (hierarchical fallback, see BuildReadTree)
 		float nz = 0.f;      // signal-bearing record count (fit support)
 		float peak = 0.f;    // informativeness: 4pi*E[p^2]-1 (0 = uniform)
 		u_int nComp = 0;     // 0 = cold leaf (no usable model)
@@ -300,6 +348,9 @@ private:
 		std::vector<TreeNode> nodes;
 		std::vector<ReadLeaf> leaves;
 		u_int root = 0;
+		// Diagnostics: leaves that guide on a borrowed ancestor fit
+		// (hierarchical fallback; their own records were below warmup)
+		u_int borrowedLeaves = 0;
 	};
 
 	// Descend a frozen tree to the leaf index for p (root must exist).
@@ -315,8 +366,9 @@ private:
 	// completed write stats of the retiring write tree).
 	ReadTree *BuildReadTree(const WriteTree &wt) const;
 	WriteTree *BuildWriteTree(const WriteTree &wt) const;
-	// Fit one leaf's vMF mixture from its directional histogram.
-	static void FitLeaf(const LeafStats &ls, ReadLeaf &out);
+	// Fit one leaf's vMF mixture from its directional histogram (own or
+	// ancestor-aggregated stats - same code path for the fallback).
+	void FitLeaf(const AggStats &a, ReadLeaf &out) const;
 	// EM iterations over the 128 weighted bin centroids.
 	// Per-query component selection weights (cosine-weighted for
 	// surfaces, raw weights for volumes); returns their sum.
@@ -358,6 +410,17 @@ private:
 
 	luxrays::Point cubeMin;
 	float cubeSize, invCubeSize;
+	// Warmup gate for leaf eligibility (path.guiding.warmup; floored at
+	// WARMUP_RECORDS so an emitted count always satisfies the GPU's
+	// hardcoded GUIDE_WARMUP_RECORDS kernel gate - parity invariant).
+	u_int warmup;
+	// Round length, split fraction, tree bounds and the directional-lobe
+	// cap (path.guiding.swaprecords/.split/.maxdepth/.maxleaves/
+	// .components; env fallbacks resolved in the ctor).
+	unsigned long long swapRecords;
+	float splitFrac;
+	u_int maxDepth, maxLeaves, maxComponents;
+	bool debug;
 
 	// Frozen read tree (queries) + active write tree (records); both
 	// swapped atomically each round. Retired trees stay allocated a few

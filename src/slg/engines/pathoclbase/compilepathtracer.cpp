@@ -99,6 +99,13 @@ void CompiledScene::CompilePathTracer() {
 	// folds zHatMis into the DL-side MIS density.
 	compiledPathTracer.guidingRisK = Min(Max(pathTracer->guidingRisK, 0), 8);
 
+	// Guiding artist gates (P5): the kernel's guidableBsdf/bounce gate
+	// and MixWeight selection read the same values the CPU parsed.
+	compiledPathTracer.guidingMinDepth = (u_int)Max(pathTracer->guidingMinDepth, 0);
+	compiledPathTracer.guidingGlossiness = pathTracer->guidingGlossiness;
+	compiledPathTracer.guidingDiffuse = pathTracer->guidingDiffuse ? 1u : 0u;
+	compiledPathTracer.guidingStrength = pathTracer->guidingStrength;
+
 	// Portal bounce proposal (M5): the rects are uploaded once per device
 	// (they are static scene data); only the scalars ride taskConfig.
 	compiledPathTracer.portalCount = (u_int)pathTracer->portals.size();

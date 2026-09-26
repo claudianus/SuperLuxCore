@@ -170,6 +170,17 @@ typedef struct {
 	// product target t = f*|cos|*Lhat. Mirrors PathTracer::guidingRisK.
 	unsigned int guidingRisK;
 
+	// Guiding artist gates (P5, path.guiding.*): earliest bounce depth
+	// for the guide (was hardcoded 2), glossiness cutoff for the field
+	// (was .3f), pure-diffuse opt-in (was env-only) and the artist
+	// strength scale on the guide-side selection weight. Mirrors
+	// PathTracer::guidingMinDepth/guidingGlossiness/guidingDiffuse/
+	// guidingStrength.
+	unsigned int guidingMinDepth;
+	float guidingGlossiness;
+	unsigned int guidingDiffuse;
+	float guidingStrength;
+
 	// Portal-guided bounce sampling (M5, path.portal.*): aperture rects
 	// live in the portalRects buffer (4 float4 records each); share caps
 	// the one-sample MIS weight. Mirrors PathTracer::portals/portalShare.

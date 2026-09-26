@@ -151,11 +151,22 @@ void PathCPURenderEngine::StartLockLess() {
 	delete pathGuidingCache;
 	pathGuidingCache = nullptr;
 	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.guiding.enable")).Get<bool>()) {
+		// Cache settings (P5): defined properties win, LUX_PG_* env is
+		// the debug fallback (resolved inside Settings/ctor). warmup is
+		// floored at WARMUP_RECORDS inside the cache (GPU kernel gate
+		// parity).
+		const PathGuidingCache::Settings pgSettings =
+				PathGuidingCache::SettingsFromProperties(cfg);
+		const bool pgFreeze = cfg.IsDefined("path.guiding.freeze") ?
+				cfg.Get(Property("path.guiding.freeze")(true)).Get<bool>() :
+				(!getenv("LUX_PG_FREEZE") ||
+					(atoi(getenv("LUX_PG_FREEZE")) != 0));
 		// Optional warm start: path.guiding.tablefile loads a previously
 		// dumped read tree (LUX_PG_DUMP) and keeps training on top of it.
 		const string tableFile = cfg.Get(Property("path.guiding.tablefile")("")).Get<string>();
 		if (!tableFile.empty()) {
-			pathGuidingCache = PathGuidingCache::Load(tableFile);
+			pathGuidingCache = PathGuidingCache::Load(tableFile,
+					pgFreeze, pgSettings);
 			if (pathGuidingCache) {
 				SLG_LOG("[PathCPURenderEngine] Path guiding table loaded: " << tableFile);
 			} else {
@@ -167,7 +178,8 @@ void PathCPURenderEngine::StartLockLess() {
 			const Point cubeMin(bsphere.center.x - bsphere.rad,
 					bsphere.center.y - bsphere.rad,
 					bsphere.center.z - bsphere.rad);
-			pathGuidingCache = new PathGuidingCache(cubeMin, 2.f * bsphere.rad);
+			pathGuidingCache = new PathGuidingCache(cubeMin,
+					2.f * bsphere.rad, pgSettings);
 		}
 		SLG_LOG("[PathCPURenderEngine] Path guiding (M4) enabled");
 	}
@@ -199,12 +211,19 @@ void PathCPURenderEngine::StopLockLess() {
 
 	pathTracer.DeletePixelFilterDistribution();
 
-	// Table export for GPU training flow (M2b): dump the frozen read
-	// side when LUX_PG_DUMP is set.
+	// Table export: path.guiding.savetable (env LUX_PG_DUMP fallback)
+	// dumps the frozen read side - the CPU-trains/GPU-samples flow.
 	if (pathGuidingCache) {
-		const char *dumpPath = getenv("LUX_PG_DUMP");
-		if (dumpPath && dumpPath[0])
+		const string dumpPath = renderConfig.GetConfig().Get(
+				Property("path.guiding.savetable")(
+					getenv("LUX_PG_DUMP") ? getenv("LUX_PG_DUMP") : ""))
+				.Get<string>();
+		if (!dumpPath.empty()) {
+			// Commit the pending write-side records so the dump is
+			// not missing the last training round.
+			pathGuidingCache->ForceSwap();
 			pathGuidingCache->Save(dumpPath);
+		}
 	}
 
 	delete photonGICache;
