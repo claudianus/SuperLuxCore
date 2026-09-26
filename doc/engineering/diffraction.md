@@ -25,7 +25,7 @@ caustics for free.
   in material_types.cl, compilematerials serialization, kernels.h +
   pathoclbaseoclthreadkernels source registration, parser branch
   `"diffraction"`, BLC node `nodes/materials/diffraction.py`.
-- Regression: `dev-tools/e43_diffraction_test.py` (T1 mirror-limit vs
+- Regression: `dev-tools/e46_diffraction_test.py` (T1 mirror-limit vs
   `mirror` via 16×16 block means — per-pixel relative metrics fail on
   light-silhouette MC noise; T2 hue spread; T3 CPU/GPU; T4 RGB finite).
 - Demo: `scenes/diffraction/cd-rainbow.scn` + `gen_assets.py` (annulus

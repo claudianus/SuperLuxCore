@@ -3,7 +3,7 @@
 Status: **shipped on CPU (`PATHCPU`) and GPU (`PATHOCL`, Metal-validated)** —
 `scene.materials.X.type = diffraction`, exposed in SuperBlendLuxCore as the
 "Diffraction (CD)" material node. Regression suite:
-`dev-tools/e43_diffraction_test.py`. Demo scene:
+`dev-tools/e46_diffraction_test.py`. Demo scene:
 `scenes/diffraction/cd-rainbow.scn` (720p render `cd-rainbow-720p.png`).
 
 ## What and why
@@ -119,11 +119,11 @@ concentrate energy in low orders.
   `include/slg/kernels/kernels.h` + `pathoclbaseoclthreadkernels.cpp`
 - Parser branch: `src/slg/scene/parsematerials.cpp` (`"diffraction"`)
 - Blender: `SuperBlendLuxCore/nodes/materials/diffraction.py`
-- Tests: `dev-tools/e43_diffraction_test.py`
+- Tests: `dev-tools/e46_diffraction_test.py`
 - Demo: `scenes/diffraction/cd-rainbow.scn`, `gen_assets.py` (annulus mesh +
   PFM studio env), `cd-rainbow-720p.png`
 
-## Regression coverage (`dev-tools/e43_diffraction_test.py`)
+## Regression coverage (`dev-tools/e46_diffraction_test.py`)
 
 1. **T1 mirror equivalence** — huge `spacing` collapses all orders onto the
    mirror direction; block-averaged image + total energy match a `mirror`

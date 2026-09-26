@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# E43: diffraction material functional tests.
+# E46: diffraction material functional tests.
 #
 #   T1  math sanity: spacing >> lambda collapses to order 0 -> the render must
 #       equal a plain mirror render of the same geometry.
@@ -10,7 +10,7 @@
 #   T4  RGB (non-spectral) mode still produces a finite, non-black image.
 #
 # Run from the repo root:
-#   python3.13 dev-tools/e43_diffraction_test.py
+#   python3.13 dev-tools/e46_diffraction_test.py
 
 import os
 import sys

@@ -59,7 +59,7 @@ ask for.
 | Random-walk SSS (S2/E35) | material defs / [../engineering/openpbr-sss-findings.md](../engineering/openpbr-sss-findings.md) | `62366b35b964de43395f36874cfc888110493bc6` albedo/mfp | `dev-tools/e35_sss_albedo.py`, `e35_visual_demo.py` | CPU/OCL/Metal |
 | Huang hair (S3) | [hair.md](hair.md) | `4cfae33296cc73c7f1d29e97877fce716a0266d6` Chiang/Huang model select | `dev-tools/e36_hair_huang.py`, `e36_visual_demo.py` | CPU/OCL/Metal |
 | .lxm proxy + scene.spill out-of-core | [../engineering/out-of-core.md](../engineering/out-of-core.md) | `fe11c2ee900d1c19119e488f8f6ea0f865b5cc39` v1, `c92c2f3407e9eb55fa6e4c649a3c49b409fa867a` cluster idx, `62c7c06687c99b453cfa4584cc1cacc0500b93e1` v4, `c92c2f3407e9eb55fa6e4c649a3c49b409fa867a` stride, `c92c2f3407e9eb55fa6e4c649a3c49b409fa867a` residency pool, spill `c92c2f3407e9eb55fa6e4c649a3c49b409fa867a`+ | SuperBlendLuxCore `dev-tools/lxm*_test.py`, `cluster_residency_test.py`, `imagemap_stream_test.py`, `*spill*_test.py` | all (POSIX+Win COW) |
-| Diffraction grating (CD rainbow) | [diffraction.md](diffraction.md) | this branch | `dev-tools/e43_diffraction_test.py` (T1–T4), `scenes/diffraction/cd-rainbow.scn` | CPU/OCL/Metal |
+| Diffraction grating (CD rainbow) | [diffraction.md](diffraction.md) | this branch | `dev-tools/e46_diffraction_test.py` (T1–T4), `scenes/diffraction/cd-rainbow.scn` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.
