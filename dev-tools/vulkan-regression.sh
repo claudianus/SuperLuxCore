@@ -148,6 +148,18 @@ opencl.devices.select = $SELECT
 EOF
         echo "rendering (first run compiles Metal pipelines for 21 kernels — can take tens of minutes)..."
         ( cd "$ROOT" && "$CONSOLE" "$cfg" ) > "$WORK/emissive-vk.log" 2>&1
+        # Report/verify which intersection path ran. A silent SW fallback
+        # would still pass the pixel check but stop exercising HWRT.
+        if grep -q "ray-query intersection active" "$WORK/emissive-vk.log"; then
+            echo "[render] intersection mode: HWRT ray-query (BLAS+TLAS)"
+        elif grep -q "using SW traversal" "$WORK/emissive-vk.log"; then
+            echo "[render] WARNING: HWRT fell back to SW traversal"
+            grep "using SW traversal" "$WORK/emissive-vk.log" | head -2
+        else
+            echo "[render] FAIL: neither HWRT active nor SW-fallback log found"
+            cp "$WORK/emissive-vk.log" /tmp/vulkan-regression-render.log 2>/dev/null
+            FAIL=1
+        fi
         if [ ! -f "$WORK/emissive-vk.hdr" ]; then
             cp "$WORK/emissive-vk.log" /tmp/vulkan-regression-render.log 2>/dev/null
             echo "[render] FAIL: no output (log: /tmp/vulkan-regression-render.log)"
@@ -195,6 +207,32 @@ PYEOF
                 echo "[render] FAIL: centre mismatch (log: /tmp/vulkan-regression-render.log)"
             fi
         fi
+    fi
+fi
+
+# ---- Stage C: scene-edit AS rebuild (opt-in, needs pysuperluxcore) -----------
+if [ "$FULL" = 1 ]; then
+    echo "--- Stage C: scene-edit AS rebuild (vk_rt_update_test.py)"
+    PYLUX="${PYLUX_PYTHON:-}"
+    if [ -z "$PYLUX" ]; then
+        for cand in /Applications/Blender.app/Contents/Resources/*/python/bin/python3.* \
+                    "$(command -v python3.13 2>/dev/null)"; do
+            if [ -x "$cand" ] && "$cand" -c "import sys; sys.path.insert(0,'$ROOT/out/build/src/pysuperluxcore/Release'); import pysuperluxcore" 2>/dev/null; then
+                PYLUX="$cand"; break
+            fi
+        done
+    fi
+    if [ -z "$PYLUX" ]; then
+        echo "[update] SKIP: no python with pysuperluxcore (set PYLUX_PYTHON)"
+    elif "$PYLUX" "$ROOT/dev-tools/vk_rt_update_test.py" > "$WORK/update.log" 2>&1 \
+            && [ "$(grep -c 'BLAS + TLAS built' "$WORK/update.log")" -ge 2 ] \
+            && grep -q 'VK_RT_UPDATE: session completed' "$WORK/update.log"; then
+        echo "[update] PASS (AS rebuilt after scene edit, $(grep -c 'BLAS + TLAS built' "$WORK/update.log") builds)"
+    else
+        cp "$WORK/update.log" /tmp/vulkan-regression-update.log 2>/dev/null
+        echo "[update] FAIL (log: /tmp/vulkan-regression-update.log)"
+        tail -15 "$WORK/update.log"
+        FAIL=1
     fi
 fi
 

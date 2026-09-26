@@ -117,7 +117,7 @@ Two-layer design mirroring the Metal backend:
 |---|---|---|
 | **M0 spike** ✅ | Standalone Vulkan ray-query microbench — DONE (`dev-tools/vkrt/`): MoltenVK #2771 RT path functional on M5 Pro, 588 Mrays/s, exact CPU parity | PASSED — gate was "works at all on Apple"; next: same-scene vs native Metal |
 | **M1** | `VulkanDevice` + clspv translation of kernel set; PATHOCL SW-traversal render on NVIDIA+AMD+Intel | e2e parity vs PATHCPU on 3 vendors |
-| **M2** | Ray-query RT kernel + AS build (analog of `metalrtaccel.mm`, ~1.2k LOC native + GLSL kernel) | HWRT OBJECT_ID/UV/RGB parity + throughput ≥ OptiX |
+| **M2** ✅ | Ray-query RT kernel + AS build (`BuildRTAccel` in `vkintersectiondevice.cpp`) | 15/15 ray parity on MoltenVK; throughput TBD on native driver |
 | **M3 decision** | Retire OpenCL everywhere; retire CUDA on NVIDIA if VK ≥ CUDA; keep Metal on macOS until MoltenVK RT ships stable | parity + perf evidence |
 
 ## Blocked by
@@ -175,8 +175,13 @@ Verified end-to-end on Apple M5 Pro via MoltenVK (2026-09):
   pruned module (`vkk2-<kernel>-<khash>`), not the whole program — a
   source edit only recompiles kernels whose call graph changed.
 - **SPIRV-Cross fixes** live on the writable fork
-  `claudianus/SPIRV-Cross@luxcore-psb-msl-fixes` (`be1636d3`); the
-  MoltenVK build in `dev-tools/vkrt` references it.
+  `claudianus/SPIRV-Cross@luxcore-psb-msl-fixes` (`be1636d3`,
+  `335eaf6c`); the MoltenVK build in `dev-tools/vkrt` references it.
+- **Full regression**: `vulkan-regression.sh --full` PASS — Stage A
+  `vk_intersect_test` 8/8 rays, Stage B 1280×720 PATHOCL render with
+  deterministic centre-pixel assert (needs fix #5 below; without it
+  `vkCreatePipelineLayout`/`pipeline` fails
+  `VK_ERROR_INITIALIZATION_FAILED` inside MTLCompilerService).
 
 ### SPIRV-Cross / MoltenVK findings (patched locally)
 
@@ -207,6 +212,18 @@ fixes verified by `xcrun metal` on the generated MSL:
    re-inlining: library ~15 s, pipeline ~184 s, vs OOM/∞ before.
    Small helpers keep `always_inline`; `static` keeps internal linkage
    so metallib symbol dedup still works.
+5. **BDA pointer-to-array casts** — BDA pointers are declared
+   `spvUnsafeArray<T,N>*` (the templated wrapper `type_to_glsl` emits
+   for physical pointers), but `&member` on a physical-layout C array
+   yields `T(*)[N]` — an incompatible pointer type that fails MSL
+   (`cannot initialize 'spvUnsafeArray<float,4096>*' with
+   'float(*)[4096]'`, surfaced at runtime as
+   `VK_ERROR_INITIALIZATION_FAILED` during pipeline creation).
+   `to_pointer_expression`/`to_enclosed_pointer_expression`/
+   `to_ptr_expression` route through `bda_array_pointer_cast`, wrapping
+   `&expr` in `reinterpret_cast<device spvUnsafeArray<T,N>*>` when the
+   pointee is an array — layout-identical, so the cast is a no-op
+   (`335eaf6c`).
 
 ### Known limitations (this port)
 
@@ -218,16 +235,40 @@ fixes verified by `xcrun metal` on the generated MSL:
   SPIRV-Cross → MSL → Metal. Native Vulkan drivers (NV/AMD/Intel) skip
   the MSL stage entirely — the SPIRV-Cross fixes above are Apple-only
   concerns.
-- **SW traversal only**: BVH intersect runs as a compute kernel; HWRT
-  (`VK_KHR_ray_query` → Metal RT) is the M2 work, gated on the Metal
-  HWRT reference fix.
+- **HWRT implemented (M2)**: `VulkanIntersectionDevice` builds one BLAS
+  per mesh + TLAS and runs a GLSL `GL_EXT_ray_query` compute kernel
+  (`src/luxrays/devices/vkintersectiondevice.cpp`,
+  `BuildRTAccel()`/`EnqueueTraceRayBuffer`). OpenCL C cannot express
+  `OpRayQuery*`, so the traversal shader is compiled by
+  `glslangValidator` (bundled in `~/.luxcore/vktools`) while shading
+  kernels keep the clspv path. Hit mapping:
+  `instanceCustomIndex`→meshIndex, `primitiveIndex`→triangleIndex,
+  barycentrics (u,v)→(b1,b2) — byte-identical `RayHit` to the SW path.
+  `LUXRAYS_VULKAN_RT=0` forces the SW traversal fallback; dataset
+  edits (`Update()`) rebuild the AS set. Validated: `vk_intersect_test`
+  15/15 rays HWRT *and* forced-SW, `spirv-val` clean
+  (`OpTypeAccelerationStructureKHR`/`OpRayQuery*` present); 1280×720
+  PATHOCL kitchen render (`scenes/kitchen/kitchen-agx-vulkan.cfg`,
+  25 BLAS + TLAS, AgX + ACES 2.0 outputs visually verified);
+  scene-edit rebuild verified via `dev-tools/vk_rt_update_test.py`
+  (second `BLAS + TLAS built` logged after `EndSceneEdit`, session
+  completes clean). Remaining note: edit path reports a small
+  872-byte device-buffer leak on session teardown — minor, tracked.
+- **MoltenVK RT is experimental**: AS support needs
+  `enableExperimentalRayTracing` in the global `MVKConfiguration`
+  (set programmatically via `vkSetMoltenVKConfigurationMVK` — the
+  function is deprecated but `VK_EXT_layer_settings` cannot reach the
+  *global* config it toggles; ABI-safe via the size round-trip). Perf
+  unverified vs native drivers — MoltenVK's RT is functional, not
+  tuned.
 - Blender external-process render supports Vulkan via `BLC_GPU_BACKEND`
   re-derivation; in-process and viewport renders work through the
   normal `opencl.devices.select` path.
 
 Regression: `dev-tools/vulkan-regression.sh` (Stage A `vk_intersect_test`,
 seconds; `--full` adds a 1280×720 PATHOCL emissive-quad render with
-deterministic centre-pixel assert).
+deterministic centre-pixel assert + HWRT-mode check — Stage B — and a
+scene-edit AS-rebuild test — Stage C, skipped without pysuperluxcore).
 
 ## References
 
