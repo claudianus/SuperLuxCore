@@ -564,22 +564,20 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBVHNodesBuff);
 
-	// Path guiding (P1-3 M2b): 16 frozen coarse-table chunks (4224B each;
-	// small uploads land reliably) + field bounds + enable. Chunks are
-	// null (and guidingEnable 0) when unguided; kernels must not
-	// dereference them then (gated on guidingEnable).
-	for (u_int i = 0u; i < 16u; ++i)
-		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideChunkBuff[i]);
+	// Path guiding (P1-3 M4e): flattened SD-tree nodes + leaf vMF
+	// records + enable. Buffers are null (and guidingEnable 0) when
+	// unguided; kernels must not dereference them then.
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideNodesBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideLeavesBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideHasTable ? 1u : 0u);
-	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[0]);
-	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[1]);
-	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[2]);
-	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeSize);
 	// Guiding stats buffer
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideDbgBuff);
 	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each)
 	for (u_int i = 0u; i < 16u; ++i)
 		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideRecBuff[i]);
+
+	// Portal bounce proposal (M5): aperture rects, null when none
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, portalRectsBuff);
 
 	// Native curve primitives (Metal HWRT): null when no mesh carries curve
 	// data; only dereferenced under RAYHIT_CURVE_FLAG hits.

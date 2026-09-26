@@ -78,7 +78,7 @@ protected:
 	}
 
 	virtual bool ProcessVisibilityParticle(const PGICVisibilityParticle &vp,
-			vector<PGICVisibilityParticle> &visibilityParticles,
+			SpillableArray<PGICVisibilityParticle> &visibilityParticles,
 			IndexOctree<PGICVisibilityParticle> *octree, const float maxDistance2) const {
 		PGICOctree *particlesOctree = (PGICOctree *)octree;
 

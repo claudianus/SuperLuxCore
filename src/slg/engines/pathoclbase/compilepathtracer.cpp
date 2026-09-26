@@ -90,6 +90,19 @@ void CompiledScene::CompilePathTracer() {
 	// IDX_WAVELENGTH (sampler_types.cl) under -D SLG_SPECTRAL.
 	compiledPathTracer.spectralEnable = pathTracer->spectralEnable;
 
+	// RIS product guiding (M4b): K-candidate resampling against the
+	// f|cos|*Lhat product. The kernel draws the candidates in
+	// MK_HIT_OBJECT (post-BSDF, pre-DL - same ordering as the CPU) and
+	// folds zHatMis into the DL-side MIS density.
+	compiledPathTracer.guidingRisK = Min(Max(pathTracer->guidingRisK, 0), 8);
+
+	// Portal bounce proposal (M5): the rects are uploaded once per device
+	// (they are static scene data); only the scalars ride taskConfig.
+	compiledPathTracer.portalCount = (u_int)pathTracer->portals.size();
+	compiledPathTracer.portalShare = pathTracer->portalShare;
+	compiledPathTracer.portalSideGate = pathTracer->portalSideGate;
+	compiledPathTracer.portalAdapt = pathTracer->portalAdapt ? 1u : 0u;
+
 	// MNEE specular caustics (pathtracer_mnee.cpp): the kernel port runs the
 	// same single vertex solver (path.mnee.enable / path.mnee.maxiterations).
 	// The multi-specular chain port (MNEEMultiDirectSampling, MNEE_PHASE_MS_*

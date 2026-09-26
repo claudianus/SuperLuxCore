@@ -1961,58 +1961,32 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
-// Path guiding (P1-3 M2b): frozen coarse-grid directional guide sampling.
+// Path guiding (P1-3 M4e): flattened SD-tree + per-leaf vMF mixture.
 //
-// Ports PathGuidingCache::Sample/Pdf/CosineSample (CPU reference) at the
-// coarse GPU resolution: 8^3 spatial cells, 8x4 directional bins (equal
-// area), cell-major 33 floats per cell (32 bins + total). The host
-// downsamples the CPU field (mass-preserving pooling) and uploads 16
-// chunks of 32 cells (4224B each): this Metal backend silently drops
-// host-to-device uploads above ~8KB, so one big 2MB buffer never lands.
-// Training records flow device-to-host through 16 small record buffers
-// (M2b-2); sampling queries still read the frozen chunks, so all queries
-// agree by construction within a round.
+// Ports PathGuidingCache::Sample/Pdf exactly - the GPU queries the same
+// fitted field the CPU uses (the coarse-grid snapshot of M2b is gone).
+// One-sample MIS stays exact because the drawn direction and its pdf
+// come from the identical compound distribution.
+//
+// nodes: uint4 per node, DFS-emitted so the root is always index 0.
+//   inner: {child0, child1, axis, splitBits}; leaf: {~0u, ~0u, leafIndex, 0}.
+// leaves: 24 floats per leaf - [0..3] component weights w_k,
+//   [4+4k..6+4k] mean direction mu_k.xyz, [7+4k] concentration kappa_k,
+//   [20] visitation count, [21] informativeness peak, [22] nComp,
+//   [23] round flux total.
+// Training records flow device-to-host through the 16 small record
+// buffers (M2b-2); the tree upload refreshes on the same ForceSwap
+// cadence, so queries agree by construction within a round.
 //------------------------------------------------------------------------------
 
-#define GUIDE_GRID_RES 8u
-#define GUIDE_DIR_PHI 8u
-#define GUIDE_DIR_THETA 4u
-#define GUIDE_DIR_BINS 32u
+#define GUIDE_VMF_K 4u
 #define GUIDE_WARMUP_RECORDS 256.f
-#define GUIDE_BIN_OMEGA ((2.f * M_PI_F / 8.f) * (2.f / 4.f))
-#define GUIDE_CHUNK_CELLS 32u
-#define GUIDE_CELL_FLOATS 33u
-
-// Chunk select: 16 frozen chunk buffers, chunk = coarseCell >> 5
-// Chunk select: 16 frozen chunk buffers, chunk = coarseCell >> 5
-OPENCL_FORCE_INLINE __global const float *Guide_Chunk(uint ch,
-		__global const float *c0, __global const float *c1,
-		__global const float *c2, __global const float *c3,
-		__global const float *c4, __global const float *c5,
-		__global const float *c6, __global const float *c7,
-		__global const float *c8, __global const float *c9,
-		__global const float *c10, __global const float *c11,
-		__global const float *c12, __global const float *c13,
-		__global const float *c14, __global const float *c15) {
-	switch (ch) {
-		case 0u: return c0;
-		case 1u: return c1;
-		case 2u: return c2;
-		case 3u: return c3;
-		case 4u: return c4;
-		case 5u: return c5;
-		case 6u: return c6;
-		case 7u: return c7;
-		case 8u: return c8;
-		case 9u: return c9;
-		case 10u: return c10;
-		case 11u: return c11;
-		case 12u: return c12;
-		case 13u: return c13;
-		case 14u: return c14;
-		default: return c15;
-	}
-}
+#define GUIDE_FLOOR_W_SURFACE .10f
+#define GUIDE_FLOOR_W_VOLUME .15f
+#define GUIDE_LEAF_FLOATS 24u
+// Depth cap: TREE_MAX_DEPTH is 12 on the host; anything deeper means a
+// corrupt upload and must not loop forever.
+#define GUIDE_MAX_DEPTH 32u
 
 OPENCL_FORCE_INLINE uint GuidingHash(uint x) {
 	// murmur3 32-bit finalizer (matches the CPU GuidingHash)
@@ -2024,32 +1998,92 @@ OPENCL_FORCE_INLINE uint GuidingHash(uint x) {
 	return x;
 }
 
-OPENCL_FORCE_INLINE uint Guide_CellIndex(float3 p,
-		float minX, float minY, float minZ, float invSize) {
-	const uint ix = (uint)(clamp((p.x - minX) * invSize, 0.f, 0.99999994f) * 8.f);
-	const uint iy = (uint)(clamp((p.y - minY) * invSize, 0.f, 0.99999994f) * 8.f);
-	const uint iz = (uint)(clamp((p.z - minZ) * invSize, 0.f, 0.99999994f) * 8.f);
-	return min(ix + iy * 8u + iz * 64u, 511u);
+// Descend the flattened SD-tree to the leaf holding p; returns the
+// leaf's 24-float record, or NULL on a corrupt/degenerate upload.
+OPENCL_FORCE_INLINE __global const float *GuideTree_LeafAt(
+		__global const uint4 *nodes, __global const float *leaves,
+		float3 p) {
+	uint ni = 0u;
+	for (uint d = 0u; d < GUIDE_MAX_DEPTH; ++d) {
+		const uint4 nd = nodes[ni];
+		if (nd.x == 0xffffffffu)
+			return leaves + nd.z * GUIDE_LEAF_FLOATS;
+		const float split = as_float(nd.w);
+		const float pc = (nd.z == 0u) ? p.x : ((nd.z == 1u) ? p.y : p.z);
+		ni = (pc < split) ? nd.x : nd.y;
+	}
+	return NULL;
 }
 
-OPENCL_FORCE_INLINE uint Guide_DirBin(float3 dir) {
-	const float phi = atan2(dir.y, dir.x);
-	const float c = clamp(dir.z, -1.f, 1.f);
-	const uint pi = min((uint)((phi + M_PI_F) / (2.f * M_PI_F) * 8.f), 7u);
-	const uint ti = min((uint)((c * .5f + .5f) * 4.f), 3u);
-	return ti * 8u + pi;
+// vMF pdf on the sphere: k e^{k(c-1)} / (2 pi (1-e^{-2k})); kappa ~ 0
+// reads as the uniform distribution (mirrors PathGuidingCache::VmfPdf).
+OPENCL_FORCE_INLINE float Guide_VmfPdf(float cosMuW, float kappa) {
+	if (kappa < 1e-3f)
+		return .25f / M_PI_F;
+	return kappa * exp(kappa * (cosMuW - 1.f)) /
+			(2.f * M_PI_F * (1.f - exp(-2.f * kappa)));
 }
 
-OPENCL_FORCE_INLINE float3 Guide_BinDir(uint bin, float u0, float u1) {
-	const uint pi = bin % 8u;
-	const uint ti = bin / 8u;
-	const float phi = (((float)pi + u0) / 8.f) * 2.f * M_PI_F - M_PI_F;
-	const float c = (((float)ti + u1) / 4.f) * 2.f - 1.f;
-	const float s = sqrt(max(0.f, 1.f - c * c));
-	// NOTE: MAKE_FLOAT3 (not raw (float3)(...) which this Metal backend
-	// lowers as a comma expression + scalar splat, nor bare float3(...)
-	// which Apple OpenCL rejects) — valid on both backends.
-	return MAKE_FLOAT3(s * cos(phi), s * sin(phi), c);
+// A(kappa) = coth(k) - 1/k, the vMF mean resultant length; ~k/3 near 0.
+OPENCL_FORCE_INLINE float Guide_VmfMeanCos(float kappa) {
+	if (kappa < 1e-3f)
+		return kappa / 3.f;
+	const float e = exp(-2.f * kappa);
+	return (1.f + e) / (1.f - e) - 1.f / kappa;
+}
+
+// Exact vMF sample via closed-form z inversion + uniform phi
+// (kappa ~ 0 degenerates to uniform sphere).
+OPENCL_FORCE_INLINE float3 Guide_VmfSample(float3 mu, float kappa,
+		float u0, float u1) {
+	if (kappa < 1e-3f)
+		return UniformSampleSphere(u0, u1);
+	const float z = 1.f + log(max(u1 + (1.f - u1) * exp(-2.f * kappa),
+			1e-30f)) / kappa;
+	const float s = sqrt(max(0.f, 1.f - z * z));
+	const float phi = 2.f * M_PI_F * u0;
+	const float3 helper = (fabs(mu.z) < .999f) ?
+			MAKE_FLOAT3(0.f, 0.f, 1.f) : MAKE_FLOAT3(0.f, 1.f, 0.f);
+	const float3 u = normalize(cross(helper, mu));
+	const float3 v = cross(mu, u);
+	return u * (s * cos(phi)) + v * (s * sin(phi)) + mu * z;
+}
+
+// Per-component density at a direction (mirrors LobePdf): vMF for
+// kappa > 0; kappa ~ 0 reads as the cosine lobe on surfaces and the
+// uniform sphere in volumes.
+OPENCL_FORCE_INLINE float Guide_LobePdf(float kappa, float cosMuW,
+		float cosDirN, const bool isotropic) {
+	if (kappa < 1e-3f)
+		return isotropic ? (.25f / M_PI_F) :
+				((cosDirN > 0.f) ? cosDirN / M_PI_F : 0.f);
+	return Guide_VmfPdf(cosMuW, kappa);
+}
+
+// Component selection weights (mirrors CompWeights): surfaces scale
+// each component by its expected cosine A(kappa)*(mu.n), clamped
+// positive; volumes use raw weights. Returns the weight sum.
+OPENCL_FORCE_INLINE float GuideTree_CompWeights(__global const float *leaf,
+		float3 n, const bool isotropic, float *s) {
+	const uint nComp = (uint)leaf[22];
+	float sSum = 0.f;
+	for (uint k = 0u; k < nComp; ++k) {
+		float sk = leaf[k];
+		if (!isotropic) {
+			const float kappa = leaf[7 + k * 4];
+			if (kappa < 1e-3f) {
+				// kappa ~ 0 doubles as the cosine lobe (E[cos] = 2/3)
+				sk *= 2.f / 3.f;
+			} else {
+				const float d = leaf[4 + k * 4] * n.x +
+						leaf[5 + k * 4] * n.y + leaf[6 + k * 4] * n.z;
+				sk *= max(0.f, Guide_VmfMeanCos(kappa) * d);
+			}
+		}
+		s[k] = sk;
+		sSum += sk;
+	}
+	return sSum;
 }
 
 OPENCL_FORCE_INLINE bool Guide_CosineSample(float3 n, float u0, float u1,
@@ -2067,103 +2101,338 @@ OPENCL_FORCE_INLINE bool Guide_CosineSample(float3 n, float u0, float u1,
 	return true;
 }
 
-// M2c: adaptive mixture weight from the (frozen-in-round) cell total.
-// Mirrors PathGuidingCache::MixWeight on the CPU.
-OPENCL_FORCE_INLINE float Guide_MixWeight(float total) {
-	return min(total / (total + 1024.f), .75f);
+// M2c adaptive mixture (mirrors PathGuidingCache::MixWeight):
+// guide-side selection probability from the leaf's record count times
+// the informativeness gate. Thin or diffuse leaves sample mostly BSDF;
+// rich peaked leaves trust the guide.
+OPENCL_FORCE_INLINE float Guide_PeakGate(float peak) {
+	return clamp((peak - 3.5f) / 5.5f, 0.f, 1.f);
+}
+OPENCL_FORCE_INLINE float Guide_MixWeight(float count, float peak) {
+	return min(count / (count + 1024.f), .75f) * Guide_PeakGate(peak);
 }
 
-OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
+// Ports PathGuidingCache::Sample. leaf may be NULL (empty/corrupt
+// field) - that folds into the same cold-leaf fallback the CPU takes.
+OPENCL_FORCE_INLINE bool GuideTree_Sample(__global const float *leaf,
 		float3 n, float uBin, float uDir0, float uDir1,
 		float3 *sampledDir, float *pdfW, const bool isotropic) {
-	__global const float *cb = tb + localCell * 33u;
-	float total = cb[32];
-	if (!(total > 0.f))
-		return false;
+	const float floorW = isotropic ? GUIDE_FLOOR_W_VOLUME : GUIDE_FLOOR_W_SURFACE;
+	const uint nComp = leaf ? (uint)leaf[22] : 0u;
+	const float count = leaf ? leaf[20] : 0.f;
+	if (nComp == 0u || count < GUIDE_WARMUP_RECORDS) {
+		// Cold leaf: pure-floor fallback (same density reported by Pdf).
+		if (isotropic) {
+			*sampledDir = UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .25f / M_PI_F;
+			return true;
+		}
+		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
+	}
 
-	// M2c smoothing (mirrors the CPU GuideWeights): beta flattens
-	// noise-dominated bins toward uniform within the valid hemisphere.
-	// isotropic (volume scattering vertices, CPU Sample(..., isotropic)):
-	// bins cover the full sphere, no cosine weighting - media scatter
-	// over 4pi and the vertex normal is just -rayDir.
-	const float beta = .1f * total / 32.f;
-	float weights[32];
+	float s[GUIDE_VMF_K];
+	const float sSum = GuideTree_CompWeights(leaf, n, isotropic, s);
+	if (!(sSum > 0.f)) {
+		if (isotropic) {
+			*sampledDir = UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .25f / M_PI_F;
+			return true;
+		}
+		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
+	}
+
+	// Usable-field fraction: sSum/wSum is the share of mixture mass that
+	// is not grazing/dead; the unusable part folds back into the floor.
 	float wSum = 0.f;
-	for (uint i = 0u; i < GUIDE_DIR_BINS; ++i) {
-		const uint pi = i % 8u;
-		const uint ti = i / 8u;
-		const float phi = (((float)pi + .5f) / 8.f) * 2.f * M_PI_F - M_PI_F;
-		const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
-		const float s = sqrt(max(0.f, 1.f - c * c));
-		const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-		weights[i] = isotropic ? (cb[i] + beta) :
-				((cosB > 0.f) ? cb[i] * cosB + beta : 0.f);
-		wSum += weights[i];
-	}
-	if (!(wSum > 0.f)) {
+	for (uint k = 0u; k < nComp; ++k)
+		wSum += leaf[k];
+	const float usable = (wSum > 0.f) ? clamp(sSum / wSum, 0.f, 1.f) : 0.f;
+	const float effFloorW = floorW + (1.f - floorW) * (1.f - usable);
+
+	if (uBin < effFloorW) {
 		if (isotropic) {
 			*sampledDir = UniformSampleSphere(uDir0, uDir1);
-			*pdfW = .25f / M_PI_F;
-			return true;
+		} else {
+			float fp;
+			Guide_CosineSample(n, uDir0, uDir1, sampledDir, &fp);
 		}
-		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
+	} else {
+		const float u = (uBin - effFloorW) / (1.f - effFloorW);
+		float pick = u * sSum;
+		uint k = 0u;
+		for (; k + 1u < nComp; ++k) {
+			pick -= s[k];
+			if (pick <= 0.f)
+				break;
+		}
+		if (!(s[k] > 0.f))
+			k = 0u;
+		const float kappa = leaf[7 + k * 4];
+		if (kappa < 1e-3f && !isotropic) {
+			float fp;
+			Guide_CosineSample(n, uDir0, uDir1, sampledDir, &fp);
+		} else {
+			const float3 mu = MAKE_FLOAT3(leaf[4 + k * 4],
+					leaf[5 + k * 4], leaf[6 + k * 4]);
+			*sampledDir = Guide_VmfSample(mu, kappa, uDir0, uDir1);
+		}
 	}
 
-	float pick = uBin * wSum;
-	uint bin = 0u;
-	for (; bin < GUIDE_DIR_BINS - 1u; ++bin) {
-		pick -= weights[bin];
-		if (pick <= 0.f)
-			break;
-	}
-	if (!(weights[bin] > 0.f)) {
-		if (isotropic) {
-			*sampledDir = UniformSampleSphere(uDir0, uDir1);
-			*pdfW = .25f / M_PI_F;
-			return true;
-		}
-		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
-	}
-
-	*sampledDir = Guide_BinDir(bin, uDir0, uDir1);
-	*pdfW = (weights[bin] / wSum) / GUIDE_BIN_OMEGA;
+	// Exact pdf of the compound distribution we just drew from
+	const float d = dot(*sampledDir, n);
+	float mix = 0.f;
+	for (uint k = 0u; k < nComp; ++k)
+		mix += (s[k] / sSum) * Guide_LobePdf(leaf[7 + k * 4],
+				sampledDir->x * leaf[4 + k * 4] +
+				sampledDir->y * leaf[5 + k * 4] +
+				sampledDir->z * leaf[6 + k * 4],
+				d, isotropic);
+	const float floorPdf = isotropic ? .25f / M_PI_F :
+			((d > 0.f) ? d / M_PI_F : 0.f);
+	*pdfW = effFloorW * floorPdf + (1.f - effFloorW) * mix;
 	return true;
 }
 
-OPENCL_FORCE_INLINE float Guide_Pdf(__global const float *tb, uint localCell,
+// Ports PathGuidingCache::Pdf: the exact same compound distribution
+// GuideTree_Sample draws from.
+OPENCL_FORCE_INLINE float GuideTree_Pdf(__global const float *leaf,
 		float3 n, float3 dir, const bool isotropic) {
-	__global const float *cb = tb + localCell * 33u;
-	float total = cb[32];
-	if (!(total > 0.f))
-		return 0.f;
+	const float floorW = isotropic ? GUIDE_FLOOR_W_VOLUME : GUIDE_FLOOR_W_SURFACE;
+	const float d = dot(dir, n);
+	const float floorPdf = isotropic ? .25f / M_PI_F :
+			((d > 0.f) ? d / M_PI_F : 0.f);
+	const uint nComp = leaf ? (uint)leaf[22] : 0u;
+	const float count = leaf ? leaf[20] : 0.f;
+	if (nComp == 0u || count < GUIDE_WARMUP_RECORDS)
+		return floorPdf;
 
-	// isotropic: same full-sphere weighting as Guide_Sample (both sides
-	// of the one-sample MIS must agree on the distribution).
-	const float beta = .1f * total / 32.f;
+	float s[GUIDE_VMF_K];
+	const float sSum = GuideTree_CompWeights(leaf, n, isotropic, s);
+	if (!(sSum > 0.f))
+		return floorPdf;
+
 	float wSum = 0.f;
-	for (uint i = 0u; i < GUIDE_DIR_BINS; ++i) {
-		const uint pi = i % 8u;
-		const uint ti = i / 8u;
-		const float phi = (((float)pi + .5f) / 8.f) * 2.f * M_PI_F - M_PI_F;
-		const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
-		const float s = sqrt(max(0.f, 1.f - c * c));
-		const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-		wSum += isotropic ? (cb[i] + beta) :
-				((cosB > 0.f) ? cb[i] * cosB + beta : 0.f);
-	}
-	if (!(wSum > 0.f))
-		return 0.f;
+	for (uint k = 0u; k < nComp; ++k)
+		wSum += leaf[k];
+	const float usable = (wSum > 0.f) ? clamp(sSum / wSum, 0.f, 1.f) : 0.f;
+	const float effFloorW = floorW + (1.f - floorW) * (1.f - usable);
 
-	const uint bin = Guide_DirBin(dir);
-	const uint pi = bin % 8u;
-	const uint ti = bin / 8u;
-	const float phi = (((float)pi + .5f) / 8.f) * 2.f * M_PI_F - M_PI_F;
-	const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
-	const float s = sqrt(max(0.f, 1.f - c * c));
-	const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-	const float w = isotropic ? (cb[bin] + beta) :
-			((cosB > 0.f) ? cb[bin] * cosB + beta : 0.f);
-	return (w / wSum) / GUIDE_BIN_OMEGA;
+	float mix = 0.f;
+	for (uint k = 0u; k < nComp; ++k)
+		mix += (s[k] / sSum) * Guide_LobePdf(leaf[7 + k * 4],
+				dir.x * leaf[4 + k * 4] + dir.y * leaf[5 + k * 4] +
+				dir.z * leaf[6 + k * 4],
+				d, isotropic);
+	return effFloorW * floorPdf + (1.f - effFloorW) * mix;
+}
+
+// Incident-radiance field estimate Lhat(p,d) = leaf.total x raw fitted
+// vMF mixture (no cosine weighting, no sampling floor - a kappa ~ 0 EM
+// component reads as the sphere uniform here, so support stays positive
+// wherever the true field is nonzero; mirrors
+// PathGuidingCache::IncidentEstimate with floorFrac = 0). The RIS
+// product-guiding target t = f|cos|*Lhat uses this.
+OPENCL_FORCE_INLINE float GuideTree_IncidentEstimate(
+		__global const float *leaf, const float3 d) {
+	const uint nComp = leaf ? (uint)leaf[22] : 0u;
+	if ((nComp == 0u) || (leaf[23] <= 0.f))
+		return 0.f;
+	float mix = 0.f;
+	for (uint k = 0u; k < nComp; ++k)
+		mix += leaf[k] * Guide_VmfPdf(
+				d.x * leaf[4 + k * 4] + d.y * leaf[5 + k * 4] +
+				d.z * leaf[6 + k * 4],
+				leaf[7 + k * 4]);
+	return leaf[23] * mix;
+}
+
+// RIS product-guiding candidate (M4b): draw one direction from the
+// (1-wG)*BSDF + wG*guide mixture and return its resampling weight
+// w = t/pMix with the product target t = f|cos|*Lhat (0 = dead
+// candidate). Mirrors the candWeight lambda in PathTracer::RenderEyePath
+// (same per-candidate hash salts). The candidate state is stored through
+// the out params only when cStore is set - the independent zHatMis pool
+// draws without keeping the candidates.
+OPENCL_FORCE_INLINE float Guide_RisCandidate(
+		__global const float *leaf,
+		__global const BSDF *bsdf,
+		const float3 shadeN, const bool isVol,
+		const float wG, const uint cs, const bool cStore,
+		float3 *cDir, float3 *cEval, BSDFEvent *cEvent,
+		float *cUD0, float *cUD1, bool *cBsdf, float *cT, float *cPMix
+		MATERIALS_PARAM_DECL) {
+	const float uSide = GuidingHash(cs ^ 0xa3b19535u) * (1.f / 4294967296.f);
+	const float uD0 = GuidingHash(cs ^ 0x85ebca6bu) * (1.f / 4294967296.f);
+	const float uD1 = GuidingHash(cs ^ 0xc2b2ae35u) * (1.f / 4294967296.f);
+	float3 d;
+	float gPdf, bPdf;
+	BSDFEvent ev;
+	float3 eval;
+	bool sideBsdf;
+	if (uSide < wG) {
+		// Guide-side candidate: sample the fitted mixture (incl. floor)
+		// then evaluate the BSDF there.
+		const float uBin = GuidingHash(cs ^ 0x27d4eb2fu) * (1.f / 4294967296.f);
+		if (!GuideTree_Sample(leaf, shadeN, uBin, uD0, uD1,
+				&d, &gPdf, isVol) || !(gPdf > 0.f))
+			return 0.f;
+		eval = BSDF_Evaluate(bsdf, d, &ev, &bPdf
+				MATERIALS_PARAM);
+		// Normalize to the single-cos convention (Disney's Evaluate
+		// double-counts the cosine) so t is one function for both
+		// candidate sides and the DL-side pHat evaluation.
+		if (mats[bsdf->materialIndex].type == DISNEY) {
+			const float cosLocal = fabs(Frame_ToLocal(&bsdf->frame, d).z);
+			eval = (cosLocal > 1e-3f) ? eval / cosLocal : BLACK;
+		}
+		sideBsdf = false;
+	} else {
+		// BSDF-side candidate: Sample returns f*|cos|/p single-cos for
+		// all materials - recover f*|cos| and keep the draw's event.
+		float cosd;
+		eval = BSDF_Sample(bsdf, uD0, uD1, &d, &bPdf, &cosd, &ev
+				MATERIALS_PARAM) * bPdf;
+		sideBsdf = true;
+		if (Spectrum_IsBlack(eval) || !(bPdf > 0.f))
+			return 0.f;
+		gPdf = GuideTree_Pdf(leaf, shadeN, d, isVol);
+	}
+	const float pMix = (1.f - wG) * bPdf + wG * gPdf;
+	if (!(pMix > 0.f))
+		return 0.f;
+	// Target t = f|cos| * Lhat (single-cos convention on both sides).
+	const float t = Spectrum_Filter(eval) *
+			GuideTree_IncidentEstimate(leaf, d);
+	if (cStore) {
+		*cDir = d;
+		*cEval = eval;
+		*cEvent = ev;
+		*cUD0 = uD0;
+		*cUD1 = uD1;
+		*cBsdf = sideBsdf;
+		*cT = t;
+		*cPMix = pMix;
+	}
+	return t / pMix;
+}
+
+//------------------------------------------------------------------------------
+// Portal-guided bounce sampling (M5, path.portal.*): GPU port of the
+// PathTracer::PortalRect proposal. Each rect is 4 float4 records:
+//   [0] = v0.xyz, invArea        [1] = e1.xyz, a = g22*invDet
+//   [2] = e2.xyz, b = g12*invDet [3] = n.xyz,  c = g11*invDet
+// (a,b,c) are the host's pre-multiplied 2x2 Gram inverse: the inside-rect
+// solve u = a*de1 - b*de2, v = c*de2 - b*de1 is identical to the CPU's
+// invDet*(g22,-g12 ; -g12,g11) application.
+//------------------------------------------------------------------------------
+
+// Solid-angle density of direction d from p under one rect's uniform-area
+// proposal: r^2/(A*|cos_s|), zero when the ray misses or runs parallel.
+OPENCL_FORCE_INLINE float Portal_RectPdfW(__global const float4 *pr,
+		const float3 p, const float3 d) {
+	const float3 n = MAKE_FLOAT3(pr[3].x, pr[3].y, pr[3].z);
+	const float dn = dot(d, n);
+	if (dn == 0.f)
+		return 0.f;
+	const float3 v0 = MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z);
+	const float t = dot(v0 - p, n) / dn;
+	if (!(t > 0.f))
+		return 0.f;
+	const float3 ds = (p + t * d) - v0;
+	const float de1 = ds.x * pr[1].x + ds.y * pr[1].y + ds.z * pr[1].z;
+	const float de2 = ds.x * pr[2].x + ds.y * pr[2].y + ds.z * pr[2].z;
+	const float u = pr[1].w * de1 - pr[2].w * de2;
+	const float v = pr[3].w * de2 - pr[2].w * de1;
+	if ((u < 0.f) || (u >= 1.f) || (v < 0.f) || (v >= 1.f))
+		return 0.f;
+	return t * t * pr[0].w / fabs(dn);
+}
+
+// Aggregate proposal density: the bounce picks one rect uniformly, so the
+// marginal is (1/N)*sum of per-rect pdfs (mirrors PathTracer::PortalPdfW).
+OPENCL_FORCE_INLINE float Portal_PdfW(__global const float4 *rects,
+		const uint count, const float3 p, const float3 d) {
+	float sum = 0.f;
+	for (uint i = 0u; i < count; ++i)
+		sum += Portal_RectPdfW(rects + 4u * i, p, d);
+	return sum / count;
+}
+
+// False when p lies on every portal's plane (all candidate directions
+// would run in-plane). Mirrored exactly between the bounce side and the
+// DL-side density - on the GPU both read the MK_HIT_OBJECT decision.
+OPENCL_FORCE_INLINE bool Portal_UsableAt(__global const float4 *rects,
+		const uint count, const float3 p) {
+	for (uint i = 0u; i < count; ++i) {
+		__global const float4 *pr = rects + 4u * i;
+		const float3 rel = p - MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z);
+		if (fabs(rel.x * pr[3].x + rel.y * pr[3].y + rel.z * pr[3].z) > 1e-4f)
+			return true;
+	}
+	return false;
+}
+
+// Half-space gate (env LUX_PG_PORTALSIDE): +1 fires only on the +n side,
+// -1 only on -n, 0 on both.
+OPENCL_FORCE_INLINE bool Portal_SideOK(__global const float4 *rects,
+		const uint count, const float sideGate, const float3 p) {
+	if (sideGate == 0.f)
+		return true;
+	for (uint i = 0u; i < count; ++i) {
+		__global const float4 *pr = rects + 4u * i;
+		const float3 rel = p - MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z);
+		const float s = rel.x * pr[3].x + rel.y * pr[3].y + rel.z * pr[3].z;
+		if (s * sideGate > 1e-4f)
+			return true;
+	}
+	return false;
+}
+
+// The aperture must sit in the surface's upper hemisphere: a portal
+// behind the shading normal can never deliver light to this vertex.
+OPENCL_FORCE_INLINE bool Portal_FacingOK(__global const float4 *rects,
+		const uint count, const float3 p, const float3 n) {
+	for (uint i = 0u; i < count; ++i) {
+		__global const float4 *pr = rects + 4u * i;
+		const float3 ctr = MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z) +
+				.5f * (MAKE_FLOAT3(pr[1].x, pr[1].y, pr[1].z) +
+				MAKE_FLOAT3(pr[2].x, pr[2].y, pr[2].z));
+		if (dot(ctr - p, n) > 0.f)
+			return true;
+	}
+	return false;
+}
+
+// Adaptive portal share (mirrors PathTracer::PortalShareAt): the
+// technique earns the fraction of the leaf's incident field arriving
+// through the aperture - Sum_i Omega_i * Lhat(d_i) / leaf total, capped
+// by portalShare. Falls back to the full share while the field is
+// untrained (portalAdapt off, guiding off, or a cold leaf).
+OPENCL_FORCE_INLINE float Portal_ShareAt(__global const float4 *rects,
+		const uint count, const float share, const bool adapt,
+		__global const uint4 *guideNodes,
+		__global const float *guideLeaves,
+		const uint guidingEnable, const float3 p) {
+	__global const float *leaf = (guidingEnable != 0u) ?
+			GuideTree_LeafAt(guideNodes, guideLeaves, p) : NULL;
+	if (!adapt || !leaf || ((uint)leaf[22] == 0u) ||
+			(leaf[20] < GUIDE_WARMUP_RECORDS))
+		return share;
+	const float tot = max(leaf[23], 1e-9f);
+	float fSum = 0.f;
+	for (uint i = 0u; i < count; ++i) {
+		__global const float4 *pr = rects + 4u * i;
+		const float3 dc = MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z) +
+				.5f * (MAKE_FLOAT3(pr[1].x, pr[1].y, pr[1].z) +
+				MAKE_FLOAT3(pr[2].x, pr[2].y, pr[2].z)) - p;
+		const float d2 = max(dot(dc, dc), 1e-12f);
+		const float3 dn = dc / sqrt(d2);
+		// rect solid angle ~ projected area / r^2
+		const float omega = fabs(dot(dn,
+				MAKE_FLOAT3(pr[3].x, pr[3].y, pr[3].z))) / (pr[0].w * d2);
+		fSum += omega * GuideTree_IncidentEstimate(leaf, dn);
+	}
+	return clamp(fSum / tot, 0.f, share);
 }
 
 // Per-sample pass for the guide bin-pick hash (mirrors Sampler::GetPass):
@@ -2233,27 +2502,17 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 		__global const BSDF *bsdf,
 		const float3 shadowRayDir
 		LIGHTS_PARAM_DECL,
-		__global const float* restrict guideChunk0,
-		__global const float* restrict guideChunk1,
-		__global const float* restrict guideChunk2,
-		__global const float* restrict guideChunk3,
-		__global const float* restrict guideChunk4,
-		__global const float* restrict guideChunk5,
-		__global const float* restrict guideChunk6,
-		__global const float* restrict guideChunk7,
-		__global const float* restrict guideChunk8,
-		__global const float* restrict guideChunk9,
-		__global const float* restrict guideChunk10,
-		__global const float* restrict guideChunk11,
-		__global const float* restrict guideChunk12,
-		__global const float* restrict guideChunk13,
-		__global const float* restrict guideChunk14,
-		__global const float* restrict guideChunk15,
+		__global const uint4* restrict guideNodes,
+		__global const float* restrict guideLeaves,
 		const uint guidingEnable,
-		const float guideCubeMinX,
-		const float guideCubeMinY,
-		const float guideCubeMinZ,
-		const float guideCubeSize) {
+		// RIS product guiding (M4b): the independent normalization
+		// zHatMis of the bounce winner drawn in MK_HIT_OBJECT (0 = off).
+		const float risZhat,
+		// Portal bounce proposal (M5): the effective share decided in
+		// MK_HIT_OBJECT (0 = off; the gates already ran there).
+		__global const float4* restrict portalRects,
+		const uint portalCount,
+		const float portalW) {
 	// Sample the BSDF
 	BSDFEvent event;
 	float bsdfPdfW;
@@ -2292,21 +2551,29 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 	// q so both MIS sides remain consistent.
 	const float factor = info->risScale / directLightSamplingPdfW;
 
-	// Path guiding (P1-3 M2b): same mixture competitor as the CPU side
+	// Path guiding (P1-3 M4e): same mixture competitor as the CPU side
 	// (see PathTracer::DirectLightSampling)
 	float bouncePdfW = bsdfPdfW;
-	{
+	if (risZhat > 0.f) {
+		// RIS product guiding (M4b): the bounce technique's effective
+		// density at w is pHat = t(w)/zHatMis with t = f|cos|*Lhat
+		// (single-cos convention, matching the candidate loop). risZhat
+		// carries the INDEPENDENT normalization zHatMis so the density
+		// stays decorrelated from the winner selection.
+		float tEval = Spectrum_Filter(bsdfEval);
+		if (mats[bsdf->materialIndex].type == DISNEY) {
+			const float cosLocal = fabs(Frame_ToLocal(&bsdf->frame,
+					shadowRayDir).z);
+			tEval = (cosLocal > 1e-3f) ? tEval / cosLocal : 0.f;
+		}
+		__global const float *risLeaf = GuideTree_LeafAt(guideNodes,
+				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
+		bouncePdfW = tEval *
+				GuideTree_IncidentEstimate(risLeaf, shadowRayDir) / risZhat;
+	} else if (guidingEnable != 0u) {
 		const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
-		const float invGuideSize = 1.f / guideCubeSize;
-		const uint guideCell = Guide_CellIndex(
-				VLOAD3F(&bsdf->hitPoint.p.x),
-				guideCubeMinX, guideCubeMinY, guideCubeMinZ, invGuideSize);
-		__global const float *guideTb = Guide_Chunk(guideCell >> 5,
-				guideChunk0, guideChunk1, guideChunk2, guideChunk3,
-				guideChunk4, guideChunk5, guideChunk6, guideChunk7,
-				guideChunk8, guideChunk9, guideChunk10, guideChunk11,
-				guideChunk12, guideChunk13, guideChunk14, guideChunk15);
-		const uint guideLocal = guideCell & 31u;
+		__global const float *guideLeaf = GuideTree_LeafAt(guideNodes,
+				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
 		// Mirrors CPU GuidableBsdf(): volume scattering vertices are
 		// always guidable (phase lobes sample blind w.r.t. the incident
 		// field); glossy bounces need enough roughness; pure diffuse is
@@ -2314,16 +2581,28 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 		const bool guidableBsdf = bsdf->isVolume ||
 				(((eventTypes & GLOSSY) != 0u) &&
 				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
-		if ((guidingEnable != 0u) && !BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
-				guidableBsdf &&
-				(pathInfo->depth.depth >= 2u) &&
-				(guideTb[guideLocal * 33u + 32u] >= GUIDE_WARMUP_RECORDS)) {
+		// Same gate as CPU CanGuide(): fitted leaf past warmup.
+		if (!BSDF_IsDelta(bsdf MATERIALS_PARAM) && guidableBsdf &&
+				(pathInfo->depth.depth >= 2u) && guideLeaf &&
+				((uint)guideLeaf[22] > 0u) &&
+				(guideLeaf[20] >= GUIDE_WARMUP_RECORDS)) {
 			const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
-			const float wDl = Guide_MixWeight(guideTb[guideLocal * 33u + 32u]);
-			bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * Guide_Pdf(guideTb, guideLocal,
-					shadeN, shadowRayDir, bsdf->isVolume);
+			const float wDl = Guide_MixWeight(guideLeaf[20], guideLeaf[21]);
+			bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl *
+					GuideTree_Pdf(guideLeaf, shadeN, shadowRayDir,
+					bsdf->isVolume);
 		}
 	}
+
+	// Portal bounce technique (M5): the bounce-side mixture gains
+	// wP*pPortal(d) + (1-wP)*rest wherever the aperture proposal can
+	// fire - the mirrored predicate already ran in MK_HIT_OBJECT and
+	// left its share in portalW (0 under RIS, on the GI-eligible first
+	// vertex, and on a portal plane; same as the CPU gates).
+	if (portalW > 0.f)
+		bouncePdfW = portalW * Portal_PdfW(portalRects, portalCount,
+				VLOAD3F(&bsdf->hitPoint.p.x), shadowRayDir) +
+				(1.f - portalW) * bouncePdfW;
 
 	// Russian Roulette
 	bouncePdfW *= (PathDepthInfo_GetRRDepth(tmpDepthInfo) >= taskConfig->pathTracer.rrDepth) ?
@@ -5962,29 +6241,12 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		/* Images */ \
 		KERNEL_ARGS_IMAGEMAPS_PAGES \
 		KERNEL_ARGS_PHOTONGI \
-		/* Path guiding (P1-3 M2b): 16 frozen coarse-table chunks
-		 * (4224B each) + field bounds + enable */ \
-		, __global const float* restrict guideChunk0 \
-		, __global const float* restrict guideChunk1 \
-		, __global const float* restrict guideChunk2 \
-		, __global const float* restrict guideChunk3 \
-		, __global const float* restrict guideChunk4 \
-		, __global const float* restrict guideChunk5 \
-		, __global const float* restrict guideChunk6 \
-		, __global const float* restrict guideChunk7 \
-		, __global const float* restrict guideChunk8 \
-		, __global const float* restrict guideChunk9 \
-		, __global const float* restrict guideChunk10 \
-		, __global const float* restrict guideChunk11 \
-		, __global const float* restrict guideChunk12 \
-		, __global const float* restrict guideChunk13 \
-		, __global const float* restrict guideChunk14 \
-		, __global const float* restrict guideChunk15 \
+		/* Path guiding (P1-3 M4e): flattened SD-tree (uint4 per node,
+		 * root at index 0) + per-leaf vMF mixture records (24 floats
+		 * per leaf). Null when unguided; gated on guidingEnable. */ \
+		, __global const uint4* restrict guideNodes \
+		, __global const float* restrict guideLeaves \
 		, const uint guidingEnable \
-		, const float guideCubeMinX \
-		, const float guideCubeMinY \
-		, const float guideCubeMinZ \
-		, const float guideCubeSize \
 		/* Guiding stats: [0]=tryGuide hits, [1]=guide-ok */ \
 		, __global uint* restrict guideDbgBuff \
 		/* Path guiding (P1-3 M2b-2): 16 training-record buffers (8KB
@@ -6005,6 +6267,10 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global float4* restrict guideRec13 \
 		, __global float4* restrict guideRec14 \
 		, __global float4* restrict guideRec15 \
+		/* Portal-guided bounce sampling (M5): 4 float4 records per
+		 * aperture rect (layout in Portal_RectPdfW). Null when
+		 * portalCount == 0; gated on taskConfig->pathTracer.portalCount. */ \
+		, __global const float4* restrict portalRects \
 		/* Native curve primitives (Metal HWRT): control points (float4
 		 * xyz+radius), global per-segment start indices, per-cp attrs
 		 * (2 float4/cp). Null when no mesh carries curve data; only

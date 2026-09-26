@@ -54,14 +54,118 @@ EmbreeAccel::~EmbreeAccel() {
 	rtcReleaseDevice(embreeDevice);
 }
 
+//--- Clustered (.lxm v2) mesh support ----------------------------------------
+// A cluster-indexed mesh is exported as an Embree USER geometry whose
+// primitives are the clusters: Embree builds its BVH over the stored
+// cluster bounds and calls back into the mesh only for the clusters a
+// ray actually reaches. Vertex/triangle pages stay unmapped until first
+// traversal contact (ray-driven residency).
+
+static void ClusterBoundsFunc(const RTCBoundsFunctionArguments *args) {
+	const ExtTriangleMesh *mesh =
+			static_cast<const ExtTriangleMesh *>(args->geometryUserPtr);
+	const LxmCluster &cl = mesh->GetCluster(args->primID);
+	RTCBounds *b = args->bounds_o;
+	b->lower_x = cl.bboxMin[0]; b->lower_y = cl.bboxMin[1]; b->lower_z = cl.bboxMin[2];
+	b->upper_x = cl.bboxMax[0]; b->upper_y = cl.bboxMax[1]; b->upper_z = cl.bboxMax[2];
+}
+
+static void ClusterIntersectFunc(const RTCIntersectFunctionNArguments *args) {
+	const ExtTriangleMesh *mesh =
+			static_cast<const ExtTriangleMesh *>(args->geometryUserPtr);
+	const LxmCluster &cl = mesh->GetCluster(args->primID);
+	const Triangle *tris = mesh->GetTriangles().data();
+
+	// Ray packets are SoA (see RTCRayHitNt); rtcIntersect1 uses N == 1.
+	RTCRayHitNt<1> *rh = reinterpret_cast<RTCRayHitNt<1> *>(args->rayhit);
+	for (u_int n = 0; n < args->N; ++n) {
+		if (!args->valid[n])
+			continue;
+
+		Ray ray(Point(rh->ray.org_x[n], rh->ray.org_y[n], rh->ray.org_z[n]),
+				Vector(rh->ray.dir_x[n], rh->ray.dir_y[n], rh->ray.dir_z[n]),
+				rh->ray.tnear[n], rh->ray.tfar[n]);
+		for (u_int j = cl.firstTri, e = cl.firstTri + cl.triCount; j < e; ++j) {
+			const Triangle &t3 = tris[j];
+			float t, b1, b2;
+			if (Triangle::Intersect(ray,
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[0]),
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[1]),
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[2]),
+					&t, &b1, &b2)) {
+				rh->ray.tfar[n] = t;
+				ray.maxt = t;
+				rh->hit.u[n] = b1;
+				rh->hit.v[n] = b2;
+				// Report the real triangle index (not the cluster id) so
+				// shading lookups stay identical to the flat build.
+				rh->hit.primID[n] = j;
+				rh->hit.geomID[n] = args->geomID;
+			}
+		}
+	}
+}
+
+static void ClusterOccludedFunc(const RTCOccludedFunctionNArguments *args) {
+	const ExtTriangleMesh *mesh =
+			static_cast<const ExtTriangleMesh *>(args->geometryUserPtr);
+	const LxmCluster &cl = mesh->GetCluster(args->primID);
+	const Triangle *tris = mesh->GetTriangles().data();
+
+	RTCRayNt<1> *r = reinterpret_cast<RTCRayNt<1> *>(args->ray);
+	for (u_int n = 0; n < args->N; ++n) {
+		if (!args->valid[n])
+			continue;
+
+		Ray ray(Point(r->org_x[n], r->org_y[n], r->org_z[n]),
+				Vector(r->dir_x[n], r->dir_y[n], r->dir_z[n]),
+				r->tnear[n], r->tfar[n]);
+		for (u_int j = cl.firstTri, e = cl.firstTri + cl.triCount; j < e; ++j) {
+			const Triangle &t3 = tris[j];
+			float t, b1, b2;
+			if (Triangle::Intersect(ray,
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[0]),
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[1]),
+					mesh->GetVertex(Transform::TRANS_IDENTITY, t3.v[2]),
+					&t, &b1, &b2)) {
+				// Embree occluded convention: signal the hit by setting
+				// tfar to -inf.
+				r->tfar[n] = -std::numeric_limits<float>::infinity();
+				break;
+			}
+		}
+	}
+}
+
+void EmbreeAccel::ExportClusteredTriangleMesh(const RTCScene embreeScene,
+		const ExtTriangleMesh &mesh) const {
+	const RTCGeometry geom = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_USER);
+
+	rtcSetGeometryUserPrimitiveCount(geom, mesh.GetClusterIndexCount());
+	rtcSetGeometryUserData(geom,
+			const_cast<ExtTriangleMesh *>(&mesh));
+	rtcSetGeometryBoundsFunction(geom, ClusterBoundsFunc, nullptr);
+	rtcSetGeometryIntersectFunction(geom, ClusterIntersectFunc);
+	rtcSetGeometryOccludedFunction(geom, ClusterOccludedFunc);
+
+	rtcCommitGeometry(geom);
+	rtcAttachGeometry(embreeScene, geom);
+	rtcReleaseGeometry(geom);
+}
+
 void EmbreeAccel::ExportTriangleMesh(const RTCScene embreeScene, MeshConstRef mesh) const {
+	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mesh);
+	if (extMesh && extMesh->HasClusterIndex() && !extMesh->HasVertexMotion()) {
+		ExportClusteredTriangleMesh(embreeScene, *extMesh);
+		return;
+	}
+
 	const RTCGeometry geom = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_TRIANGLE);
 
 	// Per-vertex deformation motion: hand every step buffer to Embree as
 	// an additional vertex timestep. Embree distributes timesteps
 	// uniformly over the ray-time interval, so non-uniform step times are
 	// approximated (same convention as the Metal HWRT path).
-	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mesh);
 	if (extMesh && extMesh->HasVertexMotion()) {
 		const u_int stepCount = extMesh->GetVertexMotionStepCount();
 		if (stepCount > RTC_MAX_TIME_STEP_COUNT)

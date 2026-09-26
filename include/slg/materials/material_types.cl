@@ -145,6 +145,7 @@ typedef struct {
 	unsigned int kTexIndex;
 	unsigned int nuTexIndex;
 	unsigned int nvTexIndex;
+	int multibounce;
 	int useGgx;
 } Metal2Param;
 

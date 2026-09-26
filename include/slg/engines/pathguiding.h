@@ -66,10 +66,9 @@ namespace slg {
 // round's field.
 //
 // GPU: unchanged contract - training records arrive through Record()
-// (exact position + direction drained from the device record buffers),
-// sampling reads SnapshotCoarseTable() which evaluates the fitted leaf
-// model at coarse cell/bin centers. M4e will upload the flattened tree
-// + vMF table.
+// (exact position + direction drained from the device record buffers);
+// the device consumes SnapshotTree(), the flattened read tree + per-leaf
+// vMF mixtures, and runs the same lookup/sample/pdf math in-kernel.
 //------------------------------------------------------------------------------
 
 class PathGuidingCache {
@@ -80,14 +79,9 @@ public:
 	static const u_int DIR_BINS = DIR_PHI * DIR_THETA;
 	// Training round length: sides swap every this many record attempts
 	static const unsigned long long SWAP_RECORDS = 1000000ULL;
-	// Coarse GPU field layout (M2b): shared with the OpenCL port, which
-	// must use the same numbers (see pathoclbase_funcs.cl)
-	static const u_int COARSE_GRID = 8u;
-	static const u_int COARSE_PHI = 8u;
-	static const u_int COARSE_THETA = 4u;
-	static const u_int COARSE_BINS = 32u;
-	static const u_int COARSE_CHUNKS = 16u;
-	static const u_int COARSE_CHUNK_CELLS = 32u;
+	// Flattened GPU leaf record layout (M4e): 24 floats per leaf,
+	// shared with the OpenCL port (see pathoclbase_funcs.cl)
+	static const u_int LEAF_FLOATS = 24u;
 	// A leaf guides only after this many recorded arrivals (before that the
 	// bounce is BSDF-only; the records still accumulate)
 	static const u_int WARMUP_RECORDS = 256;
@@ -190,11 +184,22 @@ public:
 	// Returns nullptr (and logs) when the file is missing/incompatible
 	static PathGuidingCache *Load(const std::string &path);
 
-	// Read-side snapshot evaluated into the coarse GPU field layout
-	// (16 chunks of 32 cells x (32 bins + total)): each coarse cell center
-	// descends the read tree and the leaf mixture is evaluated at the 32
-	// bin centers. Transitional until M4e uploads the flattened tree.
-	void SnapshotCoarseTable(std::vector<float> *out) const;
+	// Flattened read tree for direct GPU consumption (M4e). The kernel
+	// descends the same tree the CPU queries and evaluates the fitted
+	// vMF mixture itself, replacing the coarse-grid snapshot.
+	//
+	// nodes: 4 u_int per node, re-emitted in DFS order so the root is
+	//   always index 0. Inner node: {child0, child1, axis, splitBits}
+	//   (splitBits = as_uint(split)). Leaf node: {~0u, ~0u, leafIndex, 0}.
+	// leaves: 24 floats per leaf -
+	//   [0..3]      component weights w[k]
+	//   [4+4k..6+4k] component mean direction mu[k].xyz
+	//   [7+4k]      component concentration kappa[k]
+	//   [20] count  [21] peak  [22] nComp  [23] total
+	// An empty/absent tree emits a single leaf node + zeroed leaf so the
+	// GPU buffers are always valid to dereference.
+	void SnapshotTree(std::vector<u_int> *nodes,
+			std::vector<float> *leaves) const;
 
 	// Field bounds of the snapshot (for the GPU upload)
 	luxrays::Point GetCubeMin() const { return cubeMin; }

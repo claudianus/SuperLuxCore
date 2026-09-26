@@ -34,12 +34,12 @@ namespace {
 // NB: could be simplified into a lambda
 template <class T>
 struct CompareNode {
-	CompareNode(const vector<T> & entries, u_int a) :
+	CompareNode(const SpillableArray<T> & entries, u_int a) :
 		allEntries(entries),
 		axis(a)
 	{ }
 
-	const std::vector<T> & allEntries;
+	const luxrays::SpillableArray<T> & allEntries;
 	u_int axis;
 
 	bool operator()(const u_int i1, const u_int i2) const {
@@ -54,7 +54,7 @@ struct CompareNode {
 //------------------------------------------------------------------------------
 
 template <class T>
-IndexKdTree<T>::IndexKdTree(const vector<T> & entries) :
+IndexKdTree<T>::IndexKdTree(const SpillableArray<T> & entries) :
 	allEntries(entries),
 	arrayNodes(allEntries.size())
 {
@@ -75,7 +75,7 @@ size_t IndexKdTree<T>::GetMemoryUsage() const {
 }
 
 template <class T>
-const std::vector<T> & IndexKdTree<T>::GetAllEntries() const {
+const luxrays::SpillableArray<T> & IndexKdTree<T>::GetAllEntries() const {
 	return allEntries;
 }
 
@@ -165,7 +165,7 @@ void load_construct_data(
 ){
 	// create and load data through pointer to object
 	// tracking handles issues of duplicates.
-	std::vector<T> * allEntriesPtr;
+	luxrays::SpillableArray<T> * allEntriesPtr;
 	ar >> allEntriesPtr;
 	// invoke inplace constructor to initialize instance of my_class
 	::new(t)slg::IndexKdTree<T>(*allEntriesPtr);

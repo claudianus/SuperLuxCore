@@ -333,7 +333,7 @@ void SceneVisibility<T>::TraceVisibilityThread::RenderFunc(std::stop_token stop_
 //------------------------------------------------------------------------------
 
 template <class T>
-SceneVisibility<T>::SceneVisibility(SceneConstRef scn, vector<T> &parts,
+SceneVisibility<T>::SceneVisibility(SceneConstRef scn, SpillableArray<T> &parts,
 		const u_int maxDepth,  const u_int sampleCount,
 		const float hitRate, const float r, const float ang,
 		const float t0, const float t1) :

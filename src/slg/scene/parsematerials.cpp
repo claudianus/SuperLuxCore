@@ -431,6 +431,7 @@ MaterialUPtr Scene::CreateMaterial(
 	} else if (matType == "metal2") {
 		auto nu = parseTex("uroughness", {.1f});
 		auto nv = parseTex("vroughness", {.1f});
+		const auto multibounce = parseBool("multibounce", false);
 		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		TextureConstPtr n, k;
@@ -451,6 +452,7 @@ MaterialUPtr Scene::CreateMaterial(
 				refpreset,
 				nu,
 				nv,
+				multibounce,
 				useGgx
 			);
 			moveToTrash(std::move(oldTexPtr));
@@ -464,14 +466,14 @@ MaterialUPtr Scene::CreateMaterial(
 			auto fresnelTex = static_cast<const FresnelTexture *>(tex.get());
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				FresnelTextureConstPtr(fresnelTex), nu, nv, useGgx
+				FresnelTextureConstPtr(fresnelTex), nu, nv, multibounce, useGgx
 			);
 		} else {
 			n = parseTex("n", {.5f, .5f, .5f});
 			k = parseTex("k", {.5f, .5f, .5f});
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				n, k, nu, nv, useGgx
+				n, k, nu, nv, multibounce, useGgx
 			);
 		}
 	} else if (matType == "roughglass") {

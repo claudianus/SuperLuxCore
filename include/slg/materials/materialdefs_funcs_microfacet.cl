@@ -157,6 +157,149 @@ OPENCL_FORCE_INLINE float3 Microfacet_GgxMSCompensation(const float mu,
 }
 
 //------------------------------------------------------------------------------
+// Height-tracking multi-bounce evaluation for Smith GGX conductors
+// (Heitz et al. 2016, "Multiple-Scattering Microfacet BSDFs with the Smith
+// Model"). GPU twin of GgxMSConductorEval in microfacet.h — see the CPU
+// side for the algorithm description. Deterministic hash-seeded walks keep
+// Evaluate a fixed function of (wStart, wTarget).
+//------------------------------------------------------------------------------
+
+#define GGX_MS_DEPTH 8
+#define GGX_MS_WALKS 4
+
+// Microflake cross-section for a direction v of any sign:
+// |v.z|*(1+Lambda(v)) up, |v.z|*Lambda(v) down.
+OPENCL_FORCE_INLINE float Microfacet_GgxMSSigma(const float3 v,
+		const float alphaX, const float alphaY) {
+	const float l = Microfacet_GgxLambda(v, alphaX, alphaY);
+	return fabs(v.z) * ((v.z > 0.f) ? 1.f + l : l);
+}
+
+// Deterministic per-evaluation RNG seeded from the raw float bits of the
+// input directions plus the shading point: Evaluate stays a fixed function of
+// its inputs while different directions/points see independent walks.
+OPENCL_FORCE_INLINE uint Microfacet_GgxMSSeed(const float3 a, const float3 b,
+		const float3 p, const int walk) {
+	uint s = as_uint(a.x) * 0x8da6b343u + as_uint(a.y) * 0xd8163841u +
+			as_uint(a.z) * 0xcb1ab31fu + as_uint(b.x) * 0x9e3779b9u +
+			as_uint(b.y) * 0x85ebca6bu + as_uint(b.z) * 0xc2b2ae35u +
+			as_uint(p.x) * 0x165667b1u + as_uint(p.y) * 0xd3a2646cu +
+			as_uint(p.z) * 0xfd7046c5u + (uint)walk * 0x27d4eb2fu;
+	s ^= s >> 15; s *= 0x2c1b3c6du; s ^= s >> 12; s *= 0x297a2d39u; s ^= s >> 15;
+	return s;
+}
+
+OPENCL_FORCE_INLINE float Microfacet_GgxMSRand(__private uint *s) {
+	*s = (*s) * 1664525u + 1013904223u;
+	return (float)((*s) >> 8) * (1.f / 16777216.f);
+}
+
+// Visible-normal sampler for an approach direction wi of any sign
+// (GGX P22 slope-space form). GPU twin of GgxMSSampleVisibleNormal.
+OPENCL_FORCE_INLINE float3 Microfacet_GgxMSSampleVisibleNormal(const float3 wi,
+		const float alphaX, const float alphaY,
+		const float r0, const float r1, const float r2) {
+	const float3 v = normalize(MAKE_FLOAT3(wi.x * alphaX, wi.y * alphaY, wi.z));
+	const float th = acos(clamp(v.z, -1.f, 1.f));
+	float sx, sy;
+	if (th < 1e-4f) {
+		const float r = sqrt(r0 / fmax(1.f - r0, 1e-7f));
+		const float ph = 2.f * M_PI_F * r1;
+		sx = r * cos(ph);
+		sy = r * sin(ph);
+	} else {
+		const float sn = sin(th), cs = cos(th), tn = sn / cs;
+		const float sig = .5f * (cs + 1.f);
+		if (sig < 1e-4f) {
+			sx = 0.f;
+			sy = 0.f;
+		} else {
+			const float c = 1.f / sig;
+			const float A = 2.f * r0 / (cs * c) - 1.f;
+			const float B = tn;
+			const float tmp = 1.f / (A * A - 1.f);
+			const float D = sqrt(fmax(0.f,
+					B * B * tmp * tmp - (A * A - B * B) * tmp));
+			const float s1 = B * tmp - D, s2 = B * tmp + D;
+			sx = (A < 0.f || s2 > 1.f / tn) ? s1 : s2;
+			sy = sqrt(fmax(0.f, -1.f - sx * sx +
+					(1.f + sx * sx) / pow(fmax(1.f - r2, 1e-7f), 2.f / 3.f))) *
+					sin(2.f * M_PI_F * r1);
+		}
+	}
+	const float ph = atan2(v.y, v.x);
+	const float cph = cos(ph), sph = sin(ph);
+	float sxr = cph * sx - sph * sy, syr = sph * sx + cph * sy;
+	sxr *= alphaX;
+	syr *= alphaY;
+	if (!isfinite(sxr) || !isfinite(syr))
+		return (wi.z > 0.f) ? MAKE_FLOAT3(0.f, 0.f, 1.f) :
+				normalize(MAKE_FLOAT3(wi.x, wi.y, 0.f));
+	return normalize(MAKE_FLOAT3(-sxr, -syr, 1.f));
+}
+
+// Full Smith multi-bounce conductor BRDF (single + multiple scattering).
+// Returns f * |cos(wTarget)|: pass lightDir as wTarget for the LuxCore
+// f*|cos(lightDir)| convention.
+OPENCL_FORCE_INLINE float3 Microfacet_GgxMSConductorEval(const float3 wStart,
+		const float3 wTarget, const float3 p, const float alphaX,
+		const float alphaY, const float3 eta, const float3 kappa) {
+	if ((wStart.z <= 1e-5f) || (wTarget.z <= 1e-5f))
+		return BLACK;
+
+	const float lambdaOut = Microfacet_GgxLambda(wTarget, alphaX, alphaY);
+
+	float3 result = BLACK;
+	for (int k = 0; k < GGX_MS_WALKS; ++k) {
+		uint seed = Microfacet_GgxMSSeed(wStart, wTarget, p, k);
+		float3 wr = MAKE_FLOAT3(-wStart.x, -wStart.y, -wStart.z);
+		float hr = 0.f;
+		float3 weight = WHITE;
+
+		for (int i = 0; i < GGX_MS_DEPTH; ++i) {
+			const float st = Microfacet_GgxMSSigma(
+					MAKE_FLOAT3(-wr.x, -wr.y, -wr.z), alphaX, alphaY);
+			float h;
+			if (st < 1e-5f) {
+				if (wr.z >= 0.f)
+					break;
+				h = hr;
+			} else {
+				const float u = fmax(Microfacet_GgxMSRand(&seed), 1e-7f);
+				h = fmin(0.f, hr) - log(u) * wr.z / st;
+			}
+			if (h >= 0.f)
+				break;
+			hr = h;
+
+			const float3 m = Microfacet_GgxMSSampleVisibleNormal(
+					MAKE_FLOAT3(-wr.x, -wr.y, -wr.z), alphaX, alphaY,
+					Microfacet_GgxMSRand(&seed), Microfacet_GgxMSRand(&seed),
+					Microfacet_GgxMSRand(&seed));
+
+			const float3 v = MAKE_FLOAT3(-wr.x, -wr.y, -wr.z);
+			const float3 hsum = v + wTarget;
+			if (dot(hsum, hsum) > 1e-12f) {
+				const float3 wh = normalize(hsum);
+				// D(wh) is only defined on the upper hemisphere; the
+				// wh.z <= 0 skip is required for energy conservation
+				if ((wh.z > 0.f) && (dot(v, wh) > 1e-9f))
+					result += weight *
+							FresnelGeneral_Evaluate(eta, kappa, dot(v, wh)) *
+							(Microfacet_GgxD(wh, alphaX, alphaY) *
+									exp(h * lambdaOut) / (4.f * st));
+			}
+
+			const float wrm = dot(wr, m);
+			weight *= FresnelGeneral_Evaluate(eta, kappa, fabs(wrm));
+			wr = wr - m * (2.f * wrm);
+		}
+	}
+
+	return result * (1.f / GGX_MS_WALKS);
+}
+
+//------------------------------------------------------------------------------
 // GGX coating BSDF
 //
 // Drop-in GGX replacement for the SchlickBSDF_Coating* functions used by

@@ -28,7 +28,7 @@ class DLSCacheEntry;
 
 class DLSCOctree : public IndexOctree<DLSCVisibilityParticle> {
 public:
-	DLSCOctree(const std::vector<DLSCVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
+	DLSCOctree(const luxrays::SpillableArray<DLSCVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
 			const float radius, const float normAngle, const u_int md = 24);
 	virtual ~DLSCOctree();
 

@@ -86,7 +86,7 @@ void CompiledScene::CompilePhotonGI() {
 
 		// Compile radiance photons
 
-		const std::vector<RadiancePhoton> &radiancePhotons = photonGICache->GetRadiancePhotons();
+		const SpillableArray<RadiancePhoton> &radiancePhotons = photonGICache->GetRadiancePhotons();
 		if (radiancePhotons.size() > 0) {
 			pgicRadiancePhotons.resize(radiancePhotons.size());
 
@@ -141,7 +141,7 @@ void CompiledScene::CompilePhotonGI() {
 
 		// Compile caustic photons
 
-		const std::vector<Photon> &causticPhotons = photonGICache->GetCausticPhotons();
+		const SpillableArray<Photon> &causticPhotons = photonGICache->GetCausticPhotons();
 		if (causticPhotons.size() > 0) {
 			pgicCausticPhotons.resize(causticPhotons.size());
 			for (u_int i = 0; i < causticPhotons.size(); ++i) {

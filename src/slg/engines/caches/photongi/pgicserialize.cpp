@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "luxrays/utils/safesave.h"
+#include "luxrays/utils/spillablearrayserialize.h"
 
 #include "slg/engines/caches/photongi/photongicache.h"
 

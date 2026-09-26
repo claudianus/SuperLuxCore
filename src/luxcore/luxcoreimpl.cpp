@@ -1169,6 +1169,21 @@ void SceneImpl::SaveMesh(const string &meshName, const string &fileName) {
 	API_END();
 }
 
+void SceneImpl::SaveMeshClusterStride(const string &meshName,
+		const string &fileName, const unsigned int clusterTriStride) {
+	API_BEGIN("{}, {}, {}", ToArgString(meshName), ToArgString(fileName),
+			clusterTriStride);
+
+	auto& mesh = GetSlgScene().GetExtMeshes().GetExtMesh(meshName);
+	auto *triMesh = ExtTriangleMesh::FromMesh(&mesh);
+	if (!triMesh)
+		throw runtime_error("SaveMeshClusterStride: not a triangle mesh: " +
+				meshName);
+	triMesh->SaveProxy(fileName, clusterTriStride);
+
+	API_END();
+}
+
 void SceneImpl::DefineStrands(const string &shapeName, const cyHairFile &strandsFile,
 		const StrandsTessellationType tesselType,
 		const unsigned int adaptiveMaxDepth, const float adaptiveError,

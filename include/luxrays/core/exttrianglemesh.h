@@ -309,6 +309,18 @@ private:
 // curve acceleration structures instead of intersecting their triangle
 // tessellation (the tessellation is still present and used by software BVHs
 // and light sampling).
+// .lxm v2 cluster index record: a spatially coherent run of
+// Morton-sorted triangles with conservative bounds. Cluster bounds let
+// the scene BVH/Embree build against the index alone — vertex and
+// triangle data are only touched (paged in) when a ray actually reaches
+// the cluster (ray-driven residency, Nanite-style at OS page
+// granularity). Layout is part of the .lxm on-disk format.
+struct LxmCluster {
+	float bboxMin[3], bboxMax[3];
+	u_int firstTri, triCount;
+};
+static_assert(sizeof(LxmCluster) == 32);
+
 struct CurveControlPoint {
 	float x, y, z, radius;
 };
@@ -672,6 +684,23 @@ public:
 	virtual size_t SpillBuffers(const std::string &dir,
 			const std::string &namePrefix, const size_t minBytes);
 
+	// Set by LoadProxy: all buffers alias one file mapping, so
+	// SpillBuffers is a no-op (re-writing mapped pages to fresh files
+	// would fault the entire mesh in and double the I/O).
+	bool buffersFromFileMapping = false;
+
+	// .lxm v2 cluster index: points inside the same file mapping as the
+	// buffers (the mapping is kept alive by them). Accelerators use the
+	// cluster bounds as primitives so triangle/vertex pages stay
+	// untouched until a ray reaches them.
+	bool HasClusterIndex() const { return clusterIndex != nullptr; }
+	u_int GetClusterIndexCount() const { return clusterIndexCount; }
+	const LxmCluster &GetCluster(const u_int i) const { return clusterIndex[i]; }
+	void SetClusterIndex(const LxmCluster *index, const u_int count) {
+		clusterIndex = index;
+		clusterIndexCount = count;
+	}
+
 	static ExtTriangleMeshUPtr Load(const std::string &fileName);
 
 	static ExtTriangleMeshUPtr Merge(
@@ -742,8 +771,10 @@ public:
 	
 	virtual void SavePly(const std::string &fileName) const;
 	virtual void SaveSerialized(const std::string &fileName) const;
-	// Writes the raw mesh buffers as an .lxm proxy file (see LoadProxy)
-	virtual void SaveProxy(const std::string &fileName) const;
+	// Writes the raw mesh buffers as an .lxm proxy file (see LoadProxy).
+	// clusterTriStride sets the v2 cluster-index triangles-per-cluster.
+	virtual void SaveProxy(const std::string &fileName,
+			const u_int clusterTriStride = 16) const;
 
 	template<class Archive> void save(Archive &ar, const unsigned int version) const {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(TriangleMesh);
@@ -848,6 +879,11 @@ public:
 	BevelCylinder *bevelCylinders;
 	BevelBoundingCylinder *bevelBoundingCylinders;
 	std::unique_ptr<luxrays::ocl::IndexBVHArrayNode[]> bevelBVHArrayNodes;
+
+	// .lxm v2 cluster index (points inside the file mapping owned by the
+	// buffers; no separate keeper needed). Set by LoadProxy.
+	const LxmCluster *clusterIndex = nullptr;
+	u_int clusterIndexCount = 0;
 };
 
 class ExtInstanceTriangleMesh : public InstanceTriangleMesh, public ExtMesh {

@@ -158,6 +158,19 @@ typedef struct {
 	// the path wavelengths and treats Spectrum channels as spectral bins.
 	unsigned int spectralEnable;
 
+	// RIS product guiding (M4b, path.guiding.risk): K > 0 resamples K
+	// candidates drawn from the (1-w)*BSDF + w*guide mixture against the
+	// product target t = f*|cos|*Lhat. Mirrors PathTracer::guidingRisK.
+	unsigned int guidingRisK;
+
+	// Portal-guided bounce sampling (M5, path.portal.*): aperture rects
+	// live in the portalRects buffer (4 float4 records each); share caps
+	// the one-sample MIS weight. Mirrors PathTracer::portals/portalShare.
+	unsigned int portalCount;
+	float portalShare;
+	float portalSideGate;
+	unsigned int portalAdapt;
+
 	// PhotonGI cache settings
 	struct {
 		float glossinessUsageThreshold;

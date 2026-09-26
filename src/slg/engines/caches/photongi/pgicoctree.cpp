@@ -27,7 +27,7 @@ using namespace slg;
 // PGCIOctree
 //------------------------------------------------------------------------------
 
-PGICOctree::PGICOctree(const vector<PGICVisibilityParticle> &entries,
+PGICOctree::PGICOctree(const SpillableArray<PGICVisibilityParticle> &entries,
 		const BBox &bbox, const float r, const float normAngle, const u_int md) :
 	IndexOctree(entries, bbox, r, normAngle, md) {
 }

@@ -1060,6 +1060,13 @@ public:
 	 */
 	virtual void SaveMesh(const std::string &meshName, const std::string &fileName) = 0;
 	/*!
+	 * \brief Same as SaveMesh but with an explicit .lxm cluster stride
+	 * (triangles per cluster in the v2 cluster index). Ignored for
+	 * non-.lxm extensions.
+	 */
+	virtual void SaveMeshClusterStride(const std::string &meshName,
+			const std::string &fileName, const unsigned int clusterTriStride) = 0;
+	/*!
 	 * \brief Defines a mesh (to be later used in one or more scene objects) starting
 	 * from the strands/hairs definition included in strandsFile.
 	 *

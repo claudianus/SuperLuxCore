@@ -23,6 +23,7 @@
 
 #include "luxrays/utils/mcdistribution.h"
 #include "luxrays/utils/serializationutils.h"
+#include "luxrays/utils/spillablearray.h"
 
 #include "slg/slg.h"
 #include "slg/bsdf/bsdf.h"
@@ -196,11 +197,11 @@ private:
 
 	// Used only during the building phase
 	//SceneConstRef scene;
-	std::vector<DLSCVisibilityParticle> visibilityParticles;
+	luxrays::SpillableArray<DLSCVisibilityParticle> visibilityParticles;
 	std::vector<std::vector<float> > cacheEntriesReceivedLuminance;
 
 	// Used during the rendering phase
-	std::vector<DLSCacheEntry> cacheEntries;
+	luxrays::SpillableArray<DLSCacheEntry> cacheEntries;
 	DLSCBvh *cacheEntriesBVH;
 };
 

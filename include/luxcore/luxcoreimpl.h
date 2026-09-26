@@ -365,6 +365,8 @@ public:
 		const float *points, const size_t pointsCount) override;
 
 	void SaveMesh(const std::string &meshName, const std::string &fileName);
+	void SaveMeshClusterStride(const std::string &meshName,
+			const std::string &fileName, const unsigned int clusterTriStride);
 	void DefineStrands(
 		const std::string &shapeName,
 		const luxrays::cyHairFile &strandsFile,

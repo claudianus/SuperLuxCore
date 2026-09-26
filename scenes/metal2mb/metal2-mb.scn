@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# metal2 multi-bounce comparison scene.
+# Cornell box, three gold spheres (uroughness = 0.6):
+#   left  : metal2 legacy Schlick
+#   mid   : metal2 distribution = ggx (single scatter)
+#   right : metal2 distribution = ggx + multibounce (Heitz'16)
+# Lit by a sky environment map so the missing multiple scattering shows up
+# as a darkened, desaturated reflection on the single-scatter sphere.
+
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+# gold-ish conductor via fresnelcolor
+scene.textures.goldfr.type = constfloat3
+scene.textures.goldfr.value = 1.0 0.62 0.29
+scene.textures.gold.type = fresnelcolor
+scene.textures.gold.kr = goldfr
+################################################################################
+scene.materials.m2-schlick.type = metal2
+scene.materials.m2-schlick.fresnel = gold
+scene.materials.m2-schlick.uroughness = 0.6
+scene.materials.m2-schlick.vroughness = 0.6
+################################################################################
+scene.materials.m2-ggx.type = metal2
+scene.materials.m2-ggx.fresnel = gold
+scene.materials.m2-ggx.uroughness = 0.6
+scene.materials.m2-ggx.vroughness = 0.6
+scene.materials.m2-ggx.distribution = ggx
+################################################################################
+scene.materials.m2-ggxmb.type = metal2
+scene.materials.m2-ggxmb.fresnel = gold
+scene.materials.m2-ggxmb.uroughness = 0.6
+scene.materials.m2-ggxmb.vroughness = 0.6
+scene.materials.m2-ggxmb.distribution = ggx
+scene.materials.m2-ggxmb.multibounce = 1
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply
+scene.objects.sphere-left.material = m2-schlick
+scene.objects.sphere-left.ply = scenes/cornell/sphere-left.ply
+scene.objects.sphere-mid.material = m2-ggx
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-right.material = m2-ggxmb
+scene.objects.sphere-right.ply = scenes/cornell/sphere-right.ply
+################################################################################
+scene.lights.sky.type = infinite
+scene.lights.sky.file = scenes/simple-mat/sky.exr
+scene.lights.sky.gain = 1.0 1.0 1.0
+scene.lights.sky.shift = 0.0 0.0

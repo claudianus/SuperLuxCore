@@ -22,6 +22,8 @@
 #include <boost/serialization/version.hpp>
 #include <vector>
 
+#include "luxrays/utils/spillablearray.h"
+
 namespace boost { namespace serialization {
 class access;
 } }
@@ -65,12 +67,12 @@ private:
 template <class T>
 class IndexKdTree {
 public:
-	IndexKdTree(const std::vector<T>& entries);
+	IndexKdTree(const luxrays::SpillableArray<T>& entries);
 	virtual ~IndexKdTree() = default;
 
 	size_t GetMemoryUsage() const;
 
-	const std::vector<T> & GetAllEntries() const;
+	const luxrays::SpillableArray<T> & GetAllEntries() const;
 
 
 protected:
@@ -83,7 +85,7 @@ protected:
 	);
 
 
-	const std::vector<T> & allEntries;
+	const luxrays::SpillableArray<T> & allEntries;
 	std::vector<IndexKdTreeArrayNode> arrayNodes;
 
 	size_t nextFreeNode;

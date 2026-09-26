@@ -55,6 +55,10 @@ private:
 	static bool MeshPtrCompare(const Mesh * p0, const Mesh * p1);
 	
 	void ExportTriangleMesh(const RTCScene embreeScene, MeshConstRef mesh) const;
+	// .lxm v2 cluster-indexed mesh: exported as an Embree USER geometry
+	// over cluster bounds — ray-driven residency (see embreeaccel.cpp).
+	void ExportClusteredTriangleMesh(const RTCScene embreeScene,
+			const ExtTriangleMesh &mesh) const;
 	void ExportMotionTriangleMesh(const RTCScene embreeScene, const MotionTriangleMesh & mtm) const;
 
 	// Used for Embree initialization

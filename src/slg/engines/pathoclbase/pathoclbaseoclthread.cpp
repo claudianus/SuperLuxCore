@@ -111,8 +111,9 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	guideDbgBuff = nullptr;
 	for (u_int i = 0u; i < 16u; ++i)
 		guideRecBuff[i] = nullptr;
-	for (u_int i = 0u; i < 16u; ++i)
-		guideChunkBuff[i] = nullptr;
+	guideNodesBuff = nullptr;
+	guideLeavesBuff = nullptr;
+	portalRectsBuff = nullptr;
 
 	// OpenCL task related buffers
 	raysBuff = nullptr;
@@ -220,9 +221,10 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&pgicRadiancePhotonsBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBVHNodesBuff);
-	for (u_int i = 0u; i < 16u; ++i)
-		intersectionDevice.FreeBuffer(&guideChunkBuff[i]);
+	intersectionDevice.FreeBuffer(&guideNodesBuff);
+	intersectionDevice.FreeBuffer(&guideLeavesBuff);
 	intersectionDevice.FreeBuffer(&guideDbgBuff);
+	intersectionDevice.FreeBuffer(&portalRectsBuff);
 	for (u_int i = 0u; i < 16u; ++i)
 		intersectionDevice.FreeBuffer(&guideRecBuff[i]);
 

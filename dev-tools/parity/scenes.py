@@ -108,6 +108,69 @@ SCENES = {
         "expect": {"ratio_min": 0.97, "rmse_max": 0.08,
                 "black_max": 0.01},
     },
+    # Phase 2.2: RIS product guiding - K candidates from the BSDF/guide
+    # mixture resampled against t = f|cos|*Lhat. The kernel draws the
+    # pools in MK_HIT_OBJECT so the DL MIS sees zHatMis (same ordering
+    # as the CPU pre-DL block).
+    "glossy_guiding_ris": {
+        "props_file": "scenes/cornell/pg-indirect.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "cfg_extra": "path.guiding.enable = 1\npath.guiding.risk = 4\n",
+        "spp": 96,
+        "expect": {"ratio_min": 0.97, "rmse_max": 0.08,
+                "black_max": 0.01},
+    },
+    "volume_guiding_ris": {
+        "props": VOLGUIDE_PROPS,
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "cfg_extra": "path.guiding.enable = 1\npath.guiding.risk = 4\n",
+        "spp": 96,
+        "timeout": 420,
+        "expect": {"ratio_min": 0.97, "rmse_max": 0.05,
+                "black_max": 0.01},
+    },
+    # Phase 2.3: portal-guided bounce proposal (M5). The slit scene is
+    # the canonical portal case: the front compartment is lit only
+    # through the 0.24x0.3 aperture at y=1.95, so the portal proposal
+    # (uniform point on the rect, analytic solid-angle pdf folded into
+    # the bounce one-sample MIS) is the technique that earns variance.
+    # The same path.portal.* properties drive the CPU reference, so the
+    # gate verifies the GPU port of the proposal AND the mirrored
+    # DL-side MIS density.
+    # Thresholds: this scene is extremely heavy-tailed - the measured
+    # CPU-vs-CPU noise floor at 96spp (seed 17 vs 18) is ratio 1.054,
+    # rmse 0.115, black_frac 0.21. The gate tolerates that floor plus
+    # margin; a dead portal proposal still fails (portal-off lands
+    # ~0.93).
+    "portal_slit": {
+        "props_file": "scenes/cornell/pg-indirect-slit.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "cfg_extra": "path.guiding.enable = 1\n"
+            "path.portal.count = 1\n"
+            "path.portal.weight = 0.5\n"
+            "path.portal.0 = -0.12 1.95 1.85   0.12 1.95 1.85   "
+            "0.12 1.95 2.15   -0.12 1.95 2.15\n",
+        "spp": 96,
+        "expect": {"ratio_min": 0.93, "ratio_max": 1.10,
+                "rmse_max": 0.14, "black_max": 0.25},
+    },
+    # Same scene without the guiding field: portalAdapt falls back to
+    # the fixed portalShare, covering the non-adaptive share path.
+    "portal_slit_fixed": {
+        "props_file": "scenes/cornell/pg-indirect-slit.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "cfg_extra": "path.portal.count = 1\n"
+            "path.portal.weight = 0.5\n"
+            "path.portal.0 = -0.12 1.95 1.85   0.12 1.95 1.85   "
+            "0.12 1.95 2.15   -0.12 1.95 2.15\n",
+        "spp": 96,
+        "expect": {"ratio_min": 0.93, "ratio_max": 1.10,
+                "rmse_max": 0.14, "black_max": 0.25},
+    },
     # Vertex motion + shared-mesh instancing across accel paths
     "vertex_motion": {
         "builder": build_vertex_motion,

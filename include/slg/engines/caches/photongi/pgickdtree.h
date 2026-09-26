@@ -31,7 +31,7 @@ class PGICVisibilityParticle;
 
 class PGICKdTree : public IndexKdTree<PGICVisibilityParticle> {
 public:
-	PGICKdTree(const std::vector<PGICVisibilityParticle> & allEntries);
+	PGICKdTree(const luxrays::SpillableArray<PGICVisibilityParticle> & allEntries);
 	virtual ~PGICKdTree() = default;
 
 	size_t GetNearestEntry(const luxrays::Point &p, const luxrays::Normal &n,

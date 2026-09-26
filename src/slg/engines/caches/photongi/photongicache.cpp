@@ -19,6 +19,7 @@
 #include <math.h>
 
 #include <boost/format.hpp>
+#include <chrono>
 #include <filesystem>
 
 #include "luxrays/utils/thread.h"
@@ -514,7 +515,40 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	}
 
 	SLG_LOG("PhotonGI total memory usage: " << ToMemString(totalMemUsage));
-	
+
+	//--------------------------------------------------------------------------
+	// Spill the read-only photon arrays to file-backed storage
+	//--------------------------------------------------------------------------
+
+	// The caches are read-only during rendering once their BVH has been built:
+	// swapping them for copy-on-write file mappings lets the kernel evict the
+	// untouched pages under pressure while lookups page them back on demand.
+	// Skipped when the caustic cache is periodically updated, because Update()
+	// clears and rebuilds the array (Reset() would just drop the mapping, but
+	// spilling an array that is about to be rebuilt is wasted work).
+	if (scene->GeoSpillEnabled() &&
+			(!params.caustic.enabled || (params.caustic.updateSpp == 0))) {
+		const std::string dir = scene->GeoSpillDir() + "/" + std::to_string(
+				std::chrono::steady_clock::now().time_since_epoch().count()) +
+				"-" + std::to_string(reinterpret_cast<uintptr_t>(this));
+		const size_t minBytes = scene->GeoSpillMinBytes();
+		size_t spilled = 0;
+
+		if (radiancePhotonsBVH &&
+				(radiancePhotons.size() * sizeof(RadiancePhoton) >= minBytes)) {
+			std::filesystem::create_directories(dir);
+			spilled += radiancePhotons.Spill(dir + "/radiancephotons.bin");
+		}
+		if (causticPhotonsBVH &&
+				(causticPhotons.size() * sizeof(Photon) >= minBytes)) {
+			std::filesystem::create_directories(dir);
+			spilled += causticPhotons.Spill(dir + "/causticphotons.bin");
+		}
+
+		if (spilled > 0)
+			SLG_LOG("PhotonGI cache spilled to file-backed storage: " << ToMemString(spilled));
+	}
+
 	//--------------------------------------------------------------------------
 	// Check if I have to save the persistent cache
 	//--------------------------------------------------------------------------

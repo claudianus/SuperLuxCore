@@ -21,6 +21,7 @@
 
 #include "luxrays/utils/mcdistribution.h"
 #include "luxrays/utils/serializationutils.h"
+#include "luxrays/utils/spillablearray.h"
 
 #include "slg/slg.h"
 #include "slg/core/indexoctree.h"
@@ -68,7 +69,7 @@ struct ELVCVisibilityParticle {
 
 class ELVCOctree : public IndexOctree<ELVCVisibilityParticle> {
 public:
-	ELVCOctree(const std::vector<ELVCVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
+	ELVCOctree(const luxrays::SpillableArray<ELVCVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
 			const float radius, const float normAngle, const u_int md = 24);
 	virtual ~ELVCOctree();
 
@@ -138,7 +139,7 @@ protected:
 
 class ELVCBvh : public IndexBvh<ELVCacheEntry> {
 public:
-	ELVCBvh(const std::vector<ELVCacheEntry> *entries,
+	ELVCBvh(const luxrays::SpillableArray<ELVCacheEntry> *entries,
 			const float radius, const float normalAngle);
 	virtual ~ELVCBvh();
 
@@ -146,7 +147,7 @@ public:
 			const luxrays::Normal &n, const bool isVolume) const;
 
 	// Used for OpenCL data translation
-	const std::vector<ELVCacheEntry> *GetAllEntries() const { return allEntries; }
+	const luxrays::SpillableArray<ELVCacheEntry> *GetAllEntries() const { return allEntries; }
 
 	friend class boost::serialization::access;
 
@@ -281,10 +282,10 @@ private:
 	ELVCParams params;
 
 	// Used only during the building phase
-	std::vector<ELVCVisibilityParticle> visibilityParticles;
+	luxrays::SpillableArray<ELVCVisibilityParticle> visibilityParticles;
 
 	// Used during the rendering phase
-	std::vector<ELVCacheEntry> cacheEntries;
+	luxrays::SpillableArray<ELVCacheEntry> cacheEntries;
 	ELVCBvh *cacheEntriesBVH;
 	u_int mapWidth, mapHeight;
 	u_int tilesXCount, tilesYCount;

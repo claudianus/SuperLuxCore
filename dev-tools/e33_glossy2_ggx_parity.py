@@ -43,9 +43,12 @@ def parse_scene(rel_path):
 
 def render(scene, engine, seed=17):
     cfg = pyluxcore.Properties()
+    # NOP pipeline: the default AutoLinearToneMap normalizes image mean and
+    # would hide any reflectance differences in a white furnace.
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
+film.imagepipelines.0.0.type = NOP
 renderengine.type = {engine}
 sampler.type = SOBOL
 batch.haltspp = {SPP}
@@ -71,16 +74,52 @@ path.pathdepth.total = 8
 
 
 def furnace(mb):
+    # NOTE: the cornell room meshes live around (-2.78, 2, 2.7), not the
+    # origin -- the camera must look at the room or no object is hit.
     props = pyluxcore.Properties()
     props.SetFromString(f"""
-scene.camera.lookat.orig = 0 -2 3
-scene.camera.lookat.target = 0 0 0
-scene.camera.fieldofview = 30
+scene.camera.lookat.orig = -2.78 -1.0 2.73
+scene.camera.lookat.target = -2.78 1.5 1.8
+scene.camera.fieldofview = 45
 scene.materials.white.type = glossy2
 scene.materials.white.kd = 1.0 1.0 1.0
 scene.materials.white.ks = 1.0 1.0 1.0
 scene.materials.white.uroughness = 0.3
 scene.materials.white.vroughness = 0.3
+scene.materials.white.distribution = ggx
+scene.materials.white.multibounce = {mb}
+scene.objects.floor.material = white
+scene.objects.floor.ply = scenes/cornell/box.ply
+scene.objects.ball.material = white
+scene.objects.ball.ply = scenes/cornell/sphere-mid.ply
+scene.objects.ball.transformation = 1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+scene.lights.env.type = constantinfinite
+scene.lights.env.color = 1.0 1.0 1.0
+scene.lights.env.gain = 1.0 1.0 1.0
+""")
+    os.chdir(str(REPO))
+    scene = pyluxcore.Scene()
+    scene.Parse(props)
+    return render(scene, "PATHCPU")
+
+
+def furnace_metal(mb):
+    # metal2 GGX white-furnace: F0~=1 conductor at roughness 0.5. Single
+    # scatter loses ~10% energy; the Heitz'16 height-tracking multi-bounce
+    # walk must recover it (albedo -> ~1.0).
+    props = pyluxcore.Properties()
+    props.SetFromString(f"""
+scene.camera.lookat.orig = -2.78 -1.0 2.73
+scene.camera.lookat.target = -2.78 1.5 1.8
+scene.camera.fieldofview = 45
+scene.textures.whitefr.type = constfloat3
+scene.textures.whitefr.value = 1.0 1.0 1.0
+scene.textures.fr.type = fresnelcolor
+scene.textures.fr.kr = whitefr
+scene.materials.white.type = metal2
+scene.materials.white.fresnel = fr
+scene.materials.white.uroughness = 0.5
+scene.materials.white.vroughness = 0.5
 scene.materials.white.distribution = ggx
 scene.materials.white.multibounce = {mb}
 scene.objects.floor.material = white
@@ -132,6 +171,28 @@ def main():
         if fl.max() > 1.15:
             print("FAIL: energy gain detected in white furnace")
             sys.exit(1)
+
+    # metal2: the Heitz'16 height-tracking multi-bounce walk must recover the
+    # missing single-scatter energy without overshooting. The estimator uses
+    # deterministic per-evaluation walks, so a few pixels can exceed 1.0 as
+    # estimator noise; judge by the mean and high percentiles, not the max.
+    fl0 = fl1 = None
+    for mb in (0, 1):
+        fl = furnace_metal(mb).mean(axis=2)
+        print(f"furnace metal2-ggx mb={mb}: mean {fl.mean():.4f} "
+              f"p99 {np.percentile(fl, 99):.4f} max {fl.max():.4f} "
+              f"(ideal mean ~1.0)")
+        if np.percentile(fl, 99) > 1.15:
+            print("FAIL: systematic energy gain in white furnace")
+            sys.exit(1)
+        if mb == 0:
+            fl0 = fl
+        else:
+            fl1 = fl
+    if fl1.mean() <= fl0.mean() * 1.02 or abs(fl1.mean() - 1.0) > 0.05:
+        print(f"FAIL: multibounce did not recover ss energy "
+              f"(mb0={fl0.mean():.4f}, mb1={fl1.mean():.4f})")
+        sys.exit(1)
     print("PASS")
 
 

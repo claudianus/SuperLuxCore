@@ -120,18 +120,25 @@ OPENCL_FORCE_INLINE void Metal2Material_Evaluate(__global const Material* restri
 			&nVal, &kVal
 			MATERIALS_PARAM);
 
-	const float3 F = FresnelGeneral_Evaluate(nVal, kVal, cosWH);
-	Spectrum_Clamp(F);
-
 	const BSDFEvent event = GLOSSY | REFLECT;
 	// f*|cos(lightDir)| = D * G2 * F / (4 * |eyeDir.z|)
-	const float3 result = useGgx ?
-		(Microfacet_GgxD(wh, alphaT, alphaB) *
-				Microfacet_GgxG2(lightDir, eyeDir, alphaT, alphaB) /
-				(4.f * fabs(eyeDir.z))) * F :
-		(SchlickDistribution_D(roughness, wh, anisotropy) *
-				SchlickDistribution_G(roughness, lightDir, eyeDir) /
-				(4.f * fabs(eyeDir.z))) * F;
+	float3 result;
+	if (useGgx && material->metal2.multibounce) {
+		// Heitz'16 height-tracking multi-bounce evaluation; the estimator
+		// already includes the single-scatter term.
+		result = Microfacet_GgxMSConductorEval(eyeDir, lightDir,
+				MAKE_FLOAT3(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z),
+				alphaT, alphaB, nVal, kVal);
+	} else {
+		const float3 F = Spectrum_Clamp(FresnelGeneral_Evaluate(nVal, kVal, cosWH));
+		result = useGgx ?
+			(Microfacet_GgxD(wh, alphaT, alphaB) *
+					Microfacet_GgxG2(lightDir, eyeDir, alphaT, alphaB) /
+					(4.f * fabs(eyeDir.z))) * F :
+			(SchlickDistribution_D(roughness, wh, anisotropy) *
+					SchlickDistribution_G(roughness, lightDir, eyeDir) /
+					(4.f * fabs(eyeDir.z))) * F;
+	}
 	
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -199,7 +206,13 @@ OPENCL_FORCE_INLINE void Metal2Material_Sample(__global const Material* restrict
 	const BSDFEvent event = GLOSSY | REFLECT;
 
 	float3 result;
-	if (useGgx) {
+	if (useGgx && material->metal2.multibounce) {
+		// VNDF single-scatter sampling covers the multi-bounce support;
+		// weight = (f_ss+ms)*cos / pdf_ss stays unbiased.
+		result = Microfacet_GgxMSConductorEval(fixedDir, sampledDir,
+				MAKE_FLOAT3(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z),
+				alphaT, alphaB, nVal, kVal) / pdfW;
+	} else if (useGgx) {
 		// (f*cos_i)/pdf = F * G2/G1(wo) for VNDF sampling
 		const float g1 = Microfacet_GgxG1(fixedDir, alphaT, alphaB);
 		if (g1 <= 0.f) {

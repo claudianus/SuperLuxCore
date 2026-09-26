@@ -27,6 +27,7 @@
 #include "luxrays/utils/properties.h"
 #include "luxrays/utils/utils.h"
 #include "luxrays/utils/serializationutils.h"
+#include "luxrays/utils/spillablearray.h"
 
 #include "slg/slg.h"
 #include "slg/usings.h"
@@ -294,11 +295,11 @@ public:
 	const luxrays::SpectrumGroup *GetIndirectRadiance(const BSDF &bsdf) const;
 	luxrays::SpectrumGroup ConnectWithCausticPaths(const BSDF &bsdf) const;
 
-	const std::vector<RadiancePhoton> &GetRadiancePhotons() const { return radiancePhotons; }
+	const luxrays::SpillableArray<RadiancePhoton> &GetRadiancePhotons() const { return radiancePhotons; }
 	const PGICRadiancePhotonBvh *GetRadiancePhotonsBVH() const { return radiancePhotonsBVH; }
 	const u_int GetRadiancePhotonTracedCount() const { return indirectPhotonTracedCount; }
 
-	const std::vector<Photon> &GetCausticPhotons() const { return causticPhotons; }
+	const luxrays::SpillableArray<Photon> &GetCausticPhotons() const { return causticPhotons; }
 	const PGICPhotonBvh *GetCausticPhotonsBVH() const { return causticPhotonsBVH; }
 	const u_int GetCausticPhotonTracedCount() const { return causticPhotonTracedCount; }
 
@@ -354,16 +355,16 @@ private:
 	bool finishUpdateFlag;
 
 	// Visibility map
-	std::vector<PGICVisibilityParticle> visibilityParticles;
+	luxrays::SpillableArray<PGICVisibilityParticle> visibilityParticles;
 	PGICKdTree *visibilityParticlesKdTree;
 
 	// Radiance photon map
-	std::vector<RadiancePhoton> radiancePhotons;
+	luxrays::SpillableArray<RadiancePhoton> radiancePhotons;
 	PGICRadiancePhotonBvh *radiancePhotonsBVH;
 	u_int indirectPhotonTracedCount;
 
 	// Caustic photon maps
-	std::vector<Photon> causticPhotons;
+	luxrays::SpillableArray<Photon> causticPhotons;
 	PGICPhotonBvh *causticPhotonsBVH;
 	u_int causticPhotonTracedCount, causticPhotonPass;
 };

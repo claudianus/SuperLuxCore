@@ -30,7 +30,7 @@ using namespace slg;
 // PGCIKdTree
 //------------------------------------------------------------------------------
 
-PGICKdTree::PGICKdTree(const vector<PGICVisibilityParticle> & entries) :
+PGICKdTree::PGICKdTree(const SpillableArray<PGICVisibilityParticle> & entries) :
 		IndexKdTree(entries) {
 }
 
@@ -196,7 +196,7 @@ void load_construct_data(
 	unsigned int file_version
 ) {
     // retrieve data from archive required to construct new instance
-	const std::vector<slg::PGICVisibilityParticle> * entries;
+	const luxrays::SpillableArray<slg::PGICVisibilityParticle> * entries;
     ar >> entries;
     // invoke inplace constructor to initialize instance of my_class
     ::new(t)slg::PGICKdTree(*entries);

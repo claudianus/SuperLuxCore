@@ -2834,6 +2834,7 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("SetStrandsVertexMotion", &Scene_SetStrandsVertexMotion)
     .def("SetMeshAppliedTransformation", &Scene_SetMeshAppliedTransformation)
     .def("SaveMesh", &luxcore::detail::SceneImpl::SaveMesh)
+    .def("SaveMeshClusterStride", &luxcore::detail::SceneImpl::SaveMeshClusterStride)
     .def("DefineStrands", &Scene_DefineStrands)
     .def("DefineBlenderStrands", &blender::Scene_DefineBlenderStrands)
     .def("DefineBlenderCurveStrands", &blender::Scene_DefineBlenderCurveStrands)

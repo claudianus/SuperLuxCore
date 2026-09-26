@@ -44,7 +44,7 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 template <class T>
-IndexOctree<T>::IndexOctree(const vector<T> &entries,
+IndexOctree<T>::IndexOctree(const SpillableArray<T> &entries,
 		const BBox &bbox, const float r, const float normAngle, const u_int md) :
 	allEntries(entries), worldBBox(bbox), maxDepth(md), entryRadius(r), entryRadius2(r * r),
 	entryNormalCosAngle(cosf(Radians(normAngle))) {

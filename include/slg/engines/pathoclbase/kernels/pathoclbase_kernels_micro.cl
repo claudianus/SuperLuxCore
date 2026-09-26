@@ -487,6 +487,155 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		}
 	}
 
+	// RIS product guiding (M4b, port of the pre-DL candidate loop in
+	// PathTracer::RenderEyePath): draw K candidates from the
+	// (1-wG)*BSDF + wG*guide mixture and resample one proportional to
+	// w_i = t(w_i)/pMix(w_i) with the product target t = f|cos|*Lhat.
+	// Runs here - post-BSDF, pre-DL - because MK_DL_SAMPLE_BSDF's MIS
+	// weight needs the independent normalization zHatMis. risZhat > 0
+	// marks an active winner applied by MK_GENERATE_NEXT_VERTEX_RAY.
+	taskState->risZhat = 0.f;
+	taskState->risZhatMis = 0.f;
+	if ((taskConfig->pathTracer.guidingRisK > 0u) && (guidingEnable != 0u) &&
+			!sampleResult->lastPathVertex && !sampleResult->firstPathVertex &&
+			!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
+			(pathInfo->depth.depth >= 2u)) {
+		__global const float *risLeaf = GuideTree_LeafAt(guideNodes,
+				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
+		const BSDFEvent risEventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
+		// Mirrors CPU GuidableBsdf(ris = true): the BSDF-side candidates
+		// resolve any lobe themselves, so the glossiness cutoff relaxes
+		// to a thin band above delta; the field only has to cover the
+		// directions the BSDF would not try. Volumes stay guidable.
+		const bool risGuidable = bsdf->isVolume ||
+				(((risEventTypes & GLOSSY) != 0u) &&
+				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .05f));
+		if (risGuidable && risLeaf && ((uint)risLeaf[22] > 0u) &&
+				(risLeaf[20] >= GUIDE_WARMUP_RECORDS)) {
+			const uint risK = min(taskConfig->pathTracer.guidingRisK, 8u);
+			const float wG = Guide_MixWeight(risLeaf[20], risLeaf[21]);
+			const float3 risShadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+			const bool isVol = bsdf->isVolume;
+			const uint sampleOffset = taskConfig->pathTracer.eyeSampleBootSize +
+					pathInfo->depth.depth * taskConfig->pathTracer.eyeSampleStepSize;
+			const uint risSalt = (sampleOffset * 2971215073u) ^
+					(sampleResult->pixelX * 73856093u) ^
+					(sampleResult->pixelY * 19349663u) ^
+					(GuidingPass(taskConfig, gid, samplesBuff) * 83492791u);
+			float3 cDir[8], cEval[8];
+			BSDFEvent cEvent[8];
+			float cUD0[8], cUD1[8], cT[8], cPMix[8], cW[8];
+			bool cBsdf[8];
+			float wSum = 0.f;
+			for (uint ci = 0u; ci < risK; ++ci)
+				wSum += (cW[ci] = Guide_RisCandidate(risLeaf, bsdf,
+						risShadeN, isVol, wG,
+						risSalt ^ (ci * 0x9e3779b9u), true,
+						&cDir[ci], &cEval[ci], &cEvent[ci],
+						&cUD0[ci], &cUD1[ci], &cBsdf[ci],
+						&cT[ci], &cPMix[ci]
+						MATERIALS_PARAM));
+			if (wSum > 0.f) {
+				// Resample proportional to the weights.
+				const float uPick = GuidingHash(risSalt ^ 0x165667b1u) *
+						(1.f / 4294967296.f) * wSum;
+				float acc = 0.f;
+				int sel = -1;
+				for (uint ci = 0u; ci < risK; ++ci) {
+					acc += cW[ci];
+					if ((uPick <= acc) && (cW[ci] > 0.f)) {
+						sel = (int)ci;
+						break;
+					}
+				}
+				if (sel >= 0) {
+					// The MIS density pHat = t/zHatMis needs an
+					// INDEPENDENT normalization: conditioning on the
+					// winner tilts the selection pool's W low for the
+					// directions that reach a light (w/W selection), so
+					// a second pool decorrelates it (CPU comment in
+					// pathtracer.cpp - pg-indirect-slit halo bias).
+					float wSumM = 0.f;
+					float3 d2, e2;
+					BSDFEvent ev2;
+					float u20, u21, t2, pm2;
+					bool sb2;
+					for (uint ci = 0u; ci < risK; ++ci)
+						wSumM += Guide_RisCandidate(risLeaf, bsdf,
+								risShadeN, isVol, wG,
+								risSalt ^ (0x51ab3d29u + ci * 0x85ebca6bu),
+								false,
+								&d2, &e2, &ev2, &u20, &u21, &sb2, &t2, &pm2
+								MATERIALS_PARAM);
+					const float zHat = wSum / risK;
+					const float zHatMis = (wSumM > 0.f) ? (wSumM / risK) : zHat;
+					const float3 wt = cEval[sel] * (zHat / cT[sel]);
+					taskState->risZhat = zHat;
+					taskState->risZhatMis = zHatMis;
+					taskState->risDirX = cDir[sel].x;
+					taskState->risDirY = cDir[sel].y;
+					taskState->risDirZ = cDir[sel].z;
+					taskState->risWtR = wt.x;
+					taskState->risWtG = wt.y;
+					taskState->risWtB = wt.z;
+					taskState->risPHat = cT[sel] / zHatMis;
+					taskState->risUD0 = cUD0[sel];
+					taskState->risUD1 = cUD1[sel];
+					taskState->risEvent = (uint)cEvent[sel];
+					taskState->risSideBsdf = cBsdf[sel] ? 1u : 0u;
+				}
+			}
+		}
+	}
+
+	// Portal-guided bounce sampling (M5, port of the bounce-side gate in
+	// PathTracer::RenderEyePath): with probability portalShare the bounce
+	// direction is proposed by aiming at a uniform point on an aperture
+	// rect. The decision runs here - post-RIS, pre-DL - because
+	// MK_DL_SAMPLE_BSDF folds wP*PortalPdfW into the bounce density: the
+	// CPU mirrors the same predicate in both places; on the GPU the
+	// mirrored result travels in the task state. Mutually exclusive with
+	// RIS (pHat replaces the rest-mixture) and with the ReSTIR-GI-eligible
+	// first vertex (giPdfW owns the books there).
+	taskState->portalW = 0.f;
+	taskState->portalTake = 0u;
+	{
+		const uint portalCount = taskConfig->pathTracer.portalCount;
+		if ((portalCount > 0u) && !BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
+				!bsdf->isVolume && (taskState->risZhat <= 0.f) &&
+				!(taskConfig->pathTracer.restirGI.enabled &&
+					sampleResult->firstPathVertex)) {
+			const float3 portalP = VLOAD3F(&bsdf->hitPoint.p.x);
+			const float3 portalN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+			if (Portal_UsableAt(portalRects, portalCount, portalP) &&
+					Portal_SideOK(portalRects, portalCount,
+						taskConfig->pathTracer.portalSideGate, portalP) &&
+					Portal_FacingOK(portalRects, portalCount, portalP,
+						portalN)) {
+				const float wPortal = Portal_ShareAt(portalRects,
+						portalCount, taskConfig->pathTracer.portalShare,
+						taskConfig->pathTracer.portalAdapt != 0u,
+						guideNodes, guideLeaves, guidingEnable, portalP);
+				if (wPortal > 0.f) {
+					const uint sampleOffset =
+							taskConfig->pathTracer.eyeSampleBootSize +
+							pathInfo->depth.depth *
+							taskConfig->pathTracer.eyeSampleStepSize;
+					const uint portalSalt =
+							(sampleResult->pixelX * 2654435761u) ^
+							(sampleResult->pixelY * 2246822519u) ^
+							(GuidingPass(taskConfig, gid, samplesBuff) *
+								3266489917u) ^
+							(sampleOffset * 668265263u);
+					taskState->portalW = wPortal;
+					taskState->portalTake =
+							(GuidingHash(portalSalt) * (1.f / 4294967296.f) <
+								wPortal) ? 1u : 0u;
+				}
+			}
+		}
+	}
+
 	//----------------------------------------------------------------------
 	// Check if this is the last path vertex (but not also the first)
 	//
@@ -1181,12 +1330,10 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 			&taskState->bsdf,
 			VLOAD3F(&rays[gid].d.x)
 			LIGHTS_PARAM,
-			guideChunk0, guideChunk1, guideChunk2, guideChunk3,
-			guideChunk4, guideChunk5, guideChunk6, guideChunk7,
-			guideChunk8, guideChunk9, guideChunk10, guideChunk11,
-			guideChunk12, guideChunk13, guideChunk14, guideChunk15,
-			guidingEnable,
-			guideCubeMinX, guideCubeMinY, guideCubeMinZ, guideCubeSize)) {
+			guideNodes, guideLeaves, guidingEnable,
+			taskState->risZhatMis,
+			portalRects, taskConfig->pathTracer.portalCount,
+			taskState->portalW)) {
 		__global GPUTask *task = &tasks[gid];
 		Seed seedValue = task->seed;
 		// This trick is required by SAMPLER_PARAM macro
@@ -1405,23 +1552,17 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 #endif
 				}
 			}
-			// invGuideSize feeds the training record below even on the
-			// GI-consumed path, so it stays outside the draw guard.
-			const float invGuideSize = 1.f / guideCubeSize;
+			// Path guiding (P1-3 M4e): flattened SD-tree + vMF leaf
+			// one-sample MIS, mirroring PathTracer::RenderEyePath() on
+			// the CPU (see src/slg/engines/pathtracer.cpp). Training
+			// records below (M2b-2).
+			// guideLeaf is the flattened leaf record at the vertex
+			// position; NULL when guiding is off or the field is empty.
+			__global const float *guideLeaf = (guidingEnable != 0u) ?
+					GuideTree_LeafAt(guideNodes, guideLeaves,
+						VLOAD3F(&bsdf->hitPoint.p.x)) : NULL;
 			if (giPending != 1u) {
-			// Path guiding (P1-3 M2b): frozen-table one-sample MIS,
-			// mirroring PathTracer::RenderEyePath() on the CPU (see
-			// src/slg/engines/pathtracer.cpp). Training records below (M2b-2).
 			const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
-			const uint guideCell = Guide_CellIndex(
-					VLOAD3F(&bsdf->hitPoint.p.x),
-					guideCubeMinX, guideCubeMinY, guideCubeMinZ, invGuideSize);
-			__global const float *guideTb = Guide_Chunk(guideCell >> 5,
-					guideChunk0, guideChunk1, guideChunk2, guideChunk3,
-					guideChunk4, guideChunk5, guideChunk6, guideChunk7,
-					guideChunk8, guideChunk9, guideChunk10, guideChunk11,
-					guideChunk12, guideChunk13, guideChunk14, guideChunk15);
-			const uint guideLocal = guideCell & 31u;
 			// Mirrors CPU GuidableBsdf(): volume scattering vertices are
 			// always guidable (phase lobes sample blind w.r.t. the
 			// incident field); glossy bounces need enough roughness;
@@ -1429,25 +1570,71 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			const bool guidableBsdf = bsdf->isVolume ||
 					(((eventTypes & GLOSSY) != 0u) &&
 					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
+			// Same gate as CPU CanGuide(): fitted leaf past warmup.
 			const bool tryGuide = (guidingEnable != 0u) &&
 					!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
 					guidableBsdf &&
-					(pathInfo->depth.depth >= 2u) &&
-					(guideTb[guideLocal * 33u + 32u] >= GUIDE_WARMUP_RECORDS);
+					(pathInfo->depth.depth >= 2u) && guideLeaf &&
+					((uint)guideLeaf[22] > 0u) &&
+					(guideLeaf[20] >= GUIDE_WARMUP_RECORDS);
 			// Guiding stats
 			if (tryGuide)
 				guideDbgBuff[0] = 1u;
 			// M2c adaptive mixture (mirrors the CPU side): selection
-			// probability from the frozen-in-round coarse cell total.
+			// probability from the leaf record count x PeakGate.
 			const float wGuide = tryGuide ?
-					Guide_MixWeight(guideTb[guideLocal * 33u + 32u]) : .5f;
+					Guide_MixWeight(guideLeaf[20], guideLeaf[21]) : .5f;
 			const float uSelRaw = Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM);
 			const bool takeGuideSide = (uSelRaw < wGuide);
 			const float uSelRescaled = takeGuideSide ?
 					uSelRaw / max(wGuide, 1e-6f) :
 					(uSelRaw - wGuide) / max(1.f - wGuide, 1e-6f);
+			// Portal bounce proposal (M5): share + selector decided in
+			// MK_HIT_OBJECT; portalW wraps every technique's density in
+			// wP*pPortal + (1-wP)*rest (mirrored CPU predicates).
+			const float wPortal = taskState->portalW;
+			const uint portalCount = taskConfig->pathTracer.portalCount;
 			bool guided = false;
-			if (tryGuide && takeGuideSide) {
+			if (taskState->risZhat > 0.f) {
+				// RIS product-guiding winner (drawn pre-DL in
+				// MK_HIT_OBJECT): the continuation weight is
+				// f|cos|*zHat/t(w*) and pHat is the density the DL MIS
+				// partner already saw (a consistent pair).
+				sampledDir = MAKE_FLOAT3(taskState->risDirX,
+						taskState->risDirY, taskState->risDirZ);
+				bsdfPdfW = taskState->risPHat;
+				bsdfSample = MAKE_FLOAT3(taskState->risWtR,
+						taskState->risWtG, taskState->risWtB);
+				cosSampledDir = fabs(dot(VLOAD3F(&bsdf->hitPoint.shadeN.x),
+						sampledDir));
+				if (taskState->risSideBsdf != 0u) {
+					bsdfEvent = (BSDFEvent)taskState->risEvent;
+				} else {
+					// Field-side winner: shadow BSDF draw with the
+					// candidate's own uniforms for single-lobe event
+					// bookkeeping (same trick as the mixture path).
+					float3 discardDir;
+					float discardPdfW, discardCos;
+					BSDFEvent shadowEvent = (BSDFEvent)0;
+					const float3 discardEval = BSDF_Sample(bsdf,
+							taskState->risUD0, taskState->risUD1,
+							&discardDir, &discardPdfW, &discardCos,
+							&shadowEvent
+							MATERIALS_PARAM);
+					bsdfEvent = Spectrum_IsBlack(discardEval) ?
+							(BSDFEvent)taskState->risEvent : shadowEvent;
+				}
+#if defined(SLG_SPECTRAL)
+				// The candidate's BSDF_Sample ran in MK_HIT_OBJECT (and
+				// possibly the shadow draw just above): a dispersive
+				// transmit may have collapsed the alive mask on the hit
+				// point - carry it back so the next intersection keeps it.
+				sampleResult->spectralHeroAlive = bsdf->hitPoint.spectralHeroAlive;
+#endif
+				guided = true;
+			}
+			if (!guided && tryGuide && takeGuideSide &&
+					(taskState->portalTake == 0u)) {
 				float guidePdfW;
 				float3 guideDir;
 				const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
@@ -1456,7 +1643,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 						(sampleResult->pixelY * 19349663u) ^
 						(GuidingPass(taskConfig, gid, samplesBuff) * 83492791u) ^
 						(sampleOffset * 2971215073u)) * (1.f / 4294967296.f);
-				if (Guide_Sample(guideTb, guideLocal,
+				if (GuideTree_Sample(guideLeaf,
 						shadeN, uBin, uSelRescaled,
 						Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
 						&guideDir, &guidePdfW, bsdf->isVolume) && (guidePdfW > 0.f)) {
@@ -1481,7 +1668,13 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 							((cosLocal > 1e-3f) ? guideEvalDouble / cosLocal : BLACK) :
 							guideEvalDouble;
 					if (!Spectrum_IsBlack(guideEval)) {
-						const float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
+						// The portal share wraps the rest-mixture
+						// symmetric to the BSDF side (CPU parity).
+						float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
+						if (wPortal > 0.f)
+							mixPdfW = wPortal * Portal_PdfW(portalRects,
+									portalCount, VLOAD3F(&bsdf->hitPoint.p.x),
+									guideDir) + (1.f - wPortal) * mixPdfW;
 						if (mixPdfW > 0.f) {
 							sampledDir = guideDir;
 							bsdfSample = guideEval / mixPdfW;
@@ -1504,6 +1697,83 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					bsdfSample = BLACK;
 				}
 			}
+			if (taskState->portalTake != 0u) {
+				// Portal proposal (M5, mirrors the CPU takePortal block):
+				// aim at a uniform point on a uniformly picked aperture
+				// rect; the marginal density is wP*PortalPdfW +
+				// (1-wP)*restPdfW with rest evaluated exactly as the
+				// BSDF/guide sides (single-cos f|cos| convention).
+				const uint portalSalt =
+						(sampleResult->pixelX * 2654435761u) ^
+						(sampleResult->pixelY * 2246822519u) ^
+						(GuidingPass(taskConfig, gid, samplesBuff) *
+							3266489917u) ^
+						(sampleOffset * 668265263u);
+				const float uIdx = GuidingHash(portalSalt ^ 0x9e3779b9u) *
+						(1.f / 4294967296.f);
+				const float uPU = GuidingHash(portalSalt ^ 0x85ebca6bu) *
+						(1.f / 4294967296.f);
+				const float uPV = GuidingHash(portalSalt ^ 0xc2b2ae35u) *
+						(1.f / 4294967296.f);
+				__global const float4 *pr = portalRects + 4u *
+						min((uint)(uIdx * portalCount), portalCount - 1u);
+				const float3 hp = VLOAD3F(&bsdf->hitPoint.p.x);
+				const float3 pt = MAKE_FLOAT3(pr[0].x, pr[0].y, pr[0].z) +
+						uPU * MAKE_FLOAT3(pr[1].x, pr[1].y, pr[1].z) +
+						uPV * MAKE_FLOAT3(pr[2].x, pr[2].y, pr[2].z);
+				sampledDir = normalize(pt - hp);
+				BSDFEvent pEvent;
+				float pBsdfPdfW;
+				float3 pEval = BSDF_Evaluate(bsdf, sampledDir,
+						&pEvent, &pBsdfPdfW
+						MATERIALS_PARAM);
+				// Disney double-cos correction, same as the guide and
+				// RIS candidate evaluations.
+				if (mats[bsdf->materialIndex].type == DISNEY) {
+					const float cosLocal = fabs(Frame_ToLocal(&bsdf->frame,
+							sampledDir).z);
+					pEval = (cosLocal > 1e-3f) ? pEval / cosLocal : BLACK;
+				}
+				const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+				float restPdfW = pBsdfPdfW;
+				if (tryGuide)
+					restPdfW = (1.f - wGuide) * pBsdfPdfW + wGuide *
+							GuideTree_Pdf(guideLeaf, shadeN, sampledDir,
+							bsdf->isVolume);
+				const float mixPdfW = wPortal * Portal_PdfW(portalRects,
+						portalCount, hp, sampledDir) +
+						(1.f - wPortal) * restPdfW;
+				if (!Spectrum_IsBlack(pEval) && (mixPdfW > 0.f)) {
+					bsdfSample = pEval / mixPdfW;
+					bsdfPdfW = mixPdfW;
+					cosSampledDir = fabs(dot(shadeN, sampledDir));
+					// Single-lobe event bookkeeping via a shadow BSDF
+					// draw (same convention as the guide side).
+					float3 discardDir;
+					float discardPdfW, discardCos;
+					BSDFEvent shadowEvent = (BSDFEvent)0;
+					const float3 discardEval = BSDF_Sample(bsdf,
+							GuidingHash(portalSalt ^ 0x27d4eb2fu) *
+								(1.f / 4294967296.f),
+							GuidingHash(portalSalt ^ 0x165667b1u) *
+								(1.f / 4294967296.f),
+							&discardDir, &discardPdfW, &discardCos,
+							&shadowEvent
+							MATERIALS_PARAM);
+					bsdfEvent = Spectrum_IsBlack(discardEval) ?
+							pEvent : shadowEvent;
+				} else {
+					// Valid portal draw, zero BSDF contribution (e.g.
+					// below the shading hemisphere): kill the path
+					// rather than resample under mixture weights.
+					bsdfSample = BLACK;
+				}
+				guided = true;
+#if defined(SLG_SPECTRAL)
+				sampleResult->spectralHeroAlive =
+						bsdf->hitPoint.spectralHeroAlive;
+#endif
+			}
 			if (!guided) {
 				const float uBsdf = tryGuide ?
 						uSelRescaled : Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM);
@@ -1518,12 +1788,22 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 				// (which re-copies from the SampleResult) keeps it.
 				sampleResult->spectralHeroAlive = bsdf->hitPoint.spectralHeroAlive;
 #endif
-				if (tryGuide) {
-					const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
-					const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
-					const float guidePdfW = Guide_Pdf(guideTb, guideLocal,
-							shadeN, sampledDir, bsdf->isVolume);
-					const float mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
+				if (tryGuide || (wPortal > 0.f)) {
+					// Every BSDF-side sample under tryGuide (whichever
+					// way the selector fell) is reweighted to the
+					// mixture; the portal share wraps it symmetric to
+					// the guide side (mirrored CPU bookkeeping).
+					float mixPdfW = bsdfPdfW;
+					if (tryGuide) {
+						const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+						const float guidePdfW = GuideTree_Pdf(guideLeaf,
+								shadeN, sampledDir, bsdf->isVolume);
+						mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
+					}
+					if (wPortal > 0.f)
+						mixPdfW = wPortal * Portal_PdfW(portalRects,
+								portalCount, VLOAD3F(&bsdf->hitPoint.p.x),
+								sampledDir) + (1.f - wPortal) * mixPdfW;
 					if (mixPdfW > 0.f) {
 						bsdfSample *= bsdfPdfW / mixPdfW;
 						bsdfPdfW = mixPdfW;

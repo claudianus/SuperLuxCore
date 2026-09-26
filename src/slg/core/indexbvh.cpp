@@ -38,7 +38,7 @@ using namespace slg;
 
 template<u_int CHILDREN_COUNT, class T>
 static std::unique_ptr<luxrays::ocl::IndexBVHArrayNode[]> BuildEmbreeBVH(
-		RTCBuildQuality quality, const vector<T> *allEntries,
+		RTCBuildQuality quality, const SpillableArray<T> *allEntries,
 		const float entryRadius, u_int *nNodes) {
 	//const double t1 = WallClockTime();
 
@@ -74,7 +74,7 @@ IndexBvh<T>::IndexBvh() : arrayNodes(nullptr) {
 }
 
 template <class T>
-IndexBvh<T>::IndexBvh(const vector<T> *entries, const float radius) :
+IndexBvh<T>::IndexBvh(const SpillableArray<T> *entries, const float radius) :
 		allEntries(entries), entryRadius(radius), entryRadius2(radius * radius) {
 	arrayNodes = BuildEmbreeBVH<4, T>(RTC_BUILD_QUALITY_HIGH, allEntries, entryRadius, &nNodes);
 }

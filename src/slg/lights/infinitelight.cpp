@@ -33,7 +33,7 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 InfiniteLight::InfiniteLight() :
-	imageMap(nullptr), imageMapDistribution(nullptr), visibilityMapCache(nullptr) {
+	imageMap(nullptr), cdfMaxDim(4096), imageMapDistribution(nullptr), visibilityMapCache(nullptr) {
 }
 
 InfiniteLight::~InfiniteLight() {
@@ -44,33 +44,39 @@ void InfiniteLight::Preprocess() {
 
 	auto& imageMapStorage = imageMap->GetStorage();
 
-	std::vector<float> data(imageMap->GetWidth() * imageMap->GetHeight());
-	//float maxVal = -INFINITY;
-	//float minVal = INFINITY;
-	for (u_int y = 0; y < imageMap->GetHeight(); ++y) {
-		for (u_int x = 0; x < imageMap->GetWidth(); ++x) {
-			const u_int index = x + y * imageMap->GetWidth();
+	const u_int imgW = imageMap->GetWidth();
+	const u_int imgH = imageMap->GetHeight();
 
-			if (sampleUpperHemisphereOnly && (y > imageMap->GetHeight() / 2))
-				data[index] = 0.f;
-			else
-				data[index] = imageMapStorage.GetFloat(index);
+	// Cap the importance-sampling resolution: a 16k HDRI would need a
+	// ~1GB CDF (nv row distributions of 2*nu floats). Block-summing to
+	// cdfMaxDim preserves the total mass per cell, so sampling stays
+	// unbiased (the pdf is consistent with the sampled distribution);
+	// only the variance of tiny hot spots grows slightly.
+	const u_int maxDim = Max(imgW, imgH);
+	const u_int decim = cdfMaxDim ? (maxDim + cdfMaxDim - 1) / cdfMaxDim : 1;
+	const u_int distW = (imgW + decim - 1) / decim;
+	const u_int distH = (imgH + decim - 1) / decim;
+	if (decim > 1)
+		SLG_LOG("InfiniteLight: downsampling importance CDF " <<
+			imgW << "x" << imgH << " -> " << distW << "x" << distH);
 
-			if (!IsValid(data[index]))
-				throw runtime_error("Pixel (" + ToString(x) + ", " + ToString(y) + ") in infinite light has an invalid value: " + ToString(data[index]));
-
-			//maxVal = Max(data[index], maxVal);
-			//minVal = Min(data[index], minVal);
+	std::vector<float> data(distW * distH, 0.f);
+	for (u_int y = 0; y < imgH; ++y) {
+		const u_int dy = Min(y / decim, distH - 1);
+		const bool upper = sampleUpperHemisphereOnly && (y > imgH / 2);
+		for (u_int x = 0; x < imgW; ++x) {
+			const float v = upper ? 0.f : imageMapStorage.GetFloat(x + y * imgW);
+			if (!IsValid(v))
+				throw runtime_error("Pixel (" + ToString(x) + ", " + ToString(y) + ") in infinite light has an invalid value: " + ToString(v));
+			data[Min(x / decim, distW - 1) + dy * distW] += v;
 		}
 	}
-	
-	//SLG_LOG("InfiniteLight luminance  Max=" << maxVal << " Min=" << minVal);
 
 	imageMapDistribution =
 		std::make_unique<Distribution2D>(
 			data,
-			imageMap->GetWidth(),
-			imageMap->GetHeight()
+			distW,
+			distH
 		);
 }
 
@@ -257,6 +263,7 @@ PropertiesUPtr InfiniteLight::ToProperties(const ImageMapCache &imgMapCache, con
 	props->Set(imageMap->ToProperties(prefix, false));
 	props->Set(Property(prefix + ".gamma")(1.f));
 	props->Set(Property(prefix + ".sampleupperhemisphereonly")(sampleUpperHemisphereOnly));
+	props->Set(Property(prefix + ".cdfdim")(cdfMaxDim));
 
 	props->Set(Property(prefix + ".visibilitymapcache.enable")(useVisibilityMapCache));
 	if (useVisibilityMapCache)

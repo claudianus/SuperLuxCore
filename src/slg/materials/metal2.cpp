@@ -18,6 +18,8 @@
 
 #include "slg/materials/metal2.h"
 #include "slg/materials/microfacet.h"
+#include "slg/textures/fresnel/fresnelcolor.h"
+#include "slg/textures/fresnel/fresnelconst.h"
 
 using namespace std;
 using namespace luxrays;
@@ -38,6 +40,7 @@ Metal2Material::Metal2Material(
 	TextureConstPtr kk,
 	TextureConstPtr u,
 	TextureConstPtr v,
+	const bool mbounce,
 	const bool useGgx
 ) :
 	Material(frontTransp, backTransp, emitted, bump),
@@ -46,6 +49,7 @@ Metal2Material::Metal2Material(
 	k(kk),
 	nu(u),
 	nv(v),
+	multibounce(mbounce),
 	useGgx(useGgx)
 {
 	glossiness = ComputeGlossiness(nu, nv);
@@ -59,6 +63,7 @@ Metal2Material::Metal2Material(
 	FresnelTextureConstPtr ft,
 	TextureConstPtr u,
 	TextureConstPtr v,
+	const bool mbounce,
 	const bool useGgx)
 	:
 	Material(frontTransp, backTransp, emitted, bump),
@@ -67,9 +72,36 @@ Metal2Material::Metal2Material(
 	k(nullptr),
 	nu(u),
 	nv(v),
+	multibounce(mbounce),
 	useGgx(useGgx)
 {
 	glossiness = ComputeGlossiness(nu, nv);
+}
+
+// Resolves the conductor complex IOR (n, k) used by the multi-bounce walk.
+// Mirrors Metal2Material_GetNK on the GPU side for parity.
+void Metal2Material::GetNK(const HitPoint &hitPoint, Spectrum &nVal, Spectrum &kVal) const {
+	if (fresnelTex) {
+		if (fresnelTex->GetType() == FRESNELCONST_TEX) {
+			const FresnelConstTexture *fct = static_cast<const FresnelConstTexture *>(
+					std::addressof(*fresnelTex));
+			nVal = fct->GetN();
+			kVal = fct->GetK();
+		} else if (fresnelTex->GetType() == FRESNELCOLOR_TEX) {
+			const Spectrum f = static_cast<const FresnelColorTexture *>(
+					std::addressof(*fresnelTex))->GetKr().GetSpectrumValue(hitPoint);
+			nVal = FresnelTexture::ApproxN(f);
+			kVal = FresnelTexture::ApproxK(f);
+		} else {
+			// Fallback for other Fresnel textures: approximate n,k from F(0)
+			const Spectrum f = fresnelTex->Evaluate(hitPoint, 1.f);
+			nVal = FresnelTexture::ApproxN(f);
+			kVal = FresnelTexture::ApproxK(f);
+		}
+	} else {
+		nVal = n->GetSpectrumValue(hitPoint).Clamp(.001f);
+		kVal = k->GetSpectrumValue(hitPoint).Clamp(.001f);
+	}
 }
 
 Spectrum Metal2Material::Albedo(const HitPoint &hitPoint) const {
@@ -129,6 +161,14 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 
 	*event = GLOSSY | REFLECT;
 	if (useGgx) {
+		if (multibounce) {
+			// Heitz'16 height-tracking multi-bounce evaluation: the walk
+			// estimator already contains the single-scatter term.
+			Spectrum nVal, kVal;
+			GetNK(hitPoint, nVal, kVal);
+			return GgxMSConductorEval(localEyeDir, localLightDir,
+					hitPoint.p, alphaT, alphaB, nVal, kVal);
+		}
 		// f*|cos(lightDir)| = D * G2 * F / (4 * |eyeDir.z|)
 		return (GgxD(wh, alphaT, alphaB) *
 				GgxG2(localLightDir, localEyeDir, alphaT, alphaB) /
@@ -189,6 +229,15 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	*event = GLOSSY | REFLECT;
 
 	if (useGgx) {
+		if (multibounce) {
+			// VNDF single-scatter sampling covers the full multi-bounce
+			// support; weight = (f_ss+ms)*cos / pdf_ss stays unbiased.
+			Spectrum nVal, kVal;
+			GetNK(hitPoint, nVal, kVal);
+			const Spectrum ms = GgxMSConductorEval(localFixedDir, *localSampledDir,
+					hitPoint.p, alphaT, alphaB, nVal, kVal);
+			return ms / *pdfW;
+		}
 		// (f*cos_i)/pdf = F * G2/G1(wo) for VNDF sampling
 		const float g1 = GgxG1(localFixedDir, alphaT, alphaB);
 		if (g1 <= 0.f)
@@ -284,6 +333,7 @@ PropertiesUPtr Metal2Material::ToProperties(const ImageMapCache &imgMapCache, co
 		props->Set(Property("scene.materials." + name + ".k")(k->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".uroughness")(nu->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".vroughness")(nv->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".multibounce")(multibounce));
 	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 

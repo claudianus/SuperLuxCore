@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# metal2 Schlick / GGX / GGX+multibounce comparison scene.
+# Cornell box, three rough metal spheres (identical uroughness = 0.5):
+#   left  : metal2 legacy Schlick
+#   mid   : metal2 distribution = ggx (single-scatter only)
+#   right : metal2 distribution = ggx + multibounce (Heitz'16 height-tracking
+#           walk: recovers the energy lost to internal microsurface bounces)
+
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+# Aluminium n,k (approximate visible-band values)
+scene.materials.m-schlick.type = metal2
+scene.materials.m-schlick.n = 1.30 0.96 0.68
+scene.materials.m-schlick.k = 7.5 6.6 5.4
+scene.materials.m-schlick.uroughness = 0.5
+scene.materials.m-schlick.vroughness = 0.5
+################################################################################
+scene.materials.m-ggx.type = metal2
+scene.materials.m-ggx.n = 1.30 0.96 0.68
+scene.materials.m-ggx.k = 7.5 6.6 5.4
+scene.materials.m-ggx.uroughness = 0.5
+scene.materials.m-ggx.vroughness = 0.5
+scene.materials.m-ggx.distribution = ggx
+################################################################################
+scene.materials.m-ggxmb.type = metal2
+scene.materials.m-ggxmb.n = 1.30 0.96 0.68
+scene.materials.m-ggxmb.k = 7.5 6.6 5.4
+scene.materials.m-ggxmb.uroughness = 0.5
+scene.materials.m-ggxmb.vroughness = 0.5
+scene.materials.m-ggxmb.distribution = ggx
+scene.materials.m-ggxmb.multibounce = 1
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply
+scene.objects.sphere-left.material = m-schlick
+scene.objects.sphere-left.ply = scenes/cornell/sphere-left.ply
+scene.objects.sphere-mid.material = m-ggx
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-right.material = m-ggxmb
+scene.objects.sphere-right.ply = scenes/cornell/sphere-right.ply
+################################################################################

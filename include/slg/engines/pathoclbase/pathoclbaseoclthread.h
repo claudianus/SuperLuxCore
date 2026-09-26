@@ -192,6 +192,8 @@ protected:
 	// CPU cache, swap a training round and re-upload the coarse chunks.
 	// Called once per outer render iteration (device idle).
 	void DrainGuide();
+	// Portal bounce proposal (M5): one-time aperture rect upload.
+	void InitPortals();
 	void InitKernels();
 	void InitGPUTaskBuffer();
 	void InitSamplerSharedDataBuffer();
@@ -293,12 +295,16 @@ protected:
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBVHNodesBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBVHNodesBuff;
-	// Path guiding (P1-3 M2b): 16 frozen coarse-table chunks (4224B each)
-	luxrays::HardwareDeviceBuffer *guideChunkBuff[16];
+	// Path guiding (P1-3 M4e): flattened SD-tree nodes (uint4/node)
+	// + per-leaf vMF mixture records (24 floats/leaf)
+	luxrays::HardwareDeviceBuffer *guideNodesBuff;
+	luxrays::HardwareDeviceBuffer *guideLeavesBuff;
 	// Guiding stats (validation)
 	luxrays::HardwareDeviceBuffer *guideDbgBuff;
 	// Path guiding (P1-3 M2b-2): per-task training records (float4/task)
 	luxrays::HardwareDeviceBuffer *guideRecBuff[16];
+	// Portal bounce proposal (M5): 4 float4 records per aperture rect
+	luxrays::HardwareDeviceBuffer *portalRectsBuff;
 
 	// OpenCL task related buffers
 	luxrays::HardwareDeviceBuffer *raysBuff;

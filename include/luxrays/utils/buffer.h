@@ -118,6 +118,10 @@ public:
 	// Emptiness
 	explicit operator bool() const noexcept;
 
+	// True when the storage is an adopted external mapping (e.g. an
+	// .lxm section or a spill file) rather than owned heap memory.
+	bool IsExternal() const noexcept { return external; }
+
 
 private:
 	// Underlying storage. shared_ptr so adopted external memory can

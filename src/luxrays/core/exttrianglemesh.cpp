@@ -257,10 +257,14 @@ void ExtTriangleMesh::Init(
 }
 
 void ExtTriangleMesh::Preprocess() {
-	// Compute all triangle normals
-	#pragma omp parallel for
-	for (long long i = 0; i < tris.Count(); ++i)
-		triNormals[i] = tris[i].GetGeometryNormal(vertices);
+	// Compute all triangle normals — skipped when triNormals was adopted
+	// from a .lxm section (LoadProxy v3): recomputing it would fault in
+	// every vertex/triangle page, defeating ray-driven residency.
+	if (!triNormals.IsExternal() || !triNormals) {
+		#pragma omp parallel for
+		for (long long i = 0; i < tris.Count(); ++i)
+			triNormals[i] = tris[i].GetGeometryNormal(vertices);
+	}
 
 	PreprocessBevel();
 }
@@ -271,6 +275,8 @@ void ExtTriangleMesh::Preprocess() {
 // rtcSetSharedGeometryBuffer) see the mapped address.
 size_t ExtTriangleMesh::SpillBuffers(const std::string &dir,
 		const std::string &namePrefix, const size_t minBytes) {
+	if (buffersFromFileMapping)
+		return 0;
 	size_t spilled = 0;
 	u_int fileIndex = 0;
 	const auto fileName = [&](const char *tag) {
@@ -366,10 +372,23 @@ Point ExtTriangleMesh::GetVertexAtTime(const u_int vertIndex, const float time) 
 
 BBox ExtTriangleMesh::GetBBox() const {
 	if (!cachedBBoxValid) {
-		cachedBBox = TriangleMesh::GetBBox();
-		for (const auto &stepVerts : motionVertSteps) {
-			for (u_int i = 0; i < stepVerts.Count(); ++i)
-				cachedBBox = Union(cachedBBox, stepVerts[i]);
+		if (clusterIndex) {
+			// Cluster bounds are stored conservative — union them without
+			// touching vertex pages (a full vertex scan would fault the
+			// whole mesh in).
+			cachedBBox = BBox();
+			for (u_int i = 0; i < clusterIndexCount; ++i) {
+				const LxmCluster &cl = clusterIndex[i];
+				cachedBBox = Union(cachedBBox, BBox(
+						Point(cl.bboxMin[0], cl.bboxMin[1], cl.bboxMin[2]),
+						Point(cl.bboxMax[0], cl.bboxMax[1], cl.bboxMax[2])));
+			}
+		} else {
+			cachedBBox = TriangleMesh::GetBBox();
+			for (const auto &stepVerts : motionVertSteps) {
+				for (u_int i = 0; i < stepVerts.Count(); ++i)
+					cachedBBox = Union(cachedBBox, stepVerts[i]);
+			}
 		}
 
 		cachedBBoxValid = true;

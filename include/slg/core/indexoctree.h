@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "luxrays/core/geometry/bbox.h"
+#include "luxrays/utils/spillablearray.h"
 #include "slg/slg.h"
 
 namespace slg {
@@ -29,7 +30,7 @@ namespace slg {
 template <class T>
 class IndexOctree {
 public:
-	IndexOctree(const std::vector<T> &allEntries, const luxrays::BBox &bbox,
+	IndexOctree(const luxrays::SpillableArray<T> &allEntries, const luxrays::BBox &bbox,
 			const float r, const float normAngle, const u_int md = 24);
 	virtual ~IndexOctree();
 
@@ -60,7 +61,7 @@ protected:
 		const u_int entryIndex, const luxrays::BBox &entryBBox,
 		const float entryBBoxDiagonal2, const u_int depth = 0);
 
-	const std::vector<T> &allEntries;
+	const luxrays::SpillableArray<T> &allEntries;
 
 	luxrays::BBox worldBBox;
 	

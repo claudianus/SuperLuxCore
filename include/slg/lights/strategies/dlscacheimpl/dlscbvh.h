@@ -21,6 +21,7 @@
 
 #include <vector>
 
+#include "luxrays/utils/spillablearray.h"
 #include "slg/core/indexbvh.h"
 
 namespace slg {
@@ -29,7 +30,7 @@ class DLSCacheEntry;
 
 class DLSCBvh : public IndexBvh<DLSCacheEntry> {
 public:
-	DLSCBvh(const std::vector<DLSCacheEntry> *entries,
+	DLSCBvh(const luxrays::SpillableArray<DLSCacheEntry> *entries,
 			const float radius, const float normalAngle);
 	virtual ~DLSCBvh();
 
@@ -40,7 +41,7 @@ public:
 			const bool isVolume) const;
 
 	// Used for OpenCL data translation
-	const std::vector<DLSCacheEntry> *GetAllEntries() const { return allEntries; }
+	const luxrays::SpillableArray<DLSCacheEntry> *GetAllEntries() const { return allEntries; }
 
 	friend class boost::serialization::access;
 

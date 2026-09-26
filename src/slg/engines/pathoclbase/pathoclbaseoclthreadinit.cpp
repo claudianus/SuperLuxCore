@@ -392,16 +392,22 @@ void PathOCLBaseOCLRenderThread::InitPhotonGI() {
 }
 
 void PathOCLBaseOCLRenderThread::InitGuide() {
-	// Path guiding table chunks (16 x 4224B): small uploads land reliably
-	if (renderEngine->guideHasTable && renderEngine->guideTable.size() > 0) {
-		for (u_int i = 0u; i < 16u; ++i) {
-			intersectionDevice.AllocBufferRO(&guideChunkBuff[i],
-					&renderEngine->guideTable[i * 32u * 33u],
-					32u * 33u * sizeof(float), "Path guiding table chunk");
-		}
+	// Path guiding flattened field (M4e): SD-tree nodes (16B/node) +
+	// leaf vMF records (96B/leaf). SnapshotTree always emits at least
+	// one leaf node + one zeroed leaf, so the buffers are valid even
+	// for a cold field; the field bound checks live inside the tree.
+	if (renderEngine->guideHasTable && renderEngine->guideNodes.size() > 0) {
+		intersectionDevice.AllocBufferRO(&guideNodesBuff,
+				&renderEngine->guideNodes[0],
+				renderEngine->guideNodes.size() * sizeof(u_int),
+				"Path guiding tree nodes");
+		intersectionDevice.AllocBufferRO(&guideLeavesBuff,
+				&renderEngine->guideLeaves[0],
+				renderEngine->guideLeaves.size() * sizeof(float),
+				"Path guiding leaf mixtures");
 	} else {
-		for (u_int i = 0u; i < 16u; ++i)
-			intersectionDevice.FreeBuffer(&guideChunkBuff[i]);
+		intersectionDevice.FreeBuffer(&guideNodesBuff);
+		intersectionDevice.FreeBuffer(&guideLeavesBuff);
 	}
 
 	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each,
@@ -457,23 +463,70 @@ void PathOCLBaseOCLRenderThread::DrainGuide() {
 		}
 	}
 
-	// New training round every 10 drains + re-upload coarse chunks
-	// (small uploads land). 10 drains x 4K records warms the table.
+	// New training round every 10 drains + re-upload the flattened
+	// field. Grow-only capacity: an in-place rewrite keeps the cl_mem
+	// the kernel args are bound to; a capacity increase reallocs, so
+	// the args must be re-bound (the old chunk table never reallocated
+	// and could skip this).
 	{
 		static u_int drainCount = 0u;
 		if (++drainCount >= 10u) {
 			drainCount = 0u;
 			renderEngine->guideCache->ForceSwap();
-			std::vector<float> coarse;
-			renderEngine->guideCache->SnapshotCoarseTable(&coarse);
-			for (u_int i = 0u; i < 16u; ++i) {
-				if (!guideChunkBuff[i])
-					continue;
-				intersectionDevice.EnqueueWriteBuffer(guideChunkBuff[i], CL_TRUE,
-						32u * 33u * sizeof(float),
-						&coarse[(size_t)i * 32u * 33u]);
+			renderEngine->guideCache->SnapshotTree(&renderEngine->guideNodes,
+					&renderEngine->guideLeaves);
+			const size_t nodeBytes =
+					renderEngine->guideNodes.size() * sizeof(u_int);
+			const size_t leafBytes =
+					renderEngine->guideLeaves.size() * sizeof(float);
+			bool rebind = false;
+			if (!guideNodesBuff || guideNodesBuff->GetSize() < nodeBytes) {
+				intersectionDevice.AllocBufferRO(&guideNodesBuff, nullptr,
+						nodeBytes, "Path guiding tree nodes");
+				rebind = true;
 			}
+			if (!guideLeavesBuff || guideLeavesBuff->GetSize() < leafBytes) {
+				intersectionDevice.AllocBufferRO(&guideLeavesBuff, nullptr,
+						leafBytes, "Path guiding leaf mixtures");
+				rebind = true;
+			}
+			intersectionDevice.EnqueueWriteBuffer(guideNodesBuff, CL_TRUE,
+					nodeBytes, &renderEngine->guideNodes[0]);
+			intersectionDevice.EnqueueWriteBuffer(guideLeavesBuff, CL_TRUE,
+					leafBytes, &renderEngine->guideLeaves[0]);
+			if (rebind)
+				SetAllAdvancePathsKernelArgs(0);
 		}
+	}
+}
+
+void PathOCLBaseOCLRenderThread::InitPortals() {
+	// Portal bounce proposal (M5): the aperture rects are static scene
+	// data, so this is a one-time upload (unlike the guiding field there
+	// is no per-round drain). Each rect is 4 float4 records:
+	//   [0] = v0.xyz, invArea        [1] = e1.xyz, g22*invDet
+	//   [2] = e2.xyz, g12*invDet     [3] = n.xyz,  g11*invDet
+	// The pre-multiplied Gram inverse coefficients keep the inside-rect
+	// solve to 2 dots on the device.
+	const auto &portals = renderEngine->pathTracer.portals;
+	if (!portals.empty()) {
+		std::vector<float> data(portals.size() * 16u);
+		for (size_t i = 0u; i < portals.size(); ++i) {
+			const PathTracer::PortalRect &pr = portals[i];
+			float *r = &data[i * 16u];
+			r[0] = pr.v0.x; r[1] = pr.v0.y; r[2] = pr.v0.z;
+			r[3] = pr.invArea;
+			r[4] = pr.e1.x; r[5] = pr.e1.y; r[6] = pr.e1.z;
+			r[7] = pr.g22 * pr.invDet;
+			r[8] = pr.e2.x; r[9] = pr.e2.y; r[10] = pr.e2.z;
+			r[11] = pr.g12 * pr.invDet;
+			r[12] = pr.n.x; r[13] = pr.n.y; r[14] = pr.n.z;
+			r[15] = pr.g11 * pr.invDet;
+		}
+		intersectionDevice.AllocBufferRO(&portalRectsBuff, &data[0],
+				data.size() * sizeof(float), "Portal aperture rects");
+	} else {
+		intersectionDevice.FreeBuffer(&portalRectsBuff);
 	}
 }
 
@@ -975,6 +1028,7 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
 
 	InitGuide();
+	InitPortals();
 
 	//--------------------------------------------------------------------------
 	// Film definition

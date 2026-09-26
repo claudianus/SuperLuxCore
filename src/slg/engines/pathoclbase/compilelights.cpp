@@ -70,7 +70,7 @@ void CompiledScene::CompileDLSC(const LightStrategyDLSCache& dlscLightStrategy) 
 	// Compile all cache entries
 	auto bvh = dlscLightStrategy.GetBVH();
 	if (bvh) {
-		const std::vector<DLSCacheEntry> *allEntries = bvh->GetAllEntries();
+		const SpillableArray<DLSCacheEntry> *allEntries = bvh->GetAllEntries();
 		const u_int entriesCount = allEntries->size();
 
 		dlscAllEntries.resize(entriesCount);
@@ -278,7 +278,7 @@ void CompiledScene::CompileELVC(EnvLightVisibilityCacheRPtr visibilityMapCache) 
 	// Compile all cache entries
 	auto* bvh = visibilityMapCache->GetBVH();
 	if (bvh) {
-		const std::vector<ELVCacheEntry> *allEntries = bvh->GetAllEntries();
+		const SpillableArray<ELVCacheEntry> *allEntries = bvh->GetAllEntries();
 		const u_int entriesCount = allEntries->size();
 
 		elvcAllEntries.resize(entriesCount);

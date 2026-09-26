@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -135,11 +136,19 @@ public:
 
 private:
 	// Pull the contents back into heap storage when a mutating call hits
-	// a spilled array
+	// a spilled array. Move-only element types are relocated with move
+	// semantics (the mapping is released right after, so the moved-from
+	// source objects are never observed again).
 	void EnsureHeap() {
 		if (!keeper)
 			return;
-		storage.assign(ptr, ptr + count);
+		if constexpr (std::is_copy_constructible_v<T>) {
+			storage.assign(ptr, ptr + count);
+		} else {
+			storage.reserve(count);
+			for (size_t i = 0; i < count; ++i)
+				storage.emplace_back(std::move(ptr[i]));
+		}
 		keeper.reset();
 	}
 	void Sync() {

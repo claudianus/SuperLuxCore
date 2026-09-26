@@ -50,7 +50,7 @@ const u_int EnvLightVisibilityCache::defaultLuminanceMapHeight = 512;
 // ELVCOctree
 //------------------------------------------------------------------------------
 
-ELVCOctree::ELVCOctree(const vector<ELVCVisibilityParticle> &entries,
+ELVCOctree::ELVCOctree(const SpillableArray<ELVCVisibilityParticle> &entries,
 		const BBox &bbox, const float r, const float n, const u_int md) :
 	IndexOctree(entries, bbox, r, n, md) {
 }
@@ -238,7 +238,7 @@ protected:
 	}
 
 	virtual bool ProcessVisibilityParticle(const ELVCVisibilityParticle &vp,
-			vector<ELVCVisibilityParticle> &visibilityParticles,
+			SpillableArray<ELVCVisibilityParticle> &visibilityParticles,
 			IndexOctree<ELVCVisibilityParticle> *octree, const float maxDistance2) const {
 		ELVCOctree *particlesOctree = (ELVCOctree *)octree;
 
@@ -626,7 +626,7 @@ void EnvLightVisibilityCache::BuildTileDistributions() {
 // ELVCBvh
 //------------------------------------------------------------------------------
 
-ELVCBvh::ELVCBvh(const vector<ELVCacheEntry> *entries, const float radius, const float normalAngle) :
+ELVCBvh::ELVCBvh(const SpillableArray<ELVCacheEntry> *entries, const float radius, const float normalAngle) :
 			IndexBvh(entries, radius), normalCosAngle(cosf(Radians(normalAngle))) {
 }
 

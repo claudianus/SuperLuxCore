@@ -32,7 +32,7 @@ using namespace slg;
 // DLSCBvh
 //------------------------------------------------------------------------------
 
-DLSCBvh::DLSCBvh(const vector<DLSCacheEntry> *entries, const float radius, const float normalAngle) :
+DLSCBvh::DLSCBvh(const SpillableArray<DLSCacheEntry> *entries, const float radius, const float normalAngle) :
 			IndexBvh(entries, radius), normalCosAngle(cosf(Radians(normalAngle))) {
 }
 

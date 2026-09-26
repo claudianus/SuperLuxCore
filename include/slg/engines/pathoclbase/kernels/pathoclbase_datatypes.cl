@@ -402,6 +402,30 @@ typedef struct {
 	// Path guiding (P1-3 M2b-2): vertex-start accumulated radiance
 	// (direct+emission channels) for incident-value training records
 	float guideRadStart[3];
+
+	// RIS product guiding (M4b): the bounce winner resampled in
+	// MK_HIT_OBJECT (post-BSDF, pre-DL - the CPU draws candidates before
+	// DirectLightSampling so the DL MIS sees pHat = t/zHatMis; the same
+	// ordering is preserved across the state machine). risZhat > 0 marks
+	// an active winner: MK_DL_SAMPLE_BSDF folds risZhatMis into the
+	// bounce density and MK_GENERATE_NEXT_VERTEX_RAY applies dir/wt.
+	float risZhat, risZhatMis;
+	float risDirX, risDirY, risDirZ;
+	float risWtR, risWtG, risWtB;
+	float risPHat;
+	// Winner's draw uniforms: a field-side winner re-runs a shadow BSDF
+	// draw in the bounce kernel for single-lobe event bookkeeping
+	float risUD0, risUD1;
+	unsigned int risEvent;
+	unsigned int risSideBsdf;
+
+	// Portal bounce proposal (M5): decided in MK_HIT_OBJECT (post-RIS,
+	// pre-DL) because the DL-side MIS folds wP*PortalPdfW into the bounce
+	// density - the kernel order mirrors the CPU mirrored predicates.
+	// portalW > 0 marks an active proposal (effective share at this
+	// vertex); portalTake is the hashed selector outcome.
+	float portalW;
+	unsigned int portalTake;
 	
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,

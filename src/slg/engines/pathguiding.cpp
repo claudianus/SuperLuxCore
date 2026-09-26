@@ -1001,51 +1001,75 @@ float PathGuidingCache::Pdf(const Point &p, const Normal &n,
 }
 
 //------------------------------------------------------------------------------
-// GPU coarse-table snapshot (transitional: evaluates the fitted leaf
-// model at coarse cell/bin centers; M4e uploads the flattened tree)
+// GPU flattened-tree snapshot (M4e): the kernel descends the same tree
+// the CPU queries and evaluates the fitted vMF mixture itself
 //------------------------------------------------------------------------------
 
-void PathGuidingCache::SnapshotCoarseTable(vector<float> *out) const {
-	out->assign(COARSE_CHUNKS * COARSE_CHUNK_CELLS * (COARSE_BINS + 1), 0.f);
+void PathGuidingCache::SnapshotTree(vector<u_int> *nodesOut,
+		vector<float> *leavesOut) const {
+	nodesOut->clear();
+	leavesOut->clear();
 	const ReadTree *rt = readTree.load(std::memory_order_acquire);
-	if (!rt || rt->nodes.empty())
+
+	if (!rt || rt->nodes.empty()) {
+		// Canonical empty field: one leaf node pointing at a cold leaf.
+		nodesOut->assign(4, ~0u);
+		(*nodesOut)[2] = 0u;
+		leavesOut->assign(24, 0.f);
 		return;
-	const float cs = cubeSize / COARSE_GRID;
-	const float omega = (2.f * M_PI / COARSE_PHI) * (2.f / COARSE_THETA);
-	for (u_int cc = 0u; cc < COARSE_GRID * COARSE_GRID * COARSE_GRID; ++cc) {
-		const u_int cx = cc % COARSE_GRID;
-		const u_int cy = (cc / COARSE_GRID) % COARSE_GRID;
-		const u_int cz = cc / (COARSE_GRID * COARSE_GRID);
-		const Point p(cubeMin.x + (cx + .5f) * cs,
-				cubeMin.y + (cy + .5f) * cs,
-				cubeMin.z + (cz + .5f) * cs);
-		const ReadLeaf &leaf = rt->leaves[Descend(rt->nodes, rt->root, p)];
-		float *dst = &(*out)[(cc >> 5) * COARSE_CHUNK_CELLS *
-				(COARSE_BINS + 1) + (cc & 31u) * (COARSE_BINS + 1)];
-		if (leaf.nComp == 0 || leaf.count < GuideWarmup())
-			continue;
-		// Directional masses: leaf mixture pdf at each coarse bin center
-		// times the bin solid angle times the leaf flux (isotropic
-		// component weights - the kernel cosine-weights at sample time).
-		for (u_int i = 0; i < COARSE_BINS; ++i) {
-			const u_int pi = i % COARSE_PHI;
-			const u_int ti = i / COARSE_PHI;
-			const float phi = ((pi + .5f) / COARSE_PHI) * 2.f * M_PI - M_PI;
-			const float c = ((ti + .5f) / COARSE_THETA) * 2.f - 1.f;
-			const float s = sqrtf(Max(0.f, 1.f - c * c));
-			const Vector d(s * cosf(phi), s * sinf(phi), c);
-			float pdf = 0.f;
-			for (u_int k = 0; k < leaf.nComp; ++k)
-				pdf += leaf.w[k] * VmfPdf(d.x * leaf.mu[k][0] +
-						d.y * leaf.mu[k][1] + d.z * leaf.mu[k][2],
-						leaf.kappa[k]);
-			dst[i] = pdf * omega * leaf.total;
+	}
+
+	// Re-emit nodes in DFS order so the root lands at index 0 (the
+	// kernel has no root parameter to keep the arg list stable).
+	vector<u_int> remap(rt->nodes.size(), ~0u);
+	vector<u_int> stack(1, rt->root);
+	u_int emit = 0;
+	while (!stack.empty()) {
+		const u_int src = stack.back();
+		stack.pop_back();
+		remap[src] = emit++;
+		const TreeNode &nd = rt->nodes[src];
+		if (nd.axis != ~0u) {
+			stack.push_back(nd.child[0]);
+			stack.push_back(nd.child[1]);
 		}
-		// Column 32 is consumed by the kernel's warmup gate (a count
-		// comparison) and Guide_MixWeight (statistical confidence):
-		// record the signal count scaled by the informativeness gate so
-		// diffuse cells read as thin (mirrors the CPU MixWeight).
-		dst[COARSE_BINS] = leaf.nz * PeakGate(leaf.peak);
+	}
+
+	nodesOut->resize(rt->nodes.size() * 4);
+	for (u_int src = 0; src < rt->nodes.size(); ++src) {
+		if (remap[src] == ~0u)
+			continue;
+		const TreeNode &nd = rt->nodes[src];
+		u_int *dst = &(*nodesOut)[remap[src] * 4];
+		if (nd.axis == ~0u) {
+			dst[0] = dst[1] = ~0u;
+			dst[2] = nd.leaf;
+			dst[3] = 0u;
+		} else {
+			dst[0] = remap[nd.child[0]];
+			dst[1] = remap[nd.child[1]];
+			dst[2] = nd.axis;
+			u_int splitBits;
+			memcpy(&splitBits, &nd.split, sizeof(u_int));
+			dst[3] = splitBits;
+		}
+	}
+
+	leavesOut->resize(rt->leaves.size() * 24);
+	for (u_int i = 0; i < rt->leaves.size(); ++i) {
+		const ReadLeaf &rl = rt->leaves[i];
+		float *dst = &(*leavesOut)[i * 24];
+		for (u_int k = 0; k < VMF_K; ++k) {
+			dst[k] = rl.w[k];
+			dst[4 + k * 4 + 0] = rl.mu[k][0];
+			dst[4 + k * 4 + 1] = rl.mu[k][1];
+			dst[4 + k * 4 + 2] = rl.mu[k][2];
+			dst[4 + k * 4 + 3] = rl.kappa[k];
+		}
+		dst[20] = rl.count;
+		dst[21] = rl.peak;
+		dst[22] = (float)rl.nComp;
+		dst[23] = rl.total;
 	}
 }
 

@@ -249,6 +249,11 @@ public:
 	bool restirGITemporalEnable;
 	bool restirGISpatialEnable;
 
+	// RIS product-guiding candidate count (path.guiding.risk): K > 0
+	// resamples K mixture-proposal draws against the product target
+	// f*|cos|*Lhat; K = 1 degenerates to the plain mixture draw.
+	int guidingRisK;
+
 	// GPU light tracing (path.lighttracing.*): a second task population
 	// on PATHOCL/RTPATHOCL traces light sub-paths and splats their
 	// vertices into RADIANCE_PER_SCREEN_NORMALIZED via camera projection
@@ -285,6 +290,9 @@ public:
 	mutable std::vector<float> lightFocusCasterRadii;
 
 private:
+	friend class CompiledScene;
+	friend class PathOCLBaseOCLRenderThread;
+
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
 			luxrays::Ray &eyeRay, PathVolumeInfo &volInfo,
 			Sampler& sampler,

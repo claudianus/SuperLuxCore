@@ -840,6 +840,7 @@ void CompiledScene::CompileMaterials() {
 				auto nvTex = m2m.GetNv();
 				mat->metal2.nuTexIndex = scene.GetTextures().GetTextureIndex(nuTex);
 				mat->metal2.nvTexIndex = scene.GetTextures().GetTextureIndex(nvTex);
+				mat->metal2.multibounce = m2m.IsMultibounce() ? 1 : 0;
 				mat->metal2.useGgx = m2m.IsGgx() ? 1 : 0;
 				break;
 			}

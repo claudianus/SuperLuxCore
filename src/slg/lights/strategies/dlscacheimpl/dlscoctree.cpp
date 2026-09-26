@@ -38,7 +38,7 @@ using namespace slg;
 // DLSCOctree
 //------------------------------------------------------------------------------
 
-DLSCOctree::DLSCOctree(const vector<DLSCVisibilityParticle> &entries,
+DLSCOctree::DLSCOctree(const SpillableArray<DLSCVisibilityParticle> &entries,
 		const BBox &bbox, const float r, const float n, const u_int md) :
 	IndexOctree(entries, bbox, r, n, md) {
 }

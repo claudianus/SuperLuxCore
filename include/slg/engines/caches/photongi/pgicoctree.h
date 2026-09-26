@@ -28,7 +28,7 @@ class PGICVisibilityParticle;
 
 class PGICOctree : public IndexOctree<PGICVisibilityParticle> {
 public:
-	PGICOctree(const std::vector<PGICVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
+	PGICOctree(const luxrays::SpillableArray<PGICVisibilityParticle> &allEntries, const luxrays::BBox &bbox,
 			const float r, const float normAngle, const u_int md = 24);
 	virtual ~PGICOctree();
 

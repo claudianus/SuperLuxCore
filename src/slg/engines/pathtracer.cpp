@@ -97,7 +97,7 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
-		guidingEnable(false), spectralEnable(false),
+		guidingEnable(false), guidingRisK(0), spectralEnable(false),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true) {
@@ -141,17 +141,11 @@ static bool GuidingDiffuse() {
 	return kDiffuse;
 }
 
-// M4b: RIS product-guiding candidate count (env LUX_PG_RISK, default
+// M4b: RIS product-guiding candidate count (path.guiding.risk, default
 // 0 = off; >1 resamples K mixture-proposal draws against the product
 // target f*|cos|*Lhat). The RIS proposal is the same adaptive mixture;
-// K=1 degenerates to the plain mixture path bit-for-bit.
-static int GuidingRisK() {
-	static const int k = []() {
-		const char *e = getenv("LUX_PG_RISK");
-		return e ? atoi(e) : 0;
-	}();
-	return k;
-}
+// K=1 degenerates to the plain mixture path bit-for-bit. The env
+// LUX_PG_RISK still overrides the property (bisect compatibility).
 
 // Contribution split diagnostic (LUX_PG_CONTRIB): accumulates the film's
 // total direct-light and emission-hit contributions across all paths so
@@ -1143,12 +1137,12 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			float uD0 = 0.f, uD1 = 0.f;
 			bool sideBsdf = false;   // winner came from the BSDF side
 		} ris;
-		if (GuidingRisK() >= 1 && guidingEnable && pathGuidingCache &&
+		if (guidingRisK >= 1 && guidingEnable && pathGuidingCache &&
 				!bsdf.IsDelta() && GuidableBsdf(bsdf, true) &&
 				!sampleResult.firstPathVertex &&
 				((int)pathInfo.depth.depth >= Max(1, GuidingMinDepth())) &&
 				pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
-			const int K = Min(GuidingRisK(), 8);
+			const int K = Min(guidingRisK, 8);
 			const float wG = PathGuidingCache::MixWeight(
 					pathGuidingCache->ReadCount(bsdf.hitPoint.p),
 					pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
@@ -2676,6 +2670,12 @@ void PathTracer::ParseOptions(
 	// (path.guiding.tablefile, empty = train inline on both CPU and GPU)
 	guidingEnable = cfg.Get(defaultProps.Get("path.guiding.enable")).Get<bool>();
 	guidingTableFile = cfg.Get(defaultProps.Get("path.guiding.tablefile")).Get<string>();
+	// RIS product guiding (M4b): K-candidate resampling of the
+	// BSDF/guide mixture against f*|cos|*Lhat. Parsed here (not lazily)
+	// so the GPU task configuration sees the same value.
+	guidingRisK = cfg.Get(defaultProps.Get("path.guiding.risk")).Get<int>();
+	if (const char *e = getenv("LUX_PG_RISK"))
+		guidingRisK = atoi(e);
 
 	// Hero-wavelength spectral transport (P2-1): Spectrum channels carry
 	// spectral samples at the path wavelengths instead of RGB primaries
@@ -2816,6 +2816,9 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
+			Property("path.guiding.risk")(
+				getenv("LUX_PG_RISK") ? atoi(getenv("LUX_PG_RISK")) :
+				cfg.Get(GetDefaultProps()->Get("path.guiding.risk")).Get<int>()) <<
 			cfg.Get(GetDefaultProps()->Get("path.portal.count")) <<
 			cfg.Get(GetDefaultProps()->Get("path.portal.weight")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.enable")) <<
@@ -2878,6 +2881,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.mnee.seedcache")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
+			Property("path.guiding.risk")(0) <<
 			Property("path.portal.count")(0) <<
 			Property("path.portal.weight")(.3f) <<
 			Property("path.restir.gi.enable")(false) <<

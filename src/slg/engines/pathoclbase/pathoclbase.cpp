@@ -63,8 +63,7 @@ PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 		const bool supportsNativeThreads) :	OCLRenderEngine(rcfg, supportsNativeThreads),
 		compiledScene(nullptr), oclSampler(nullptr),
 		oclPixelFilter(nullptr), photonGICache(nullptr), lightSamplerSharedData(nullptr),
-		guideCubeSize(1.f), guideHasTable(false), guideCache(nullptr) {
-	guideCubeMin[0] = guideCubeMin[1] = guideCubeMin[2] = 0.f;
+		guideHasTable(false), guideCache(nullptr) {
 	writeKernelsToFile = false;
 	// GPU light tracing: no light tasks until UpdateTaskCount splits
 	eyeTaskCount = 0;
@@ -152,6 +151,20 @@ PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 	SLG_LOG("Metal devices used:");
 	for (IntersectionDeviceRef dev : devs) {
 		if (dev.GetDeviceDesc().GetType() & DEVICE_TYPE_METAL_ALL) {
+			SLG_LOG("[" << dev.GetName() << "]");
+			intersectionDevices.push_back(dev);
+		}
+	}
+#endif
+
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+	//--------------------------------------------------------------------------
+	// Add Vulkan devices
+	//--------------------------------------------------------------------------
+
+	SLG_LOG("Vulkan devices used:");
+	for (IntersectionDeviceRef dev : devs) {
+		if (dev.GetDeviceDesc().GetType() & DEVICE_TYPE_VULKAN_ALL) {
 			SLG_LOG("[" << dev.GetName() << "]");
 			intersectionDevices.push_back(dev);
 		}
@@ -345,12 +358,14 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 
 	oclSampler = Sampler::FromPropertiesOCL(cfg);
 
-	// Path guiding (P1-3 M2b-2): GPU samples a frozen coarse table while
-	// the CPU-side cache trains from GPU-drained records. An optional
-	// table file (path.guiding.tablefile) seeds training; otherwise the
-	// cache starts empty and guides once warm (cold start is pure BSDF).
+	// Path guiding (P1-3 M4e): GPU descends the same flattened SD-tree
+	// the CPU queries, evaluating the fitted vMF leaf mixtures in the
+	// kernel. The CPU-side cache trains from GPU-drained records. An
+	// optional table file (path.guiding.tablefile) seeds training;
+	// otherwise the cache starts empty and guides once warm.
 	guideHasTable = false;
-	guideTable.clear();
+	guideNodes.clear();
+	guideLeaves.clear();
 	delete guideCache;
 	guideCache = nullptr;
 	if (cfg.Get(Property("path.guiding.enable")(false)).Get<bool>()) {
@@ -360,7 +375,7 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 			if (!guideCache) {
 				SLG_LOG("WARNING: unable to load path guiding table file: " + tableFile);
 			} else {
-				SLG_LOG("[PathOCLBaseRenderEngine] Path guiding (M2b) table loaded: " + tableFile);
+				SLG_LOG("[PathOCLBaseRenderEngine] Path guiding table loaded: " + tableFile);
 			}
 		}
 		if (!guideCache) {
@@ -371,12 +386,7 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 							bsphere.center.z - bsphere.rad),
 					2.f * bsphere.rad);
 		}
-		const luxrays::Point cubeMin = guideCache->GetCubeMin();
-		guideCubeMin[0] = cubeMin.x;
-		guideCubeMin[1] = cubeMin.y;
-		guideCubeMin[2] = cubeMin.z;
-		guideCubeSize = guideCache->GetCubeSize();
-		guideCache->SnapshotCoarseTable(&guideTable);
+		guideCache->SnapshotTree(&guideNodes, &guideLeaves);
 		guideHasTable = true;
 	}
 

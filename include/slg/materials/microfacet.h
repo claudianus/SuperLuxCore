@@ -32,6 +32,7 @@
 #include "luxrays/core/geometry/vector_normal.h"
 #include "luxrays/core/color/color.h"
 #include "slg/materials/material.h"
+#include "slg/textures/fresnel/fresneltexture.h"
 
 namespace slg {
 
@@ -189,6 +190,179 @@ inline luxrays::Spectrum GgxMSCompensation(const float mu, const float alpha,
 	if (Ess <= 1e-4f)
 		return luxrays::Spectrum(1.f);
 	return luxrays::Spectrum(1.f) + Favg * ((1.f - Ess) / Ess);
+}
+
+//------------------------------------------------------------------------------
+// Height-tracking multi-bounce evaluation for Smith GGX conductors
+// (Heitz et al. 2016, "Multiple-Scattering Microfacet BSDFs with the Smith
+// Model", SIGGRAPH). A random walk through the microflake field: the free
+// path in height is exponential with rate sigma(v)/|v.z| for approach
+// direction v = -w, the hit normal is drawn from the visible normal
+// distribution of -w (slope-space P22 sampling, valid for both sides of the
+// surface), and each vertex contributes F * D(wh) * G1(wo, h) / (4*sigma)
+// toward the outgoing direction, where G1(wo, h) = exp(h * Lambda(wo)) is
+// the transmittance from depth h to the boundary. All correlations are
+// captured by tracking the explicit height, so the estimator is unbiased
+// (white-furnace albedo of an F=1 conductor is exactly 1).
+//
+// Material::Evaluate carries no RNG state, so the walks are driven by a
+// deterministic hash of (wStart, wTarget): evaluation stays a fixed function
+// of the two directions while different directions see different
+// realizations. The result already includes the single-scatter term;
+// sampling can keep using plain VNDF because its pdf covers the whole
+// multi-bounce support, so the f/pdf pair remains unbiased.
+//------------------------------------------------------------------------------
+
+constexpr int GGX_MS_DEPTH = 8;  // max internal vertices per walk
+constexpr int GGX_MS_WALKS = 4;  // independent walk restarts per evaluation
+
+// Microflake cross-section for a direction v of any sign:
+// |v.z|*(1+Lambda(v)) for upward v, |v.z|*Lambda(v) for downward v.
+inline float GgxMSSigma(const luxrays::Vector &v,
+		const float alphaX, const float alphaY) {
+	const float l = GgxLambda(v, alphaX, alphaY); // sign-agnostic (z^2)
+	return fabsf(v.z) * ((v.z > 0.f) ? 1.f + l : l);
+}
+
+// Deterministic per-evaluation RNG. Seeded from the raw float bits of the
+// input directions plus the shading point so that Evaluate() stays a fixed
+// function of its inputs, while different directions and surface points still
+// see independent walk realizations (error becomes noise, not frozen bias).
+inline u_int GgxMSBits(const float f) {
+	union { float f; u_int u; } v;
+	v.f = f;
+	return v.u;
+}
+
+inline u_int GgxMSSeed(const luxrays::Vector &a, const luxrays::Vector &b,
+		const luxrays::Point &p, const int walk) {
+	u_int s = GgxMSBits(a.x) * 0x8da6b343u + GgxMSBits(a.y) * 0xd8163841u +
+			GgxMSBits(a.z) * 0xcb1ab31fu + GgxMSBits(b.x) * 0x9e3779b9u +
+			GgxMSBits(b.y) * 0x85ebca6bu + GgxMSBits(b.z) * 0xc2b2ae35u +
+			GgxMSBits(p.x) * 0x165667b1u + GgxMSBits(p.y) * 0xd3a2646cu +
+			GgxMSBits(p.z) * 0xfd7046c5u + (u_int)walk * 0x27d4eb2fu;
+	s ^= s >> 15; s *= 0x2c1b3c6du; s ^= s >> 12; s *= 0x297a2d39u; s ^= s >> 15;
+	return s;
+}
+
+inline float GgxMSRand(u_int &s) {
+	s = s * 1664525u + 1013904223u;
+	return (float)(s >> 8) * (1.f / 16777216.f);
+}
+
+// Visible-normal sampler for an approach direction wi of any sign
+// (GGX P22 slope-space form, after Heitz'16 / facet-forge). For wi.z < 0
+// it returns the underside-facing normals an ascending ray can hit.
+inline luxrays::Vector GgxMSSampleVisibleNormal(const luxrays::Vector &wi,
+		const float alphaX, const float alphaY,
+		const float r0, const float r1, const float r2) {
+	// stretch to the isotropic alpha=1 configuration
+	const luxrays::Vector v = luxrays::Normalize(
+			luxrays::Vector(wi.x * alphaX, wi.y * alphaY, wi.z));
+	const float th = acosf(luxrays::Clamp(v.z, -1.f, 1.f));
+	float sx, sy;
+	if (th < 1e-4f) {
+		const float r = sqrtf(r0 / luxrays::Max(1.f - r0, 1e-7f));
+		const float ph = 2.f * M_PI * r1;
+		sx = r * cosf(ph);
+		sy = r * sinf(ph);
+	} else {
+		const float sn = sinf(th), cs = cosf(th), tn = sn / cs;
+		const float sig = .5f * (cs + 1.f);
+		if (sig < 1e-4f) {
+			sx = 0.f;
+			sy = 0.f;
+		} else {
+			const float c = 1.f / sig;
+			const float A = 2.f * r0 / (cs * c) - 1.f;
+			const float B = tn;
+			const float tmp = 1.f / (A * A - 1.f);
+			const float D = sqrtf(luxrays::Max(0.f,
+					B * B * tmp * tmp - (A * A - B * B) * tmp));
+			const float s1 = B * tmp - D, s2 = B * tmp + D;
+			sx = (A < 0.f || s2 > 1.f / tn) ? s1 : s2;
+			sy = sqrtf(luxrays::Max(0.f, -1.f - sx * sx +
+					(1.f + sx * sx) / powf(luxrays::Max(1.f - r2, 1e-7f), 2.f / 3.f))) *
+					sinf(2.f * M_PI * r1);
+		}
+	}
+	// align with the view azimuth and stretch back
+	const float ph = atan2f(v.y, v.x);
+	const float cph = cosf(ph), sph = sinf(ph);
+	float sxr = cph * sx - sph * sy, syr = sph * sx + cph * sy;
+	sxr *= alphaX;
+	syr *= alphaY;
+	if (!std::isfinite(sxr) || !std::isfinite(syr))
+		return (wi.z > 0.f) ? luxrays::Vector(0.f, 0.f, 1.f) :
+				luxrays::Normalize(luxrays::Vector(wi.x, wi.y, 0.f));
+	return luxrays::Normalize(luxrays::Vector(-sxr, -syr, 1.f));
+}
+
+// Full Smith multi-bounce conductor BRDF (single + multiple scattering).
+// Returns f * |cos(wTarget)| following the LuxCore convention: to obtain the
+// usual f*|cos(lightDir)|, pass the light/incident direction as wTarget and
+// the outgoing/eye direction as wStart. Both directions must lie in the upper
+// hemisphere of the material local frame.
+inline luxrays::Spectrum GgxMSConductorEval(const luxrays::Vector &wStart,
+		const luxrays::Vector &wTarget, const luxrays::Point &p,
+		const float alphaX, const float alphaY,
+		const luxrays::Spectrum &eta, const luxrays::Spectrum &kappa) {
+	if ((wStart.z <= 1e-5f) || (wTarget.z <= 1e-5f))
+		return luxrays::Spectrum(0.f);
+
+	// Transmittance from depth h toward wTarget: G1 = exp(h * Lambda(wTarget))
+	const float lambdaOut = GgxLambda(wTarget, alphaX, alphaY);
+
+	luxrays::Spectrum result(0.f);
+	for (int k = 0; k < GGX_MS_WALKS; ++k) {
+		u_int seed = GgxMSSeed(wStart, wTarget, p, k);
+		luxrays::Vector wr(-wStart.x, -wStart.y, -wStart.z); // ray travel dir
+		float hr = 0.f; // height in extinction units (h <= 0 inside, >= 0 out)
+		luxrays::Spectrum weight(1.f);
+
+		for (int i = 0; i < GGX_MS_DEPTH; ++i) {
+			const float st = GgxMSSigma(
+					luxrays::Vector(-wr.x, -wr.y, -wr.z), alphaX, alphaY);
+			float h;
+			if (st < 1e-5f) {
+				if (wr.z >= 0.f)
+					break; // near-horizontal ascent: escapes unhit
+				h = hr;    // grazing descent: hits again at same height
+			} else {
+				const float u = luxrays::Max(GgxMSRand(seed), 1e-7f);
+				h = luxrays::Min(0.f, hr) - logf(u) * wr.z / st;
+			}
+			if (h >= 0.f)
+				break; // left the surface
+			hr = h;
+
+			const luxrays::Vector m = GgxMSSampleVisibleNormal(
+					luxrays::Vector(-wr.x, -wr.y, -wr.z), alphaX, alphaY,
+					GgxMSRand(seed), GgxMSRand(seed), GgxMSRand(seed));
+
+			// NEE vertex: F * D(wh) * G1(wo, h) / (4*sigma), wh = half(-wr, wo)
+			const luxrays::Vector v(-wr.x, -wr.y, -wr.z);
+			const luxrays::Vector hsum = v + wTarget;
+			if (luxrays::Dot(hsum, hsum) > 1e-12f) {
+				const luxrays::Vector wh = luxrays::Normalize(hsum);
+				// D(wh) is only defined on the upper hemisphere; skipping
+				// wh.z <= 0 is required for energy conservation
+				if ((wh.z > 0.f) && (luxrays::Dot(v, wh) > 1e-9f))
+					result += weight *
+							FresnelTexture::GeneralEvaluate(eta, kappa,
+									luxrays::Dot(v, wh)) *
+							(GgxD(wh, alphaX, alphaY) * expf(h * lambdaOut) /
+									(4.f * st));
+			}
+
+			// Mirror facet: throughput *= F(|wr.m|), new dir = reflect about m
+			const float wrm = luxrays::Dot(wr, m);
+			weight *= FresnelTexture::GeneralEvaluate(eta, kappa, fabsf(wrm));
+			wr = wr - m * (2.f * wrm);
+		}
+	}
+
+	return result * (1.f / GGX_MS_WALKS);
 }
 
 //------------------------------------------------------------------------------

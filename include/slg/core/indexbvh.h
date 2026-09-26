@@ -24,6 +24,8 @@
 
 #include "luxrays/core/bvh/bvhbuild.h"
 #include "luxrays/utils/serializationutils.h"
+#include "luxrays/utils/spillablearray.h"
+#include "luxrays/utils/spillablearrayserialize.h"
 
 #include "slg/slg.h"
 
@@ -36,7 +38,7 @@ namespace slg {
 template <class T>
 class IndexBvh {
 public:
-	IndexBvh(const std::vector<T> *entries, const float entryRadius);
+	IndexBvh(const luxrays::SpillableArray<T> *entries, const float entryRadius);
 	virtual ~IndexBvh() = default;
 
 	float GetEntryRadius() const { return entryRadius; }
@@ -75,7 +77,7 @@ protected:
 	
 	BOOST_SERIALIZATION_SPLIT_MEMBER()
 
-	const std::vector<T> *allEntries;
+	const luxrays::SpillableArray<T> *allEntries;
 	float entryRadius, entryRadius2;
 
 	std::unique_ptr<luxrays::ocl::IndexBVHArrayNode[]> arrayNodes;

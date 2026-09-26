@@ -67,6 +67,9 @@ public:
 
 	ImageMapConstPtr imageMap;
 	bool sampleUpperHemisphereOnly;
+	// Max dimension of the importance-sampling CDF; the distribution is
+	// block-summed down to this size (mass preserved, still unbiased)
+	u_int cdfMaxDim;
 
 	// Visibility map cache options
 	ELVCParams visibilityMapCacheParams;

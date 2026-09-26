@@ -33,11 +33,11 @@ public:
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
 			TextureConstPtr nn, TextureConstPtr kk, TextureConstPtr u, TextureConstPtr v,
-			const bool useGgx = false);
+			const bool mbounce = false, const bool useGgx = false);
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
 			FresnelTextureConstPtr ft, TextureConstPtr u, TextureConstPtr v,
-			const bool useGgx = false);
+			const bool mbounce = false, const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return METAL2; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
@@ -66,14 +66,18 @@ public:
 	TextureConstPtr GetNu() const { return nu; }
 	TextureConstPtr GetNv() const { return nv; }
 	const bool IsGgx() const { return useGgx; }
+	const bool IsMultibounce() const { return multibounce; }
 
 private:
+	void GetNK(const HitPoint &hitPoint, luxrays::Spectrum &nVal,
+			luxrays::Spectrum &kVal) const;
 	FresnelTextureConstPtr fresnelTex;
 	// For compatibility with the past
 	TextureConstPtr n, k;
 
 	TextureConstPtr nu;
 	TextureConstPtr nv;
+	const bool multibounce;
 	const bool useGgx;
 };
 

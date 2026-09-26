@@ -35,7 +35,7 @@ class Photon;
 
 class PGICPhotonBvh : public IndexBvh<Photon> {
 public:
-	PGICPhotonBvh(const std::vector<Photon> *entries, const u_int photonTracedCount,
+	PGICPhotonBvh(const luxrays::SpillableArray<Photon> *entries, const u_int photonTracedCount,
 			const float radius, const float normalAngle);
 	virtual ~PGICPhotonBvh();
 
@@ -69,7 +69,7 @@ class RadiancePhoton;
 
 class PGICRadiancePhotonBvh : public IndexBvh<RadiancePhoton> {
 public:
-	PGICRadiancePhotonBvh(const std::vector<RadiancePhoton> *entries,
+	PGICRadiancePhotonBvh(const luxrays::SpillableArray<RadiancePhoton> *entries,
 			const float radius, const float normalAngle);
 	virtual ~PGICRadiancePhotonBvh();
 

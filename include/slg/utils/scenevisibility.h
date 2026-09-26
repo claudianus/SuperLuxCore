@@ -34,7 +34,7 @@ class SceneVisibility {
 public:
 	SceneVisibility(
 			SceneConstRef scene,
-			std::vector<T> &visibilityParticles,
+			luxrays::SpillableArray<T> &visibilityParticles,
 			const u_int maxPathDepth,
 			const u_int maxSampleCount,
 			const float targetHitRate,
@@ -84,11 +84,11 @@ protected:
 	virtual IndexOctree<T> *AllocOctree() const = 0;
 	virtual bool ProcessHitPoint(const BSDF &bsdf, const PathVolumeInfo &volInfo,
 			std::vector<T> &visibilityParticles) const = 0;
-	virtual bool ProcessVisibilityParticle(const T &visibilityParticle, std::vector<T> &visibilityParticles,
+	virtual bool ProcessVisibilityParticle(const T &visibilityParticle, luxrays::SpillableArray<T> &visibilityParticles,
 			IndexOctree<T> *particlesOctree, const float maxDistance2) const = 0;
 
 	SceneConstRef scene;
-	std::vector<T> &visibilityParticles;
+	luxrays::SpillableArray<T> &visibilityParticles;
 	const u_int maxPathDepth, maxSampleCount;	
 	const float targetHitRate, lookUpRadius, lookUpNormalAngle, timeStart, timeEnd;
 };

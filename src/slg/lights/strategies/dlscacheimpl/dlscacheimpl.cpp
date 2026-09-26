@@ -136,7 +136,7 @@ protected:
 	}
 
 	virtual bool ProcessVisibilityParticle(const DLSCVisibilityParticle &vp,
-			vector<DLSCVisibilityParticle> &visibilityParticles,
+			SpillableArray<DLSCVisibilityParticle> &visibilityParticles,
 			IndexOctree<DLSCVisibilityParticle> *octree, const float maxDistance2) const {
 		DLSCOctree *particlesOctree = (DLSCOctree *)octree;
 

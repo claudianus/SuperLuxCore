@@ -35,7 +35,7 @@ using namespace slg;
 
 BOOST_CLASS_EXPORT_IMPLEMENT(slg::PGICPhotonBvh)
 
-PGICPhotonBvh::PGICPhotonBvh(const vector<Photon> *entries, const u_int count,
+PGICPhotonBvh::PGICPhotonBvh(const SpillableArray<Photon> *entries, const u_int count,
 		const float radius, const float normalAngle) :
 		IndexBvh(entries, radius), entryNormalCosAngle(cosf(Radians(normalAngle))),
 		photonTracedCount(count) {
@@ -120,7 +120,7 @@ SpectrumGroup PGICPhotonBvh::ConnectAllNearEntries(const BSDF &bsdf) const {
 
 BOOST_CLASS_EXPORT_IMPLEMENT(slg::PGICRadiancePhotonBvh)
 
-PGICRadiancePhotonBvh::PGICRadiancePhotonBvh(const vector<RadiancePhoton> *entries,
+PGICRadiancePhotonBvh::PGICRadiancePhotonBvh(const SpillableArray<RadiancePhoton> *entries,
 		const float radius, const float normalAngle) :
 		IndexBvh(entries, radius), entryNormalCosAngle(cosf(Radians(normalAngle))) {
 }
