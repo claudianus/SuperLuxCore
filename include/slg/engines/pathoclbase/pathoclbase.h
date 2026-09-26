@@ -55,7 +55,12 @@ public:
 	friend class PathOCLBaseOCLRenderThread;
 
 	size_t maxMemPageSize;
+	// taskCount is the TOTAL device task population (all per-task
+	// buffers and kernel dispatches are sized by it). When GPU light
+	// tracing is enabled the tail gids [eyeTaskCount, taskCount) run
+	// light paths; eyeTaskCount == taskCount when disabled.
 	u_int taskCount;
+	u_int eyeTaskCount, lightTaskCount;
 
 	PathTracer pathTracer;
 

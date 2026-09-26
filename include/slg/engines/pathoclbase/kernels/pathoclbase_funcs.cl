@@ -3410,7 +3410,7 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_WriteJacStart(
 		__global MneeState *mnee, const float3 x0p, const float3 lightPos,
 		const unsigned int maxIterations,
 		__global Ray *ray, __global PathVolumeInfo *dlVolInfo,
-		__global EyePathInfo *pathInfo) {
+		__global const PathVolumeInfo *srcVol) {
 	if (mnee->iteration >= maxIterations)
 		return false;
 	float maxRes;
@@ -3419,7 +3419,7 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_WriteJacStart(
 	mnee->resNorm = maxRes;
 	MneeChain_ZeroJacobian(mnee);
 	MneeChain_WritePerturbRay(mnee, x0p, 0, 0, ray, ray->time);
-	*dlVolInfo = pathInfo->volume;
+	*dlVolInfo = *srcVol;
 	mnee->chainIdx = 0;
 	mnee->chainSub = 0;
 	mnee->phase = MNEE_PHASE_MS_JACPERT;
@@ -3430,13 +3430,13 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_WriteJacStart(
 OPENCL_FORCE_INLINE void MneeChain_WriteTrial0(
 		__global MneeState *mnee, const float3 x0p,
 		__global Ray *ray, __global PathVolumeInfo *dlVolInfo,
-		__global EyePathInfo *pathInfo) {
+		__global const PathVolumeInfo *srcVol) {
 	const float3 pProp = MneeChain_TrialPos(mnee, 0);
 	MneeVtx v;
 	MneeChain_LoadVtx(mnee, 0, &v);
 	MneeChain_WriteReprojectRay(pProp, v.gn,
 			.5f * MneeChain_TrialEps(x0p, v.p), ray, ray->time);
-	*dlVolInfo = pathInfo->volume;
+	*dlVolInfo = *srcVol;
 	mnee->chainIdx = 0;
 	mnee->chainProjected = 1;
 	mnee->phase = MNEE_PHASE_MS_TRIAL;
@@ -3489,7 +3489,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			// light (CPU: break out of the discovery loop).
 			if (mnee->chainN >= 2) {
 				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
-					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, pathInfo))
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, &pathInfo->volume))
 					Mnee_ExitTransition(taskState, sampleResult);
 			} else
 				Mnee_ExitTransition(taskState, sampleResult);
@@ -3526,7 +3526,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			// A non specular surface ends the chain (CPU: break).
 			if (mnee->chainN >= 2) {
 				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
-					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, pathInfo))
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, &pathInfo->volume))
 					Mnee_ExitTransition(taskState, sampleResult);
 			} else
 				Mnee_ExitTransition(taskState, sampleResult);
@@ -3541,7 +3541,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 
 		if (mnee->chainN >= mnee->chainMaxV) {
 			if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
-					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, pathInfo))
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, &pathInfo->volume))
 				Mnee_ExitTransition(taskState, sampleResult);
 			return;
 		}
@@ -3660,7 +3660,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			Mnee_ExitTransition(taskState, sampleResult);
 			return;
 		}
-		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, pathInfo);
+		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, &pathInfo->volume);
 		return;
 	}
 
@@ -3727,7 +3727,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			Mnee_ExitTransition(taskState, sampleResult);
 			return;
 		}
-		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, pathInfo);
+		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, &pathInfo->volume);
 		return;
 	}
 
@@ -3763,7 +3763,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			return;
 		}
 		if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
-					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, pathInfo))
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, &pathInfo->volume))
 			Mnee_ExitTransition(taskState, sampleResult);
 		return;
 	}
@@ -4237,6 +4237,1003 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 
 
 //------------------------------------------------------------------------------
+// LMNEE: light -> camera manifold connect (design in
+// doc/features/gpu_lighttracing.md). Mirror of the eye-side MNEE with the
+// endpoint roles swapped: x0 is the light-path vertex whose straight
+// camera connect was blocked by a delta occluder, y is the sampled lens
+// point. The Newton solver (Mnee_StepAndWriteProposal, Mnee_Residual,
+// Mnee_GeometricTerm) is endpoint-agnostic and reused verbatim; only the
+// start gates and the solve-end contribution differ. The solve runs on
+// the task's visibility-ray slot (lightVisRayBase tail) while the light
+// path stalls on lpi->mneeActive.
+//------------------------------------------------------------------------------
+
+// Camera endpoint id for the seed cache (keyed like a light index, but
+// the camera is a singleton endpoint)
+#define LMNEE_CAMERA_SEED_ID 0xFFFFFFFEu
+
+// Start of the light-side MNEE sub-state machine, called from
+// MK_LIGHT_VERTEX when the pending connect ray hit a delta occluder.
+// Returns 1 when the solve was started (first trace written into
+// visRay), 0 otherwise.
+OPENCL_FORCE_NOT_INLINE int LMnee_Start(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global const RayHit *visRayHit, __global Ray *visRay,
+		__global LightPathInfo *lpi,
+		__global MneeSeedEntry *mneeSeeds,
+		const float worldRadius
+		MATERIALS_PARAM_DECL
+		) {
+	if (!taskConfig->pathTracer.mnee.enabled)
+		return 0;
+
+	__global MneeState *mnee = &taskDirectLight->mnee;
+	__global const BSDF *occlBsdf = &task->tmpBsdf;
+	__global const Material *occlMat = &mats[occlBsdf->materialIndex];
+
+	// Same occluder gates as Mnee_Start: delta specular MIRROR or GLASS
+	if (occlBsdf->isVolume || !occlMat->isDelta || !(occlMat->eventTypes & SPECULAR))
+		return 0;
+	if ((occlMat->type != MIRROR) && (occlMat->type != GLASS))
+		return 0;
+
+	const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX, lpi->lensPointY,
+			lpi->lensPointZ);
+	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+
+	// Generalized half-vector IOR ratio of the occluder (same convention
+	// as Mnee_Start)
+	float etaVertex;
+	if (occlMat->type == MIRROR) {
+		const float3 gn1s = VLOAD3F(&occlBsdf->hitPoint.geometryN.x);
+		const float3 x1p = VLOAD3F(&occlBsdf->hitPoint.p.x);
+		const float3 toX0 = x0p - x1p;
+		const float3 toY = lensPoint - x1p;
+		etaVertex = (dot(toX0, gn1s) * dot(toY, gn1s) > 0.f) ? 1.f : -1.f;
+		if (etaVertex != 1.f)
+			return 0;
+	} else {
+		// Dispersive glass: the manifold uses a single IOR ratio, skip
+		if ((occlMat->glass.cauchyBTex != NULL_INDEX) &&
+				(Texture_GetFloatValue(occlMat->glass.cauchyBTex,
+					&occlBsdf->hitPoint TEXTURES_PARAM) > 0.f))
+			return 0;
+
+		const float nc = ExtractExteriorIors(&occlBsdf->hitPoint,
+				occlMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
+		const float nt = ExtractInteriorIors(&occlBsdf->hitPoint,
+				occlMat->glass.interiorIorTexIndex TEXTURES_PARAM);
+		if ((nt <= 0.f) || (nc <= 0.f))
+			return 0;
+		etaVertex = nt / nc;
+	}
+
+	mnee->mirrorMode = (occlMat->type == MIRROR);
+	mnee->chainN = 0;
+	mnee->lightPosX = lensPoint.x;
+	mnee->lightPosY = lensPoint.y;
+	mnee->lightPosZ = lensPoint.z;
+	mnee->shadowMeshIndex = visRayHit->meshIndex;
+	const float3 occlP = VLOAD3F(&occlBsdf->hitPoint.p.x);
+	mnee->occlX = occlP.x;
+	mnee->occlY = occlP.y;
+	mnee->occlZ = occlP.z;
+	mnee->beta = 1.f;
+	mnee->iteration = 0;
+	mnee->needsTrace = false;
+
+	MneeVtx v;
+	Mnee_InitVtxFromBsdf(occlBsdf, etaVertex, &v);
+	Mnee_StoreVtx(mnee, &v);
+	taskDirectLight->mneeBsdfFinal = task->tmpBsdf;
+
+	// Warm-start from the seed cache (camera endpoint id)
+	if (taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint key = Mnee_SeedKey(LMNEE_CAMERA_SEED_ID,
+				visRayHit->meshIndex, occlP, cellSize);
+		if (Mnee_SeedCacheLookup(mneeSeeds, key, LMNEE_CAMERA_SEED_ID,
+				visRayHit->meshIndex, mnee->mirrorMode, etaVertex, mnee)) {
+			Mnee_ApplySeedShift(mnee, x0p);
+			mnee->phase = MNEE_PHASE_STEP;
+			return 1;
+		}
+	}
+
+	if (mnee->mirrorMode && (etaVertex == 1.f)) {
+		// Mirror: seed from the lens point mirrored across the tangent
+		// plane at the occluder hit (same trick as the eye side)
+		const float3 gn1 = VLOAD3F(&occlBsdf->hitPoint.geometryN.x);
+		const float3 x1Line = VLOAD3F(&occlBsdf->hitPoint.p.x);
+		const float3 x1ToLens = lensPoint - x1Line;
+		const float proj = 2.f * dot(x1ToLens, gn1);
+		const float3 mirroredLens = lensPoint - proj * gn1;
+		const float3 dSeed = normalize(mirroredLens - x0p);
+		Ray_Init2(visRay, BSDF_GetRayOrigin(&taskState->bsdf, dSeed), dSeed,
+				visRay->time);
+
+		mnee->phase = MNEE_PHASE_SEED_TRACE;
+	} else {
+		Mnee_ApplySeedShift(mnee, x0p);
+		mnee->phase = MNEE_PHASE_STEP;
+	}
+
+	return 1;
+}
+
+// Solve end: mode check, specular factor at the solved vertex, then the
+// camera-side endpoint weight and the x1 -> lens visibility ray. The
+// pending splat fields carry the pre-visibility radiance for the normal
+// Stage A resolution (which multiplies connectionThroughput in).
+OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global LightPathInfo *lpi,
+		__global MneeState *mnee,
+		const float3 x0p, const float g,
+		__global Ray *visRay,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3,
+		__global MneeSeedEntry *mneeSeeds,
+		const float worldRadius
+		, __global const Camera* restrict camera
+		MATERIALS_PARAM_DECL
+		) {
+	// Post-solve validity check (same as the eye side): the half-vector
+	// formulation can converge to the wrong specular mode
+	MneeVtx v;
+	Mnee_LoadVtx(mnee, &v);
+	const float3 wi = normalize(x0p - v.p);
+	const float3 lensPoint = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
+			mnee->lightPosZ);
+	const float3 wo = normalize(lensPoint - v.p);
+	const float cosX = dot(v.gn, wi);
+	const float cosY = dot(v.gn, wo);
+	const bool refraction = (cosX * cosY < 0.f);
+	if (mnee->mirrorMode ? refraction : !refraction) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	BSDFEvent specEvent;
+	const float3 specFactor = Mnee_SpecFactor(
+			&mats[taskDirectLight->mneeBsdfFinal.materialIndex],
+			&taskDirectLight->mneeBsdfFinal.hitPoint,
+			&taskDirectLight->mneeBsdfFinal, wi, &specEvent
+			MATERIALS_PARAM);
+	if (Spectrum_IsBlack(specFactor) || !(g > 0.f) || isnan(g) || isinf(g)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Publish the converged vertex as a warm-start seed
+	if (taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		Mnee_SeedCacheStore(mneeSeeds,
+				Mnee_SeedKey(LMNEE_CAMERA_SEED_ID, mnee->shadowMeshIndex,
+					occlP, cellSize),
+				v.p, v.n, LMNEE_CAMERA_SEED_ID, mnee->shadowMeshIndex,
+				mnee->mirrorMode);
+	}
+
+	// Camera endpoint: project the arriving segment direction to the
+	// film and evaluate the camera weight (the light-side analog of
+	// Light_Illuminate + directPdfW2: fluxToRadianceFactor is the
+	// importance arriving per unit area at the vertex, d2 is the
+	// squared endpoint distance)
+	const float3 toVtx = v.p - lensPoint;
+	const float dSeg2 = length(toVtx);
+	if (dSeg2 < 1e-3f) {
+		lpi->mneeActive = false;
+		return;
+	}
+	const float time = visRay->time;
+	float filmX, filmY;
+	if (camera->type == ORTHOGRAPHIC) {
+		const float3 orthoDir = normalize(Transform_ApplyVector(
+				&camera->base.cameraToWorld, MAKE_FLOAT3(0.f, 0.f, 1.f)));
+		Ray_Init3(visRay, v.p, orthoDir, dSeg2, time);
+	} else
+		Ray_Init3(visRay, lensPoint, toVtx / dSeg2, dSeg2, time);
+	if (!Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+			filmWidth, filmHeight,
+			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	float pdfW, fluxToRadianceFactor;
+	if (!Camera_GetPDF(camera, visRay, dSeg2, &pdfW, &fluxToRadianceFactor) ||
+			(fluxToRadianceFactor <= 0.f)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Receiver BSDF at x0 toward the solved vertex
+	BSDFEvent receiverEvent;
+	float receiverPdfW;
+	const float3 bsdfEval0 = BSDF_Evaluate(&taskState->bsdf,
+			normalize(v.p - x0p), &receiverEvent, &receiverPdfW
+			MATERIALS_PARAM);
+	if (Spectrum_IsBlack(bsdfEval0)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Endpoint weight: cameraPdfW is the emitted importance (the
+	// light-side analog of lightRadiance2). The manifold geometricTerm
+	// already carries the endpoint segment's 1/d^2 measure, so using
+	// fluxToRadianceFactor here would double-count the distance falloff.
+	// For a plain (mirror) half-vector the r^2 measure rides explicitly
+	// (the pinhole lens is a delta, so that factor is dSeg2^2).
+	const bool plainHalfVector = (v.eta == 1.f);
+	const float camWeight = pdfW *
+			(plainHalfVector ? dSeg2 * dSeg2 : 1.f);
+
+	lpi->pendingSplat.filmX = filmX;
+	lpi->pendingSplat.filmY = filmY;
+	const float3 radiance = VLOAD3F(taskState->throughput.c) *
+			bsdfEval0 * specFactor * (g * camWeight);
+	lpi->pendingSplat.radianceR = radiance.x;
+	lpi->pendingSplat.radianceG = radiance.y;
+	lpi->pendingSplat.radianceB = radiance.z;
+	lpi->pendingSplat.lightGroupID = lpi->lightGroupID;
+	lpi->pendingSplat.isCaustic = true;
+	// fromMnee == 1 marks a single-vertex-solved segment: a re-block
+	// means a multi-interface occluder, so the chain takes over
+	lpi->pendingSplat.fromMnee = 1;
+
+	// Volume state after the specular event at the vertex (the seg2
+	// march runs through it), same convention as the eye side
+	lpi->connectVolInfo = lpi->volume;
+	PathVolumeInfo_Update(&lpi->connectVolInfo, specEvent,
+			&taskDirectLight->mneeBsdfFinal
+			MATERIALS_PARAM);
+	lpi->connectDepth = lpi->depth;
+	lpi->connectThroughShadow = false;
+
+	// Queue the x1 -> lens shadow segment into the visibility slot; the
+	// normal Stage A march resolves it next iteration
+	const float3 segDir = -toVtx / dSeg2;
+	const float3 origin = BSDF_GetRayOrigin(&taskDirectLight->mneeBsdfFinal,
+			segDir);
+	Ray_Init4(visRay, origin, segDir, 0.f, dSeg2 * (1.f - 1e-4f), time);
+	lpi->pendingSplat.valid = true;
+	lpi->mneeActive = false;
+}
+
+//------------------------------------------------------------------------------
+// LMNEE multi-specular chain (light-side port of the eye MneeChain_*
+// driver): needed when the occluder is a closed dielectric - a glass slab,
+// sphere or lens element has TWO refracting faces, so a single-vertex solve
+// converges on the near face and its endpoint segment re-blocks on the far
+// one. The chain discovers the full x0 -> v0 -> ... -> vN -> lens topology
+// along the straight connect ray and Newton-solves all vertices jointly.
+//
+// The driver mirrors MneeChain_ProcessState with the endpoint roles
+// swapped: the endpoint is the sampled lens point stored in mnee->lightPos,
+// the source volume is lpi->volume, the accumulating walk volume is
+// lpi->connectVolInfo, and every failure drops the connect by clearing
+// lpi->mneeActive (the light path then simply continues). All numeric
+// helpers (residuals, FD Jacobian, Thomas solve, re-projection rays,
+// MneeChain_LightJac) are endpoint-agnostic and reused verbatim.
+//------------------------------------------------------------------------------
+
+// Chain solve end: MS_POST already validated every vertex and accumulated
+// the specular factor. Project the LAST chain vertex (the far interface
+// for a slab) to the film, evaluate the camera endpoint weight with the
+// chain geometric term, and queue the xN -> lens segment for the normal
+// Stage A visibility resolution. Mirror of the eye-side SEG2 contribution
+// assembly (pathtracer_mnee.cpp) mapped onto the camera endpoint.
+OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global LightPathInfo *lpi,
+		__global MneeState *mnee,
+		const float3 x0p,
+		__global Ray *visRay,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3
+		, __global const Camera* restrict camera
+		MATERIALS_PARAM_DECL
+		) {
+	const int nn = mnee->chainN;
+	const float3 lensPoint = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
+			mnee->lightPosZ);
+
+	// Receiver BSDF: for a chain the receiver aims at the FIRST vertex
+	// (pathtracer_mnee.cpp SEG2 assembly, vtxP = chainVtx[0])
+	MneeVtx vFirst;
+	MneeChain_LoadVtx(mnee, 0, &vFirst);
+	const float3 receiverDir = normalize(vFirst.p - x0p);
+	BSDFEvent receiverEvent;
+	float receiverPdfW;
+	const float3 bsdfEval0 = BSDF_Evaluate(&taskState->bsdf, receiverDir,
+			&receiverEvent, &receiverPdfW
+			MATERIALS_PARAM);
+	if (Spectrum_IsBlack(bsdfEval0)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Camera endpoint: project the arriving segment (last vertex -> lens)
+	// to the film and evaluate the importance arriving per unit area
+	const float3 lastP = MneeChain_VtxPos(mnee, nn - 1);
+	const float3 toVtx = lastP - lensPoint;
+	const float dSeg2 = length(toVtx);
+	if (dSeg2 < 1e-3f) {
+		lpi->mneeActive = false;
+		return;
+	}
+	const float time = visRay->time;
+	float filmX, filmY;
+	if (camera->type == ORTHOGRAPHIC) {
+		const float3 orthoDir = normalize(Transform_ApplyVector(
+				&camera->base.cameraToWorld, MAKE_FLOAT3(0.f, 0.f, 1.f)));
+		Ray_Init3(visRay, lastP, orthoDir, dSeg2, time);
+	} else
+		Ray_Init3(visRay, lensPoint, toVtx / dSeg2, dSeg2, time);
+	if (!Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+			filmWidth, filmHeight,
+			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3)) {
+		lpi->mneeActive = false;
+		return;
+	}
+	float pdfW, fluxToRadianceFactor;
+	if (!Camera_GetPDF(camera, visRay, dSeg2, &pdfW, &fluxToRadianceFactor) ||
+			(fluxToRadianceFactor <= 0.f)) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Endpoint weight: the camera's emitted importance is cameraPdfW (the
+	// light-side analog of lightRadiance2 - a pure per-solid-angle
+	// emission). The manifold geometricTerm already carries the endpoint
+	// segment's 1/d^2 measure, so fluxToRadianceFactor's extra 1/dSeg2^2
+	// would double-count it. For a plain (mirror) half-vector the chain
+	// instead carries the r^2 measure factor like the eye-side
+	// directPdfW2 - the pinhole lens is a delta so that factor is dSeg2^2.
+	const float camWeight = pdfW *
+			(mnee->plainHalfVector ? dSeg2 * dSeg2 : 1.f);
+	const float3 specFactor = MAKE_FLOAT3(mnee->specFactorR,
+			mnee->specFactorG, mnee->specFactorB);
+
+	lpi->pendingSplat.filmX = filmX;
+	lpi->pendingSplat.filmY = filmY;
+	const float3 radiance = VLOAD3F(taskState->throughput.c) *
+			bsdfEval0 * specFactor * (mnee->geometricTerm * camWeight);
+	lpi->pendingSplat.radianceR = radiance.x;
+	lpi->pendingSplat.radianceG = radiance.y;
+	lpi->pendingSplat.radianceB = radiance.z;
+	lpi->pendingSplat.lightGroupID = lpi->lightGroupID;
+	lpi->pendingSplat.isCaustic = true;
+	// fromMnee == 2 marks a chain-solved segment: a re-block then drops
+	// (the occluder needs more interfaces than maxSpecular models) rather
+	// than restarting the chain forever
+	lpi->pendingSplat.fromMnee = 2;
+
+	lpi->connectDepth = lpi->depth;
+	lpi->connectThroughShadow = false;
+
+	// Queue the xN -> lens shadow segment; the far interface is the last
+	// chain vertex so the segment travels in air and resolves clean
+	const float3 segDir = -toVtx / dSeg2;
+	const float3 origin = BSDF_GetRayOrigin(&taskDirectLight->mneeBsdfFinal,
+			segDir);
+	Ray_Init4(visRay, origin, segDir, 0.f, dSeg2 * (1.f - 1e-4f), time);
+	lpi->pendingSplat.valid = true;
+	lpi->mneeActive = false;
+}
+
+// One launch of the light-side chain sub-state machine (mirror of
+// MneeChain_ProcessState; see the LMNEE block comment for the mapping).
+OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global LightPathInfo *lpi,
+		__global Ray *ray, __global RayHit *rayHit,
+		__global SampleResult *sampleResult,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3,
+		__global const PathVolumeInfo *srcVol,
+		__global PathVolumeInfo *dlVolInfo
+		, __global const Camera* restrict camera
+		MATERIALS_PARAM_DECL
+		) {
+	__global MneeState *mnee = &taskDirectLight->mnee;
+	// The endpoint is the sampled lens point (stored in lightPos)
+	const float3 lightPos = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY, mnee->lightPosZ);
+	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+
+	// Trace consumption shared by DISCOVER/JACPERT/TRIAL/COMMIT/POST
+	int throughShadowTransparency = false;
+	float3 connectionThroughput;
+	const bool continueToTrace = Scene_Intersect(taskConfig,
+			LIGHT_RAY | INDIRECT_RAY,
+			NULL, NONE,
+			&throughShadowTransparency, dlVolInfo, &task->tmpHitPoint,
+			.5f, ray, rayHit, &taskDirectLight->mneeBsdf, &connectionThroughput,
+			WHITE, sampleResult, false
+			MATERIALS_PARAM);
+	if (continueToTrace)
+		return;
+
+	//--------------------------------------------------------------------------
+	// MNEE_PHASE_MS_DISCOVER: straight-ray chain topology
+	//--------------------------------------------------------------------------
+	if (mnee->phase == MNEE_PHASE_MS_DISCOVER) {
+		if (rayHit->meshIndex == NULL_INDEX) {
+			if (mnee->chainN >= 2) {
+				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
+					lpi->mneeActive = false;
+			} else
+				lpi->mneeActive = false;
+			return;
+		}
+
+		__global const Material *hitMat = &mats[taskDirectLight->mneeBsdf.materialIndex];
+		float etaVertex = 1.f;
+		bool vertexOk = true;
+		if (taskDirectLight->mneeBsdf.isVolume || !hitMat->isDelta ||
+				!(hitMat->eventTypes & SPECULAR))
+			vertexOk = false;
+		else if (hitMat->type == MIRROR)
+			etaVertex = 1.f;
+		else if (hitMat->type == GLASS) {
+			if ((hitMat->glass.cauchyBTex != NULL_INDEX) &&
+					(Texture_GetFloatValue(hitMat->glass.cauchyBTex,
+						&taskDirectLight->mneeBsdf.hitPoint TEXTURES_PARAM) > 0.f))
+				vertexOk = false;
+			else {
+				const float nc = ExtractExteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+						hitMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
+				const float nt = ExtractInteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+						hitMat->glass.interiorIorTexIndex TEXTURES_PARAM);
+				if ((nt <= 0.f) || (nc <= 0.f))
+					vertexOk = false;
+				else
+					etaVertex = nt / nc;
+			}
+		} else
+			vertexOk = false;
+
+		if (!vertexOk) {
+			if (mnee->chainN >= 2) {
+				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
+						taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
+					lpi->mneeActive = false;
+			} else
+				lpi->mneeActive = false;
+			return;
+		}
+
+		MneeVtx vv;
+		Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf, etaVertex, &vv);
+		MneeChain_StoreVtx(mnee, mnee->chainN, &vv);
+		mnee->chainMatType[mnee->chainN] = hitMat->type;
+		mnee->chainN++;
+
+		if (mnee->chainN >= mnee->chainMaxV) {
+			if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
+				lpi->mneeActive = false;
+			return;
+		}
+
+		const float3 dir = normalize(lightPos - x0p);
+		MneeChain_WriteDiscoverRay(&taskDirectLight->mneeBsdf, dir, ray, ray->time);
+		*dlVolInfo = *srcVol;
+		return;
+	}
+
+	// The phases below only run with a complete chain.
+	const int nn = mnee->chainN;
+
+	//--------------------------------------------------------------------------
+	// MNEE_PHASE_MS_JACPERT: FD Jacobian column + Newton loop top
+	//--------------------------------------------------------------------------
+	if (mnee->phase == MNEE_PHASE_MS_JACPERT) {
+		const int j = mnee->chainIdx;
+		const int k = mnee->chainSub;
+		if (rayHit->meshIndex == NULL_INDEX) {
+			lpi->mneeActive = false;
+			return;
+		}
+
+		MneeVtx pertV;
+		Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf,
+				mnee->chainVtx[j].eta, &pertV);
+		const float eps = MneeChain_FdEps(mnee, x0p, j);
+		for (int jj = j - 1; jj <= j + 1; ++jj) {
+			if ((jj < 0) || (jj >= nn))
+				continue;
+			const float3 pPrevJJ = (jj == 0) ? x0p :
+					((jj - 1 == j) ? pertV.p : MneeChain_VtxPos(mnee, jj - 1));
+			const float3 pNextJJ = (jj == nn - 1) ? lightPos :
+					((jj + 1 == j) ? pertV.p : MneeChain_VtxPos(mnee, jj + 1));
+			MneeVtx vjj;
+			if (jj == j)
+				vjj = pertV;
+			else
+				MneeChain_LoadVtx(mnee, jj, &vjj);
+			float2 CP;
+			if (!MneeChain_ResidualAt(pPrevJJ, pNextJJ, &vjj, vjj.eta, &CP)) {
+				lpi->mneeActive = false;
+				return;
+			}
+			const float dCx = (CP.x - mnee->chainRes[jj].x) / eps;
+			const float dCy = (CP.y - mnee->chainRes[jj].y) / eps;
+			__global MneeMat2T *blockOut = (jj == j - 1) ? &mnee->chainJacNxt[jj] :
+					((jj == j) ? &mnee->chainJacCur[jj] : &mnee->chainJacPrev[jj]);
+			float4 b = MneeMat2T_ToFloat4(blockOut);
+			if (k == 0) { b.x = dCx; b.z = dCy; } else { b.y = dCx; b.w = dCy; }
+			MneeMat2T_FromFloat4(blockOut, b);
+		}
+
+		if (k == 0) {
+			mnee->chainSub = 1;
+			MneeChain_WritePerturbRay(mnee, x0p, j, 1, ray, ray->time);
+			*dlVolInfo = *srcVol;
+			return;
+		}
+		if (j + 1 < nn) {
+			mnee->chainIdx = j + 1;
+			mnee->chainSub = 0;
+			MneeChain_WritePerturbRay(mnee, x0p, j + 1, 0, ray, ray->time);
+			*dlVolInfo = *srcVol;
+			return;
+		}
+
+		// Jacobian complete: Newton loop top, solved check first
+		if (mnee->resNorm < 1e-5f) {
+			float4 dxFirst;
+			if (!MneeChain_ThomasSolveMat(mnee, nn, &dxFirst)) {
+				lpi->mneeActive = false;
+				return;
+			}
+			MneeVtx vlast;
+			MneeChain_LoadVtx(mnee, nn - 1, &vlast);
+			const float3 pPrevLast = (nn == 1) ? x0p : MneeChain_VtxPos(mnee, nn - 2);
+			const float epsLight = fmax(1e-5f, 1e-4f * length(x0p - vlast.p));
+			const float4 lightJac = MneeChain_LightJac(pPrevLast, lightPos,
+					&vlast, vlast.eta, epsLight);
+			const float4 dxDy = Mnee44_Mul(dxFirst, lightJac);
+			MneeVtx vfirst;
+			MneeChain_LoadVtx(mnee, 0, &vfirst);
+			const float3 d01 = MAKE_FLOAT3(x0p.x - vfirst.p.x, x0p.y - vfirst.p.y, x0p.z - vfirst.p.z);
+			const float r01sq = dot(d01, d01);
+			float G = 0.f;
+			if (r01sq >= 1e-6f) {
+				const float dw0Dx1 = fabs(dot(d01, vfirst.gn)) / (sqrt(r01sq) * r01sq);
+				G = dw0Dx1 * fabs(Mnee44_Det(dxDy));
+			}
+			if (!(G > 0.f) || !isfinite(G)) {
+				lpi->mneeActive = false;
+				return;
+			}
+			mnee->geometricTerm = G;
+
+			*dlVolInfo = *srcVol;
+			mnee->chainSpecR = 1.f; mnee->chainSpecG = 1.f; mnee->chainSpecB = 1.f;
+			mnee->plainHalfVector = 1;
+			const float eps0 = MneeChain_TrialEps(x0p, vfirst.p);
+			MneeChain_WriteReprojectRay(vfirst.p, vfirst.gn, .5f * eps0, ray, ray->time);
+			mnee->chainIdx = 0;
+			mnee->phase = MNEE_PHASE_MS_POST;
+			return;
+		}
+
+		if (!MneeChain_ThomasSolveVec(mnee, nn)) {
+			lpi->mneeActive = false;
+			return;
+		}
+		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, srcVol);
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// MNEE_PHASE_MS_TRIAL: line search trial of vertex chainIdx
+	//--------------------------------------------------------------------------
+	if (mnee->phase == MNEE_PHASE_MS_TRIAL) {
+		const int i = mnee->chainIdx;
+		bool accepted = true;
+		if (rayHit->meshIndex == NULL_INDEX)
+			accepted = false;
+		else {
+			MneeVtx trialV;
+			Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf,
+					mnee->chainVtx[i].eta, &trialV);
+			if (mats[taskDirectLight->mneeBsdf.materialIndex].type != mnee->chainMatType[i])
+				accepted = false;
+			else {
+				const float3 pPrev = (i == 0) ? x0p : MneeChain_TrialPos(mnee, i - 1);
+				const float3 pNext = (i == nn - 1) ? lightPos : MneeChain_TrialPos(mnee, i + 1);
+				float2 CT;
+				if (!MneeChain_ResidualAt(pPrev, pNext, &trialV, trialV.eta, &CT))
+					accepted = false;
+				else
+					MneeVec2T_FromFloat2(&mnee->chainTrialRes[i], CT);
+			}
+		}
+		if (!accepted)
+			mnee->chainProjected = 0;
+
+		if (accepted && (i + 1 < nn)) {
+			const float3 pProp = MneeChain_TrialPos(mnee, i + 1);
+			MneeVtx vNext;
+			MneeChain_LoadVtx(mnee, i + 1, &vNext);
+			MneeChain_WriteReprojectRay(pProp, vNext.gn,
+					.5f * MneeChain_TrialEps(x0p, vNext.p), ray, ray->time);
+			*dlVolInfo = *srcVol;
+			mnee->chainIdx = i + 1;
+			return;
+		}
+
+		float trialMax = 0.f;
+		if (mnee->chainProjected) {
+			for (int t = 0; t < nn; ++t)
+				trialMax = fmax(trialMax, length(MneeVec2T_ToFloat2(&mnee->chainTrialRes[t])));
+		}
+		if (mnee->chainProjected && (trialMax < mnee->resNorm)) {
+			mnee->beta = fmin(1.f, 2.f * mnee->beta);
+			const float3 pProp0 = MneeChain_TrialPos(mnee, 0);
+			MneeVtx v0;
+			MneeChain_LoadVtx(mnee, 0, &v0);
+			MneeChain_WriteReprojectRay(pProp0, v0.gn,
+					.5f * MneeChain_TrialEps(x0p, v0.p), ray, ray->time);
+			*dlVolInfo = *srcVol;
+			mnee->chainIdx = 0;
+			mnee->phase = MNEE_PHASE_MS_COMMIT;
+			return;
+		}
+		mnee->beta *= .5f;
+		mnee->iteration++;
+		if (mnee->beta <= 1e-2f) {
+			lpi->mneeActive = false;
+			return;
+		}
+		MneeChain_WriteTrial0(mnee, x0p, ray, dlVolInfo, srcVol);
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// MNEE_PHASE_MS_COMMIT: rebuild the accepted trial vertices
+	//--------------------------------------------------------------------------
+	if (mnee->phase == MNEE_PHASE_MS_COMMIT) {
+		const int i = mnee->chainIdx;
+		if (rayHit->meshIndex == NULL_INDEX) {
+			lpi->mneeActive = false;
+			return;
+		}
+		MneeVtx cv;
+		Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf,
+				mnee->chainVtx[i].eta, &cv);
+		MneeChain_StoreVtx(mnee, i, &cv);
+
+		if (i + 1 < nn) {
+			const float3 pProp = MneeChain_TrialPos(mnee, i + 1);
+			MneeVtx vNext;
+			MneeChain_LoadVtx(mnee, i + 1, &vNext);
+			MneeChain_WriteReprojectRay(pProp, vNext.gn,
+					.5f * MneeChain_TrialEps(x0p, vNext.p), ray, ray->time);
+			*dlVolInfo = *srcVol;
+			mnee->chainIdx = i + 1;
+			return;
+		}
+		mnee->iteration++;
+		if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
+			lpi->mneeActive = false;
+			return;
+		}
+		if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
+			lpi->mneeActive = false;
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// MNEE_PHASE_MS_POST: per-vertex mode check + spec factor + volume
+	//--------------------------------------------------------------------------
+	if (mnee->phase == MNEE_PHASE_MS_POST) {
+		const int k = mnee->chainIdx;
+		if (rayHit->meshIndex == NULL_INDEX) {
+			lpi->mneeActive = false;
+			return;
+		}
+		if (mats[taskDirectLight->mneeBsdf.materialIndex].type != mnee->chainMatType[k]) {
+			lpi->mneeActive = false;
+			return;
+		}
+
+		MneeVtx vk;
+		MneeChain_LoadVtx(mnee, k, &vk);
+		const float3 pPrevK = (k == 0) ? x0p : MneeChain_VtxPos(mnee, k - 1);
+		const float3 pNextK = (k == nn - 1) ? lightPos : MneeChain_VtxPos(mnee, k + 1);
+		const float3 wik = normalize(pPrevK - vk.p);
+		const float3 wok = normalize(pNextK - vk.p);
+		const float cosI = dot(vk.gn, wik);
+		const float cosO = dot(vk.gn, wok);
+		if (vk.eta == 1.f) {
+			if (cosI * cosO < 0.f) {
+				lpi->mneeActive = false;
+				return;
+			}
+		} else {
+			if (cosI * cosO > 0.f) {
+				lpi->mneeActive = false;
+				return;
+			}
+		}
+
+		BSDFEvent specEvent;
+		const float3 spec = Mnee_SpecFactor(
+				&mats[taskDirectLight->mneeBsdf.materialIndex],
+				&taskDirectLight->mneeBsdf.hitPoint,
+				&taskDirectLight->mneeBsdf, wik, &specEvent
+				MATERIALS_PARAM);
+		if (Spectrum_IsBlack(spec)) {
+			lpi->mneeActive = false;
+			return;
+		}
+		mnee->chainSpecR *= spec.x;
+		mnee->chainSpecG *= spec.y;
+		mnee->chainSpecB *= spec.z;
+		if (vk.eta != 1.f)
+			mnee->plainHalfVector = 0;
+		mnee->specEvent = specEvent;
+		PathVolumeInfo_Update(dlVolInfo, specEvent,
+				&taskDirectLight->mneeBsdf
+				MATERIALS_PARAM);
+
+		if (k + 1 < nn) {
+			MneeVtx vNext;
+			MneeChain_LoadVtx(mnee, k + 1, &vNext);
+			const float epsNext = MneeChain_TrialEps(x0p, vNext.p);
+			MneeChain_WriteReprojectRay(vNext.p, vNext.gn, .5f * epsNext, ray, ray->time);
+			mnee->chainIdx = k + 1;
+			return;
+		}
+
+		taskDirectLight->mneeBsdfFinal = taskDirectLight->mneeBsdf;
+		mnee->specFactorR = mnee->chainSpecR;
+		mnee->specFactorG = mnee->chainSpecG;
+		mnee->specFactorB = mnee->chainSpecB;
+		// Light side: the endpoint contribution is a camera splat, queued
+		// through pendingSplat for the normal Stage A visibility resolve
+		LMneeChain_SolveEnd(taskConfig, task, taskDirectLight, taskState, lpi,
+				mnee, x0p, ray, filmWidth, filmHeight,
+				filmSubRegion0, filmSubRegion1, filmSubRegion2,
+				filmSubRegion3, camera
+				MATERIALS_PARAM);
+		return;
+	}
+
+	lpi->mneeActive = false;
+}
+
+// Start the light-side chain from a blocked connect context (mirror of
+// MneeChain_StartFromSSFail, with one difference): the discovery ray is
+// cast from the RECEIVER x0 toward the lens so the first specular hit
+// becomes vertex 0. Re-walking the straight segment rebuilds the true
+// occluder topology even when the triggering hit was a re-blocked
+// manifold segment (a slab's far face), where the connect-side BSDF in
+// task->tmpBsdf would seed the wrong interface.
+OPENCL_FORCE_NOT_INLINE bool LMneeChain_Start(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global Ray *ray,
+		__global LightPathInfo *lpi
+		MATERIALS_PARAM_DECL
+		) {
+	if (!taskConfig->pathTracer.mnee.enabled)
+		return false;
+	if (taskConfig->pathTracer.mnee.maxSpecular <= 1)
+		return false;
+
+	__global MneeState *mnee = &taskDirectLight->mnee;
+	const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX, lpi->lensPointY,
+			lpi->lensPointZ);
+	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+
+	mnee->lightPosX = lensPoint.x;
+	mnee->lightPosY = lensPoint.y;
+	mnee->lightPosZ = lensPoint.z;
+	mnee->mirrorMode = false;
+	MneeChain_Begin(mnee, taskConfig->pathTracer.mnee.maxSpecular);
+
+	// chainN stays 0: MS_DISCOVER stores the first specular hit as vertex 0
+	const float3 dir = normalize(lensPoint - x0p);
+	MneeChain_WriteDiscoverRay(&taskState->bsdf, dir, ray, ray->time);
+	lpi->connectVolInfo = lpi->volume;
+	mnee->phase = MNEE_PHASE_MS_DISCOVER;
+	lpi->mneeActive = true;
+	return true;
+}
+
+// One launch of the light-side MNEE sub-state machine: consumes the trace
+// result sitting in the visibility slot and either writes the next trace
+// or exits (success -> pendingSplat queued for Stage A, failure -> drop).
+OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global LightPathInfo *lpi,
+		__global Ray *visRay, __global RayHit *visRayHit,
+		__global SampleResult *sampleResult,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3,
+		const float worldRadius,
+		__global MneeSeedEntry *mneeSeeds
+		, __global const Camera* restrict camera
+		MATERIALS_PARAM_DECL
+		) {
+	__global MneeState *mnee = &taskDirectLight->mnee;
+	const float3 lensPoint = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
+			mnee->lightPosZ);
+	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+
+	// Multi-specular chain phases (>= MS_DISCOVER): a closed dielectric
+	// needs more than one refracting vertex, so the single-vertex machine
+	// hands off here once a chain was started (see LMneeChain_Start).
+	if (mnee->phase >= MNEE_PHASE_MS_DISCOVER) {
+		LMneeChain_ProcessState(taskConfig, task, taskDirectLight, taskState,
+				lpi, visRay, visRayHit, sampleResult,
+				filmWidth, filmHeight,
+				filmSubRegion0, filmSubRegion1,
+				filmSubRegion2, filmSubRegion3,
+				&lpi->volume, &lpi->connectVolInfo,
+				camera MATERIALS_PARAM);
+		return;
+	}
+
+	MneeVtx v;
+	Mnee_LoadVtx(mnee, &v);
+
+	// MNEE_PHASE_STEP: Newton loop top, no trace to consume
+	if (mnee->phase == MNEE_PHASE_STEP) {
+		float g;
+		const int stepResult = Mnee_StepAndWriteProposal(taskConfig, mnee,
+				x0p, lensPoint, &v, &taskState->bsdf, visRay, &g);
+		if (stepResult == 1) {
+			mnee->phase = MNEE_PHASE_PROP_TRACE;
+			lpi->connectVolInfo = lpi->volume;
+			return;
+		}
+		if (stepResult == 2) {
+			LMnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, lpi,
+					mnee, x0p, g, visRay, filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1, filmSubRegion2,
+					filmSubRegion3, mneeSeeds, worldRadius,
+					camera MATERIALS_PARAM);
+			return;
+		}
+		lpi->mneeActive = false;
+		return;
+	}
+
+	// Consume the trace result of the current LMNEE ray (seed / proposal).
+	// Same volume-walk convention as the eye side: no depth context.
+	int throughShadowTransparency = false;
+	float3 connectionThroughput;
+	const bool continueToTrace = Scene_Intersect(taskConfig,
+			LIGHT_RAY | INDIRECT_RAY,
+			NULL, NONE,
+			&throughShadowTransparency, &lpi->connectVolInfo,
+			&task->tmpHitPoint,
+			.5f,
+			visRay, visRayHit, &taskDirectLight->mneeBsdf,
+			&connectionThroughput,
+			WHITE, sampleResult, false
+			MATERIALS_PARAM);
+	if (continueToTrace)
+		return;
+
+	if (mnee->phase == MNEE_PHASE_SEED_TRACE) {
+		if (visRayHit->meshIndex == mnee->shadowMeshIndex) {
+			MneeVtx vSeed;
+			Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf, v.eta, &vSeed);
+			Mnee_StoreVtx(mnee, &vSeed);
+		}
+		Mnee_ApplySeedShift(mnee, x0p);
+		Mnee_LoadVtx(mnee, &v);
+		mnee->phase = MNEE_PHASE_STEP;
+		return;
+	}
+
+	// MNEE_PHASE_PROP_TRACE
+	if (visRayHit->meshIndex == NULL_INDEX) {
+		lpi->mneeActive = false;
+		return;
+	}
+
+	bool stepRejected;
+	bool converged = false;
+	float gConverged = 0.f;
+	if (visRayHit->meshIndex != mnee->shadowMeshIndex) {
+		stepRejected = true;
+	} else {
+		MneeVtx vProp;
+		Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf, v.eta, &vProp);
+		float2 CProp;
+		if (!Mnee_Residual(x0p, lensPoint, &vProp, &CProp)) {
+			stepRejected = true;
+		} else {
+			const float resPropNorm = length(CProp);
+			if (resPropNorm < mnee->resNorm) {
+				mnee->beta = fmin(1.f, 2.f * mnee->beta);
+				mnee->iteration++;
+				Mnee_StoreVtx(mnee, &vProp);
+				taskDirectLight->mneeBsdfFinal = taskDirectLight->mneeBsdf;
+				v = vProp;
+				stepRejected = false;
+
+				if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
+					lpi->mneeActive = false;
+					return;
+				}
+				if (resPropNorm < 3e-4f) {
+					converged = true;
+					gConverged = Mnee_GeometricTerm(x0p, lensPoint, &vProp,
+							NULL);
+				}
+			} else
+				stepRejected = true;
+		}
+	}
+
+	if (converged) {
+		LMnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, lpi,
+				mnee, x0p, gConverged, visRay, filmWidth, filmHeight,
+				filmSubRegion0, filmSubRegion1, filmSubRegion2,
+				filmSubRegion3, mneeSeeds, worldRadius,
+				camera MATERIALS_PARAM);
+		return;
+	}
+
+	if (stepRejected) {
+		mnee->beta *= .5f;
+		mnee->iteration++;
+	}
+
+	float g;
+	const int stepResult = Mnee_StepAndWriteProposal(taskConfig, mnee,
+			x0p, lensPoint, &v, &taskState->bsdf, visRay, &g);
+	if (stepResult == 1) {
+		mnee->phase = MNEE_PHASE_PROP_TRACE;
+		lpi->connectVolInfo = lpi->volume;
+		return;
+	}
+	if (stepResult == 2) {
+		LMnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, lpi,
+				mnee, x0p, g, visRay, filmWidth, filmHeight,
+				filmSubRegion0, filmSubRegion1, filmSubRegion2,
+				filmSubRegion3, mneeSeeds, worldRadius,
+				camera MATERIALS_PARAM);
+		return;
+	}
+	lpi->mneeActive = false;
+}
+
+
+//------------------------------------------------------------------------------
 // Kernel parameters
 //------------------------------------------------------------------------------
 
@@ -4427,6 +5424,26 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		 * NULL unless path.spectral.upsampling=jh2019 */ \
 		, __global const float* restrict spectralUpsamplingTable
 
+// GPU light tracing (doc/features/gpu_lighttracing.md): extra args of
+// the light-path kernels only. Keeping them out of KERNEL_ARGS avoids
+// growing the parameter list of every other kernel (Apple's
+// OpenCL-on-Metal translator has a low buffer-argument limit - see the
+// WAVEFRONT_GID comment). The screen-normalized radiance groups are
+// passed here (not via KERNEL_ARGS_FILM) for the same reason.
+#define KERNEL_ARGS_LIGHT \
+		, __global LightPathInfo *lightPathInfos \
+		, __global const float* restrict emitLightsDistribution \
+		, __global float4 *lightFocus \
+		, __global uint *lightFocusCount \
+		, __global float *filmScreenRadianceGroup0 \
+		, __global float *filmScreenRadianceGroup1 \
+		, __global float *filmScreenRadianceGroup2 \
+		, __global float *filmScreenRadianceGroup3 \
+		, __global float *filmScreenRadianceGroup4 \
+		, __global float *filmScreenRadianceGroup5 \
+		, __global float *filmScreenRadianceGroup6 \
+		, __global float *filmScreenRadianceGroup7
+
 // Wavefront lane -> task index mapping. Under wavefrontEnable, lane
 // gid indexes this kernel's state queue; otherwise the dense mapping
 // (gid == task index) is used. Task data keeps being indexed by the
@@ -4527,6 +5544,39 @@ __kernel void Init(
 				gid * visCandCount + i].flags = RAY_FLAGS_MASKED;
 
 	__global GPUTaskState *taskState = &tasksState[gid];
+
+	// GPU light tracing (doc/features/gpu_lighttracing.md): tasks
+	// [eyeTaskCount, taskCount) are light-path tasks cycling
+	// MK_LIGHT_INIT <-> MK_LIGHT_VERTEX.
+	if (taskConfig->pathTracer.lightTracing.enabled &&
+			gid >= taskConfig->pathTracer.lightTracing.eyeTaskCount) {
+		// Read the seed (required by SAMPLER_PARAM)
+		Seed ltSeedValue = tasks[gid].seed;
+		Seed *ltSeed = &ltSeedValue;
+
+		Sampler_LightTaskInit(taskConfig,
+				gid - taskConfig->pathTracer.lightTracing.eyeTaskCount,
+				filmWidth, filmHeight
+				, ltSeed
+				, samplerSharedDataBuff
+				, samplesBuff
+				, samplesDataBuff
+				, sampleResultsBuff
+				, gid);
+
+		// Mask both ray slots: the path ray and the camera-visibility
+		// ray tail slot
+		rays[gid].flags = RAY_FLAGS_MASKED;
+		rays[taskConfig->pathTracer.lightTracing.lightVisRayBase +
+				gid - taskConfig->pathTracer.lightTracing.eyeTaskCount].flags =
+				RAY_FLAGS_MASKED;
+
+		taskStats[gid].sampleCount = 0;
+		taskState->state = MK_LIGHT_INIT;
+
+		tasks[gid].seed = ltSeedValue;
+		return;
+	}
 
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
 	__global TilePathSamplerSharedData *samplerSharedData = (__global TilePathSamplerSharedData *)samplerSharedDataBuff;

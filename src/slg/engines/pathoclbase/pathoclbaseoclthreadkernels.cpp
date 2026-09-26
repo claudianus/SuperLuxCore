@@ -392,6 +392,27 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
 	}
 
+	// GPU light tracing state machine (MK_LIGHT_INIT <->
+	// MK_LIGHT_VERTEX). Compiled only when a light-task population
+	// exists: these kernels carry the KERNEL_ARGS_LIGHT tail (+10
+	// buffer args), which pushes past the buffer-argument limit of
+	// Apple's OpenCL-on-Metal translator (dispatch crashed inside
+	// AGX::ComputeContext::performEnqueueKernel even with the feature
+	// disabled, because the kernels were enqueued unconditionally).
+	if (renderEngine->lightTaskCount > 0) {
+		std::tuple<HardwareDeviceKernelUPtr&, const char *> lightKernels[] = {
+			{advancePathsKernel_MK_LIGHT_INIT, "AdvancePaths_MK_LIGHT_INIT"},
+			{advancePathsKernel_MK_LIGHT_VERTEX, "AdvancePaths_MK_LIGHT_VERTEX"},
+		};
+
+		for (auto& [microKernel, name] : lightKernels) {
+			auto [kernel, workGroupSize] = CompileKernel(intersectionDevice, *program, name);
+
+			microKernel = std::move(kernel);
+			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
+		}
+	}
+
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex
 			<< "] AdvancePaths_MK_* workgroup size: "
 			<< advancePathsWorkGroupSize
@@ -432,7 +453,7 @@ void PathOCLBaseOCLRenderThread::SetInitKernelArgs(const u_int filmIndex) {
 	initKernelArgsCount = argIndex;
 }
 
-void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
+u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState
 ) {
 	CompiledScene *cscene = renderEngine->compiledScene;
@@ -561,6 +582,30 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	// path.spectral.upsampling=jh2019; TEXTURES_PARAM tail)
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
 			spectralUpsamplingTableBuff);
+
+	return argIndex;
+}
+
+// GPU light tracing (doc/features/gpu_lighttracing.md): the light
+// kernels take the full KERNEL_ARGS set plus the KERNEL_ARGS_LIGHT
+// tail (light path state, emission distribution and the
+// screen-normalized film channels - kept out of KERNEL_ARGS so the
+// other kernels do not pay the buffer-argument cost; see
+// WAVEFRONT_GID for the Apple argument limit).
+void PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
+	HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState
+) {
+	u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel, filmIndex, queueState);
+
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightPathInfosBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, emitLightsDistributionBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightFocusBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightFocusCountBuff);
+	for (u_int i = 0; i < FILM_MAX_RADIANCE_GROUP_COUNT; ++i) {
+		HardwareDeviceBuffer *b = (i < threadFilms[filmIndex]->channel_RADIANCE_PER_SCREEN_NORMALIZEDs_Buff.size()) ?
+				threadFilms[filmIndex]->channel_RADIANCE_PER_SCREEN_NORMALIZEDs_Buff[i] : nullptr;
+		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, b);
+	}
 }
 
 // Mirror of the PathState enum in
@@ -582,6 +627,8 @@ constexpr u_int MK_MNEE_NEXT_VERTEX = 11;
 constexpr u_int MK_RT_RESTIR = 12;
 constexpr u_int MK_RT_GI_BOUNCE = 13;
 constexpr u_int MK_RT_GI_RESOLVE = 14;
+constexpr u_int MK_LIGHT_INIT = 15;
+constexpr u_int MK_LIGHT_VERTEX = 16;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
@@ -613,6 +660,12 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_NEXT_SAMPLE, filmIndex, MK_NEXT_SAMPLE);
 	if (advancePathsKernel_MK_GENERATE_CAMERA_RAY)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_GENERATE_CAMERA_RAY, filmIndex, MK_GENERATE_CAMERA_RAY);
+	// GPU light tracing: the light kernels take the KERNEL_ARGS_LIGHT
+	// tail on top of the shared set
+	if (advancePathsKernel_MK_LIGHT_INIT)
+		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_INIT, filmIndex, MK_LIGHT_INIT);
+	if (advancePathsKernel_MK_LIGHT_VERTEX)
+		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_VERTEX, filmIndex, MK_LIGHT_VERTEX);
 }
 
 void PathOCLBaseOCLRenderThread::SetKernelArgs() {
@@ -701,6 +754,19 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_CAMERA_RAY,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// GPU light tracing: light tasks self-loop MK_LIGHT_INIT <->
+	// MK_LIGHT_VERTEX; enqueued only when the light-task population
+	// exists (the kernels are not compiled otherwise).
+	// VERTEX must run BEFORE INIT: VERTEX consumes rayHits[gid] traced
+	// from the ray written by the previous pass's INIT. Running INIT
+	// first would overwrite rays[gid] and pair the old hit with the
+	// new ray.
+	if (advancePathsKernel_MK_LIGHT_VERTEX)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_LIGHT_VERTEX,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (advancePathsKernel_MK_LIGHT_INIT)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_LIGHT_INIT,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 }
 
 void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
@@ -824,6 +890,10 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_SPLAT_SAMPLE, MK_SPLAT_SAMPLE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_NEXT_SAMPLE, MK_NEXT_SAMPLE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_GENERATE_CAMERA_RAY, MK_GENERATE_CAMERA_RAY},
+		// Same VERTEX-before-INIT order as the dense path (queue
+		// membership is frozen per pass here, so it is not load-bearing)
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_LIGHT_VERTEX, MK_LIGHT_VERTEX},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_LIGHT_INIT, MK_LIGHT_INIT},
 	};
 
 	for (const auto &[kernelMember, state] : dispatchTable) {

@@ -518,4 +518,255 @@ OPENCL_FORCE_NOT_INLINE void Camera_GenerateRay(
 			break;
 	}
 }
+
+//------------------------------------------------------------------------------
+// Light to camera connections
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float3 Camera_MotionSampleDir(
+		__global const CameraBase* restrict cameraBase,
+		const float time) {
+	// World space camera direction before motion blur: the camera forward
+	// is +Z in camera space (see the rayDir.z > 0 convention in
+	// *_GenerateRayImpl), so dir = cameraToWorld * (0,0,1)
+	float3 globalDir = normalize(Transform_ApplyVector(&cameraBase->cameraToWorld,
+			MAKE_FLOAT3(0.f, 0.f, 1.f)));
+
+	if (cameraBase->motionSystem.interpolatedTransformFirstIndex != NULL_INDEX) {
+		Matrix4x4 m;
+		MotionSystem_Sample(&cameraBase->motionSystem, time, cameraBase->interpolatedTransforms, &m);
+		globalDir = Matrix4x4_ApplyVector_Private(&m, globalDir);
+	}
+
+	return globalDir;
+}
+
+OPENCL_FORCE_INLINE bool PerspectiveCamera_GetSamplePosition(
+		__global const Camera* restrict camera,
+		__global Ray *ray, float *x, float *y,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3) {
+	const __global CameraBase* restrict cameraBase = &camera->base;
+	const __global PerspectiveCamera* restrict cameraPersp = &camera->persp;
+
+	const float3 rayDir = VLOAD3F(&ray->d.x);
+	const float3 rayOrig = VLOAD3F(&ray->o.x);
+
+	const float3 globalDir = Camera_MotionSampleDir(cameraBase, ray->time);
+	const float cosi = dot(rayDir, globalDir);
+
+	if ((cosi <= 0.f) || (!isinf(ray->maxt) &&
+			(ray->maxt * cosi < cameraBase->hither || ray->maxt * cosi > cameraBase->yon)))
+		return false;
+
+	const float lensRadius = cameraPersp->projCamera.lensRadius;
+	float3 pO = rayOrig + ((lensRadius > 0.f) ?
+			(rayDir * (cameraPersp->projCamera.focalDistance / cosi)) : rayDir);
+
+	if (cameraBase->motionSystem.interpolatedInverseTransformFirstIndex != NULL_INDEX) {
+		Matrix4x4 m;
+		MotionSystem_SampleInverse(&cameraBase->motionSystem, ray->time,
+				cameraBase->interpolatedTransforms, &m);
+		pO = Matrix4x4_ApplyPoint_Private(&m, pO);
+	}
+	// worldToRaster = rasterToWorld^-1 = rasterToCamera^-1 . cameraToWorld^-1
+	// (derived on the fly: storing it in Camera overflows Apple's encoder -
+	// see the note in camera_types.cl)
+	pO = Transform_InvApplyPoint(&cameraBase->rasterToCamera,
+			Transform_InvApplyPoint(&cameraBase->cameraToWorld, pO));
+
+	*x = pO.x;
+	*y = filmHeight - 1.f - pO.y;
+
+	// Check if we are inside the image plane
+	if ((*x < filmSubRegion0) || (*x >= filmSubRegion1 + 1.f) ||
+			(*y < filmSubRegion2) || (*y >= filmSubRegion3 + 1.f))
+		return false;
+
+	if (cameraPersp->projCamera.enableClippingPlane) {
+		// Check if the ray end point is on the not visible side of the plane
+		const float3 endPoint = rayOrig + rayDir * ray->maxt;
+		const float3 planeCenter = VLOAD3F(&cameraPersp->projCamera.clippingPlaneCenter.x);
+		const float3 planeNormal = VLOAD3F(&cameraPersp->projCamera.clippingPlaneNormal.x);
+		if (dot(planeNormal, endPoint - planeCenter) <= 0.f)
+			return false;
+
+		Camera_ApplyArbitraryClippingPlane(ray, planeCenter, planeNormal);
+	}
+
+	return true;
+}
+
+OPENCL_FORCE_INLINE bool OrthographicCamera_GetSamplePosition(
+		__global const Camera* restrict camera,
+		__global Ray *ray, float *x, float *y,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3) {
+	const __global CameraBase* restrict cameraBase = &camera->base;
+	const __global OrthographicCamera* restrict cameraOrtho = &camera->ortho;
+
+	const float3 rayDir = VLOAD3F(&ray->d.x);
+	const float3 rayOrig = VLOAD3F(&ray->o.x);
+
+	const float3 globalDir = normalize(Transform_ApplyVector(&cameraBase->cameraToWorld,
+			MAKE_FLOAT3(0.f, 0.f, 1.f)));
+	const float cosi = dot(rayDir, globalDir);
+
+	if ((cosi <= 0.f) || (!isinf(ray->maxt) &&
+			(ray->maxt < cameraBase->hither || ray->maxt > cameraBase->yon)))
+		return false;
+
+	const float3 endPoint = rayOrig + rayDir * ray->maxt;
+	// worldToRaster = rasterToWorld^-1 = rasterToCamera^-1 . cameraToWorld^-1
+	float3 pO = Transform_InvApplyPoint(&cameraBase->rasterToCamera,
+			Transform_InvApplyPoint(&cameraBase->cameraToWorld, endPoint));
+	if (cameraBase->motionSystem.interpolatedTransformFirstIndex != NULL_INDEX) {
+		Matrix4x4 m;
+		MotionSystem_Sample(&cameraBase->motionSystem, ray->time,
+				cameraBase->interpolatedTransforms, &m);
+		pO = Matrix4x4_ApplyPoint_Private(&m, pO);
+	}
+
+	*x = pO.x;
+	*y = filmHeight - 1.f - pO.y;
+
+	// Update the ray origin and direction: the projection on the image
+	// plane moves the origin in raster space
+	pO.z = 0.f;
+	const Matrix4x4 rasterToWorld = Matrix4x4_Mul(
+			&cameraBase->cameraToWorld.m, &cameraBase->rasterToCamera.m);
+	const float3 eyeRayOrig = Matrix4x4_ApplyPoint_Private(&rasterToWorld, pO);
+	const float3 eyeDir = normalize(endPoint - eyeRayOrig);
+	const float eyeDistance = length(endPoint - eyeRayOrig);
+
+	ray->o.x = eyeRayOrig.x;
+	ray->o.y = eyeRayOrig.y;
+	ray->o.z = eyeRayOrig.z;
+	ray->d.x = eyeDir.x;
+	ray->d.y = eyeDir.y;
+	ray->d.z = eyeDir.z;
+	ray->mint = MachineEpsilon_E_Float3(eyeRayOrig);
+	ray->maxt = eyeDistance - MachineEpsilon_E_Float3(endPoint);
+
+	// Check if we are inside the image plane
+	if ((*x < filmSubRegion0) || (*x >= filmSubRegion1 + 1.f) ||
+			(*y < filmSubRegion2) || (*y >= filmSubRegion3 + 1.f))
+		return false;
+
+	if (cameraOrtho->projCamera.enableClippingPlane) {
+		const float3 planeCenter = VLOAD3F(&cameraOrtho->projCamera.clippingPlaneCenter.x);
+		const float3 planeNormal = VLOAD3F(&cameraOrtho->projCamera.clippingPlaneNormal.x);
+		if (dot(planeNormal, endPoint - planeCenter) <= 0.f)
+			return false;
+
+		Camera_ApplyArbitraryClippingPlane(ray, planeCenter, planeNormal);
+	}
+
+	return true;
+}
+
+// Port of Camera::SampleLens(): samples a point on the (possibly moving)
+// camera lens for light-to-camera connections. Orthographic cameras have
+// no lens: the sampled point is the camera-plane origin used by
+// ConnectToEye() to anchor the projection.
+OPENCL_FORCE_NOT_INLINE bool Camera_SampleLens(
+		__global const Camera* restrict camera,
+		__global const float* restrict cameraBokehDistribution,
+		const float time, const float u1, const float u2,
+		float3 *lensPoint) {
+	const __global CameraBase* restrict cameraBase = &camera->base;
+
+	float3 p;
+	switch (camera->type) {
+		case PERSPECTIVE: {
+			float lensU, lensV;
+			PerspectiveCamera_LocalSampleLens(&camera->persp,
+					cameraBokehDistribution, u1, u2, &lensU, &lensV);
+			p = MAKE_FLOAT3(lensU, lensV, 0.f);
+			break;
+		}
+		case ORTHOGRAPHIC:
+			p = MAKE_FLOAT3(0.f, 0.f, 0.f);
+			break;
+		default:
+			return false;
+	}
+
+	p = Transform_ApplyPoint(&cameraBase->cameraToWorld, p);
+	if (cameraBase->motionSystem.interpolatedTransformFirstIndex != NULL_INDEX) {
+		Matrix4x4 m;
+		MotionSystem_Sample(&cameraBase->motionSystem, time,
+				cameraBase->interpolatedTransforms, &m);
+		p = Matrix4x4_ApplyPoint_Private(&m, p);
+	}
+
+	*lensPoint = p;
+	return true;
+}
+
+// Returns false if the camera type can not project light vertices to the film
+OPENCL_FORCE_NOT_INLINE bool Camera_GetSamplePosition(
+		__global const Camera* restrict camera,
+		__global Ray *ray, float *x, float *y,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3) {
+	switch (camera->type) {
+		case PERSPECTIVE:
+			return PerspectiveCamera_GetSamplePosition(camera, ray, x, y,
+					filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+		case ORTHOGRAPHIC:
+			return OrthographicCamera_GetSamplePosition(camera, ray, x, y,
+					filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+		default:
+			return false;
+	}
+}
+
+OPENCL_FORCE_INLINE void PerspectiveCamera_GetPDF(
+		__global const Camera* restrict camera,
+		__global const Ray *eyeRay, const float eyeDistance,
+		float *pdfW, float *fluxToRadianceFactor) {
+	const float3 globalDir = Camera_MotionSampleDir(&camera->base, eyeRay->time);
+	const float cosAtCamera = dot(VLOAD3F(&eyeRay->d.x), globalDir);
+
+	if (cosAtCamera <= 0.f) {
+		*pdfW = 0.f;
+		*fluxToRadianceFactor = 0.f;
+	} else {
+		const float cameraPdfW = 1.f / (cosAtCamera * cosAtCamera * cosAtCamera *
+				camera->persp.pixelArea);
+
+		*pdfW = cameraPdfW;
+		*fluxToRadianceFactor = cameraPdfW / (eyeDistance * eyeDistance);
+	}
+}
+
+OPENCL_FORCE_INLINE void OrthographicCamera_GetPDF(
+		__global const Camera* restrict camera,
+		float *pdfW, float *fluxToRadianceFactor) {
+	*pdfW = camera->ortho.cameraPdf;
+	*fluxToRadianceFactor = camera->ortho.cameraPdf;
+}
+
+// Returns false if the camera type can not evaluate a light to camera connection
+OPENCL_FORCE_NOT_INLINE bool Camera_GetPDF(
+		__global const Camera* restrict camera,
+		__global const Ray *eyeRay, const float eyeDistance,
+		float *pdfW, float *fluxToRadianceFactor) {
+	switch (camera->type) {
+		case PERSPECTIVE:
+			PerspectiveCamera_GetPDF(camera, eyeRay, eyeDistance, pdfW, fluxToRadianceFactor);
+			return true;
+		case ORTHOGRAPHIC:
+			OrthographicCamera_GetPDF(camera, pdfW, fluxToRadianceFactor);
+			return true;
+		default:
+			return false;
+	}
+}
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

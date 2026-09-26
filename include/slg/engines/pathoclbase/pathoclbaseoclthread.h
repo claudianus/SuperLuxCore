@@ -44,8 +44,9 @@ namespace ocl { namespace pathoclbase {
 class PathOCLBaseRenderEngine;
 
 // Number of per-state wavefront task queues: mirrors the PathState
-// enum in pathoclbase_datatypes.cl (MK_* states 0..14)
-inline constexpr u_int WAVEFRONT_NUM_STATES = 15;
+// enum in pathoclbase_datatypes.cl (0..14 eye states + MK_LIGHT_INIT
+// and MK_LIGHT_VERTEX of the GPU light-tracing task population).
+inline constexpr u_int WAVEFRONT_NUM_STATES = 17;
 // Spectral hero-wavelength buckets per state queue (B2/E3 M2). Matches
 // SLG_SPECTRAL_BINS (3 spectral bins ride in the float3 channels).
 // Non-spectral builds bucket everything into lambda 0, which reproduces
@@ -99,6 +100,10 @@ public:
 
 		// Film buffers
 		std::vector<luxrays::HardwareDeviceBuffer *> channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff;
+		// GPU light tracing: screen-normalized splat targets (float3 per
+		// pixel per radiance group). Populated by the light task kernels
+		// when path.lighttracing.enable is on.
+		std::vector<luxrays::HardwareDeviceBuffer *> channel_RADIANCE_PER_SCREEN_NORMALIZEDs_Buff;
 		luxrays::HardwareDeviceBuffer *channel_ALPHA_Buff;
 		luxrays::HardwareDeviceBuffer *channel_DEPTH_Buff;
 		luxrays::HardwareDeviceBuffer *channel_POSITION_Buff;
@@ -190,7 +195,8 @@ protected:
 	void InitSampleResultsBuffer();
 
 	void SetInitKernelArgs(const u_int filmIndex);
-	void SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
+	u_int SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
+	void SetAdvancePathsLightKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
 
@@ -235,6 +241,9 @@ protected:
 	luxrays::HardwareDeviceBuffer *envLightIndicesBuff;
 	luxrays::HardwareDeviceBuffer *lightsDistributionBuff;
 	luxrays::HardwareDeviceBuffer *infiniteLightSourcesDistributionBuff;
+	// GPU light tracing: emit-strategy Distribution1D (unsupported lights
+	// carry zero weight). Bound only on the light kernels.
+	luxrays::HardwareDeviceBuffer *emitLightsDistributionBuff;
 	luxrays::HardwareDeviceBuffer *dlscAllEntriesBuff;
 	luxrays::HardwareDeviceBuffer *dlscDistributionsBuff;
 	luxrays::HardwareDeviceBuffer *dlscBVHNodesBuff;
@@ -293,6 +302,14 @@ protected:
 	luxrays::HardwareDeviceBuffer *sampleResultsBuff;
 	luxrays::HardwareDeviceBuffer *taskStatsBuff;
 	luxrays::HardwareDeviceBuffer *eyePathInfosBuff;
+	// GPU light tracing: LightPathInfo per light task (lightTaskCount
+	// entries, indexed gid - eyeTaskCount)
+	luxrays::HardwareDeviceBuffer *lightPathInfosBuff;
+	// Caustic focus cache: per-light hotspot rings, float4 entries
+	// (xyz = world position, w = aim radius) of numLights*LIGHT_FOCUS_K,
+	// plus a per-light fill counter (ring cursor). Zero-initialized.
+	luxrays::HardwareDeviceBuffer *lightFocusBuff;
+	luxrays::HardwareDeviceBuffer *lightFocusCountBuff;
 	// ReSTIR DI per-pixel temporal reservoirs (filmWidth * filmHeight)
 	luxrays::HardwareDeviceBuffer *restirReservoirsBuff;
 	// MNEE manifold seed cache (E4): fixed-size hashed grid of converged
@@ -328,6 +345,10 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_CAMERA_RAY;
+	// GPU light tracing (doc/features/gpu_lighttracing.md): the
+	// light-task population's state machine kernels
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_LIGHT_INIT;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_LIGHT_VERTEX;
 	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
 	// queues once per iteration from the authoritative taskState->state;
 	// BucketHistogram counts the per-(state, lambda) task population

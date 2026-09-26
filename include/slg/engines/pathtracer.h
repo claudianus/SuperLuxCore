@@ -225,6 +225,21 @@ public:
 	bool restirGITemporalEnable;
 	bool restirGISpatialEnable;
 
+	// GPU light tracing (path.lighttracing.*): a second task population
+	// on PATHOCL/RTPATHOCL traces light sub-paths and splats their
+	// vertices into RADIANCE_PER_SCREEN_NORMALIZED via camera projection
+	// (doc/features/gpu_lighttracing.md). Implies hybridBackForward on
+	// the eye side (caustic suppression, same contract as CPU hybrid).
+	bool lightTracingEnable;
+	float lightTracingTaskFraction;
+	// Caustic focus cache (GPU only): guided light emission toward
+	// remembered productive targets (see LIGHT_FOCUS_K in
+	// pathoclbase_datatypes.cl). Unbiased mixture: pdf = (1-ratio)*native
+	// + ratio*aim.
+	bool lightFocusEnable;
+	float lightFocusRatio;
+	float lightFocusRadiusFrac;
+
 private:
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
 			luxrays::Ray &eyeRay, PathVolumeInfo &volInfo,

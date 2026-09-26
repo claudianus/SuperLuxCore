@@ -1,0 +1,33 @@
+# LMNEE multi-specular validation: a thin glass slab covers the RIGHT
+# half of the camera view. The straight x0 -> lens connect is blocked by
+# a delta occluder that needs two refracting interfaces, so the region
+# lights up only when the chain solve (path.mnee.maxspecular >= 2) runs.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.emission.id = 0
+scene.materials.Light.kd = 0.0 0.0 0.0
+# Slab glass: explicit IOR, no interior volume (so the connect ray is a
+# plain delta block, not a volume-priority pass-through)
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.95 0.95 0.95
+scene.materials.glass.kr = 0.05 0.05 0.05
+scene.materials.glass.interiorior = 1.45
+scene.materials.glass.exteriorior = 1.0
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply

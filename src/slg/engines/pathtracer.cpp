@@ -1170,9 +1170,12 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 			// Scene::Intersect()) but the change must not leak into the
 			// light path state
 			PathDepthInfo connDepthInfo = pathInfo.depth;
+			// SHADOW_RAY lets the connection ray pass through
+			// transparency.shadow materials (e.g. a refractive enclosure
+			// around the vertex), mirroring eye-path shadow rays
 			if (!scene.Intersect(
 					luxrays::make_observer<IntersectionDevice>(device),
-					LIGHT_RAY | CAMERA_RAY,
+					LIGHT_RAY | CAMERA_RAY | SHADOW_RAY,
 					&volInfo, u0, &traceRay, &traceRayHit, &bsdfConn,
 					&connectionThroughput, nullptr, nullptr, false,
 					&connDepthInfo, NONE)) {
@@ -1490,6 +1493,22 @@ void PathTracer::ParseOptions(
 		hybridBackForwardGlossinessThreshold = Clamp(cfg.Get(defaultProps.Get("path.hybridbackforward.glossinessthreshold")).Get<double>(), 0.0, 1.0);
 	}
 
+	// GPU light tracing (PATHOCL/RTPATHOCL): a tail task population splats
+	// light-path vertices into the screen-normalized channel. The light
+	// pass owns the caustic-class contributions, so the eye side must run
+	// with hybrid caustic suppression for the estimator to stay unbiased
+	// (same contract as CPU hybrid).
+	lightTracingEnable = cfg.Get(defaultProps.Get("path.lighttracing.enable")).Get<bool>();
+	lightTracingTaskFraction = Clamp(cfg.Get(defaultProps.Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+	// Caustic focus cache (GPU): guided emission mixture parameters
+	lightFocusEnable = cfg.Get(defaultProps.Get("path.lighttracing.focus.enable")).Get<bool>();
+	lightFocusRatio = Clamp(cfg.Get(defaultProps.Get("path.lighttracing.focus.ratio")).Get<double>(), 0.0, 0.9);
+	lightFocusRadiusFrac = Clamp(cfg.Get(defaultProps.Get("path.lighttracing.focus.radius")).Get<double>(), 1e-5, 1.0);
+	if (lightTracingEnable && !hybridBackForwardEnable) {
+		hybridBackForwardEnable = true;
+		hybridBackForwardPartition = cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>();
+	}
+
 	// Albedo AOV settings
 	albedoSpecularSetting = String2AlbedoSpecularSetting(cfg.Get(defaultProps.Get("path.albedospecular.type")).Get<string>());
 	albedoSpecularGlossinessThreshold = Max(cfg.Get(defaultProps.Get("path.albedospecular.glossinessthreshold")).Get<double>(), 0.0);
@@ -1586,6 +1605,12 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.partition")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.glossinessthreshold")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.taskfraction")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.only")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.ratio")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.radius")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxiterations")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxspecular")) <<
@@ -1620,6 +1645,12 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.hybridbackforward.enable")(false) <<
 			Property("path.hybridbackforward.partition")(0.8) <<
 			Property("path.hybridbackforward.glossinessthreshold")(.05f) <<
+			Property("path.lighttracing.enable")(false) <<
+			Property("path.lighttracing.taskfraction")(0.25) <<
+			Property("path.lighttracing.only")(false) <<
+			Property("path.lighttracing.focus.enable")(true) <<
+			Property("path.lighttracing.focus.ratio")(0.5) <<
+			Property("path.lighttracing.focus.radius")(0.01f) <<
 			Property("path.mnee.enable")(false) <<
 			Property("path.mnee.maxiterations")(12) <<
 			Property("path.mnee.maxspecular")(1) <<

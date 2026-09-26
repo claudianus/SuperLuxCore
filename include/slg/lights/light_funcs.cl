@@ -1135,6 +1135,410 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 	return radiance;
 }
 
+//------------------------------------------------------------------------------
+// LightSource::Emit() device ports (GPU light tracing,
+// doc/features/gpu_lighttracing.md)
+//
+// Each port mirrors the CPU LightSource::Emit() signature minus the
+// directPdfA/cosThetaAtLight outputs (unused by the light task state
+// machine). Unsupported light types never reach the dispatcher: the host
+// zeroes their weight in emitLightsDistribution (compilelights.cpp).
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float3 ConstantInfiniteLight_Emit(
+		__global const LightSource *constantInfiniteLight,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+
+	// Uniform sphere pdf over directions, disk pdf over the scene sphere
+	*emissionPdfW = UniformSpherePdf() / (M_PI_F * envRadius * envRadius);
+
+	// Ray between two random points on the scene bounding sphere
+	const float3 p1 = worldCenter + envRadius * UniformSampleSphere(u0, u1);
+	const float3 p2 = worldCenter + envRadius * UniformSampleSphere(u2, u3);
+	Ray_Init2(ray, p1, normalize(p2 - p1), time);
+
+	return VLOAD3F(constantInfiniteLight->notIntersectable.temperatureScale.c) *
+			VLOAD3F(constantInfiniteLight->notIntersectable.gain.c) *
+			VLOAD3F(constantInfiniteLight->notIntersectable.constantInfinite.color.c);
+}
+
+OPENCL_FORCE_INLINE float3 InfiniteLight_Emit(
+		__global const LightSource *infiniteLight,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW
+		LIGHTS_PARAM_DECL) {
+	__global const float* restrict infiniteLightDistribution =
+			&envLightDistribution[infiniteLight->notIntersectable.infinite.distributionOffset];
+
+	float2 uv;
+	float distPdf;
+	Distribution2D_SampleContinuous(infiniteLightDistribution, u0, u1, &uv, &distPdf);
+	if (distPdf == 0.f)
+		return BLACK;
+
+	float3 localDir;
+	float latLongMappingPdf;
+	EnvLightSource_FromLatLongMapping(uv.x, uv.y, &localDir, &latLongMappingPdf);
+	if (latLongMappingPdf == 0.f)
+		return BLACK;
+
+	// light2World is the true lightToWorld transform for infinite lights
+	const float3 rayDir = -normalize(Transform_ApplyVector(&infiniteLight->notIntersectable.light2World, localDir));
+
+	// Ray origin on a disk perpendicular to the direction, pulled back
+	// by the scene radius
+	float3 x, y;
+	CoordinateSystem(-rayDir, &x, &y);
+	float d1, d2;
+	ConcentricSampleDisk(u2, u3, &d1, &d2);
+
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+	const float3 pDisk = worldCenter + envRadius * (d1 * x + d2 * y);
+	const float3 rayOrig = pDisk - envRadius * rayDir;
+
+	*emissionPdfW = distPdf * latLongMappingPdf / (M_PI_F * envRadius * envRadius);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	__global const ImageMap *imageMap = &imageMapDescs[infiniteLight->notIntersectable.infinite.imageMapIndex];
+	return VLOAD3F(infiniteLight->notIntersectable.temperatureScale.c) *
+			VLOAD3F(infiniteLight->notIntersectable.gain.c) *
+			ImageMap_GetSpectrum(imageMap, uv.x, uv.y IMAGEMAPS_PARAM);
+}
+
+OPENCL_FORCE_INLINE float3 Sky2Light_Emit(
+		__global const LightSource *sky2Light,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW
+		LIGHTS_PARAM_DECL) {
+	__global const float* restrict skyLightDistribution =
+			&envLightDistribution[sky2Light->notIntersectable.sky2.distributionOffset];
+
+	float2 uv;
+	float distPdf;
+	Distribution2D_SampleContinuous(skyLightDistribution, u0, u1, &uv, &distPdf);
+	if (distPdf == 0.f)
+		return BLACK;
+
+	float3 globalDir;
+	float latLongMappingPdf;
+	EnvLightSource_FromLatLongMapping(uv.x, uv.y, &globalDir, &latLongMappingPdf);
+	if (latLongMappingPdf == 0.f)
+		return BLACK;
+
+	const float3 rayDir = -globalDir;
+
+	float3 x, y;
+	CoordinateSystem(-rayDir, &x, &y);
+	float d1, d2;
+	ConcentricSampleDisk(u2, u3, &d1, &d2);
+
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+	const float3 pDisk = worldCenter + envRadius * (d1 * x + d2 * y);
+	const float3 rayOrig = pDisk - envRadius * rayDir;
+
+	*emissionPdfW = distPdf * latLongMappingPdf / (M_PI_F * envRadius * envRadius);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return Sky2Light_ComputeRadiance(sky2Light, -rayDir);
+}
+
+OPENCL_FORCE_INLINE float3 SunLight_Emit(
+		__global const LightSource *sunLight,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+
+	const float3 absoluteSunDir = VLOAD3F(&sunLight->notIntersectable.sun.absoluteDir.x);
+	const float3 x = VLOAD3F(&sunLight->notIntersectable.sun.x.x);
+	const float3 y = VLOAD3F(&sunLight->notIntersectable.sun.y.x);
+	const float cosThetaMax = sunLight->notIntersectable.sun.cosThetaMax;
+
+	// Origin on a disk perpendicular to the sun direction (u0,u1)
+	float d1, d2;
+	ConcentricSampleDisk(u0, u1, &d1, &d2);
+	const float3 rayOrig = worldCenter + envRadius * (absoluteSunDir + d1 * x + d2 * y);
+	const float3 rayDir = -UniformSampleCone(u2, u3, cosThetaMax, x, y, absoluteSunDir);
+
+	const float uniformConePdf = UniformConePdf(cosThetaMax);
+	*emissionPdfW = uniformConePdf / (M_PI_F * envRadius * envRadius);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return VLOAD3F(sunLight->notIntersectable.sun.color.c);
+}
+
+OPENCL_FORCE_INLINE float3 DistantLight_Emit(
+		__global const LightSource *distantLight,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 absoluteLightDir = VLOAD3F(&distantLight->notIntersectable.distant.absoluteLightDir.x);
+	const float3 x = VLOAD3F(&distantLight->notIntersectable.distant.x.x);
+	const float3 y = VLOAD3F(&distantLight->notIntersectable.distant.y.x);
+	const float cosThetaMax = distantLight->notIntersectable.distant.cosThetaMax;
+
+	const float3 rayDir = UniformSampleCone(u0, u1, cosThetaMax, x, y, absoluteLightDir);
+	const float uniformConePdf = UniformConePdf(cosThetaMax);
+
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+
+	float d1, d2;
+	ConcentricSampleDisk(u2, u3, &d1, &d2);
+	const float3 rayOrig = worldCenter - envRadius * (absoluteLightDir + d1 * x + d2 * y);
+
+	*emissionPdfW = uniformConePdf / (M_PI_F * envRadius * envRadius);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return VLOAD3F(distantLight->notIntersectable.temperatureScale.c) *
+			VLOAD3F(distantLight->notIntersectable.gain.c) *
+			VLOAD3F(distantLight->notIntersectable.distant.color.c);
+}
+
+OPENCL_FORCE_INLINE float3 PointLight_Emit(
+		__global const LightSource *pointLight,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 rayOrig = VLOAD3F(&pointLight->notIntersectable.point.absolutePos.x);
+	const float3 rayDir = UniformSampleSphere(u0, u1);
+	*emissionPdfW = 1.f / (4.f * M_PI_F);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return VLOAD3F(pointLight->notIntersectable.point.emittedFactor.c) *
+			(1.f / (4.f * M_PI_F));
+}
+
+OPENCL_FORCE_INLINE float3 SpotLight_Emit(
+		__global const LightSource *spotLight,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW) {
+	const float cosTotalWidth = spotLight->notIntersectable.spot.cosTotalWidth;
+	const float cosFalloffStart = spotLight->notIntersectable.spot.cosFalloffStart;
+
+	const float3 rayOrig = VLOAD3F(&spotLight->notIntersectable.spot.absolutePos.x);
+	const float3 localFromLight = UniformSampleCone(u0, u1, cosTotalWidth,
+			MAKE_FLOAT3(1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 1.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 1.f));
+	// The host stores SpotLight::alignedLight2World in light2World.m
+	// (compilelights.cpp:613; the local variable is misnamed
+	// "alignedWorld2Light"), so the aligned light->world rotation is
+	// light2World.m here
+	const float3 rayDir = normalize(Transform_ApplyVector(&spotLight->notIntersectable.light2World, localFromLight));
+	*emissionPdfW = UniformConePdf(cosTotalWidth);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return VLOAD3F(spotLight->notIntersectable.spot.emittedFactor.c) *
+			(SpotLight_LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart) /
+			fabs(CosTheta(localFromLight)));
+}
+
+// Port of LaserLight::Emit(): uniform disk over the aperture radius,
+// fixed absolute direction
+OPENCL_FORCE_INLINE float3 LaserLight_Emit(
+		__global const LightSource *laserLight,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 lightDir = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightDir.x);
+	const float3 lightPos = VLOAD3F(&laserLight->notIntersectable.laser.absoluteLightPos.x);
+	const float radius = laserLight->notIntersectable.laser.radius;
+
+	float3 x, y;
+	CoordinateSystem(lightDir, &x, &y);
+	float d1, d2;
+	ConcentricSampleDisk(u0, u1, &d1, &d2);
+	const float3 rayOrig = lightPos - radius * (d1 * x + d2 * y);
+
+	*emissionPdfW = 1.f / (M_PI_F * Sqr(radius));
+
+	Ray_Init2(ray, rayOrig, lightDir, time);
+
+	return VLOAD3F(laserLight->notIntersectable.laser.emittedFactor.c);
+}
+
+OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
+		__global const LightSource *triLight,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3, const float passThroughEvent,
+		__global HitPoint *tmpHitPoint,
+		__global Ray *ray, float *emissionPdfW
+		MATERIALS_PARAM_DECL) {
+	// A safety check to avoid NaN/Inf
+	if ((triLight->triangle.invTriangleArea == 0.f) || (triLight->triangle.invMeshArea == 0.f))
+		return BLACK;
+
+	const uint meshIndex = triLight->triangle.meshIndex;
+	const uint triangleIndex = triLight->triangle.triangleIndex;
+	const uint materialIndex = sceneObjs[meshIndex].materialIndex;
+
+	// Sample the emission direction in the light local frame. The host
+	// excludes materials with a directional emission map (IES) from the
+	// emit distribution, so only the theta-cone cases remain here.
+	float3 localDirOut;
+	float dirPdfW;
+	const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex MATERIALS_PARAM);
+	if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC) {
+		// emittedTheta == 0: pure forward emission
+		localDirOut = MAKE_FLOAT3(0.f, 0.f, 1.f);
+		dirPdfW = 1.f;
+	} else if (cosThetaMax > 0.f) {
+		localDirOut = UniformSampleCone(u2, u3, cosThetaMax,
+					MAKE_FLOAT3(1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 1.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 1.f));
+		dirPdfW = UniformConePdf(cosThetaMax);
+	} else {
+		float pdf;
+		localDirOut = CosineSampleHemisphereWithPdf(u2, u3, &pdf);
+		dirPdfW = pdf;
+	}
+	// Cannot really not emit the particle, so just bias it to the correct
+	// angle (same clamp as CPU TriangleLight::Emit)
+	localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
+
+	if (dirPdfW == 0.f)
+		return BLACK;
+	*emissionPdfW = dirPdfW * triLight->triangle.invTriangleArea;
+
+	// Initialized local to world object space transformation
+	ExtMesh_GetLocal2World(time, meshIndex, triangleIndex, &tmpHitPoint->localToWorld EXTMESH_PARAM);
+
+	float b0, b1, b2;
+	float3 samplePoint;
+	ExtMesh_Sample(&tmpHitPoint->localToWorld,
+			meshIndex, triangleIndex,
+			u0, u1,
+			&samplePoint, &b0, &b1, &b2
+			EXTMESH_PARAM);
+
+	// CPU passes the geometry normal as fixedDir (intoObject = true: the
+	// light path leaves the volume the emitter surface encloses)
+	const float3 emitGeometryN = ExtMesh_GetGeometryNormal(
+			&tmpHitPoint->localToWorld, meshIndex, triangleIndex
+			EXTMESH_PARAM);
+
+	// Build a temporary HitPoint
+	HitPoint_Init(tmpHitPoint, false,
+			meshIndex, triangleIndex,
+			samplePoint, emitGeometryN,
+			b1, b2,
+			passThroughEvent
+			MATERIALS_PARAM);
+
+	Frame frame;
+	HitPoint_GetFrame(tmpHitPoint, &frame);
+	const float3 rayDir = Frame_ToWorld_Private(&frame, localDirOut);
+
+	// Ray origin displaced by the geometry normal epsilon; with a
+	// two-sided emitter the sign follows the ray direction (CPU comment)
+	const float3 geometryN = VLOAD3F(&tmpHitPoint->geometryN.x);
+	const float3 rayOrig = samplePoint + geometryN * MachineEpsilon_E_Float3(samplePoint) *
+			((dot(rayDir, geometryN) > 0.f) ? 1.f : -1.f);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return Material_GetEmittedRadiance(materialIndex,
+			tmpHitPoint, triLight->triangle.invMeshArea
+			MATERIALS_PARAM) * fabs(localDirOut.z);
+}
+
+OPENCL_FORCE_INLINE float3 Light_Emit(
+		__global const LightSource *light,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3, const float passThroughEvent,
+		const float worldCenterX,
+		const float worldCenterY,
+		const float worldCenterZ,
+		const float envRadius,
+		__global HitPoint *tmpHitPoint,
+		__global Ray *ray, float *emissionPdfW
+		LIGHTS_PARAM_DECL) {
+	float3 flux;
+	switch (light->type) {
+		case TYPE_IL_CONSTANT:
+			flux = ConstantInfiniteLight_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1, u2, u3,
+					ray, emissionPdfW);
+			break;
+		case TYPE_IL:
+			flux = InfiniteLight_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1, u2, u3,
+					ray, emissionPdfW
+					LIGHTS_PARAM);
+			break;
+		case TYPE_IL_SKY2:
+			flux = Sky2Light_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1, u2, u3,
+					ray, emissionPdfW
+					LIGHTS_PARAM);
+			break;
+		case TYPE_SUN:
+			flux = SunLight_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1, u2, u3,
+					ray, emissionPdfW);
+			break;
+		case TYPE_DISTANT:
+			flux = DistantLight_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1, u2, u3,
+					ray, emissionPdfW);
+			break;
+		case TYPE_TRIANGLE:
+			flux = TriangleLight_Emit(
+					light,
+					time, u0, u1, u2, u3, passThroughEvent,
+					tmpHitPoint,
+					ray, emissionPdfW
+					MATERIALS_PARAM);
+			break;
+		case TYPE_POINT:
+			flux = PointLight_Emit(
+					light, time, u0, u1,
+					ray, emissionPdfW);
+			break;
+		case TYPE_SPOT:
+			flux = SpotLight_Emit(
+					light, time, u0, u1,
+					ray, emissionPdfW);
+			break;
+		case TYPE_LASER:
+			flux = LaserLight_Emit(
+					light, time, u0, u1,
+					ray, emissionPdfW);
+			break;
+		default:
+			// Unsupported types are never picked: the host zeroes their
+			// emit distribution weight
+			flux = BLACK;
+	}
+	return flux;
+}
+
 OPENCL_FORCE_INLINE bool Light_IsEnvOrIntersectable(__global const LightSource *light) {
 	switch (light->type) {
 		case TYPE_IL_CONSTANT:

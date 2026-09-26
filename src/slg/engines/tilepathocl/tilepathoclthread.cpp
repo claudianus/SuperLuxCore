@@ -138,11 +138,13 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 			(maxDepth * (visCands ? 3u : 2u) - (visCands ? 2u : 1u) +
 			giPasses);
 	for (u_int i = 0; i < worstCaseIterationCount; ++i) {
-		// Trace rays (tail slots hold the ReSTIR visibility
-		// candidate shadow rays and the GI bounce/NEE rays)
+		// Trace rays (tail slots hold the light camera-visibility rays
+		// - lightVisRayBase - then the ReSTIR visibility candidate
+		// shadow rays and the GI bounce/NEE rays)
 		intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff,
+				engine->taskCount + engine->lightTaskCount +
 				engine->taskCount *
-				(1u + engine->taskConfig.pathTracer.restir.visCandCount +
+				(engine->taskConfig.pathTracer.restir.visCandCount +
 				(visCands ? RESTIR_PIXEL_MERGES_MAX : 0u) +
 				2u * engine->taskConfig.pathTracer.restirGI.giCandCount +
 				((engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
@@ -154,9 +156,16 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 
 	// Async. transfer of the Film buffers
 	threadFilms[filmIndex]->RecvFilm(intersectionDevice);
-	threadFilms[filmIndex]->GetFilm().AddSampleCount(0,
-			tileWork.GetCoord().width * tileWork.GetCoord().height *
-			engine->aaSamples * engine->aaSamples, 0.0);
+	const double eyeCount = tileWork.GetCoord().width * tileWork.GetCoord().height *
+			engine->aaSamples * engine->aaSamples;
+	// GPU light tracing (RTPATHOCL): light tasks feed the screen-normalized
+	// channel; estimate their per-pass sample count proportionally to the
+	// task split (the eye estimate itself is per-tile geometry)
+	const u_int eyeTaskCount = engine->taskCount - engine->lightTaskCount;
+	const double lightCount = (engine->lightTaskCount > 0) ?
+			((eyeTaskCount > 0) ? eyeCount * engine->lightTaskCount / eyeTaskCount :
+			(double)engine->lightTaskCount) : 0.0;
+	threadFilms[filmIndex]->GetFilm().AddSampleCount(0, eyeCount, lightCount);
 }
 
 static void PGICUpdateCallBack(CompiledScene *compiledScene) {

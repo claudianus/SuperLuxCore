@@ -161,10 +161,18 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 			// I need to update the film samples count
 
-			double totalCount = 0.0;
-			for (size_t i = 0; i < taskCount; ++i)
-				totalCount += gpuTaskStats[i].sampleCount;
-			threadFilms[0]->GetFilm().SetSampleCount(totalCount, totalCount, 0.0);
+			// GPU light tracing (doc/features/gpu_lighttracing.md): light
+			// tasks feed the screen-normalized channel, so their samples
+			// count toward RADIANCE_PER_SCREEN_NORMALIZED, not the
+			// per-pixel statistic
+			const u_int eyeTaskCount = taskCount - engine->lightTaskCount;
+			double eyeSampleCount = 0.0, lightSampleCount = 0.0;
+			for (size_t i = 0; i < eyeTaskCount; ++i)
+				eyeSampleCount += gpuTaskStats[i].sampleCount;
+			for (size_t i = eyeTaskCount; i < taskCount; ++i)
+				lightSampleCount += gpuTaskStats[i].sampleCount;
+			threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
+					eyeSampleCount, lightSampleCount);
 
 			//SLG_LOG("[DEBUG] film transferred");
 		}
@@ -181,7 +189,11 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			SetAllAdvancePathsKernelArgs(0);
 		}
 
-		const u_int raySlotCount = taskCount * (1u +
+		// Ray slots: taskCount per-task rays + lightTaskCount light
+		// camera-visibility rays (lightVisRayBase) + ReSTIR tails.
+		// Must match the allocation in InitGPUTaskBuffer().
+		const u_int raySlotCount = taskCount + engine->lightTaskCount +
+				taskCount * (
 				((engine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
 				(engine->taskConfig.pathTracer.restir.visCandCount +
 				RESTIR_PIXEL_MERGES_MAX) : 0u) +

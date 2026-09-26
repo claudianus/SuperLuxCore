@@ -1797,6 +1797,745 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 }
 
 //------------------------------------------------------------------------------
+// GPU light tracing (doc/features/gpu_lighttracing.md)
+//
+// Light-path helpers: the LightPathInfo analogue of the EyePathInfo
+// functions in pathinfo_funcs.cl, ported from
+// src/slg/utils/pathinfo.cpp::LightPathInfo.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
+	PathDepthInfo_Init(&lpi->depth);
+	PathVolumeInfo_Init(&lpi->volume);
+	PathVolumeInfo_Init(&lpi->connectVolInfo);
+
+	lpi->connectThroughShadow = false;
+	lpi->lastBSDFEvent = SPECULAR; // SPECULAR is required to avoid MIS
+	lpi->isNearlyS = false;
+	lpi->isNearlySD = false;
+	lpi->isNearlySDS = false;
+	lpi->hasDeltaVertex = false;
+	lpi->pathDone = false;
+	lpi->mneeActive = false;
+	lpi->pendingSplat.fromMnee = false;
+	lpi->pendingSplat.valid = false;
+}
+
+OPENCL_FORCE_INLINE bool LightPathInfo_IsNearlySpecular(
+		const BSDFEvent event, const float glossiness,
+		const float glossinessThreshold) {
+	return (event & SPECULAR) ||
+			((event & GLOSSY) && (glossiness <= glossinessThreshold));
+}
+
+OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
+		__global const BSDF *bsdf, const BSDFEvent event,
+		const float glossinessThreshold
+		MATERIALS_PARAM_DECL) {
+	PathDepthInfo_IncDepths(&lpi->depth, event);
+	PathVolumeInfo_Update(&lpi->volume, event, bsdf MATERIALS_PARAM);
+
+	const float glossiness = BSDF_GetGlossiness(bsdf MATERIALS_PARAM);
+	const bool isNewVertexNearlySpecular = LightPathInfo_IsNearlySpecular(
+			event, glossiness, glossinessThreshold);
+
+	// Same order as CPU PathInfo::AddVertex(): SDS before SD before S
+	lpi->isNearlySDS = (lpi->isNearlySD || lpi->isNearlySDS) && isNewVertexNearlySpecular;
+	lpi->isNearlySD = lpi->isNearlyS && !isNewVertexNearlySpecular;
+	lpi->isNearlyS = ((lpi->depth.depth == 1) || lpi->isNearlyS) && isNewVertexNearlySpecular;
+
+	lpi->lastBSDFEvent = event;
+}
+
+OPENCL_FORCE_INLINE bool LightPathInfo_UseRR(__global LightPathInfo *lpi,
+		const uint rrDepth) {
+	return !(lpi->lastBSDFEvent & SPECULAR) &&
+			(PathDepthInfo_GetRRDepth(&lpi->depth) >= rrDepth);
+}
+
+// Port of LightPathInfo::IsCausticPath(): the path so far is nearly
+// specular and the candidate connection event is not
+OPENCL_FORCE_INLINE bool LightPathInfo_IsCausticPath(__global const LightPathInfo *lpi,
+		const BSDFEvent event, const float glossiness,
+		const float glossinessThreshold) {
+	return lpi->isNearlyS && (lpi->depth.depth + 1 > 1) &&
+			!LightPathInfo_IsNearlySpecular(event, glossiness, glossinessThreshold);
+}
+
+//------------------------------------------------------------------------------
+// MK_LIGHT_INIT: draw the next light-path sample - pick the emitter,
+// emit the path ray into rays[gid], sample the lens point.
+//
+// From: MK_LIGHT_INIT (also the entry state for light tasks)
+// To: MK_LIGHT_VERTEX
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_LIGHT_INIT(
+		KERNEL_ARGS
+		KERNEL_ARGS_LIGHT
+		) {
+	WAVEFRONT_GUARD
+	__global GPUTask *task = &tasks[gid];
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_LIGHT_INIT(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_LIGHT_INIT)
+		return;
+
+	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	Seed seedValue = task->seed;
+	// This trick is required by SAMPLER_PARAM macro
+	Seed *seed = &seedValue;
+
+	__constant const PathTracer* restrict pathTracer = &taskConfig->pathTracer;
+	const uint lightIndex = gid - pathTracer->lightTracing.eyeTaskCount;
+	__global LightPathInfo *lpi = &lightPathInfos[lightIndex];
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+	__constant const Scene* restrict scene = &taskConfig->scene;
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	// Advance the light-sample sequence (dims map to sampler dims >= 2)
+	Sampler_LightNextSample(taskConfig
+			SAMPLER_PARAM);
+
+	LightPathInfo_Init(lpi);
+
+	// A light sample was drawn; count it even if the emission fails
+	// (mirrors PathTracerThreadState::lightSampleCount accounting)
+	taskStats[gid].sampleCount += 1;
+
+	const uint bootSize = pathTracer->lightTracing.lightSampleBootSize;
+
+#if defined(SLG_SPECTRAL)
+	// Hero-wavelength spectral transport: the wavelength dimension sits
+	// at the end of the boot block (see PathTracer::RenderLightSample)
+	const float wavelengthSample = Sampler_GetLightSample(taskConfig,
+			bootSize - 1 SAMPLER_PARAM);
+	float w[SLG_SPECTRAL_BINS];
+	const uint hero = Spectral_SampleWavelengths(wavelengthSample, w);
+	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i)
+		sampleResult->spectralW[i] = w[i];
+	sampleResult->spectralHeroAlive = SLG_SW_DEFAULT | (hero << SLG_SW_HERO_SHIFT);
+#endif
+
+	const float time = mix(camera->base.shutterOpen, camera->base.shutterClose,
+			Sampler_GetLightSample(taskConfig, 8 SAMPLER_PARAM));
+
+	// Pick the light source over the emission distribution
+	float pickPdf;
+	const uint emitLightIndex = Distribution1D_SampleDiscrete(emitLightsDistribution,
+			Sampler_GetLightSample(taskConfig, 0 SAMPLER_PARAM), &pickPdf);
+
+	float3 flux = BLACK;
+	if ((emitLightIndex != NULL_INDEX) && (pickPdf > 0.f)) {
+		__global const LightSource* restrict light = &lights[emitLightIndex];
+
+		float emissionPdfW;
+#if defined(SLG_SPECTRAL)
+		// Emission textures evaluate at the path wavelengths
+		task->tmpHitPoint.spectralW[0] = sampleResult->spectralW[0];
+		task->tmpHitPoint.spectralW[1] = sampleResult->spectralW[1];
+		task->tmpHitPoint.spectralW[2] = sampleResult->spectralW[2];
+		task->tmpHitPoint.spectralHeroAlive = sampleResult->spectralHeroAlive;
+#endif
+		flux = Light_Emit(light, time,
+				Sampler_GetLightSample(taskConfig, 1 SAMPLER_PARAM),
+				Sampler_GetLightSample(taskConfig, 2 SAMPLER_PARAM),
+				Sampler_GetLightSample(taskConfig, 3 SAMPLER_PARAM),
+				Sampler_GetLightSample(taskConfig, 4 SAMPLER_PARAM),
+				Sampler_GetLightSample(taskConfig, 5 SAMPLER_PARAM),
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				&task->tmpHitPoint, &rays[gid], &emissionPdfW
+				LIGHTS_PARAM);
+
+		// Caustic focus cache (doc/features/gpu_lighttracing.md): with
+		// probability focusRatio, re-aim the emitted direction at a
+		// hotspot remembered from previous successful delta-crossed
+		// paths. Positional emitters only (point/spot).
+		//
+		// The emitted direction is always weighted by the one-sample
+		// mixture pdf
+		//   pdf = (1 - g) * nativePdf(dir) + g * aimPdf(dir)
+		// for BOTH branches: the aim strategy is "uniform slot pick +
+		// cone sample" (degenerate slots - a hotspot closer than the
+		// aim radius to the origin - fall back to a native-density draw,
+		// contributing (fD/fN)*nativePdf to aimPdf). Weighting native
+		// draws by the same mixture keeps the estimator unbiased; using
+		// the bare native pdf would over-weight directions outside the
+		// aim cones by 1/(1-g).
+		const uint focusN = (pathTracer->lightTracing.focusEnable && lightFocusCount) ?
+				min(lightFocusCount[emitLightIndex], (uint)LIGHT_FOCUS_K) : 0;
+		const bool focusActive = (focusN > 0) &&
+				((light->type == TYPE_POINT) || (light->type == TYPE_SPOT));
+		if (focusActive) {
+			const float3 rayOrig = VLOAD3F(&rays[gid].o.x);
+			const float aimR = pathTracer->lightTracing.focusRadiusFrac * worldRadius;
+			const float g = pathTracer->lightTracing.focusRatio;
+
+			// Optionally re-aim the direction at a remembered hotspot
+			if (Rnd_FloatValue(seed) < g) {
+				const uint slot = min((uint)(Rnd_FloatValue(seed) * focusN), focusN - 1);
+				const float4 hp = lightFocus[emitLightIndex * LIGHT_FOCUS_K + slot];
+				const float3 toTarget = MAKE_FLOAT3(hp.x, hp.y, hp.z) - rayOrig;
+				const float targetDist = length(toTarget);
+				if (targetDist > aimR) {
+					const float sinMax = aimR / targetDist;
+					const float cosMax = sqrt(fmax(0.f, 1.f - sinMax * sinMax));
+					const float3 axis = toTarget / targetDist;
+					float3 axX, axY;
+					CoordinateSystem(axis, &axX, &axY);
+					const float3 newDir = UniformSampleCone(Rnd_FloatValue(seed),
+							Rnd_FloatValue(seed), cosMax, axX, axY, axis);
+					Ray_Init2(&rays[gid], rayOrig, newDir, time);
+
+					// Emission flux of the redirected ray
+					// (SpotLight_LocalFalloff returns 0 outside the cone
+					// -> a leaked rim sample just dies)
+					if (light->type == TYPE_POINT)
+						flux = VLOAD3F(light->notIntersectable.point.emittedFactor.c) *
+								(1.f / (4.f * M_PI_F));
+					else {
+						const float3 localDir = normalize(Transform_InvApplyVector(
+								&light->notIntersectable.light2World, newDir));
+						flux = VLOAD3F(light->notIntersectable.spot.emittedFactor.c) *
+								(SpotLight_LocalFalloff(localDir,
+								light->notIntersectable.spot.cosTotalWidth,
+								light->notIntersectable.spot.cosFalloffStart) /
+								fabs(CosTheta(localDir)));
+					}
+				}
+			}
+
+			// Mixture pdf of the final direction over both strategies
+			const float3 emitDir = normalize(VLOAD3F(&rays[gid].d.x));
+			float nativePdf;
+			if (light->type == TYPE_POINT)
+				nativePdf = 1.f / (4.f * M_PI_F);
+			else
+				nativePdf = (CosTheta(normalize(Transform_InvApplyVector(
+						&light->notIntersectable.light2World, emitDir))) >=
+						light->notIntersectable.spot.cosTotalWidth) ?
+						UniformConePdf(light->notIntersectable.spot.cosTotalWidth) : 0.f;
+
+			float aimPdf = 0.f;
+			for (uint k = 0; k < focusN; ++k) {
+				const float4 hk = lightFocus[emitLightIndex * LIGHT_FOCUS_K + k];
+				const float3 tk = MAKE_FLOAT3(hk.x, hk.y, hk.z) - rayOrig;
+				const float dk = length(tk);
+				if (dk > aimR) {
+					const float sk = aimR / dk;
+					const float ck = sqrt(fmax(0.f, 1.f - sk * sk));
+					if (dot(emitDir, tk / dk) >= ck)
+						aimPdf += UniformConePdf(ck);
+				} else
+					aimPdf += nativePdf; // degenerate slot: native fallback
+			}
+			aimPdf /= focusN;
+
+			emissionPdfW = (1.f - g) * nativePdf + g * aimPdf;
+		}
+
+#if defined(SLG_SPECTRAL)
+		// Only TYPE_TRIANGLE evaluates its emission texture at the path
+		// wavelengths (Material_GetEmittedRadiance); the other emitters
+		// return baked RGB, upsampled into the bins here (same funnel as
+		// DirectHitInfiniteLight)
+		if ((light->type != TYPE_TRIANGLE) && !Spectrum_IsBlack(flux))
+			flux = Spectral_Upsample(flux, sampleResult->spectralW,
+					sampleResult->spectralHeroAlive, true,
+					spectralUpsamplingTable);
+#endif
+
+		if (!Spectrum_IsBlack(flux) && (emissionPdfW > 0.f))
+			flux /= emissionPdfW * pickPdf;
+		else
+			flux = BLACK;
+
+		lpi->lightIndex = emitLightIndex;
+		lpi->lightGroupID = light->lightID;
+	}
+
+	// Sample a point on the camera lens (same lens sample for all
+	// connects of this path, like CPU dims 6-7)
+	float3 lensPoint;
+	const bool lensOk = Camera_SampleLens(camera, cameraBokehDistribution,
+			time,
+			Sampler_GetLightSample(taskConfig, 6 SAMPLER_PARAM),
+			Sampler_GetLightSample(taskConfig, 7 SAMPLER_PARAM),
+			&lensPoint);
+	lpi->lensPointX = lensPoint.x;
+	lpi->lensPointY = lensPoint.y;
+	lpi->lensPointZ = lensPoint.z;
+
+	if (Spectrum_IsBlack(flux) || !lensOk) {
+		// The sample produced nothing: mask the path ray and retry with
+		// the next sample on the next iteration
+		rays[gid].flags = RAY_FLAGS_MASKED;
+		taskState->state = MK_LIGHT_INIT;
+	} else {
+		VSTORE3F(flux, taskState->throughput.c);
+		taskState->throughShadowTransparency = false;
+		taskState->state = MK_LIGHT_VERTEX;
+	}
+
+	// Save the seed
+	task->seed = seedValue;
+}
+
+//------------------------------------------------------------------------------
+// MK_LIGHT_VERTEX: fused per-vertex consume.
+//
+//   1. Resolve the pending camera-connect splat (the visibility ray in
+//      the lightVisRayBase tail slot was traced by the last pass).
+//   2. Consume the traced path ray: Scene_Intersect -> connect to the
+//      camera (queues the next visibility ray) -> BSDF continuation.
+//
+// From: MK_LIGHT_VERTEX
+// To: MK_LIGHT_VERTEX (self loop) or MK_LIGHT_INIT (path done)
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_LIGHT_VERTEX(
+		KERNEL_ARGS
+		KERNEL_ARGS_LIGHT
+		) {
+	WAVEFRONT_GUARD
+	__global GPUTask *task = &tasks[gid];
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_LIGHT_VERTEX(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_LIGHT_VERTEX)
+		return;
+
+	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	Seed seedValue = task->seed;
+	Seed *seed = &seedValue;
+
+	__constant const PathTracer* restrict pathTracer = &taskConfig->pathTracer;
+	const uint lightIndex = gid - pathTracer->lightTracing.eyeTaskCount;
+	__global LightPathInfo *lpi = &lightPathInfos[lightIndex];
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+	__constant const Scene* restrict scene = &taskConfig->scene;
+
+	__global Ray *visRay = &rays[pathTracer->lightTracing.lightVisRayBase + lightIndex];
+	__global RayHit *visRayHit = &rayHits[pathTracer->lightTracing.lightVisRayBase + lightIndex];
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	__global float *filmScreenRadianceGroup[FILM_MAX_RADIANCE_GROUP_COUNT];
+	filmScreenRadianceGroup[0] = filmScreenRadianceGroup0;
+	filmScreenRadianceGroup[1] = filmScreenRadianceGroup1;
+	filmScreenRadianceGroup[2] = filmScreenRadianceGroup2;
+	filmScreenRadianceGroup[3] = filmScreenRadianceGroup3;
+	filmScreenRadianceGroup[4] = filmScreenRadianceGroup4;
+	filmScreenRadianceGroup[5] = filmScreenRadianceGroup5;
+	filmScreenRadianceGroup[6] = filmScreenRadianceGroup6;
+	filmScreenRadianceGroup[7] = filmScreenRadianceGroup7;
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	//--------------------------------------------------------------------------
+	// A camera connect blocked by a delta occluder is being solved by the
+	// light-side manifold walk (LMNEE): one solver step per launch on the
+	// visibility-ray slot while the light path stalls. On success
+	// LMnee_SolveEnd queues the x1 -> lens segment into the same slot and
+	// refills pendingSplat, so the regular Stage A machinery below
+	// resolves it transparently.
+	//--------------------------------------------------------------------------
+
+	if (lpi->mneeActive) {
+		LMnee_ProcessState(taskConfig, task, &tasksDirectLight[gid],
+				taskState, lpi, visRay, visRayHit, sampleResult,
+				filmWidth, filmHeight,
+				filmSubRegion0, filmSubRegion1,
+				filmSubRegion2, filmSubRegion3,
+				worldRadius, mneeSeeds,
+				camera
+				MATERIALS_PARAM);
+		task->seed = seedValue;
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// Stage A: resolve the pending camera-connect visibility ray
+	//--------------------------------------------------------------------------
+
+	if (lpi->pendingSplat.valid) {
+		float3 connectionThroughput;
+		// The connection pass-through draw is the CPU sampleOffset + 1
+		// dimension of the connecting vertex (connectDepth.depth holds
+		// the vertex index; only transparentDepth is bumped by the
+		// marching below)
+		const float passThroughEvent = Sampler_GetLightSample(taskConfig,
+				pathTracer->lightTracing.lightSampleBootSize +
+				lpi->connectDepth.depth *
+				pathTracer->lightTracing.lightSampleStepSize + 1
+				SAMPLER_PARAM);
+
+		int connThroughShadow = lpi->connectThroughShadow;
+		// SHADOW_RAY: lets the connection ray pass through
+		// transparency.shadow materials (e.g. a glass shell around the
+		// hit vertex) exactly like an eye-path shadow ray; otherwise a
+		// refractive enclosure makes all interior splats impossible
+		const bool continueToTrace = Scene_Intersect(taskConfig,
+				LIGHT_RAY | CAMERA_RAY | SHADOW_RAY,
+				&lpi->connectDepth, lpi->lastBSDFEvent,
+				&connThroughShadow,
+				&lpi->connectVolInfo,
+				&task->tmpHitPoint,
+				passThroughEvent,
+				visRay, visRayHit,
+				&task->tmpBsdf,
+				&connectionThroughput, VLOAD3F(taskState->throughput.c),
+				sampleResult,
+				false
+				MATERIALS_PARAM
+				);
+		lpi->connectThroughShadow = connThroughShadow;
+
+		if (continueToTrace) {
+			// The visibility ray keeps marching next iteration
+			task->seed = seedValue;
+			return;
+		}
+
+		lpi->pendingSplat.valid = false;
+		visRay->flags = RAY_FLAGS_MASKED;
+		if ((visRayHit->meshIndex == NULL_INDEX) && lpi->pendingSplat.isCaustic) {
+			// Nothing blocked the connection: splat the radiance
+			const float3 radiance = MAKE_FLOAT3(lpi->pendingSplat.radianceR,
+					lpi->pendingSplat.radianceG, lpi->pendingSplat.radianceB) *
+					connectionThroughput;
+			Film_SplatLight(lpi->pendingSplat.filmX, lpi->pendingSplat.filmY,
+					lpi->pendingSplat.lightGroupID, radiance,
+					filmScreenRadianceGroup,
+					filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+
+			// Caustic focus cache: a path that crossed a delta surface
+			// and connected to the camera is productive - append its
+			// first delta vertex to the emitting light's hotspot ring
+			// (once per path: the flag is cleared so a later second
+			// delta bounce can still be credited)
+			if (lpi->hasDeltaVertex && lightFocusCount &&
+					pathTracer->lightTracing.focusEnable) {
+				lpi->hasDeltaVertex = false;
+				const uint cursor = atomic_inc(&lightFocusCount[lpi->lightIndex]);
+				lightFocus[lpi->lightIndex * LIGHT_FOCUS_K +
+						(cursor % LIGHT_FOCUS_K)] =
+						MAKE_FLOAT4(lpi->firstDeltaPX, lpi->firstDeltaPY,
+								lpi->firstDeltaPZ,
+								pathTracer->lightTracing.focusRadiusFrac * worldRadius);
+			}
+		} else if (visRayHit->meshIndex != NULL_INDEX) {
+			// The connection was blocked by a delta occluder (glass/
+			// mirror). A solved-manifold endpoint segment re-blocked
+			// (fromMnee) means the occluder has more interfaces than the
+			// single-vertex solve models - a slab's exit face - so the
+			// multi-vertex chain takes over. A fresh connect tries the
+			// cheap single-vertex solve first, falling back to the chain
+			// when it cannot start (LMNEE, doc/features/gpu_lighttracing.md).
+			int lmRet = 0;
+			if (lpi->pendingSplat.fromMnee == 1)
+				lmRet = LMneeChain_Start(taskConfig, task,
+						&tasksDirectLight[gid], taskState, visRay, lpi
+						MATERIALS_PARAM) ? 1 : 0;
+			else if (!lpi->pendingSplat.fromMnee) {
+				lmRet = LMnee_Start(taskConfig, task, &tasksDirectLight[gid],
+						taskState, visRayHit, visRay, lpi, mneeSeeds,
+						worldRadius
+						MATERIALS_PARAM);
+				if (!lmRet)
+					lmRet = LMneeChain_Start(taskConfig, task,
+							&tasksDirectLight[gid], taskState, visRay, lpi
+							MATERIALS_PARAM) ? 1 : 0;
+			}
+			if (lmRet) {
+				lpi->mneeActive = true;
+				task->seed = seedValue;
+				return;
+			}
+		}
+	}
+
+	// A terminated path moves on to the next light sample once the
+	// pending splat has been resolved
+	if (lpi->pathDone) {
+		taskState->state = MK_LIGHT_INIT;
+		task->seed = seedValue;
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// Stage B: consume the traced light-path ray
+	//--------------------------------------------------------------------------
+
+	const uint sampleOffset = pathTracer->lightTracing.lightSampleBootSize +
+			lpi->depth.depth * pathTracer->lightTracing.lightSampleStepSize;
+
+	float3 connectionThroughput;
+	// CPU draws the path-ray pass-through event at sampleOffset + 0
+	const float passThroughEvent = Sampler_GetLightSample(taskConfig,
+			sampleOffset SAMPLER_PARAM);
+
+	int throughShadowTransparency = taskState->throughShadowTransparency;
+	const bool continueToTrace = Scene_Intersect(taskConfig,
+			LIGHT_RAY | INDIRECT_RAY,
+			&lpi->depth, lpi->lastBSDFEvent,
+			&throughShadowTransparency,
+			&lpi->volume,
+			&task->tmpHitPoint,
+			passThroughEvent,
+			&rays[gid], &rayHits[gid], &taskState->bsdf,
+			&connectionThroughput, VLOAD3F(taskState->throughput.c),
+			sampleResult,
+			false
+			MATERIALS_PARAM
+			);
+	taskState->throughShadowTransparency = throughShadowTransparency;
+
+	if (continueToTrace) {
+		// The path ray keeps marching next iteration
+		task->seed = seedValue;
+		return;
+	}
+
+
+	// The ray was fully resolved
+	const bool hit = (rayHits[gid].meshIndex != NULL_INDEX);
+	bool terminate = !hit;
+
+	if (hit) {
+		__global const BSDF *bsdf = &taskState->bsdf;
+
+		// Direct light sampling takes care of paths through
+		// shadow-transparent materials (unless the material overrides:
+		// CPU GetPassThroughShadowTransparency().Black() ||
+		// GetPassThroughShadowTransparencyOverride())
+		const float3 shadowTransparency = BSDF_GetPassThroughShadowTransparency(bsdf
+				MATERIALS_PARAM);
+		const bool shOverride = BSDF_GetPassThroughShadowTransparencyOverride(bsdf
+				MATERIALS_PARAM);
+		if (!Spectrum_IsBlack(shadowTransparency) && !shOverride)
+			terminate = true;
+		else {
+			// Something was hit
+			VSTORE3F(connectionThroughput * VLOAD3F(taskState->throughput.c),
+					taskState->throughput.c);
+
+			// Caustic focus cache: remember the first delta-specular
+			// vertex of this path - a successful camera connect credits
+			// it into the emitting light's hotspot ring
+			if (!lpi->hasDeltaVertex && BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+				const float3 hp = VLOAD3F(&bsdf->hitPoint.p.x);
+				lpi->firstDeltaPX = hp.x;
+				lpi->firstDeltaPY = hp.y;
+				lpi->firstDeltaPZ = hp.z;
+				lpi->hasDeltaVertex = true;
+			}
+
+			//--------------------------------------------------------------
+			// Connect the light path vertex to the camera
+			//--------------------------------------------------------------
+
+			const bool cameraInvisible = (bsdf->sceneObjectIndex != NULL_INDEX) &&
+					sceneObjs[bsdf->sceneObjectIndex].cameraInvisible;
+			// CPU ConnectToEye: skip camera-invisible objects and delta
+			// BSDF vertices
+			if (!cameraInvisible && !BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+				const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
+				const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX,
+						lpi->lensPointY, lpi->lensPointZ);
+				const float time = rays[gid].time;
+
+				float3 eyeDir;
+				float eyeDistance;
+				if (camera->type == ORTHOGRAPHIC) {
+					// The lens point anchors the camera plane; the ray
+					// direction is the camera axis (CPU ConnectToEye).
+					// Camera forward is +Z in camera space.
+					eyeDir = normalize(Transform_ApplyVector(
+							&camera->base.cameraToWorld,
+							MAKE_FLOAT3(0.f, 0.f, 1.f)));
+					const float D = -dot(eyeDir, lensPoint);
+					eyeDistance = fabs(dot(eyeDir, hitP) + D);
+				} else {
+					eyeDir = hitP - lensPoint;
+					eyeDistance = length(eyeDir);
+					if (eyeDistance > 0.f)
+						eyeDir /= eyeDistance;
+				}
+
+				if (eyeDistance > 0.f) {
+					// The projection API consumes an eye ray: build it in
+					// the visibility-ray slot
+					Ray_Init3(visRay,
+							(camera->type == ORTHOGRAPHIC) ? hitP : lensPoint,
+							eyeDir, eyeDistance, time);
+					float filmX, filmY;
+					if (Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+							filmWidth, filmHeight,
+							filmSubRegion0, filmSubRegion1,
+							filmSubRegion2, filmSubRegion3)) {
+						BSDFEvent event;
+						float directPdfW;
+						const float3 bsdfEval = BSDF_Evaluate(bsdf,
+								-VLOAD3F(&visRay->d.x), &event, &directPdfW
+								MATERIALS_PARAM);
+
+						// CPU sampleResult.isCaustic + Metropolis
+						// addonlycaustics contract: only (nearly-)caustic
+						// connections reach the screen channel, so the
+						// visibility ray is not even queued otherwise.
+						// In lighttracing.only mode (eyeTaskCount == 0)
+						// there are no eye paths to own the non-caustic
+						// contribution, so every connection is splatted
+						// (LIGHTCPU-style output for validation).
+						if (!Spectrum_IsBlack(bsdfEval) &&
+								((pathTracer->lightTracing.eyeTaskCount == 0) ||
+								LightPathInfo_IsCausticPath(lpi, event,
+								BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
+								pathTracer->hybridBackForward.glossinessThreshold))) {
+							float pdfW, fluxToRadianceFactor;
+							Camera_GetPDF(camera, visRay, eyeDistance,
+									&pdfW, &fluxToRadianceFactor);
+
+							if (fluxToRadianceFactor > 0.f) {
+								// Queue the reversed visibility ray: it
+								// spans the vertex -> lens segment
+								const float3 eyeRayD = VLOAD3F(&visRay->d.x);
+								const float3 origin = BSDF_GetRayOrigin(bsdf, -eyeRayD);
+								const float mint = eyeDistance - visRay->maxt;
+								const float maxt = eyeDistance - visRay->mint;
+								Ray_Init4(visRay, origin, -eyeRayD, mint, maxt, time);
+
+								lpi->pendingSplat.filmX = filmX;
+								lpi->pendingSplat.filmY = filmY;
+								const float3 radiance =
+										VLOAD3F(taskState->throughput.c) *
+										bsdfEval * fluxToRadianceFactor;
+								lpi->pendingSplat.radianceR = radiance.x;
+								lpi->pendingSplat.radianceG = radiance.y;
+								lpi->pendingSplat.radianceB = radiance.z;
+								lpi->pendingSplat.lightGroupID = lpi->lightGroupID;
+								lpi->pendingSplat.isCaustic = true;
+								lpi->pendingSplat.fromMnee = false;
+								lpi->pendingSplat.valid = true;
+
+								lpi->connectVolInfo = lpi->volume;
+								lpi->connectDepth = lpi->depth;
+								lpi->connectThroughShadow = false;
+							}
+						}
+					}
+					if (!lpi->pendingSplat.valid)
+						visRay->flags = RAY_FLAGS_MASKED;
+				}
+			}
+
+			//--------------------------------------------------------------
+			// Path continuation
+			//--------------------------------------------------------------
+
+			if (!terminate &&
+					(lpi->depth.depth >= pathTracer->maxPathDepth.depth - 1))
+				terminate = true;
+
+			if (!terminate) {
+				float3 sampledDir;
+				float bsdfPdfW, cosSampledDir;
+				BSDFEvent bsdfEvent;
+				float3 bsdfSample = BSDF_Sample(bsdf,
+						Sampler_GetLightSample(taskConfig, sampleOffset + 4 SAMPLER_PARAM),
+						Sampler_GetLightSample(taskConfig, sampleOffset + 5 SAMPLER_PARAM),
+						&sampledDir, &bsdfPdfW, &cosSampledDir, &bsdfEvent
+						MATERIALS_PARAM);
+
+				if (Spectrum_IsBlack(bsdfSample))
+					terminate = true;
+				else {
+					LightPathInfo_AddVertex(lpi, bsdf, bsdfEvent,
+							pathTracer->hybridBackForward.glossinessThreshold
+							MATERIALS_PARAM);
+
+					// Hybrid back-forward mode keeps tracing only (nearly)
+					// specular light paths. The diffuse cut is only valid
+					// while eye tasks exist to own the diffuse
+					// contribution: in lighttracing.only mode
+					// (eyeTaskCount == 0) the light path is the sole
+					// estimator and must run full depth, matching CPU
+					// LIGHTCPU.
+					if (pathTracer->hybridBackForward.enabled &&
+							(pathTracer->lightTracing.eyeTaskCount > 0) &&
+							!lpi->isNearlyS &&
+							(lpi->depth.diffuseDepth + lpi->depth.glossyDepth > 1))
+						terminate = true;
+				}
+
+				if (!terminate && LightPathInfo_UseRR(lpi, pathTracer->rrDepth)) {
+					const float rrProb = RussianRouletteProb(
+							pathTracer->rrImportanceCap, bsdfSample);
+					if (rrProb < Sampler_GetLightSample(taskConfig,
+							sampleOffset + 6 SAMPLER_PARAM))
+						terminate = true;
+					else
+						bsdfSample /= rrProb;
+				}
+
+				if (!terminate) {
+					VSTORE3F(VLOAD3F(taskState->throughput.c) * bsdfSample,
+							taskState->throughput.c);
+					if (isnan(taskState->throughput.c[0]) ||
+							isnan(taskState->throughput.c[1]) ||
+							isnan(taskState->throughput.c[2]))
+						terminate = true;
+					else {
+						// Emit the continuation ray
+						Ray_Init2(&rays[gid], BSDF_GetRayOrigin(bsdf, sampledDir),
+								sampledDir, rays[gid].time);
+					}
+				}
+			}
+		}
+	}
+
+	if (terminate) {
+		lpi->pathDone = true;
+		rays[gid].flags = RAY_FLAGS_MASKED;
+		// The pending splat is resolved first on the next iteration
+		if (!lpi->pendingSplat.valid)
+			taskState->state = MK_LIGHT_INIT;
+	}
+
+	// Save the seed
+	task->seed = seedValue;
+}
+
+//------------------------------------------------------------------------------
 // Wavefront queue builder (B2/E3 M1+M2)
 //
 // Runs once per iteration when wavefront queues are enabled. Two

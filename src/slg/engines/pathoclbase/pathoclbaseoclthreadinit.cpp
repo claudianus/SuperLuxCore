@@ -282,6 +282,14 @@ void PathOCLBaseOCLRenderThread::InitLights() {
 		intersectionDevice.FreeBuffer(&infiniteLightSourcesDistributionBuff);
 	}
 
+	// GPU light tracing emit distribution (only needed when light tasks exist)
+	if ((renderEngine->lightTaskCount > 0) && (cscene->emitLightsDistributionSize > 0)) {
+		intersectionDevice.AllocBufferRO(&emitLightsDistributionBuff, cscene->emitLightsDistribution.data(),
+			cscene->emitLightsDistributionSize, "EmitLightsDistribution");
+	} else {
+		intersectionDevice.FreeBuffer(&emitLightsDistributionBuff);
+	}
+
 	if (cscene->dlscAllEntries.size() > 0) {
 		intersectionDevice.AllocBufferRO(&dlscAllEntriesBuff, &cscene->dlscAllEntries[0],
 			cscene->dlscAllEntries.size() * sizeof(slg::ocl::DLSCacheEntry), "DLSC all entries");
@@ -475,6 +483,18 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth();
 	}
 
+	// GPU light tracing (doc/features/gpu_lighttracing.md): light tasks
+	// occupy the tail gids [eyeTaskCount, taskCount). Each light task
+	// gets one extra ray slot in the tail region
+	// rays[lightVisRayBase + (gid - eyeTaskCount)] for the
+	// camera-visibility ray (dual-slot layout: one iteration per vertex).
+	// The ReSTIR/GI tails start after that region.
+	auto &lt = renderEngine->taskConfig.pathTracer.lightTracing;
+	lt.eyeTaskCount = renderEngine->eyeTaskCount;
+	lt.lightTaskCount = renderEngine->lightTaskCount;
+	lt.lightVisRayBase = taskCount;
+	const u_int rayTailBase = taskCount + renderEngine->lightTaskCount;
+
 	// ReSTIR visibility-weighted target (E2a): the K candidate shadow
 	// rays per task share the tail of raysBuff/hitsBuff starting at
 	// taskCount, so a single EnqueueTraceRayBuffer pass over
@@ -516,7 +536,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		if (restir.visCandCount == 0u)
 			restir.visibilityEnable = false;
 
-		restir.visCandRayBase = taskCount;
+		restir.visCandRayBase = rayTailBase;
 		// Candidate records are appended right after the per-pixel
 		// reservoirs (the world-space spatial grid was removed in E2b:
 		// screen-space neighbour-pixel merge replaces it).
@@ -524,7 +544,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	} else {
 		renderEngine->taskConfig.pathTracer.restir.visibilityEnable = false;
 		renderEngine->taskConfig.pathTracer.restir.visCandCount = 0;
-		renderEngine->taskConfig.pathTracer.restir.visCandRayBase = taskCount;
+		renderEngine->taskConfig.pathTracer.restir.visCandRayBase = rayTailBase;
 		renderEngine->taskConfig.pathTracer.restir.visCandDataOffset = 0;
 	}
 
@@ -584,9 +604,9 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		}
 		if (gi.enabled) {
 			// The GI ray tail starts right after the DI tail
-			gi.giCandRayBase = taskCount * (1u +
+			gi.giCandRayBase = rayTailBase + taskCount *
 					((restir.visCandCount > 0u) ?
-					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u));
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u);
 			gi.giReservoirOffset = reservoirCount + diCandSlots;
 			gi.giCandDataOffset = gi.giReservoirOffset + giReservoirSlots;
 			// Per-task record block: K candidates + 1 result record,
@@ -599,9 +619,9 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		} else {
 			gi.reservoirCount = 0;
 			gi.giCandCount = 0;
-			gi.giCandRayBase = taskCount * (1u +
+			gi.giCandRayBase = rayTailBase + taskCount *
 					((restir.visCandCount > 0u) ?
-					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u));
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u);
 			gi.giReservoirOffset = reservoirCount + diCandSlots;
 			gi.giCandDataOffset = gi.giReservoirOffset;
 			gi.giCandStride = 0;
@@ -665,8 +685,13 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		// Plus the a pass field for each pixel
 		size += sizeof(u_int) * filmRegionPixelCount;
 
-		// Plus the Sobol directions array
-		size += sizeof(u_int) * renderEngine->pathTracer.eyeSampleSize * SOBOL_BITS;
+		// Plus the Sobol directions array (light-path dims are shifted
+		// by 2 - IDX_SCREEN_X/Y - so they need lightSampleSize + 2)
+		const u_int sobolDimCount = (renderEngine->lightTaskCount > 0) ?
+				Max(renderEngine->pathTracer.eyeSampleSize,
+				renderEngine->pathTracer.lightSampleSize + 2) :
+				renderEngine->pathTracer.eyeSampleSize;
+		size += sizeof(u_int) * sobolDimCount * SOBOL_BITS;
 
 		// Plus the Owen blue-noise scramble rank tile
 		size += sizeof(u_int) * SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE;
@@ -723,7 +748,13 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		sssd->seedBase = renderEngine->seedBase;
 		sssd->bucketIndex = 0;
 		sssd->filmRegionPixelCount = filmRegionPixelCount;
-		sssd->sobolDimensions = renderEngine->pathTracer.eyeSampleSize;
+		// Light-path dims are shifted by 2 (IDX_SCREEN_X/Y): see the
+		// sizing above
+		const u_int sobolDimCount = (renderEngine->lightTaskCount > 0) ?
+				Max(renderEngine->pathTracer.eyeSampleSize,
+				renderEngine->pathTracer.lightSampleSize + 2) :
+				renderEngine->pathTracer.eyeSampleSize;
+		sssd->sobolDimensions = sobolDimCount;
 
 		// Initialize all pass values. The pass buffer is attached at the
 		// end of slg::ocl::SobolSamplerSharedData
@@ -734,11 +765,11 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		// end of slg::ocl::SobolSamplerSharedData + all pass values
 
 		u_int *sobolDirections = (u_int *)(buffer + sizeof(slg::ocl::SobolSamplerSharedData) + sizeof(u_int) * filmRegionPixelCount);
-		SobolSequence::GenerateDirectionVectors(sobolDirections, renderEngine->pathTracer.eyeSampleSize);
+		SobolSequence::GenerateDirectionVectors(sobolDirections, sobolDimCount);
 
 		// The Owen blue-noise scramble rank tile is appended after the
 		// directions array
-		u_int *scrambleTile = sobolDirections + renderEngine->pathTracer.eyeSampleSize * SOBOL_BITS;
+		u_int *scrambleTile = sobolDirections + sobolDimCount * SOBOL_BITS;
 		SobolSequence::GenerateScrambleTile(scrambleTile, SOBOL_OWEN_TILE_SIZE);
 
 		// The per-pixel luma moments for adaptive sampling start at 0
@@ -976,7 +1007,11 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// shadow rays; ReSTIR GI (G1) appends taskCount * (2*giCandCount + 1)
 	// bounce + NEE + temporal-merge visibility rays behind them
 	// (giCandRayBase matches this tail start in InitGPUTaskBuffer()).
-	const u_int raySlotCount = taskCount * (1u +
+	// GPU light tracing adds lightTaskCount camera-visibility ray slots
+	// between the per-task rays and the ReSTIR tails (lightVisRayBase).
+	const u_int raySlotCount = taskCount +
+			renderEngine->lightTaskCount +
+			taskCount * (
 			((renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
 			(renderEngine->taskConfig.pathTracer.restir.visCandCount +
 			RESTIR_PIXEL_MERGES_MAX) : 0u) +
@@ -1021,6 +1056,34 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
 
 	intersectionDevice.AllocBufferRW(&eyePathInfosBuff, nullptr, sizeof(slg::ocl::EyePathInfo) * taskCount, "PathInfo");
+
+	// GPU light tracing: LightPathInfo per light task, indexed by
+	// (gid - eyeTaskCount). Sized 0 when disabled.
+	if (renderEngine->lightTaskCount > 0)
+		intersectionDevice.AllocBufferRW(&lightPathInfosBuff, nullptr,
+				sizeof(slg::ocl::pathoclbase::LightPathInfo) * renderEngine->lightTaskCount,
+				"LightPathInfo");
+	else
+		intersectionDevice.FreeBuffer(&lightPathInfosBuff);
+
+	// Caustic focus cache (guided emission): per-light ring of the last
+	// LIGHT_FOCUS_K productive target positions (float4: xyz + aim
+	// radius) plus a monotonic fill counter used as the ring cursor.
+	// Zero-filled: count 0 means "no hotspot learned yet".
+	if ((renderEngine->lightTaskCount > 0) &&
+			renderEngine->taskConfig.pathTracer.lightTracing.focusEnable &&
+			(renderEngine->compiledScene->lightDefs.size() > 0)) {
+		const u_int lightCount = renderEngine->compiledScene->lightDefs.size();
+		std::vector<float> zeroFocus(4 * LIGHT_FOCUS_K * lightCount, 0.f);
+		intersectionDevice.AllocBufferRW(&lightFocusBuff, zeroFocus.data(),
+				sizeof(float) * zeroFocus.size(), "LightFocusPoints");
+		std::vector<u_int> zeroCount(lightCount, 0u);
+		intersectionDevice.AllocBufferRW(&lightFocusCountBuff, zeroCount.data(),
+				sizeof(u_int) * zeroCount.size(), "LightFocusCounts");
+	} else {
+		intersectionDevice.FreeBuffer(&lightFocusBuff);
+		intersectionDevice.FreeBuffer(&lightFocusCountBuff);
+	}
 
 	//--------------------------------------------------------------------------
 	// Allocate the ReSTIR DI per-pixel temporal reservoirs (zeroed: an

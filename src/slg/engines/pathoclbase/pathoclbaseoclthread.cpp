@@ -73,6 +73,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	envLightIndicesBuff = nullptr;
 	lightsDistributionBuff = nullptr;
 	infiniteLightSourcesDistributionBuff = nullptr;
+	emitLightsDistributionBuff = nullptr;
 	dlscAllEntriesBuff = nullptr;
 	dlscDistributionsBuff = nullptr;
 	dlscBVHNodesBuff = nullptr;
@@ -124,6 +125,9 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	sampleResultsBuff = nullptr;
 	taskStatsBuff = nullptr;
 	eyePathInfosBuff = nullptr;
+	lightPathInfosBuff = nullptr;
+	lightFocusBuff = nullptr;
+	lightFocusCountBuff = nullptr;
 	restirReservoirsBuff = nullptr;
 	mneeSeedsBuff = nullptr;
 	directLightVolInfosBuff = nullptr;
@@ -232,6 +236,9 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&sampleResultsBuff);
 	intersectionDevice.FreeBuffer(&taskStatsBuff);
 	intersectionDevice.FreeBuffer(&eyePathInfosBuff);
+	intersectionDevice.FreeBuffer(&lightPathInfosBuff);
+	intersectionDevice.FreeBuffer(&lightFocusBuff);
+	intersectionDevice.FreeBuffer(&lightFocusCountBuff);
 	intersectionDevice.FreeBuffer(&restirReservoirsBuff);
 	intersectionDevice.FreeBuffer(&mneeSeedsBuff);
 	intersectionDevice.FreeBuffer(&directLightVolInfosBuff);
@@ -276,6 +283,7 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&envLightDistributionsBuff);
 	intersectionDevice.FreeBuffer(&lightsDistributionBuff);
 	intersectionDevice.FreeBuffer(&infiniteLightSourcesDistributionBuff);
+	intersectionDevice.FreeBuffer(&emitLightsDistributionBuff);
 	intersectionDevice.FreeBuffer(&dlscAllEntriesBuff);
 	intersectionDevice.FreeBuffer(&dlscDistributionsBuff);
 	intersectionDevice.FreeBuffer(&dlscBVHNodesBuff);

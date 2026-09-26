@@ -114,6 +114,30 @@ typedef struct {
 		float glossinessThreshold;
 	} hybridBackForward;
 
+	// GPU light tracing (camera-projection splatting): a second task
+	// population in the tail range [eyeTaskCount, eyeTaskCount +
+	// lightTaskCount) of every per-task buffer traces light paths and
+	// splats their vertices into RADIANCE_PER_SCREEN_NORMALIZED.
+	// Implies hybridBackForward on the eye side (caustic suppression).
+	struct {
+		int enabled;
+		// Eye task count (tasks [0, eyeTaskCount)); light tasks live in
+		// the tail. eyeTaskCount + lightTaskCount == totalTaskCount.
+		unsigned int eyeTaskCount;
+		unsigned int lightTaskCount;
+		// First camera-visibility ray slot inside rays[]/rayHits[]
+		// (one slot per light task, appended after the eye task range)
+		unsigned int lightVisRayBase;
+		unsigned int lightSampleBootSize, lightSampleStepSize, lightSampleSize;
+		// Caustic focus cache (guided light emission, see
+		// pathoclbase_datatypes.cl LIGHT_FOCUS_K): aim a fraction of
+		// emissions at remembered productive targets. Mixture pdf keeps
+		// the estimator unbiased: pdf = (1-ratio)*native + ratio*aim.
+		int focusEnable;
+		float focusRatio;		// guided-draw probability
+		float focusRadiusFrac;	// aim-sphere radius / worldRadius
+	} lightTracing;
+
 	// Hero-wavelength spectral transport (P2-1 A2): when non-zero the kernel
 	// is compiled with -D SLG_SPECTRAL, draws one extra boot dimension for
 	// the path wavelengths and treats Spectrum channels as spectral bins.

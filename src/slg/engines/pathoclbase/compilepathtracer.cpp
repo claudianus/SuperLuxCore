@@ -42,6 +42,22 @@ void CompiledScene::CompilePathTracer() {
 
 	compiledPathTracer.hybridBackForward.enabled = pathTracer->hybridBackForwardEnable;
 	compiledPathTracer.hybridBackForward.glossinessThreshold = pathTracer->hybridBackForwardGlossinessThreshold;
+
+	// GPU light tracing (doc/features/gpu_lighttracing.md): a tail task
+	// population traces light sub-paths and splats their vertices into
+	// RADIANCE_PER_SCREEN_NORMALIZED via camera projection. eyeTaskCount,
+	// lightTaskCount and lightVisRayBase are filled at device init once
+	// the task count is known.
+	compiledPathTracer.lightTracing.enabled = pathTracer->lightTracingEnable;
+	compiledPathTracer.lightTracing.eyeTaskCount = 0;
+	compiledPathTracer.lightTracing.lightTaskCount = 0;
+	compiledPathTracer.lightTracing.lightVisRayBase = 0;
+	compiledPathTracer.lightTracing.lightSampleBootSize = pathTracer->lightSampleBootSize;
+	compiledPathTracer.lightTracing.lightSampleStepSize = pathTracer->lightSampleStepSize;
+	compiledPathTracer.lightTracing.lightSampleSize = pathTracer->lightSampleSize;
+	compiledPathTracer.lightTracing.focusEnable = pathTracer->lightFocusEnable;
+	compiledPathTracer.lightTracing.focusRatio = pathTracer->lightFocusRatio;
+	compiledPathTracer.lightTracing.focusRadiusFrac = pathTracer->lightFocusRadiusFrac;
 	
 	compiledPathTracer.forceBlackBackground = pathTracer->forceBlackBackground;
 

@@ -29,6 +29,13 @@ typedef struct {
 	Transform rasterToCamera;
 	Transform cameraToWorld;
 
+	// NOTE: worldToRaster is NOT stored here - it is derived on the
+	// device as rasterToCamera^-1 . cameraToWorld^-1. Storing it grows
+	// sizeof(Camera) past the buffer-argument encoding limit of Apple's
+	// OpenCL-on-Metal translator (dispatch crash in
+	// AGX::ComputeContext::prepareForEnqueue; see
+	// doc/features/gpu_lighttracing.md).
+
 	float yon, hither;
 	float shutterOpen, shutterClose;
 
@@ -71,10 +78,16 @@ typedef struct {
 	float bokehScaleX, bokehScaleY;
 
 	int enableOculusRiftBarrel;
+
+	// Used by light to camera connections
+	float pixelArea;
 } PerspectiveCamera;
 
 typedef struct {
 	ProjectiveCamera projCamera;
+
+	// Used by light to camera connections
+	float cameraPdf;
 } OrthographicCamera;
 
 typedef struct {

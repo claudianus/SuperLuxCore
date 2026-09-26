@@ -65,6 +65,9 @@ PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 		guideCubeSize(1.f), guideHasTable(false), guideCache(nullptr) {
 	guideCubeMin[0] = guideCubeMin[1] = guideCubeMin[2] = 0.f;
 	writeKernelsToFile = false;
+	// GPU light tracing: no light tasks until UpdateTaskCount splits
+	eyeTaskCount = 0;
+	lightTaskCount = 0;
 
 	//--------------------------------------------------------------------------
 	// Allocate all devices
@@ -254,7 +257,10 @@ void PathOCLBaseRenderEngine::InitFilm() {
 	// pathTracer has not yet been initialized
 	const bool hybridBackForwardEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
 			Get("path.hybridbackforward.enable")).Get<bool>();
-	if (hybridBackForwardEnable)
+	// GPU light tracing splats into the same screen-normalized channel
+	const bool lightTracingEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
+			Get("path.lighttracing.enable")).Get<bool>();
+	if (hybridBackForwardEnable || lightTracingEnable)
 		GetFilm().AddChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED);
 		lightSamplerSharedData = MetropolisSamplerSharedData::FromProperties(Properties(), seedBaseGenerator, GetFilm());
 

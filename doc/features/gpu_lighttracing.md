@@ -1,6 +1,28 @@
 # GPU Light Tracing — camera-projection splatting on the path engines
 
-Status: **design** (not implemented). This document describes how to add a
+Status: **functional on Apple Metal (cl2msl), CPU-validated** — phases 1
+(host plumbing), 2a (device `LightSource_Emit` ports + emit distribution
+incl. lasers), 2b (device `Camera_GetSamplePosition`/`Camera_GetPDF` for
+perspective and orthographic cameras) and 3 (`MK_LIGHT_INIT`/`MK_LIGHT_VERTEX`
+state machine, deferred camera-connection splats into
+`RADIANCE_PER_SCREEN_NORMALIZED`, light-path sampler dimension layout
+matching `PathTracer::RenderLightSample`, Sobol dimension expansion, dense +
+wavefront dispatch) are implemented. Caustic-class connections are gated on
+`LightPathInfo::IsCausticPath` in mixed mode (the Metropolis
+`addonlycaustics` contract: non-caustic splats would double-count against
+the eye pass); under `path.lighttracing.only` the gate is bypassed so the
+pass reproduces `LIGHTCPU` (full light-path output) for validation.
+
+Validated at 1280×720 on a refractive-enclosure scene (LuxBall shell,
+40.7k-vert cutout glass mesh + interior volume + inner object, two
+spotlights, dark floor): GPU `lighttracing.only` vs CPU `LIGHTCPU`
+agrees within ~1% mean per region (full frame 0.2%), matching lit-pixel
+counts and caustic pool geometry — including splats on surfaces *inside*
+the refractive shell (see "Connection rays through refractive enclosures"
+below). Remaining: sampler variants, spectral, RTPATHOCL, Blender adapter
+exposure.
+
+This document describes how to add a
 GPU light-subpath pass with camera projection and film splatting to the
 `PATHOCL` / `RTPATHOCL` engines (OpenCL + Metal), and how the chosen
 architecture keeps the door open to full GPU bidirectional path tracing
@@ -414,8 +436,23 @@ implementations, dispatched on `camera->type`:
   `cameraBokehDistribution` already exist for the eye path; reuse.
 
 `compilecamera.cpp` additionally uploads `pixelArea` (persp), `cameraPdf`
-(ortho) and world-space `dir` — three scalar/vec3 fields appended to the
-GPU camera structs. v1 support matrix: **perspective + orthographic**;
+(ortho). The world-space `dir` and `worldToRaster` transform are **not**
+stored: both pushed `sizeof(Camera)` past the Apple cl2msl per-kernel
+buffer-argument encoding limit (`AGX::ComputeContext::prepareForEnqueue`
+crash at dispatch — the same budget class as the `GPUTaskConfiguration`
+growth crash noted under Risks). Instead:
+
+- `worldToRaster` is derived on the device as
+  `rasterToCamera⁻¹ ∘ cameraToWorld⁻¹` (`Transform_InvApplyPoint` twice),
+  which requires `rasterToCamera.mInv`/`cameraToWorld.mInv` to be
+  uploaded — `compilecamera.cpp` previously copied only the forward `m`
+  half of every camera `Transform`, leaving `mInv` as garbage (upstream
+  never inverted these on-device, so the missing upload was latent).
+  Both halves are now uploaded for all camera branches.
+- The world-space camera direction is derived as
+  `cameraToWorld × (0,0,1)` (camera forward is +Z in camera space).
+
+v1 support matrix: **perspective + orthographic**;
 environment is a small follow-up (the PDF is trivial, the projection is
 spherical mapping); **stereo is rejected** at init for v1
 (`STEREO_PERSPECTIVE` could delegate to the wrapped camera later).
@@ -437,6 +474,184 @@ Emission selection reuses `Distribution1D_SampleContinuous` (the same
 device helper the illuminate path uses) over the new
 `emitLightsDistribution` upload.
 
+**Transform convention caveat (bug found + fixed):** spot lights do not
+store a plain `lightToWorld`. `compilelights.cpp` copies
+`SpotLight::alignedLight2World` into `light2World.m` — the local variable
+is misleadingly named `alignedWorld2Light`. The device `SpotLight_Emit`
+samples the cone in *local* space and must therefore apply
+`Transform_ApplyVector` (`light2World.m`); the original port used
+`Transform_InvApplyVector` (`light2World.mInv`, i.e. world→light) which
+slewed the emission cone — one spotlight produced no output at all, the
+other only its direct pool with all refracted contributions missing.
+`SpotLight_Illuminate` correctly uses `InvApplyVector` because it maps
+world directions *into* spot space — do not copy that call direction into
+`Emit`. (CPU reference: `SpotLight::Emit` uses `alignedLight2World`,
+`SpotLight::Illuminate` uses `Inverse(alignedLight2World)` —
+`spotlight.cpp`.)
+
+### Caustic focus cache (guided emission)
+
+A learned, GPU-resident emission guide for hard caustic setups — the
+regime where the productive solid angle of an emitter is tiny (a small
+refractor far from the light) and native emission wastes ~99% of rays.
+Related work: *focal path guiding* and 3D-Gaussian online photon guiding
+for caustics (both learn where caustic-generating geometry lives and
+steer particles toward it). Our variant is deliberately minimal:
+
+- **Store**: per-light ring of `LIGHT_FOCUS_K` (=32) `float4` entries —
+  the world position of the *first delta-specular vertex* of each path
+  whose camera connect splatted (i.e. a verified productive refraction
+  entry point) + the aim radius in `.w`. Writes are
+  `atomic_inc(&count[light]) % K`, one credit per path.
+- **Read**: `MK_LIGHT_INIT`, for `TYPE_POINT`/`TYPE_SPOT` only, with
+  probability `focusRatio` re-aims the emitted direction into a uniform
+  cone around `normalize(hotspot - origin)` whose angular radius comes
+  from `focus.radius * worldRadius` (per-entry `.w` is stored for future
+  per-hotspot adaptation).
+- **Unbiasedness (important subtlety)**: the emitted direction is a
+  *one-sample mixture* `q(d) = (1-g)·p_native(d) + g·p_aim(d)`. Every
+  emission — including the ones left on the native branch — must be
+  weighted by `q`, i.e. `emissionPdfW` is always overwritten with the
+  mixture. Weighting only the guided draws by `q` while native draws keep
+  `p_native` under-weights all directions outside the aim cones by
+  `1-g` (measured: a systematic few-% darkening before the fix). The aim
+  pdf itself must be the true mixture density of the slot procedure:
+  `(1/N)·Σ_k [d inside cone_k]·UniformConePdf(cosMax_k)` plus
+  `(fDegenerate/N)·p_native` for slots whose hotspot lies inside the aim
+  sphere (they fall back to a native-density draw).
+- Flux for the redirected direction is re-evaluated per emitter
+  (`PointLight`: `emittedFactor/4π`; `SpotLight`:
+  `emittedFactor·falloff(localDir)/|cosθ_local|`); a rim sample leaking
+  outside a spot cone gets `falloff = 0` and dies cleanly.
+
+Results (1280×720, `path.lighttracing.only`, point light moved to a far
+corner so the glass sphere subtends ~1% of the emission sphere): at
+16 spp the caustic pool forms as a coherent pattern instead of sparse
+speckles, caustic-region lit pixels +9.5% and std −8%; walls/floor keep
+their means (256 spp: all regions within ~1% of the unguided run — the
+mixture is unbiased) at mildly higher flat-region variance, the expected
+price of redirecting half the emissions.
+
+Properties: `path.lighttracing.focus.enable` (default true),
+`path.lighttracing.focus.ratio` (0..0.9, default 0.5),
+`path.lighttracing.focus.radius` (fraction of `worldRadius`, default
+0.01 — shrink toward `hotspot cluster size / worldRadius` for tight
+aiming; too small under-covers the caustic-forming surface).
+
+### Connection rays through refractive enclosures
+
+A light path readily refracts *into* a glass shell, but splats on
+interior surfaces were lost because the camera-visibility ray is a
+straight line that gets blocked by the enclosing delta surface. Two
+switches combine to fix this, both now wired on GPU **and** CPU
+(`ConnectToEye`, `pathtracer.cpp`) for parity:
+
+- The connection march runs `Scene_Intersect` with `SHADOW_RAY` added to
+  `LIGHT_RAY | CAMERA_RAY`, so surfaces whose material has
+  `transparency.shadow` non-black are passed through (accumulating the
+  shadow-transparency into `connectionThroughput`), exactly like an
+  eye-path shadow ray.
+- On the *path* ray, a shadow-transparent hit normally terminates the
+  light path (the estimator hands such surfaces to direct-light
+  sampling). `transparency.shadowoverride` (`material_types.cl`,
+  `BSDF_GetPassThroughShadowTransparencyOverride`) suppresses that
+  termination so the path refracts onward — this is precisely the flag's
+  intended use.
+
+With `transparency.shadow = 1` + `transparency.shadowoverride = 1` on the
+shell material, vertices on objects *inside* the enclosure connect and
+splat on both CPU and GPU. This is still a straight-line connection —
+it does not solve general `D…S…`-specular visibility (that needs manifold
+NEE / refractive connection solving, see *Manifold camera connect* below),
+but it covers the dominant "decorative glass shell around diffuse content"
+case.
+
+### Manifold camera connect (LMNEE, design)
+
+The straight connect still fails whenever a *non*-shadow-transparent delta
+surface sits between the vertex and the lens: a glossy/diffuse vertex
+behind real glass, underwater objects seen from air, mirrors relaying a
+view. The eye direction solves the symmetric problem with GPU MNEE
+(`MK_MNEE_NEXT_VERTEX`): when a shadow ray is blocked by a specular
+occluder, a Newton solver walks the occluder surface until the
+half-vector constraint `h = wi + eta·wo` (generalized for refraction)
+residual converges. LMNEE mirrors it with the endpoint roles swapped:
+
+- `x0` = the light-path vertex whose direct connect was blocked
+  (`taskState->bsdf`), `y` = `lpi->lensPoint` instead of a light
+  position. The solver math (`Mnee_StepAndWriteProposal`, `Mnee_Residual`,
+  `Mnee_GeometricTerm`, `MneeChain_*`) is endpoint-agnostic — both enter
+  as bare `float3` — so the whole Newton/Thomas/Jacobian machinery is
+  reused verbatim.
+- Trigger: in `MK_LIGHT_VERTEX` stage A, the queued visibility ray hit a
+  delta occluder (`task->tmpBsdf`, same slot eye MNEE reads) instead of
+  reaching the lens. The pending splat is consumed and converted into a
+  solve state on the same task (`taskDirectLight->mnee` — the buffer is
+  allocated for every task, light included, so no extra memory).
+- Trace slot: the `lightVisRayBase + lightIndex` slot multiplexes
+  connect ray → seed/proposal rays → final `xn→lens` shadow ray, one
+  trace per iteration. The light path stalls (`lpi->mneeActive`) while
+  solving; `rayHits[gid]` is untouched so the path resumes transparently.
+- Solve-end weight (mirroring `pathtracer_mnee.cpp:804`): eye MNEE
+  assembles `bsdfEval0 · specFactor · G · lightRadiance2 · (plainHV ?
+  r12² : 1) / pickPdf`. `G = dw0_dx1 · |det(dx_first/dy)|` is the
+  endpoint-agnostic manifold Jacobian — direction-invariant, so the
+  same `G` serves both traversal directions.
+- **Endpoint weight correction** (validated — see *Results*): the
+  naive mapping `lightRadiance2 → fluxToRadianceFactor` is wrong.
+  `fluxToRadianceFactor = cameraPdfW / d²_seg2` is the *straight*
+  connect's flux→radiance conversion — it bakes in the free-propagation
+  `1/d²` falloff of the endpoint segment. For a manifold connect the
+  Jacobian `G` already encodes that segment's area-measure conversion
+  (for refraction it carries the full `1/d²`; for reflection the
+  `d²_seg2` factor supplies it, exactly as `pathtracer_mnee.cpp:787-806`
+  notes `directPdfW2` is applied only when `eta == 1`). Using
+  `fluxToRadianceFactor` therefore double-counts `1/d²` and darkens the
+  splat by a factor that grows with endpoint distance (~5× observed at
+  slab depth ≈ 5). The correct endpoint "emission" — symmetric to the
+  light's `lightRadiance2` — is the camera's emitted-importance
+  solid-angle density `cameraPdfW`, with `directPdfW2 → d²_seg2`
+  (pinhole lens point is a delta, same measure convention as a point
+  light). So
+  `camWeight = cameraPdfW · (plainHalfVector ? d²_seg2 : 1)`,
+  `pickPdf → 1`. Contribution splats via `Film_SplatLight` at the film
+  position of the *solved* arriving direction `xn→lens`
+  (`Camera_GetSamplePosition`), not the straight-line projection.
+- Segmentation: straight connects (unoccluded) and manifold connects
+  (blocked by delta) cover disjoint path-space regions — no double
+  counting, no bias. A failed solve contributes zero, exactly like a
+  blocked straight connect today.
+
+### Multi-interface chains (glass slab, lens, closed dielectrics)
+
+A single-vertex solve handles one refracting/reflecting interface, but
+real glass is a *slab*: the solved first-vertex→lens segment still
+travels through the material and re-blocks on the exit face. LMNEE
+detects this — `pendingSplat.fromMnee` marks a solved-manifold segment,
+and a re-block on it (rather than a fresh connect) hands off to the
+multi-vertex chain solver instead of restarting the single-vertex solve:
+
+- `LMneeChain_Start` casts a straight discovery ray `x0 → lens` and
+  records every mirror/glass delta interface it crosses (`chainMatType`,
+  `chainVtx[].eta`), up to `path.mnee.maxspecular`. Non-delta or
+  unsupported occluders abort (contribute zero). ≥2 vertices trigger
+  `MNEE_PHASE_MS_DISCOVER → MS_JACPERT → MS_TRIAL → MS_COMMIT → MS_POST`.
+- The Newton/Thomas/Jacobian core (`MneeChain_Residual*`, `MneeChain_Jac*`,
+  `MneeChain_ThomasSolve*`, `MneeChain_LightJac`) is reused verbatim —
+  endpoint-agnostic, `lightPos` carries the lens point. `MneeChain_LightJac`
+  differentiates the last specular constraint w.r.t. the lens position,
+  giving `dxDy` and hence `G` for the chain.
+- `pendingSplat.fromMnee` is a 3-state hand-off: `0` fresh connect → try
+  `LMnee_Start`, fall back to `LMneeChain_Start`; `1` single-vertex
+  solved but its segment re-blocked → `LMneeChain_Start` directly; `2`
+  chain-solved but still blocked (occluder has more interfaces than
+  `maxspecular`) → drop, no re-solve. This prevents both missed slabs
+  and infinite re-solve loops.
+- `LMneeChain_SolveEnd` applies the same corrected endpoint weight
+  `cameraPdfW · (plainHalfVector ? d²_seg2 : 1)` using the chain's last
+  vertex→lens distance, then queues the final segment through
+  `pendingSplat` for normal Stage-A visibility resolution.
+
 ### Film splatting and normalization
 
 New device function `Film_SplatLight(filmX, filmY, lightGroupID,
@@ -450,8 +665,11 @@ radiance3)` mirroring `AtomicSplatSample`:
   73-101`, weight = uploaded `FilterLUTs` lookup, per-pixel atomic add.
 - `KERNEL_ARGS_FILM` gains a `__global float **filmScreenRadianceGroup`
   pointer array (same pattern as `filmRadianceGroup`,
-  `film_types.cl:110`) plus a `hasChannelRadiancePerScreenNormalized` flag
-  in `Film`.
+  `film_types.cl:110`). A null slot already encodes "channel absent", so
+  no `hasChannelRadiancePerScreenNormalized` flag is needed — adding one
+  to `Film` pushed the `taskConfig` constant struct past the Apple
+  cl2msl encode limit and crashed `MK_HIT_NOTHING` in
+  `AGX::ComputeContext::prepareForEnqueue` (see "Risks" below).
 - `ThreadFilm::Init` stops removing the channel when the light pass is on
   (`pathoclbaseoclthreadfilm.cpp:118-120`), allocates the GPU channel
   buffers, and `RecvFilm` transfers them — `Film::AddFilm` and
@@ -481,12 +699,21 @@ clamp needs convergence buffers; documented difference).
 ### Scheduling: dense and wavefront
 
 Dense mode: two launches appended to `EnqueueAdvancePathsKernel`
-(`MK_LIGHT_VERTEX`, `MK_LIGHT_INIT`) — the self-loop consume has no
-ordering constraint relative to `INIT` (a task only reaches `INIT` by
-terminating in `VERTEX`, and `INIT`'s emit ray is consumed at least one
-full iteration later). Cost: 2 extra `taskCount` lane-scans per iteration,
-proportional overhead only. The single-slot variant adds a third launch
-plus the pending-flag barrier described above.
+(`MK_LIGHT_VERTEX`, `MK_LIGHT_INIT`). **Ordering is load-bearing:**
+`MK_LIGHT_VERTEX` must be enqueued *before* `MK_LIGHT_INIT` within the same
+pass. VERTEX consumes `rayHits[gid]` produced by tracing `rays[gid]` — the
+ray written by the *previous* pass's INIT. Running INIT first overwrites
+`rays[gid]` with a fresh emission ray, so VERTEX pairs the old hit with the
+new ray (BSDF built at `newRay.o + oldT·newRay.d`): the light pass
+degenerates to zero-hit garbage and all splats vanish. This was a real bug
+found by instrumented debugging — the earlier claim that the self-loop has
+"no ordering constraint" was wrong, because INIT both writes `rays[gid]`
+and resamples `rays` for tasks that terminated in VERTEX. The wavefront
+dispatch table is ordered the same way for consistency (queue membership
+is frozen per pass there, so it is not strictly required). Cost: 2 extra
+`taskCount` lane-scans per iteration, proportional overhead only. The
+single-slot variant adds a third launch plus the pending-flag barrier
+described above.
 
 Wavefront mode (`PATHOCL` only — tile engines disable it): the new states
 get queue columns automatically; light tasks compact into their own
@@ -565,6 +792,8 @@ pixel-normalized group buffers). Filter LUT: KBs.
   distribution.
 - Debug: `path.lighttracing.only` (fraction=1, light-only image) for
   validation against `LIGHTCPU`.
+- `path.lighttracing.focus.enable` / `.ratio` / `.radius` — caustic
+  focus cache (guided emission); see "Caustic focus cache" above.
 
 ## Phased implementation plan
 
@@ -592,8 +821,75 @@ the fork's one-feature-per-chunk convention.
 
 ## Test scenes / validation
 
-- **CPU parity, light-only**: `path.lighttracing.only` GPU render vs
-  `LIGHTCPU` on `scenes/causticcube/`, glass-ball/sun caustic, and a
+Validated so far (Apple Metal, 1280×720, dense dispatch):
+
+- **Cornell + glass sphere** (`scenes/caustic-area` style): GPU
+  `lighttracing.only` reproduces the CPU `LIGHTCPU` image — caustic pool
+  under the sphere, color-bleed walls — and mixed mode adds the caustic
+  contribution on top of eye-only.
+- **Refractive enclosure, two spotlights, dark floor** (LuxBall shell:
+  40.7k-vert cutout glass mesh with interior volume + inner object,
+  `transparency.shadow`/`shadowoverride` enabled): per-region means GPU vs
+  `LIGHTCPU` (film filter off): full frame 63.3/63.2, shell interior
+  52.6/52.1, each spotlight's caustic pool within 0.2%; lit-pixel counts
+  match (~571k/573k). Remaining RMSE is independent-run Monte Carlo
+  noise, not bias. Isolated per-spotlight renders confirmed each emission
+  cone after the `SpotLight_Emit` transform fix.
+- **LMNEE single-interface** (`scenes/cornell/lmnee-quad.scn`: half-frame
+  single-face glass quad, right half of the film sees the room *through*
+  the glass). 1280×720 PATHOCL light tracing vs eye-path reference,
+  right/refracted half: lit pixels 447,514 (dense coverage), Pearson
+  spatial correlation vs eye = 0.976, mean ratio vs eye = 1.11 (within
+  Monte Carlo variance). Correct refracted structure (green wall, box)
+  confirms the solved direction, not the straight-line one.
+- **LMNEE two-interface chain** (`scenes/cornell/lmnee-slab.scn`:
+  half-frame thin glass slab — entry + exit faces, `maxspecular=2`).
+  The single-vertex solve re-blocks on the exit face → `fromMnee=1` →
+  `LMneeChain_Start` discovers both faces (`n=2` measured), solves the
+  coupled chain. Right/refracted half: Pearson vs eye = 0.978, mean
+  ratio = 0.78 — matching the *direct*-connect left-half ratio (0.82),
+  i.e. the manifold branch contributes at the same rate as ordinary
+  light tracing. Endpoint-weight fix verified: `fluxToRadianceFactor`
+  gave a ~5× under-darkened right side (mean ≈ 13–15); `cameraPdfW`
+  restores it to eye parity.
+- **LMNEE mirror** (`scenes/cornell/lmnee-mirror.scn`: slab rotated
+  −40° about X so it reflects the ceiling emitter). Right half renders
+  the reflected geometry at correct structure (Pearson = 0.908); mean
+  ratio 0.55 vs eye, tracking its own left-half direct-connect ratio
+  (0.49) — the residual gap is scene-level light-tracing variance, not
+  an endpoint-measure bug. The bright *emitter reflection* path
+  (light→mirror→lens) is a specular-bounce path, not a delta-occluded
+  connect, and is a known coverage gap (see *Risks*).
+- **Diffuse-depth parity vs `LIGHTCPU`** (`scenes/cornell/lmnee-open.scn`,
+  a pure-diffuse Cornell with no occluders — every connect is a plain
+  light→lens splat). Per-`path.maxdepth` full-frame mean, GPU
+  `lighttracing.only` vs `LIGHTCPU` (both `film.filter.type = NONE`,
+  512 spp): depth 1 → 1.003, depth 2 → 1.000, depth 3 → 1.0002,
+  depth 4 → 0.9997. Exact across all bounces.
+- **Found & fixed — hybrid diffuse cut in `.only` mode**: enabling
+  `path.lighttracing.enable` force-enables `hybridBackForwardEnable`
+  (`pathtracer.cpp`), which on the light path terminates any
+  non-nearly-specular vertex once `diffuse+glossy depth > 1`. That is the
+  correct hybrid partition (eye tasks own the diffuse term) but it was
+  also applied in `lighttracing.only` mode (`eyeTaskCount == 0`), where
+  there are no eye paths — so the light path is the sole estimator and
+  every depth≥3 diffuse connect was dropped. Symptom: `maxdepth` 1 and 2
+  matched `LIGHTCPU` exactly but depth 4 read ~0.886× (the deep indirect
+  term vanished: GPU depth-4 ≈ depth-2). Fix: gate that early-out on
+  `lightTracing.eyeTaskCount > 0` (`pathoclbase_kernels_micro.cl`), so it
+  only fires when eye tasks actually exist to carry the diffuse
+  contribution. Regression:
+  `dev-tools/lighttracing-depth-parity.sh`.
+- **Filter caveat for comparisons**: the CPU splatter walks the film
+  filter footprint (`FilmSampleSplatter` + `FilterLUTs`) while the GPU
+  splat is a point write — comparing GPU `.only` against default-filter
+  `LIGHTCPU` shows a spurious ~7-8% offset plus edge ringing. Always
+  compare against `film.filter.type = NONE` (or implement the LUT walk,
+  below) for structural validation.
+
+Planned:
+
+- **CPU parity, light-only**: extend to `scenes/causticcube/` and a
   simple analytic scene (single point light + diffuse wall: expected mean
   radiance computable). Compare per-pixel statistics (mean/RMSE over N
   passes), not just images.
@@ -635,6 +931,28 @@ the fork's one-feature-per-chunk convention.
   copies; homogeneous/heterogeneous media need targeted tests.
 - **TILEPATHOCL** — subregion-clipped splats waste work; document the
   limitation rather than silently dropping splats.
+- **Emitter-reflection coverage gap (LMNEE)** — LMNEE solves
+  receiver→delta-chain→lens connects: the delta surfaces are
+  *occluders* between a non-delta receiver and the lens. A path where
+  the emitter's own image is reflected into the lens
+  (light→mirror→camera, i.e. the camera sees the light source in a
+  mirror) is a specular *bounce* terminating at the lens, not a blocked
+  connect — the mirror vertex's straight shadow-ray connect has a
+  delta BSDF (~0) toward the lens. Capturing it needs either the
+  light path to actually terminate on the lens (endpoint hit) or an
+  emission-side manifold seed. Not yet handled; mirror LMNEE currently
+  reproduces the diffuse-through-mirror subset.
+- **Apple cl2msl encode limit (measured)** — `MK_LIGHT_INIT`/`MK_LIGHT_VERTEX`
+  carry `KERNEL_ARGS` + a 10-arg `KERNEL_ARGS_LIGHT` tail; they are
+  compiled only when `lightTaskCount > 0` (unconditional compilation +
+  dispatch crashed `AGX::ComputeContext::performEnqueueKernel` even with
+  the feature off). Independently, growing the `Film` struct embedded in
+  `GPUTaskConfiguration` by a single dead `int` field was enough to crash
+  `MK_HIT_NOTHING` at enqueue: keep `taskConfig` fields minimal — every
+  byte of the constant struct counts against the same per-kernel
+  buffer/constant budget. Diagnose with `LUXRAYS_OCL_TRACE_ENQUEUE=1`
+  (per-dispatch `clFinish`); the crashing kernel is the last
+  `[OCL-ENQUEUE]` without a matching `-DONE`.
 
 ## Future: toward GPU BDPT
 

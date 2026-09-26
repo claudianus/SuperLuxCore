@@ -44,6 +44,9 @@ public:
 		const float filmX, const float filmY,
 		float *pdfW, float *fluxToRadianceFactor) const;
 
+	// Used for compiling camera information for OpenCL (and more)
+	float GetCameraPdf() const { return cameraPdf; }
+
 	luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 private:

@@ -57,24 +57,35 @@ void CompiledScene::CompileCamera() {
 	camera.base.volumeIndex = sceneCamera.HasVolume() ?
 		scene.GetMaterials().GetMaterialIndex(sceneCamera.GetVolume()) : NULL_INDEX;
 
-	if (sceneCamera.motionSystem) {
-		if (sceneCamera.motionSystem->interpolatedTransforms.size() > CAMERA_MAX_INTERPOLATED_TRANSFORM)
-			throw runtime_error("Too many interpolated transformations in camera motion system: " +
-					ToString(sceneCamera.motionSystem->interpolatedTransforms.size()));
+	// Used by light to camera connections (worldToRaster and the world
+	// direction are derived on the device - see camera_types.cl)
 
-		for (u_int i = 0; i < sceneCamera.motionSystem->interpolatedTransforms.size(); ++i) {
+	if (sceneCamera.motionSystem) {
+		// Forward and inverse interpolated transforms are stored in the same array
+		const size_t count = sceneCamera.motionSystem->interpolatedTransforms.size();
+		if (2 * count > CAMERA_MAX_INTERPOLATED_TRANSFORM)
+			throw runtime_error("Too many interpolated transformations in camera motion system: " +
+					ToString(count));
+
+		for (u_int i = 0; i < count; ++i) {
 			const InterpolatedTransform &it = sceneCamera.motionSystem->interpolatedTransforms[i];
+			const InterpolatedTransform &iit = sceneCamera.motionSystem->interpolatedInverseTransforms[i];
 
 			// Here, I assume that luxrays::ocl::InterpolatedTransform and
 			// luxrays::InterpolatedTransform are the same
 			camera.base.interpolatedTransforms[i] = *((const luxrays::ocl::InterpolatedTransform *)&it);
+			camera.base.interpolatedTransforms[count + i] = *((const luxrays::ocl::InterpolatedTransform *)&iit);
 		}
 
 		camera.base.motionSystem.interpolatedTransformFirstIndex = 0;
-		camera.base.motionSystem.interpolatedTransformLastIndex = sceneCamera.motionSystem->interpolatedTransforms.size() - 1;
+		camera.base.motionSystem.interpolatedTransformLastIndex = count - 1;
+		camera.base.motionSystem.interpolatedInverseTransformFirstIndex = count;
+		camera.base.motionSystem.interpolatedInverseTransformLastIndex = 2 * count - 1;
 	} else {
 		camera.base.motionSystem.interpolatedTransformFirstIndex = NULL_INDEX;
 		camera.base.motionSystem.interpolatedTransformLastIndex = NULL_INDEX;
+		camera.base.motionSystem.interpolatedInverseTransformFirstIndex = NULL_INDEX;
+		camera.base.motionSystem.interpolatedInverseTransformLastIndex = NULL_INDEX;
 	}
 
 	// Initialize Camera specific data
@@ -85,10 +96,13 @@ void CompiledScene::CompileCamera() {
 			camera.type = slg::ocl::ORTHOGRAPHIC;
 
 			memcpy(camera.base.rasterToCamera.m.m, orthoCamera.GetRasterToCamera().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.rasterToCamera.mInv.m, orthoCamera.GetRasterToCamera().mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.base.cameraToWorld.m.m, orthoCamera.GetCameraToWorld().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.cameraToWorld.mInv.m, orthoCamera.GetCameraToWorld().mInv.m, 4 * 4 * sizeof(float));
 
 			camera.ortho.projCamera.lensRadius = orthoCamera.lensRadius;
 			camera.ortho.projCamera.focalDistance = orthoCamera.focalDistance;
+			camera.ortho.cameraPdf = orthoCamera.GetCameraPdf();
 
 			if (orthoCamera.enableClippingPlane) {
 				camera.ortho.projCamera.enableClippingPlane = true;
@@ -103,7 +117,9 @@ void CompiledScene::CompileCamera() {
 			camera.type = slg::ocl::PERSPECTIVE;
 
 			memcpy(camera.base.rasterToCamera.m.m, perspCamera.GetRasterToCamera().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.rasterToCamera.mInv.m, perspCamera.GetRasterToCamera().mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.base.cameraToWorld.m.m, perspCamera.GetCameraToWorld().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.cameraToWorld.mInv.m, perspCamera.GetCameraToWorld().mInv.m, 4 * 4 * sizeof(float));
 
 			camera.persp.projCamera.lensRadius = perspCamera.lensRadius;
 			camera.persp.projCamera.focalDistance = perspCamera.focalDistance;
@@ -154,6 +170,7 @@ void CompiledScene::CompileCamera() {
 			}
 			camera.persp.bokehScaleX = perspCamera.bokehScaleX;
 			camera.persp.bokehScaleY = perspCamera.bokehScaleY;
+			camera.persp.pixelArea = perspCamera.GetPixelArea();
 			break;
 		}
 		case Camera::ENVIRONMENT: {
@@ -161,7 +178,9 @@ void CompiledScene::CompileCamera() {
 			camera.type = slg::ocl::ENVIRONMENT;
 
 			memcpy(camera.base.rasterToCamera.m.m, envCamera.GetRasterToCamera().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.rasterToCamera.mInv.m, envCamera.GetRasterToCamera().mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.base.cameraToWorld.m.m, envCamera.GetCameraToWorld().m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.base.cameraToWorld.mInv.m, envCamera.GetCameraToWorld().mInv.m, 4 * 4 * sizeof(float));
 
 			camera.env.degrees = envCamera.degrees;
 			break;
@@ -189,9 +208,13 @@ void CompiledScene::CompileCamera() {
 			camera.stereo.perspCamera.projCamera.focalDistance = stereoCamera.focalDistance;
 
 			memcpy(camera.stereo.leftEyeRasterToCamera.m.m, stereoCamera.GetRasterToCamera(0).m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.stereo.leftEyeRasterToCamera.mInv.m, stereoCamera.GetRasterToCamera(0).mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.stereo.leftEyeCameraToWorld.m.m, stereoCamera.GetCameraToWorld(0).m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.stereo.leftEyeCameraToWorld.mInv.m, stereoCamera.GetCameraToWorld(0).mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.stereo.rightEyeRasterToCamera.m.m, stereoCamera.GetRasterToCamera(1).m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.stereo.rightEyeRasterToCamera.mInv.m, stereoCamera.GetRasterToCamera(1).mInv.m, 4 * 4 * sizeof(float));
 			memcpy(camera.stereo.rightEyeCameraToWorld.m.m, stereoCamera.GetCameraToWorld(1).m.m, 4 * 4 * sizeof(float));
+			memcpy(camera.stereo.rightEyeCameraToWorld.mInv.m, stereoCamera.GetCameraToWorld(1).mInv.m, 4 * 4 * sizeof(float));
 
 			camera.stereo.perspCamera.enableOculusRiftBarrel = stereoCamera.enableOculusRiftBarrel;
 			if (stereoCamera.enableClippingPlane) {

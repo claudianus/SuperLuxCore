@@ -359,6 +359,10 @@ typedef struct {
 	int usePrimitiveArea;
 	unsigned int frontTranspTexIndex, backTranspTexIndex;
 	Spectrum passThroughShadowTransparency;
+	// CPU Material::GetPassThroughShadowTransparencyOverride(): when set,
+	// shadow-transparent paths are still traced by the light-path
+	// estimator instead of being left to direct light sampling
+	int passThroughShadowTransparencyOverride;
 	unsigned int emitTexIndex, bumpTexIndex;
 	// Type of indirect paths where a light source is visible with a direct hit. It is
 	// an OR of DIFFUSE, GLOSSY and SPECULAR.

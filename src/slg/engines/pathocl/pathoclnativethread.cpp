@@ -128,7 +128,7 @@ void PathOCLNativeRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 	eyeSampler->SetThreadIndex(threadIndex);
 	eyeSampler->RequestSamples(PIXEL_NORMALIZED_ONLY, pathTracer.eyeSampleSize);
 
-	if (pathTracer.hybridBackForwardEnable) {
+	if (pathTracer.hybridBackForwardEnable && !pathTracer.lightTracingEnable) {
 		// Light path sampler is always Metropolis
 		Properties props;
 		props <<

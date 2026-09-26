@@ -151,7 +151,14 @@ void PathOCLRenderEngine::StartLockLess() {
 	pathTracer.InitPixelFilterDistribution(GetPixelFilter());
 
 	lightSampleSplatter.reset();
-	if (pathTracer.hybridBackForwardEnable)
+	// GPU light tracing owns the light pass (doc/features/gpu_lighttracing.md):
+	// pin the eye/light partition to 1.0 so native threads stay eye-only
+	// (the CPU Metropolis light pass would duplicate the same integral) and
+	// skip the splatter - the screen-normalized channel is written on device.
+	// hybridBackForwardEnable stays on to keep eye-side caustic suppression.
+	if (pathTracer.lightTracingEnable)
+		pathTracer.hybridBackForwardPartition = 1.f;
+	else if (pathTracer.hybridBackForwardEnable)
 		lightSampleSplatter = std::make_unique<FilmSampleSplatter>(GetPixelFilter());
 
 	PathOCLBaseRenderEngine::StartLockLess();
@@ -238,6 +245,49 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 	// used. Rounding to 8192 is a simple trick based on the assumption that
 	// workgroup size is a power of 2 and <= 8192.
 	taskCount = RoundUp<u_int>(taskCount, 8192);
+
+	// GPU light tracing (doc/features/gpu_lighttracing.md): a fraction of
+	// the task population is carved for light paths; light tasks occupy
+	// the tail gids [eyeTaskCount, taskCount). The total population is
+	// unchanged so the memory/compute budget is identical to a non-LT
+	// run at the same opencl.task.count.
+	eyeTaskCount = taskCount;
+	lightTaskCount = 0;
+	// pathTracer is parsed after this call: read the property directly
+	const bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
+			Get("path.lighttracing.enable")).Get<bool>();
+	if (lightTracingEnable) {
+		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
+		// Light tasks run their own sample sequence; Metropolis light
+		// sampling (the CPU hybrid contract) is not implemented on device,
+		// so a Metropolis eye sampler disables the light population
+		const std::string samplerType = cfg.Get(Property("sampler.type")("SOBOL")).Get<std::string>();
+		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
+			SLG_LOG("WARNING: path.lighttracing supports only perspective and "
+					"orthographic cameras, light tasks disabled");
+		} else if (samplerType == "METROPOLIS") {
+			SLG_LOG("WARNING: path.lighttracing does not support the METROPOLIS "
+					"sampler, light tasks disabled");
+		} else {
+			// path.lighttracing.only is a debug/validation mode: the whole
+			// population traces light paths (LIGHTCPU-style output)
+			const bool lightOnly = cfg.Get(PathTracer::GetDefaultProps()->
+					Get("path.lighttracing.only")).Get<bool>();
+			if (lightOnly) {
+				lightTaskCount = taskCount;
+				eyeTaskCount = 0;
+			} else {
+				const float f = Clamp(cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+				lightTaskCount = Min(taskCount - 8192u,
+						RoundUp<u_int>((u_int)(taskCount * f), 8192u));
+				eyeTaskCount = taskCount - lightTaskCount;
+			}
+			if (lightTaskCount == 0)
+				SLG_LOG("WARNING: path.lighttracing enabled but the task "
+						"fraction leaves no light tasks");
+		}
+	}
 	if(GetType() != RTPATHOCL)
 		SLG_LOG("[PathOCLRenderEngine] OpenCL task count: " << taskCount);
 }

@@ -1,0 +1,14 @@
+# Minimal single-bounce light-tracing parity test: one diffuse wall
+# facing the camera, one point light between them. Only direct
+# (1-bounce) connects contribute -> isolates the connect weight.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0. 0. -5.
+scene.camera.lookat.target = 0. 0.1 0.
+scene.camera.fieldofview = 45.
+scene.materials.Wall.type = matte
+scene.materials.Wall.kd = 0.8 0.8 0.8
+scene.lights.l1.type = point
+scene.lights.l1.position = 0. 0. -2.5
+scene.lights.l1.gain = 40. 40. 40.
+scene.objects.Wall.material = Wall
+scene.objects.Wall.ply = scenes/cornell/lmnee-wall.ply

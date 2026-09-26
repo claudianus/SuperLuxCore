@@ -76,8 +76,92 @@ typedef enum {
 	//   pre-spatial reservoir and hands the winner to
 	//   MK_GENERATE_NEXT_VERTEX_RAY through the task's result record.
 	MK_RT_GI_BOUNCE = 13,
-	MK_RT_GI_RESOLVE = 14
+	MK_RT_GI_RESOLVE = 14,
+	// GPU light tracing (doc/features/gpu_lighttracing.md): light-path
+	// task states. MK_LIGHT_INIT samples the emitter and writes the
+	// emission ray into rays[gid]; the fused consume kernel
+	// MK_LIGHT_VERTEX resolves the pending camera-connect splat, consumes
+	// the path hit, queues the camera-visibility ray into the
+	// lightVisRayBase tail slot and continues the path - one iteration
+	// per vertex, self-loop state.
+	MK_LIGHT_INIT = 15,
+	MK_LIGHT_VERTEX = 16
 } PathState;
+
+// Caustic focus cache: per-light ring of the last LIGHT_FOCUS_K world
+// positions where a successfully-splatted light path crossed its first
+// delta-specular surface. MK_LIGHT_INIT aims a fraction of light
+// emissions at a sampled hotspot - the ring's contents are the empirical
+// distribution of productive emission targets (frequency-weighted by
+// construction), so no explicit weights are stored.
+#define LIGHT_FOCUS_K 32
+
+// GPU light tracing: per light-task path state (the eye-side
+// EyePathInfo analogue). The pending camera-connect splat is deferred
+// one iteration because the visibility ray resolves in the trace pass
+// after it is queued.
+// Component floats, not float3: this file is also compiled as C++ on
+// the host for the buffer size computation.
+typedef struct {
+	PathDepthInfo depth;
+	PathVolumeInfo volume;
+	// Copies of `depth`/`volume` for the camera-visibility ray (the
+	// connect ray must not mutate the path state)
+	PathVolumeInfo connectVolInfo;
+	PathDepthInfo connectDepth;
+	int connectThroughShadow;
+
+	int lastBSDFEvent;
+	float lastBSDFPdfW;
+	float lastGlossiness;
+	float lastShadeNX, lastShadeNY, lastShadeNZ;
+	int lastFromVolume;
+
+	int isNearlyS, isNearlySD, isNearlySDS;
+
+	// The emitted light source (index into lights[]) and its group ID
+	unsigned int lightIndex, lightGroupID;
+
+	// Position of the first delta-specular vertex of the path (the
+	// caustic-generating bounce) - credited to the emitting light's
+	// focus cache when a camera connect splats
+	float firstDeltaPX, firstDeltaPY, firstDeltaPZ;
+	int hasDeltaVertex;
+
+	// Sampled lens point for the camera connects of this path
+	float lensPointX, lensPointY, lensPointZ;
+
+	// The path terminated (miss/depth/RR); the pending splat still has
+	// to be resolved before the task moves to the next light sample
+	int pathDone;
+
+	// A camera connect blocked by a delta occluder is being solved by
+	// the light-side manifold walk (LMNEE, doc/features/gpu_lighttracing.md);
+	// the path stalls in MK_LIGHT_VERTEX while the solve runs on the
+	// visibility-ray slot
+	int mneeActive;
+
+	// Deferred camera-connect splat: the visibility ray in the
+	// lightVisRayBase tail slot is resolved by the trace pass of the
+	// following iteration(s)
+	struct {
+		float filmX, filmY;
+		// throughput * bsdfEval * fluxToRadianceFactor (the visibility
+		// ray's connectionThroughput is multiplied in at resolve time)
+		float radianceR, radianceG, radianceB;
+		unsigned int lightGroupID;
+		// CPU addonlycaustics contract: only (nearly-)caustic light
+		// connections reach the screen channel; the eye side owns the
+		// rest (double counting otherwise)
+		int isCaustic;
+		// The queued visibility ray is a solved-manifold endpoint
+		// segment (LMNEE), not a straight connect: if it is blocked the
+		// occluder is the chain's exit interface and the light-side
+		// multi-vertex solve takes over instead of a fresh LMnee_Start
+		int fromMnee;
+		int valid;
+	} pendingSplat;
+} LightPathInfo;
 
 typedef struct {
 	union {

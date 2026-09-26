@@ -330,6 +330,41 @@ void Film_AddSample(
 			FILM_PARAM);
 }
 
+// GPU light tracing (doc/features/gpu_lighttracing.md): splat a
+// light-path-to-camera connection into the screen-normalized radiance
+// channel. The screen channel is a float[3] per pixel (no weight
+// accumulator - CPU AtomicAddIfValidWeightedPixel semantics); the v1
+// splat is a box at the landing pixel, the pixel filter is not applied
+// (documented gap vs the CPU FilmSampleSplatter path).
+OPENCL_FORCE_INLINE void Film_SplatLight(
+		const float filmX, const float filmY,
+		const uint lightGroupID, const float3 radiance,
+		__global float **filmScreenRadianceGroup,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3) {
+	if ((lightGroupID >= FILM_MAX_RADIANCE_GROUP_COUNT) ||
+			!filmScreenRadianceGroup[lightGroupID])
+		return;
+
+	const uint x = Floor2UInt(filmX);
+	const uint y = Floor2UInt(filmY);
+	if ((x < filmSubRegion0) || (x > filmSubRegion1) ||
+			(y < filmSubRegion2) || (y > filmSubRegion3))
+		return;
+
+	if (isnan(radiance.x) || isinf(radiance.x) ||
+			isnan(radiance.y) || isinf(radiance.y) ||
+			isnan(radiance.z) || isinf(radiance.z))
+		return;
+
+	__global float *dst = &filmScreenRadianceGroup[lightGroupID]
+			[(x + y * filmWidth) * 3];
+	AtomicAdd(&dst[0], radiance.x);
+	AtomicAdd(&dst[1], radiance.y);
+	AtomicAdd(&dst[2], radiance.z);
+}
+
 //------------------------------------------------------------------------------
 // Film kernel parameters
 //------------------------------------------------------------------------------

@@ -192,6 +192,67 @@ void CompiledScene::CompileLightStrategy() {
 			throw runtime_error("Unsupported infinite light strategy in CompiledScene::CompileLights()");
 		}
 	}
+
+	//--------------------------------------------------------------------------
+	// Compile emitLightsDistribution (GPU light tracing)
+	//--------------------------------------------------------------------------
+
+	// The emit strategy distribution indexed by lightDefs order (same as
+	// the lights[] buffer). Lights the device Emit() ports do not support
+	// get zero weight so the sampler never picks them.
+	emitLightsDistribution.clear();
+	emitLightsDistributionSize = 0;
+	try {
+		auto& emitStrategy = dynamic_cast<const DistributionLightStrategy&>(
+				scene.GetLightSources().GetEmitLightStrategy());
+		auto& dist = emitStrategy.GetLightsDistribution();
+		if (dist) {
+			std::vector<float> weights(dist->GetFuncs(), dist->GetFuncs() + dist->GetCount());
+
+			const u_int lightCount = scene.GetLightSources().GetSize();
+			u_int unsupported = 0;
+			for (u_int i = 0; i < lightCount; ++i) {
+				auto& l = scene.GetLightSources().GetLightSource(i);
+				bool supported;
+				switch (l.GetType()) {
+					case TYPE_TRIANGLE:
+						// Materials with a directional emission map (IES)
+						// need SampleableSphericalFunction, not on device
+						supported = (static_cast<const TriangleLight&>(l).
+								lightMaterial->GetEmissionFunc() == nullptr);
+						break;
+					case TYPE_POINT:
+					case TYPE_SPOT:
+					case TYPE_DISTANT:
+					case TYPE_SUN:
+					case TYPE_IL_SKY2:
+					case TYPE_IL:
+					case TYPE_IL_CONSTANT:
+					case TYPE_LASER:
+						supported = true;
+						break;
+					default:
+						supported = false;
+						break;
+				}
+				if (!supported) {
+					weights[i] = 0.f;
+					++unsupported;
+				}
+			}
+			if (unsupported > 0)
+				SLG_LOG("WARNING: GPU light tracing does not support " <<
+						unsupported << " light source(s) - excluded from the "
+						"emit distribution");
+
+			Distribution1D emitDist{std::span<float>(weights)};
+			std::tie(emitLightsDistribution, emitLightsDistributionSize) =
+					CompileDistribution1D(emitDist);
+		}
+	} catch (std::bad_cast&) {
+		// Non-distribution emit strategies are not compiled; light tasks
+		// then never pick a light (a warning is logged at engine start)
+	}
 }
 
 void CompiledScene::CompileELVC(EnvLightVisibilityCacheRPtr visibilityMapCache) {
@@ -647,7 +708,7 @@ void CompiledScene::CompileLights() {
 				ASSIGN_SPECTRUM(oclLight->notIntersectable.temperatureScale, dl.GetTemperatureScale());
 
 				// DistantLight data
-				ASSIGN_SPECTRUM(oclLight->notIntersectable.sharpDistant.color, dl.color);
+				ASSIGN_SPECTRUM(oclLight->notIntersectable.distant.color, dl.color);
 				dl.GetPreprocessedData(
 					&(oclLight->notIntersectable.distant.absoluteLightDir.x),
 					&(oclLight->notIntersectable.distant.x.x),

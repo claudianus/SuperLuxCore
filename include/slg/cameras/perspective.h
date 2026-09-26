@@ -59,6 +59,9 @@ public:
 		const float filmX, const float filmY,
 		float *pdfW, float *fluxToRadianceFactor) const;
 
+	// Used for compiling camera information for OpenCL (and more)
+	float GetPixelArea() const { return pixelArea; }
+
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 	static BokehDistributionType String2BokehDistributionType(std::string type);

@@ -185,4 +185,96 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 			return true;
 	}
 }
+
+//------------------------------------------------------------------------------
+// GPU light tracing (doc/features/gpu_lighttracing.md)
+//
+// Light-path tasks share the eye sampler infrastructure but are not bound
+// to a film pixel: every light-task dimension d maps to sampler dimension
+// d + 2 (dims 0/1 are the screen X/Y special cases of every device
+// sampler). The sequence state lives in the task's own sample slot; the
+// pixel picking machinery of InitNewSample is never used.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float Sampler_GetLightSample(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		const uint index
+		SAMPLER_PARAM_DECL) {
+	return Sampler_GetSample(taskConfig, index + 2 SAMPLER_PARAM);
+}
+
+// Per-task one-time init (Init kernel): seeds the sequence state so each
+// light task walks an independent, decorrelated stream.
+OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		const uint lightTaskIndex,
+		const uint filmWidth, const uint filmHeight
+		SAMPLER_PARAM_DECL) {
+	switch (taskConfig->sampler.type) {
+		case SOBOL: {
+			__global SobolSample *samples = (__global SobolSample *)samplesBuff;
+			__global SobolSample *sample = &samples[gid];
+
+			// Global-unique Sobol sequence index: task i samples
+			// SOBOL_STARTOFFSET + i + n * lightTaskCount (strided in
+			// Sampler_LightNextSample)
+			sample->pass = SOBOL_STARTOFFSET + lightTaskIndex;
+			sample->rngPass = (uint)Rnd_UintValue(seed);
+			sample->rng0 = Rnd_FloatValue(seed);
+			sample->rng1 = Rnd_FloatValue(seed);
+			break;
+		}
+		case PMJ02SAMPLER: {
+			__global RandomSample *samples = (__global RandomSample *)samplesBuff;
+			samples[gid].pass = lightTaskIndex;
+
+			// The scramble hash is keyed on pixelX/pixelY: give the task a
+			// deterministic pseudo-pixel so light tasks decorrelate
+			__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+			sampleResult->pixelX = lightTaskIndex % filmWidth;
+			sampleResult->pixelY = (lightTaskIndex / filmWidth) % filmHeight;
+			break;
+		}
+		case TILEPATHSAMPLER: {
+			__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
+			__global TilePathSample *sample = &samples[gid];
+			sample->pass = lightTaskIndex;
+			sample->rngPass = (uint)Rnd_UintValue(seed);
+			sample->rng0 = Rnd_FloatValue(seed);
+			sample->rng1 = Rnd_FloatValue(seed);
+			break;
+		}
+		default:
+			// RANDOM is seed driven; METROPOLIS is rejected on the host
+			break;
+	}
+}
+
+// Per-sample advance: draws a fresh light-path sample.
+OPENCL_FORCE_INLINE void Sampler_LightNextSample(
+		__constant const GPUTaskConfiguration* restrict taskConfig
+		SAMPLER_PARAM_DECL) {
+	const uint lightTaskCount = taskConfig->pathTracer.lightTracing.lightTaskCount;
+
+	switch (taskConfig->sampler.type) {
+		case SOBOL: {
+			__global SobolSample *samples = (__global SobolSample *)samplesBuff;
+			__global SobolSample *sample = &samples[gid];
+			sample->pass += lightTaskCount;
+			break;
+		}
+		case PMJ02SAMPLER: {
+			__global RandomSample *samples = (__global RandomSample *)samplesBuff;
+			samples[gid].pass += 1u;
+			break;
+		}
+		case TILEPATHSAMPLER: {
+			__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
+			samples[gid].pass += 1u;
+			break;
+		}
+		default:
+			break;
+	}
+}
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

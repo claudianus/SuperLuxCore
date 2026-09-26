@@ -81,6 +81,41 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 	// workgroup size is a power of 2 and <= 8192.
 	taskCount = RoundUp<u_int>(taskCount, 8192);
 	//SLG_LOG("[TilePathOCLRenderEngine] OpenCL task count: " << taskCount);
+
+	// GPU light tracing: supported on RTPATHOCL (the tile is the whole
+	// film so splats are never clipped). TILEPATHOCL tiles would clip
+	// most splats - disable with a warning there (v1).
+	eyeTaskCount = taskCount;
+	lightTaskCount = 0;
+	auto& cfg = renderConfig.GetConfig();
+	const bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
+			Get("path.lighttracing.enable")).Get<bool>();
+	if (lightTracingEnable && (GetType() == RTPATHOCL)) {
+		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
+		const std::string samplerType = cfg.Get(Property("sampler.type")("SOBOL")).Get<std::string>();
+		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
+			SLG_LOG("WARNING: path.lighttracing supports only perspective and "
+					"orthographic cameras, light tasks disabled");
+		} else if (samplerType == "METROPOLIS") {
+			SLG_LOG("WARNING: path.lighttracing does not support the METROPOLIS "
+					"sampler, light tasks disabled");
+		} else {
+			const bool lightOnly = cfg.Get(PathTracer::GetDefaultProps()->
+					Get("path.lighttracing.only")).Get<bool>();
+			if (lightOnly) {
+				lightTaskCount = taskCount;
+				eyeTaskCount = 0;
+			} else {
+				const float f = Clamp(cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+				lightTaskCount = Min(taskCount - 8192u,
+						RoundUp<u_int>((u_int)(taskCount * f), 8192u));
+				eyeTaskCount = taskCount - lightTaskCount;
+			}
+		}
+	} else if (lightTracingEnable)
+		SLG_LOG("WARNING: path.lighttracing is not supported by TILEPATHOCL "
+				"(tile-clipped splats); use PATHOCL or RTPATHOCL");
 }
 
 void TilePathOCLRenderEngine::InitTileRepository() {

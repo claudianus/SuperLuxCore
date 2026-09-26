@@ -99,6 +99,11 @@ public:
 	u_int lightsDistributionSize;
 	std::vector<float> infiniteLightSourcesDistribution;
 	u_int infiniteLightSourcesDistributionSize;
+	// GPU light tracing: Distribution1D over the emit light strategy
+	// (same light-index order as lights[]); lights unsupported by the
+	// device Emit ports carry zero weight
+	std::vector<float> emitLightsDistribution;
+	u_int emitLightsDistributionSize;
 	// DLSC related data
 	std::vector<slg::ocl::DLSCacheEntry> dlscAllEntries;
 	std::vector<float> dlscDistributions; 
