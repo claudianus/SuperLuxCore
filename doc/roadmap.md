@@ -29,7 +29,7 @@ claims backed by measured evidence.
 | E1 | OIDN Metal into dep bundle | validated locally; needs LuxCoreDeps `with_device_metal=True` recipe + dep release |
 | Wavefront M3 | material bucketing | decided: not pursued — wavefront loses on every tested workload (dense-vs-wavefront −7~−17%, re-verified 2026-09 cornell 512²/30s: 13.4M vs 12.2M spp/s ≈ −9%); see `dev-tools/wavefront-design.md` M2 status |
 | Blender UX | V-Ray/Corona-level polish | persistent-scene cache + deltas landed; remaining: render stats UX, low-resource fallback profiles |
-| Compatibility | Cycles shader-node / Geometry Nodes coverage | node reader exists; audit coverage vs Blender LTS |
+| Compatibility | Cycles shader-node / Geometry Nodes coverage | audited vs Blender 5.2.1 (97 node branches); Math/VectorMath nearly complete via `mathfunc` (trig/exp/log/hyperbolic/invsqrt/floormod + smooth-min/max); BsdfHair/RayPortal/PointInfo/VectorRotate/VectorTransform/EeveeSpecular/Squeeze mapped; residual gaps are scene-query nodes (Raycast/CameraData/LightFalloff/IES/Gabor/Script) — warn+neutral fallback, see BlendLuxCore `doc/cycles_node_coverage.md` |
 
 ## Standing gaps (honest list)
 

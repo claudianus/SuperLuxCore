@@ -66,6 +66,7 @@
 #include "slg/textures/math/divide.h"
 #include "slg/textures/math/greaterthan.h"
 #include "slg/textures/math/lessthan.h"
+#include "slg/textures/math/mathfunc.h"
 #include "slg/textures/math/mix.h"
 #include "slg/textures/math/modulo.h"
 #include "slg/textures/math/power.h"
@@ -589,6 +590,32 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& base = GetTexture(props.Get(Property(propName + ".base")(1.f)));
 		auto& exponent = GetTexture(props.Get(Property(propName + ".exponent")(1.f)));
 		tex = std::make_unique<PowerTexture>(base, exponent);
+	} else if (texType == "mathfunc") {
+		const string opStr = props.Get(Property(propName + ".op")("sin")).Get<string>();
+		MathFuncOp op;
+		if (opStr == "sin") op = MATHFUNC_SIN;
+		else if (opStr == "cos") op = MATHFUNC_COS;
+		else if (opStr == "tan") op = MATHFUNC_TAN;
+		else if (opStr == "asin") op = MATHFUNC_ASIN;
+		else if (opStr == "acos") op = MATHFUNC_ACOS;
+		else if (opStr == "atan") op = MATHFUNC_ATAN;
+		else if (opStr == "atan2") op = MATHFUNC_ATAN2;
+		else if (opStr == "exp") op = MATHFUNC_EXP;
+		else if (opStr == "ln") op = MATHFUNC_LN;
+		else if (opStr == "sinh") op = MATHFUNC_SINH;
+		else if (opStr == "cosh") op = MATHFUNC_COSH;
+		else if (opStr == "tanh") op = MATHFUNC_TANH;
+		else if (opStr == "invsqrt") op = MATHFUNC_INVSQRT;
+		else if (opStr == "floormod") op = MATHFUNC_FLOORMOD;
+		else
+			throw runtime_error("Unknown mathfunc texture op: " + opStr);
+
+		auto& tex1 = GetTexture(props.Get(Property(propName + ".texture1")(1.f)));
+		// Unary ops have no second operand; tex2 is stored but never sampled
+		auto& tex2 = MathFuncIsBinary(op)
+				? GetTexture(props.Get(Property(propName + ".texture2")(0.f)))
+				: tex1;
+		tex = std::make_unique<MathFuncTexture>(op, tex1, tex2);
 	} else if (texType == "lessthan") {
 		auto& tex1 = GetTexture(props.Get(Property(propName + ".texture1")(1.f)));
 		auto& tex2 = GetTexture(props.Get(Property(propName + ".texture2")(1.f)));

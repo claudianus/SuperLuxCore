@@ -71,7 +71,9 @@ typedef enum {
 	MARBLE, DOTS, BRICK, WINDY, WRINKLED, UV_TEX, BAND_TEX,
 	WIREFRAME_TEX, // 65 textures
 	// Fresnel textures
-	FRESNELCOLOR_TEX, FRESNELCONST_TEX
+	FRESNELCOLOR_TEX, FRESNELCONST_TEX,
+	// Generic math-function texture (trig/exp/log)
+	MATHFUNC_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

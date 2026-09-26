@@ -68,6 +68,7 @@
 #include "slg/textures/math/divide.h"
 #include "slg/textures/math/greaterthan.h"
 #include "slg/textures/math/lessthan.h"
+#include "slg/textures/math/mathfunc.h"
 #include "slg/textures/math/mix.h"
 #include "slg/textures/math/modulo.h"
 #include "slg/textures/math/power.h"
@@ -574,6 +575,24 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
 					evalOpStackSize += CompileTextureOps(tex->absTex.texIndex, opType);
+					break;
+				}
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
+					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+					break;
+				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::MATHFUNC_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					evalOpStackSize += CompileTextureOps(tex->mathFuncTex.tex1Index, opType);
+					if (slg::MathFuncIsBinary((slg::MathFuncOp)tex->mathFuncTex.op))
+						evalOpStackSize += CompileTextureOps(tex->mathFuncTex.tex2Index, opType);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -2155,6 +2174,15 @@ void CompiledScene::CompileTextures() {
 				tex->type = slg::ocl::ABS_TEX;
 				TextureConstRef refTex = at.GetTexture();
 				tex->absTex.texIndex = scene.GetTextures().GetTextureIndex(refTex);
+				break;
+			}
+			case MATHFUNC_TEX: {
+				auto& mt = dynamic_cast<const MathFuncTexture &>(t);
+
+				tex->type = slg::ocl::MATHFUNC_TEX;
+				tex->mathFuncTex.op = mt.GetOp();
+				tex->mathFuncTex.tex1Index = scene.GetTextures().GetTextureIndex(mt.GetTexture1());
+				tex->mathFuncTex.tex2Index = scene.GetTextures().GetTextureIndex(mt.GetTexture2());
 				break;
 			}
 			case CLAMP_TEX: {

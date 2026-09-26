@@ -183,6 +183,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_texture_blender_noise_funcs2 <<
 			slg::ocl::KernelSource_texture_blender_funcs <<
 			slg::ocl::KernelSource_texture_abs_funcs <<
+			slg::ocl::KernelSource_texture_mathfunc_funcs <<
 			slg::ocl::KernelSource_texture_bilerp_funcs <<
 			slg::ocl::KernelSource_texture_blackbody_funcs <<
 			slg::ocl::KernelSource_texture_bombing_funcs <<

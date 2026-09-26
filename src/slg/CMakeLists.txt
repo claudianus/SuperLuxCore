@@ -187,6 +187,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/textures/mapping/mapping_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/mapping/mapping_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/math/texture_abs_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/textures/math/texture_mathfunc_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/math/texture_clamp_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/math/texture_random_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_types.cl
@@ -468,6 +469,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/divide.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/greaterthan.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/lessthan.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/math/mathfunc.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/mixtex.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/modulo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/power.cpp
@@ -618,6 +620,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/texture_bump_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_noise_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_abs_funcs_kernel.cpp
+  ${generated_kernels_dir}/texture_mathfunc_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_bilerp_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_blackbody_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_bombing_funcs_kernel.cpp

@@ -1112,6 +1112,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// MATHFUNC_TEX
+		//----------------------------------------------------------------------
+		case MATHFUNC_TEX:
+			MathFuncTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
+					hitPoint, sampleDistance TEXTURES_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		// SHADING_NORMAL_TEX
 		//----------------------------------------------------------------------
 		case SHADING_NORMAL_TEX:

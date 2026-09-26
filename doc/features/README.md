@@ -25,6 +25,7 @@ ask for.
 | Spectral transport | [spectral.md](spectral.md) | `7d8896fc9` | cornell-spectral | CPU/OCL/Metal |
 | Samplers | [samplers.md](samplers.md) | `0a62ebb7b` | convergence | CPU/OCL/Metal |
 | Blackbody + Whitenoise | [textures.md](textures.md) | `5d38878b6` | cornell/bb-test, whitenoise-* | CPU/OCL/Metal |
+| mathfunc texture | [textures.md](textures.md) | `5b7eefe2b` | `dev-tools/e10_mathfunc_test.py` (14 checks) | CPU/OCL/Metal |
 | Hair + Disney | [hair.md](hair.md) + [disney.md](disney.md) | `a8785faa2` | strands, hairmat-test, cornell-disney | CPU/OCL/Metal |
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
 | Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn + BlendLuxCore adapter A/B (parity < MC noise) | **Apple only** (Metal HWRT) |

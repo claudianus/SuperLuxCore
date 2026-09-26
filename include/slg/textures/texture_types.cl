@@ -80,7 +80,9 @@ typedef enum {
 	MARBLE, DOTS, BRICK, WINDY, WRINKLED, UV_TEX, BAND_TEX,
 	WIREFRAME_TEX, // 65 textures
 	// Fresnel textures
-	FRESNELCOLOR_TEX, FRESNELCONST_TEX
+	FRESNELCOLOR_TEX, FRESNELCONST_TEX,
+	// Generic math-function texture (trig/exp/log)
+	MATHFUNC_TEX
 } TextureType;
 
 typedef struct {
@@ -462,6 +464,13 @@ typedef struct {
 } PowerTexParam;
 
 typedef struct {
+	unsigned int op; // slg::MathFuncOp
+	unsigned int tex1Index;
+	// tex2Index is only pushed/popped for the binary op (MATHFUNC_ATAN2)
+	unsigned int tex2Index;
+} MathFuncTexParam;
+
+typedef struct {
 	unsigned int texIndex;
 	unsigned int channelIndex;
 } SplitFloat3TexParam;
@@ -568,6 +577,7 @@ typedef struct {
 		GreaterThanTexParam greaterThanTex;
 		LessThanTexParam lessThanTex;
 		PowerTexParam powerTex;
+		MathFuncTexParam mathFuncTex;
 		SplitFloat3TexParam splitFloat3Tex;
 		MakeFloat3TexParam makeFloat3Tex;
 		RoundingTexParam roundingTex;

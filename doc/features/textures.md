@@ -46,6 +46,19 @@ two (found and fixed during validation).
 - `whitenoise.scn` float + colour outputs.
 - **Validation:** CPU↔GPU identical distribution on a Cornell-box render.
 
+## mathfunc texture — generic unary/binary math
+
+Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeMath` trig/exp/log
+ops (SINE, COSINE, TANGENT, ARCSINE, ARCCOSINE, ARCTANGENT, ARCTAN2,
+EXPONENT, LOGARITHM via ln(x)/ln(b) composition).
+
+**Properties.** `mathfunc.op` = `sin|cos|tan|asin|acos|atan|atan2|exp|ln`;
+`mathfunc.texture1` (operand), `mathfunc.texture2` (atan2 only; unary ops
+ignore it). Scalar and float3 inputs both supported.
+
+**Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
+through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
+
 ## Platforms
 
-Both textures: CPU, OpenCL GPU, Metal GPU (cl2msl-compatible kernel code).
+All textures: CPU, OpenCL GPU, Metal GPU (cl2msl-compatible kernel code).
