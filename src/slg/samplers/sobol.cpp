@@ -78,7 +78,11 @@ void SobolSamplerSharedData::Reset() {
 }
 
 std::tuple<u_int, u_int> SobolSamplerSharedData::GetNewBucket(u_int bucketCount) {
-	u_int newBucketIndex = AtomicInc(bucketIndex.get()) % bucketCount;
+	// The raw counter keeps exact cycle/pass accounting; the returned
+	// index is scattered so CPU threads render scattered tile chunks
+	// instead of sweeping tile rows bottom-to-top (see sampler.h).
+	const u_int rawIndex = AtomicInc(bucketIndex.get()) % bucketCount;
+	u_int newBucketIndex = ScatterBucketIndex(rawIndex, bucketCount);
 
 	u_int seed = (*seedBase + newBucketIndex) % (0xFFFFFFFFu - 1u) + 1u;
 

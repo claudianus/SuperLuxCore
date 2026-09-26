@@ -45,7 +45,11 @@ void RandomSamplerSharedData::Reset() {
 
 void RandomSamplerSharedData::GetNewBucket(const u_int bucketCount,
 		u_int *newBucketIndex) {
-	*newBucketIndex = AtomicInc(&bucketIndex) % bucketCount;
+	// Scattered bucket order: same bijection as the Sobol path (see
+	// ScatterBucketIndex in sampler.h) so a pass fills the frame with
+	// scattered tiles instead of a bottom-to-top row sweep.
+	const u_int rawIndex = AtomicInc(&bucketIndex) % bucketCount;
+	*newBucketIndex = ScatterBucketIndex(rawIndex, bucketCount);
 }
 
 std::unique_ptr<SamplerSharedData> RandomSamplerSharedData::FromProperties(

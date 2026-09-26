@@ -20,11 +20,13 @@
 #define	_SLG_SAMPLER_H
 
 #include <atomic>
+#include <numeric>
 #include <string>
 #include <vector>
 
 #include "luxrays/core/randomgen.h"
 #include "luxrays/usings.h"
+#include "luxrays/utils/utils.h"
 #include "slg/slg.h"
 #include "slg/film/film.h"
 #include "slg/film/filmsamplesplatter.h"
@@ -60,6 +62,25 @@ public:
 		const luxrays::RandomGeneratorUPtr & rndGen,
 		FilmPtr film
 	);
+
+protected:
+	// Golden-ratio stride permutation of a sequential bucket index:
+	// consecutive buckets land ~n*0.618 apart, so the first pass covers
+	// the frame as scattered tile chunks instead of a bottom-to-top
+	// row sweep (visible on CPU engines where a handful of threads
+	// consume consecutive buckets). Bijective for any n (k coprime to
+	// n): every bucket is still served exactly once per cycle, so pixel
+	// coverage and per-pixel pass accounting are unchanged (unbiased).
+	static u_int ScatterBucketIndex(const u_int i, const u_int n) {
+		if (n <= 2)
+			return i;
+
+		u_int k = luxrays::Max(1u, (u_int)(n * .61803398875));
+		while (std::gcd(k, n) != 1)
+			--k;
+
+		return (u_int)(((u_longlong)i * k) % n);
+	}
 };
 
 //------------------------------------------------------------------------------
