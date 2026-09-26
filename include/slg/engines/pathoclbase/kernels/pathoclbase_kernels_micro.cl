@@ -3421,6 +3421,7 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 		// bracket-matches this list literally)
 		, __global float *vcEffStats
 		, __global uint *vcMergeHash
+		, __global VCReplay *vcReplay
 		) {
 	WAVEFRONT_GUARD
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -3459,6 +3460,15 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 	// Expected connect budget per eye vertex (0 = connect every
 	// candidate - the deterministic M6 walk)
 	const uint vcConnects = taskConfig->pathTracer.vertexConnect.connects;
+	// M7d temporal reuse: candidate index vcPoolSize replays the eye
+	// task's stored vertex - the record persists across iterations, so
+	// unlike the pool it is NOT re-drawn every pass. It still enters
+	// the deterministic sweep with the same MIS weighting (q = 1),
+	// which keeps the extra strategy sample unbiased.
+	const bool vcHasReplay = vcReplay &&
+			taskConfig->pathTracer.vertexConnect.reuse &&
+			(vcReplay[gid].vertex.seq != 0u);
+	const uint vcCandCount = vcPoolSize + (vcHasReplay ? 1u : 0u);
 
 	// M7 efficiency-aware allocation: the sample's screen tile indexes
 	// the CAS-accumulated map (tile lum / spent rays + global pair).
@@ -3530,15 +3540,25 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 					sampleResult, taskState->vcPendingLightID,
 					taskState->vcPendingEvent,
 					eyeThroughput, landed, 1.f);
+			const float l = fabs(landed.x) + fabs(landed.y) +
+					fabs(landed.z);
 			// Efficiency map: landed connect luminance on this tile.
 			// eyeThroughput is left out on purpose - the map tracks
 			// the transport the connect step itself discovers, which
 			// is the quantity the allocation should follow.
 			if (vcEffStats) {
-				const float l = fabs(landed.x) + fabs(landed.y) +
-						fabs(landed.z);
 				AtomicAddFloat(&vcEffStats[vcTile], l);
 				AtomicAddFloat(&vcEffStats[2u * vcNTiles], l);
+			}
+			// Temporal reuse (M7d): a pool candidate that out-scored
+			// the stored vertex promotes its staged record into the
+			// replay slot (the replay itself - vcPendingCand ==
+			// vcPoolSize - can not re-select itself)
+			if (vcReplay && taskConfig->pathTracer.vertexConnect.reuse &&
+					(taskState->vcPendingCand < vcPoolSize) &&
+					(l > vcReplay[gid].score)) {
+				vcReplay[gid].vertex = vcReplay[gid].staging;
+				vcReplay[gid].score = l;
 			}
 		}
 	}
@@ -3681,16 +3701,20 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 				(GuidingPass(taskConfig, gid, samplesBuff) * 83492791u);
 
 		uint c = taskState->vcCursor;
-		for (; c < vcPoolSize; ++c) {
-			const uint j = c / vcSlotsPerTask;
-			const uint k = c - j * vcSlotsPerTask;
-			const uint lightTask = (gid + j * vcPoolStride) %
-					lightTaskCount;
-			if (k >= min(lightPathInfos[lightTask].vcVertexCount,
-					vcSlotsPerTask))
-				continue;
-			__global const VCLightVertex *lv =
-					&lightVertices[lightTask * vcSlotsPerTask + k];
+		for (; c < vcCandCount; ++c) {
+			__global const VCLightVertex *lv;
+			if (c < vcPoolSize) {
+				const uint j = c / vcSlotsPerTask;
+				const uint k = c - j * vcSlotsPerTask;
+				const uint lightTask = (gid + j * vcPoolStride) %
+						lightTaskCount;
+				if (k >= min(lightPathInfos[lightTask].vcVertexCount,
+						vcSlotsPerTask))
+					continue;
+				lv = &lightVertices[lightTask * vcSlotsPerTask + k];
+			} else
+				// M7d replay candidate: the stored stale vertex record
+				lv = &vcReplay[gid].vertex;
 
 			// Skip never-written slots (clamped-region guard - kernel
 			// launches are serialized so a written record is whole)
@@ -3711,7 +3735,7 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			// Probabilistic connection: draw the inclusion test on the
 			// cheap score before paying the BSDF evaluations
 			float vcQ = 1.f;
-			if (vcConnects > 0u) {
+			if ((vcConnects > 0u) && (c < vcPoolSize)) {
 				const float scoreSum = taskState->vcScoreSum;
 				const float score =
 						(lv->throughputR + lv->throughputG +
@@ -3830,6 +3854,13 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			taskState->vcPendingEvent = eyeEvent;
 			taskState->vcPending = 1u;
 			taskState->vcCursor = c;
+			taskState->vcPendingCand = c;
+			// Stage the record for the replay reservoir: the paired
+			// light task may overwrite its cache slot before this
+			// shadow ray resolves on the next iteration
+			if (vcReplay && taskConfig->pathTracer.vertexConnect.reuse &&
+					(c < vcPoolSize))
+				vcReplay[gid].staging = *lv;
 			queued = true;
 			// Efficiency map: one connect ray spent on this tile
 			if (vcEffStats) {
@@ -3839,7 +3870,7 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			break;
 		}
 		if (!queued)
-			taskState->vcCursor = vcPoolSize;
+			taskState->vcCursor = vcCandCount;
 	}
 
 	if (!queued) {

@@ -224,6 +224,29 @@ SCENES = {
         "expect": {"ratio_min": 0.65, "ratio_max": 0.98,
                 "rmse_max": 0.08, "black_max": 0.01},
     },
+    # M7d temporal reuse: the per-eye-task replay reservoir adds one
+    # deterministic stale-vertex candidate per eye vertex (same MIS
+    # path as a fresh connect). BIDIRVMCPU remains the honest VCM
+    # reference - the replayed term is an extra unbiased strategy
+    # sample, so the gate expects the same estimator-family range as
+    # vc_merge (reuse is also on by default there now, so this entry
+    # mainly pins the explicit knob).
+    "vc_reuse": {
+        "props_file": "scenes/cornell/cornell-area-caustic.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "ref_engine": "BIDIRVMCPU",
+        "ref_cfg_extra": "bidirvm.startradius.scale = 0.004\n",
+        "cfg_extra": "path.hybridbackforward.enable = 1\n"
+            "path.lighttracing.enable = 1\n"
+            "path.lighttracing.taskfraction = 0.3\n"
+            "path.vertexconnection.enable = 1\n"
+            "path.vertexconnection.reuse = 1\n"
+            "opencl.task.count = 32768\n",
+        "spp": 96,
+        "expect": {"ratio_min": 0.55, "ratio_max": 1.0,
+                "rmse_max": 0.08, "black_max": 0.01},
+    },
     # Vertex motion + shared-mesh instancing across accel paths
     "vertex_motion": {
         "builder": build_vertex_motion,

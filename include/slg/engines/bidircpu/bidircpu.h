@@ -23,6 +23,7 @@
 #include "slg/slg.h"
 #include "slg/engines/cpurenderengine.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/pathtracer.h"
 #include "slg/samplers/sampler.h"
 #include "slg/film/film.h"
 #include "slg/film/filmsamplesplatter.h"
@@ -62,9 +63,14 @@ public:
 	friend class BiDirCPURenderEngine;
 
 protected:
-	// Used to offset Sampler data
-	static const u_int sampleBootSize = 13;
-	static const u_int sampleBootSizeVM = 12; // I'm using the same time for all rays in a single pass (so I need one less random variable)
+	// Used to offset Sampler data. Dims 0-12 are the original boot draws
+	// (film, light pick, lens, emission, eye lens, time); 13-16 are the
+	// caustic-focus emission draws (M7e, GPU parity).
+	static const u_int sampleBootSize = 17;
+	// VM shares TraceLightPath: keeping its boot identical to
+	// sampleBootSize aligns the light-step offsets (and gives the focus
+	// draws a dedicated home) instead of the historical off-by-one.
+	static const u_int sampleBootSizeVM = 17;
 	static const u_int sampleLightStepSize = 5;
 	static const u_int sampleEyeStepSize = 10;
 
@@ -159,6 +165,11 @@ public:
 	float albedoSpecularGlossinessThreshold;
 
 	bool forceBlackBackground;
+
+	// Shared with the light-tracing path (M7e): owns the caustic-focus
+	// hotspot table and the guided-emission mixture used by the light
+	// subpath emit. Only the focus/guiding options are consumed here.
+	PathTracer pathTracer;
 
 	friend class BiDirCPURenderThread;
 

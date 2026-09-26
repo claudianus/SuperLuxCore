@@ -277,6 +277,9 @@ public:
 	// Vertex merging (M7): merge radius as a fraction of the scene
 	// bounding-sphere radius (0 disables merging)
 	float vertexConnectMergeRadius;
+	// Temporal connect reuse (M7d): replay each eye task's best
+	// connect vertex as an extra deterministic candidate
+	bool vertexConnectReuse;
 	// Caustic focus cache: guided light emission toward remembered
 	// productive targets (see LIGHT_FOCUS_K in pathoclbase_datatypes.cl
 	// for the GPU ring; the CPU table below mirrors it). Unbiased
@@ -308,6 +311,7 @@ public:
 private:
 	friend class CompiledScene;
 	friend class PathOCLBaseOCLRenderThread;
+	friend class BiDirCPURenderThread;
 
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
 			luxrays::Ray &eyeRay, PathVolumeInfo &volInfo,
@@ -413,12 +417,38 @@ private:
 			Sampler &sampler, const float time,
 			luxrays::Ray &ray, luxrays::Spectrum &flux,
 			float &emissionPdfW) const;
+	// U-variants take the four focus draws (coin, slot, cone x2) as
+	// explicit arguments: engines whose sampler layout differs from
+	// PathTracer's boot dims (BIDIRCPU draws them at 13-16) can drive
+	// the same guided-emission mixture with their own dimensions.
+	void LightFocusEmitU(SceneConstRef scene, const LightSource &light,
+			const float time,
+			luxrays::Ray &ray, luxrays::Spectrum &flux,
+			float &emissionPdfW, const float uCoin, const float uSlot,
+			const float uCone0, const float uCone1) const;
 	// Distant-family branch of the caustic focus: the light direction is
 	// (nearly) fixed, so instead of re-aiming the direction the ray origin
 	// is re-sampled on a caster disc projected onto the emit plane.
 	void LightFocusEmitDistant(SceneConstRef scene, const LightSource &light,
 			Sampler &sampler, const float time,
 			luxrays::Ray &ray, float &emissionPdfW) const;
+	void LightFocusEmitDistantU(SceneConstRef scene, const LightSource &light,
+			const float time,
+			luxrays::Ray &ray, float &emissionPdfW,
+			const float uCoin, const float uSlot,
+			const float uCone0, const float uCone1) const;
+	// Mixture emission pdf of a light-subpath direction: anywhere the
+	// light strategy's own pdf appears as the ALTERNATIVE strategy in a
+	// MIS weight (BIDIR NEE weightCamera) it must evaluate the same
+	// (1-g)*native + g*aim mixture or the partition leaks energy.
+	float LightFocusEmissionPdfW(SceneConstRef scene, const LightSource &light,
+			const luxrays::Vector &emitDir, const float nativePdfW) const;
+	// Aim-branch directional density at emitDir (per solid angle,
+	// normalized by the slot count); shared by the emit-time pdf and the
+	// alternative-strategy lookup above.
+	float LightFocusAimPdf(const u_int lightIndex, const u_int focusN,
+			const luxrays::Point &rayOrig, const luxrays::Vector &emitDir,
+			const float nativePdf) const;
 
 	FilterDistribution *pixelFilterDistribution;
 	const PhotonGICache *photonGICache;

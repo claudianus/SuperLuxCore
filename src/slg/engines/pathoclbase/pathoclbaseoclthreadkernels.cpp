@@ -755,6 +755,8 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 				argIndex++, vcEffStatsBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
 				argIndex++, vcMergeHashBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
+				argIndex++, vcReplayBuff);
 	}
 	// Vertex merging (M7): per-iteration hash rebuild kernels - minimal
 	// arg lists, not the full KERNEL_ARGS tail.

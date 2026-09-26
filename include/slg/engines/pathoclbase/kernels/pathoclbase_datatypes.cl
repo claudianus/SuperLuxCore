@@ -118,6 +118,26 @@ typedef struct {
 	unsigned int seq;
 } VCLightVertex;
 
+// Temporal connect reuse (M7d, ReSTIR-BDPT-style vertex replay):
+// per-EYE-task persistent single-slot reservoir holding a copy of the
+// light vertex that landed the most connect luminance at this task so
+// far. The next eye vertex replays it as one extra deterministic
+// connect candidate - same BSDF evaluations, MIS weights and shadow
+// ray as a pool candidate - so the replayed term is an honest strategy
+// sample and the estimator stays unbiased: the reservoir only chooses
+// WHICH stale vertex gets a seat, it never weights the estimate.
+// `staging` holds the last queued pool candidate's record (the vertex
+// cache slot can be overwritten before the shadow ray resolves), so
+// the resolve pass promotes staging -> vertex when the landed
+// luminance beats the stored score. Owned by the eye task alone - no
+// atomics, no cross-task writes.
+typedef struct {
+	VCLightVertex vertex;	// vertex.seq == 0 -> empty slot
+	float score;			// best landed connect luminance
+	VCLightVertex staging;
+	float pad;
+} VCReplay;
+
 // Vertex merging (M7, Georgiev'12 VCM): the light-vertex cache is
 // indexed by a spatial hash rebuilt every iteration - VC_MERGE_BUCKETS
 // power-of-two cells (cell size = mergeRadius), each holding up to
@@ -505,6 +525,11 @@ typedef struct {
 	// eye vertex (evaluated once when the cursor starts). Drives the
 	// probabilistic-connection inclusion probability q_i (M7).
 	float vcScoreSum;
+	// Flat candidate index that queued the in-flight connect ray
+	// (vcPendingCand == vcPoolSize marks the M7d replay candidate -
+	// needed at resolve to tell pool candidates, which feed the
+	// replay reservoir, from the replay itself)
+	unsigned int vcPendingCand;
 
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,

@@ -514,7 +514,14 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 
 						// emissionPdfA / directPdfA = emissionPdfW / directPdfW
 						const float weightLight = MIS(bsdfPdfW / directLightSamplingPdfW);
-						const float weightCamera = MIS(emissionPdfW * cosThetaToLight / (directPdfW * cosThetaAtLight)) *
+						// The light subpath samples the caustic-focus
+						// emission mixture, so the alternative-strategy
+						// pdf in the MIS weight must evaluate the same
+						// mixture or the strategy partition leaks energy
+						const float focusEmissionPdfW = engine->pathTracer.
+								LightFocusEmissionPdfW(scene, *light,
+								-shadowRay.d, emissionPdfW);
+						const float weightCamera = MIS(focusEmissionPdfW * cosThetaToLight / (directPdfW * cosThetaAtLight)) *
 								(misVmWeightFactor + eyeVertex.dVCM + eyeVertex.dVC * MIS(bsdfRevPdfW));
 						// Disable MIS if we have gone trough a shadow transparent object
 						const float misWeight = shadowBsdf.hitPoint.throughShadowTransparency ?
@@ -636,6 +643,16 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 	if (!lightVertex.throughput.Black()) {
 		lightVertex.volInfo.AddVolume(light->volume);
 
+		// Caustic-focus emission guidance (M7e, GPU parity): re-aim the
+		// emitted ray toward remembered hotspot casters; the mixture pdf
+		// folds into emissionPdfW. Dims 13-16 are dedicated focus draws.
+		engine->pathTracer.LightFocusEmitU(scene, *light, time, lightRay,
+				lightVertex.throughput, lightEmitPdfW,
+				sampler->GetSample(13), sampler->GetSample(14),
+				sampler->GetSample(15), sampler->GetSample(16));
+		if (lightEmitPdfW <= 0.f)
+			return false;
+
 		lightEmitPdfW *= lightPickPdf;
 		lightDirectPdfW *= lightPickPdf;
 
@@ -657,6 +674,11 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 		lightVertex.depth = 1;
 		// The emitted ray has no generating bounce event
 		lightVertex.bsdfEvent = NONE;
+		// Caustic-focus crediting (GPU parity): remember the first
+		// delta-specular vertex of this path so a successful camera
+		// connect can credit it into the light's hotspot ring
+		Point firstDeltaP;
+		bool hasDeltaVertex = false;
 		while (lightVertex.depth <= engine->maxLightPathDepth) {
 			const u_int sampleOffset = sampleBootSize + (lightVertex.depth - 1) * sampleLightStepSize;
 
@@ -695,6 +717,13 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 				lightVertex.dVC *= factor;
 				lightVertex.dVM *= factor;
 
+				// Caustic-focus crediting (GPU parity): the first
+				// delta-specular vertex is the productive caster position
+				if (!hasDeltaVertex && lightVertex.bsdf.IsDelta()) {
+					firstDeltaP = lightVertex.bsdf.hitPoint.p;
+					hasDeltaVertex = true;
+				}
+
 				// Store the vertex only if it isn't specular
 				if (!lightVertex.bsdf.IsDelta()) {
 					lightPathVertices.push_back(lightVertex);
@@ -707,8 +736,18 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 					Point lensPoint;
 					camera.SampleLens(time, sampler->GetSample(3), sampler->GetSample(4), &lensPoint);
 
+					const size_t sampleResultsBefore = sampleResults.size();
 					ConnectToEye(time, lightVertex, sampler->GetSample(sampleOffset + 1),
 							lensPoint, sampleResults);
+					// A connect that produced a screen contribution after
+					// crossing a delta surface is a productive target:
+					// remember it (once per path, GPU parity - the flag
+					// clears so a later delta bounce can still be credited)
+					if (hasDeltaVertex && (sampleResults.size() > sampleResultsBefore)) {
+						engine->pathTracer.LightFocusCredit(scene,
+								light->lightSceneIndex, firstDeltaP);
+						hasDeltaVertex = false;
+					}
 				}
 
 				if (lightVertex.depth >= engine->maxLightPathDepth)
@@ -725,6 +764,7 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 				break;
 			}
 		}
+
 	}
 	
 	return true;

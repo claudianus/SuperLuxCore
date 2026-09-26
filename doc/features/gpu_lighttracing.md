@@ -568,6 +568,47 @@ how small the caster is relative to the scene disc.
   weight in the emit distribution); the port is a fixed direction +
   disc origin (u0/u1 are the disc coords, pdf `1/(pi*envR^2)`).
 
+#### CPU / BIDIR port (M7e)
+
+`BIDIRCPU` and `BIDIRVMCPU` consume the same feature through the shared
+`PathTracer` focus cache (`BiDirCPURenderEngine::pathTracer`), so a CPU
+bidirectional render and a GPU light-tracing render learn identical
+hotspot rings:
+
+- `BiDirCPURenderThread::TraceLightPath` calls
+  `PathTracer::LightFocusEmitU` right after `light->Emit` — dims 13-16
+  of the extended `sampleBootSize = 17` are the dedicated focus draws
+  (coin, slot, cone u0/u1). `sampleBootSizeVM` was aligned to 17, which
+  also removes a historical off-by-one overlap between the VM light and
+  eye step regions. The first delta-specular vertex is remembered per
+  path and `LightFocusCredit` records it when a `ConnectToEye` produces
+  a splat — the same credit contract as the GPU.
+- The `U`-variants take the four draws as arguments so engines whose
+  sampler layout differs from PathTracer's boot dims drive the same
+  mixture; `LightFocusEmit`/`LightFocusEmitDistant` remain the
+  sampler-reading wrappers used by PathTracer's own light paths.
+- **MIS consistency (the subtle part, measured)**: the light subpath
+  samples the mixture `q = (1-g)·native + g·aim`, so *every* place a
+  light-emission pdf appears as the ALTERNATIVE strategy in a MIS
+  weight must evaluate `q`, not `p_native`. In `DirectLightSampling`
+  the NEE `weightCamera` term used the native `emissionPdfW` returned
+  by `light->Illuminate` — with the actual sampling density being `q`,
+  the strategy partition leaked ~10% of scene energy (measured: uniform
+  −4.3% gamma / −9.6% linear on the cornell-glass-point scene, all
+  brightness bands, spp-independent). `LightFocusEmissionPdfW` now
+  evaluates the same mixture for the shadow-ray direction and feeds
+  `weightCamera`; the residual on/off difference dropped to ~0.6%
+  (RNG re-streaming noise). `BIDIRVMCPU` inherits both the emit and
+  the NEE fix from the base class.
+- Same coverage as GPU: `TYPE_POINT`/`TYPE_SPOT` steer the direction,
+  the distant branch re-samples the origin. For distant lights
+  `LightFocusEmissionPdfW` returns the native pdf — the distant mixture
+  modifies the position marginal, which does not enter the directional
+  `weightCamera` term.
+- Regression: `dev-tools/e39_bidir_focus.py` (point light + 3 glass
+  spheres; both engines, asserts NaN-free and on/off energy ratio
+  within ±4%).
+
 **Camera-side caveat (measured)**: focusing fixes only the emission
 half. A caustic whose receiver is seen *through* the refractor (sheet /
 window / basin) cannot splat — the camera connect ray hits the caster

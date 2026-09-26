@@ -80,6 +80,11 @@ void BiDirCPURenderEngine::StartLockLess() {
 	albedoSpecularSetting = String2AlbedoSpecularSetting(cfg.Get(GetDefaultProps()->Get("path.albedospecular.type")).Get<string>());
 	albedoSpecularGlossinessThreshold = Max(cfg.Get(GetDefaultProps()->Get("path.albedospecular.glossinessthreshold")).Get<double>(), 0.0);
 
+	// Caustic-focus emission guidance (M7e, GPU parity): the light
+	// subpath shares the PathTracer hotspot table + mixture pdf. Only
+	// the focus-related options are consumed by BIDIRCPU.
+	pathTracer.ParseOptions(cfg, *PathTracer::GetDefaultProps());
+
 	//--------------------------------------------------------------------------
 	// Restore render state if there is one
 	//--------------------------------------------------------------------------

@@ -350,6 +350,9 @@ protected:
 	// VC_MERGE_BUCKETS x VC_MERGE_CAPACITY vertex indices + per-bucket
 	// counters, rebuilt each iteration by the merge-hash kernels
 	luxrays::HardwareDeviceBuffer *vcMergeHashBuff;
+	// M7d temporal reuse: per-eye-task replay reservoir (VCReplay) -
+	// persists across iterations, indexed by the eye-task gid
+	luxrays::HardwareDeviceBuffer *vcReplayBuff;
 	luxrays::HardwareDeviceBuffer *directLightVolInfosBuff;
 	luxrays::HardwareDeviceBuffer *pixelFilterBuff;
 

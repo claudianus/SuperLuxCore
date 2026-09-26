@@ -48,8 +48,14 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 void PathOCLBaseOCLRenderThread::InitFilm() {
-	if (threadFilms.size() == 0)
+	if (threadFilms.size() == 0) {
+		// IncThreadFilms() creates the film AND initializes it with the
+		// same arguments used below; falling through to the loop would
+		// init it a second time and AllocBuffer would overwrite every
+		// non-null channel pointer, leaking a full set of film buffers.
 		IncThreadFilms();
+		return;
+	}
 
 	u_int threadFilmWidth, threadFilmHeight, threadFilmSubRegion[4];
 	GetThreadFilmSize(&threadFilmWidth, &threadFilmHeight, threadFilmSubRegion);
@@ -1297,6 +1303,20 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 				sizeof(float) * zeroEff.size(), "VCEffStats");
 	} else
 		intersectionDevice.FreeBuffer(&vcEffStatsBuff);
+
+	// Temporal connect reuse (M7d): per-eye-task replay reservoir.
+	// Indexed by the eye-task gid (light tasks occupy the tail gids and
+	// never reach MK_VC_CONNECT). Persists across iterations - that is
+	// the point of the reuse - so it is zero-initialised once here and
+	// never reset: vertex.seq == 0 marks an empty slot.
+	if (vcfg.enabled && vcfg.reuse) {
+		std::vector<slg::ocl::pathoclbase::VCReplay> zeroReplay(
+				renderEngine->eyeTaskCount);
+		intersectionDevice.AllocBufferRW(&vcReplayBuff, zeroReplay.data(),
+				sizeof(slg::ocl::pathoclbase::VCReplay) *
+				zeroReplay.size(), "VCReplay");
+	} else
+		intersectionDevice.FreeBuffer(&vcReplayBuff);
 
 	// Caustic focus cache (guided emission): per-light ring of the last
 	// LIGHT_FOCUS_K productive target positions (float4: xyz + aim

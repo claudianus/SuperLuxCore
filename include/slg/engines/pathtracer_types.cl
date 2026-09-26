@@ -210,6 +210,10 @@ typedef struct {
 		// misVcWeightFactor = Mis(1/etaVCM), misVmWeightFactor =
 		// Mis(etaVCM), vmNorm = 1/(PI*r^2*nVM).
 		float misVcWeightFactor, misVmWeightFactor, vmNorm;
+		// Temporal connect reuse (M7d): each eye task replays the
+		// highest-scoring light vertex it has connected so far as one
+		// extra deterministic candidate per eye vertex.
+		unsigned int reuse;
 	} vertexConnect;
 
 	// PhotonGI cache settings

@@ -112,6 +112,11 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 		const u_int *threadFilmSubRegion) {
 	engineFilm = &engineFlm;
 
+	// Re-init (resize, channel change, double InitFilm) must not leak the
+	// previous channel buffers: AllocBuffer overwrites non-null pointers
+	// without freeing. Release everything first so Init is idempotent.
+	FreeAllOCLBuffers();
+
 	const u_int filmPixelCount = threadFilmWidth * threadFilmHeight;
 
 	// Allocate the new Film

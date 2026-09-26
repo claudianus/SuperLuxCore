@@ -2099,6 +2099,18 @@ static float LightFocusSpotFalloff(const Vector &w,
 void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
 		Sampler &sampler, const float time,
 		Ray &ray, Spectrum &flux, float &emissionPdfW) const {
+	// Focus dims sit right after the 9 fixed boot dims (the spectral
+	// wavelength draw keeps occupying the last boot slot)
+	LightFocusEmitU(scene, light, time, ray, flux, emissionPdfW,
+			sampler.GetSample(9), sampler.GetSample(10),
+			sampler.GetSample(11), sampler.GetSample(12));
+}
+
+void PathTracer::LightFocusEmitU(SceneConstRef scene,
+		const LightSource &light, const float time,
+		Ray &ray, Spectrum &flux, float &emissionPdfW,
+		const float uCoin, const float uSlot,
+		const float uCone0, const float uCone1) const {
 	if (!lightFocusEnable)
 		return;
 	LightFocusEnsureInit(scene);
@@ -2112,7 +2124,8 @@ void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
 	// spreads origins uniformly over the whole scene disc, while only the
 	// fraction crossing a delta-specular caster produces caustics.
 	if ((lightType == TYPE_DISTANT) || (lightType == TYPE_SHARPDISTANT)) {
-		LightFocusEmitDistant(scene, light, sampler, time, ray, emissionPdfW);
+		LightFocusEmitDistantU(scene, light, time, ray, emissionPdfW,
+				uCoin, uSlot, uCone0, uCone1);
 		return;
 	}
 
@@ -2127,12 +2140,6 @@ void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
 
 	const float g = lightFocusRatio;
 	const float worldRadius = scene.GetDataSet().GetBSphere().rad;
-	// Focus dims sit right after the 9 fixed boot dims (the spectral
-	// wavelength draw keeps occupying the last boot slot)
-	const float uCoin = sampler.GetSample(9);
-	const float uSlot = sampler.GetSample(10);
-	const float uCone0 = sampler.GetSample(11);
-	const float uCone1 = sampler.GetSample(12);
 
 	LightFocusEntry *ring = &lightFocusTable[lightIndex * lightFocusK];
 
@@ -2198,6 +2205,19 @@ void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
 		nativePdf = (CosTheta(localDir) >= cosTotalWidth) ?
 				UniformConePdf(cosTotalWidth) : 0.f;
 	}
+	const float aimPdf = LightFocusAimPdf(lightIndex, focusN, rayOrig,
+			emitDir, nativePdf);
+
+	emissionPdfW = (1.f - g) * nativePdf + g * aimPdf;
+}
+
+// Aim-branch directional density of emitting emitDir (per unit solid
+// angle), normalized by the slot count. Shared by the emit-time pdf and
+// any alternative-strategy lookup (BIDIR NEE MIS weight).
+float PathTracer::LightFocusAimPdf(const u_int lightIndex, const u_int focusN,
+		const Point &rayOrig, const Vector &emitDir,
+		const float nativePdf) const {
+	const LightFocusEntry *ring = &lightFocusTable[lightIndex * lightFocusK];
 	float aimPdf = 0.f;
 	for (u_int k = 0; k < focusN; ++k) {
 		const LightFocusEntry &hk = ring[k];
@@ -2212,16 +2232,61 @@ void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
 			if (Dot(emitDir, tk / dk) >= ck)
 				aimPdf += UniformConePdf(ck);
 		} else
+			// Degenerate cone (light inside the aim sphere): the draw
+			// keeps the native direction, so its density is nativePdf
 			aimPdf += nativePdf;
 	}
-	aimPdf /= focusN;
+	return aimPdf / focusN;
+}
 
-	emissionPdfW = (1.f - g) * nativePdf + g * aimPdf;
+// Mixture emission pdf of a light-subpath direction. The light strategy
+// samples (1-g)*native + g*aim, so anywhere the light pdf appears as the
+// ALTERNATIVE strategy in a MIS weight (BIDIR NEE weightCamera) it must
+// evaluate the same mixture or the strategy partition leaks energy.
+// Returns nativePdfW unchanged for emitters the focus cannot steer.
+float PathTracer::LightFocusEmissionPdfW(SceneConstRef scene,
+		const LightSource &light, const Vector &emitDir,
+		const float nativePdfW) const {
+	if (!lightFocusEnable)
+		return nativePdfW;
+	LightFocusEnsureInit(scene);
+	const u_int lightIndex = light.lightSceneIndex;
+	if (lightIndex >= lightFocusLightCount)
+		return nativePdfW;
+	const LightSourceType t = light.GetType();
+	Point lightPos;
+	if (t == TYPE_POINT)
+		lightPos = static_cast<const PointLight &>(light).GetAbsolutePosition();
+	else if (t == TYPE_SPOT) {
+		float absPos[3];
+		static_cast<const SpotLight &>(light).GetPreprocessedData(
+				nullptr, absPos, nullptr, nullptr, nullptr);
+		lightPos = Point(absPos[0], absPos[1], absPos[2]);
+	} else
+		// Distant/env/area: direction is not steered, native pdf stands
+		return nativePdfW;
+	const u_int focusN = Min(lightFocusCounts[lightIndex].load(
+			std::memory_order_relaxed), lightFocusK);
+	if (focusN == 0)
+		return nativePdfW;
+	const float aimPdf = LightFocusAimPdf(lightIndex, focusN, lightPos,
+			emitDir, nativePdfW);
+	return (1.f - lightFocusRatio) * nativePdfW + lightFocusRatio * aimPdf;
 }
 
 void PathTracer::LightFocusEmitDistant(SceneConstRef scene,
 		const LightSource &light, Sampler &sampler, const float time,
 		Ray &ray, float &emissionPdfW) const {
+	LightFocusEmitDistantU(scene, light, time, ray, emissionPdfW,
+			sampler.GetSample(9), sampler.GetSample(10),
+			sampler.GetSample(11), sampler.GetSample(12));
+}
+
+void PathTracer::LightFocusEmitDistantU(SceneConstRef scene,
+		const LightSource &light, const float time,
+		Ray &ray, float &emissionPdfW,
+		const float uCoin, const float uSlot,
+		const float uCone0, const float uCone1) const {
 	const u_int casterN = lightFocusCasterCenters.size();
 	if (casterN == 0)
 		return;
@@ -2254,10 +2319,6 @@ void PathTracer::LightFocusEmitDistant(SceneConstRef scene,
 		return;
 
 	const float g = lightFocusRatio;
-	const float uCoin = sampler.GetSample(9);
-	const float uSlot = sampler.GetSample(10);
-	const float uCone0 = sampler.GetSample(11);
-	const float uCone1 = sampler.GetSample(12);
 
 	if (uCoin < g) {
 		// Pick a caster proportional to its disc area r^2, then sample a
@@ -2669,6 +2730,7 @@ void PathTracer::ParseOptions(
 	vertexConnectPoolTasks = Max(1u, cfg.Get(defaultProps.Get("path.vertexconnection.pool")).Get<u_int>());
 	vertexConnectAdaptive = cfg.Get(defaultProps.Get("path.vertexconnection.adaptive")).Get<bool>();
 	vertexConnectMergeRadius = Max(0.f, cfg.Get(defaultProps.Get("path.vertexconnection.mergeradius")).Get<float>());
+	vertexConnectReuse = cfg.Get(defaultProps.Get("path.vertexconnection.reuse")).Get<bool>();
 	if (vertexConnectEnable && !hybridBackForwardEnable) {
 		hybridBackForwardEnable = true;
 		hybridBackForwardPartition = cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>();
@@ -2922,6 +2984,10 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			// Vertex merging (M7, Georgiev'12 VCM): merge radius as a
 			// fraction of the scene bounding-sphere radius (0 = off)
 			Property("path.vertexconnection.mergeradius")(0.f) <<
+			// Temporal connect reuse (M7d, ReSTIR-style vertex replay):
+			// each eye task keeps a copy of its best connect vertex and
+			// replays it as an extra candidate on later samples
+			Property("path.vertexconnection.reuse")(true) <<
 			Property("path.restir.gi.enable")(false) <<
 			Property("path.restir.gi.candidates")(4) <<
 			Property("path.restir.gi.temporal.enable")(true) <<
