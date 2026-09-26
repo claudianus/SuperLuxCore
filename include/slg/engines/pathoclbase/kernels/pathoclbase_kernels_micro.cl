@@ -326,6 +326,9 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		pathInfo->vcFoldVC = factor;
 		pathInfo->dVCM *= pathInfo->vcFoldVCM;
 		pathInfo->dVC *= pathInfo->vcFoldVC;
+		// dVM folds with the same 1/MIS(|cos|) factor as dVC (CPU
+		// Bounce: dVM *= factor) - it shares vcFoldVC
+		pathInfo->dVM *= pathInfo->vcFoldVC;
 	}
 
 	//----------------------------------------------------------------------
@@ -1953,16 +1956,25 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 				// vertex on the CPU side - undo the hit fold
 				pathInfo->dVCM /= pathInfo->vcFoldVCM;
 				pathInfo->dVC /= pathInfo->vcFoldVC;
+				pathInfo->dVM /= pathInfo->vcFoldVC;
 			} else {
-				// CPU Bounce() MIS update (misVm/misVc = 0):
-				//   specular: dVCM = 0, dVC *= MIS(cosSampledDir)
+				// CPU Bounce() MIS update:
+				//   specular: dVCM = 0, dVC *= MIS(cos), dVM *= MIS(cos)
 				//   else:     dVC  = MIS(cos/pdfW) *
-				//                (dVC * MIS(revPdfW) + dVCM)
+				//                (dVC*MIS(revPdfW) + dVCM + misVmW)
+				//             dVM  = MIS(cos/pdfW) *
+				//                (dVM*MIS(revPdfW) + dVCM*misVcW + 1)
 				//             dVCM = MIS(1/pdfW)
+				// (misVmW/misVcW = 0 -> pure BDPT; they are nonzero only
+				// when vertex merging is on)
 				// NOTE: under guiding/portal/RIS proposals bsdfPdfW is the
 				// mixture density while bsdfRevPdfW stays the pure-BSDF
 				// reverse density (no CPU reference exists for that
 				// combination - approximation, documented).
+				const float vcMisVcW = taskConfig->pathTracer.vertexConnect.
+						misVcWeightFactor;
+				const float vcMisVmW = taskConfig->pathTracer.vertexConnect.
+						misVmWeightFactor;
 				float bsdfRevPdfW;
 				if (bsdfEvent & SPECULAR)
 					bsdfRevPdfW = bsdfPdfW;
@@ -1971,11 +1983,16 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 							MATERIALS_PARAM);
 				if (bsdfEvent & SPECULAR) {
 					pathInfo->dVCM = 0.f;
-					pathInfo->dVC *= VCMis(cosSampledDir);
+					const float specFactor = VCMis(cosSampledDir);
+					pathInfo->dVC *= specFactor;
+					pathInfo->dVM *= specFactor;
 				} else {
-					pathInfo->dVC = VCMis(cosSampledDir / bsdfPdfW) *
-							(pathInfo->dVC * VCMis(bsdfRevPdfW) +
-							pathInfo->dVCM);
+					const float w = VCMis(cosSampledDir / bsdfPdfW);
+					pathInfo->dVC = w * (pathInfo->dVC *
+							VCMis(bsdfRevPdfW) + pathInfo->dVCM + vcMisVmW);
+					pathInfo->dVM = w * (pathInfo->dVM *
+							VCMis(bsdfRevPdfW) + pathInfo->dVCM * vcMisVcW +
+							1.f);
 					pathInfo->dVCM = VCMis(1.f / bsdfPdfW);
 				}
 			}
@@ -2287,6 +2304,7 @@ OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
 	// vertices yet
 	lpi->dVCM = 0.f;
 	lpi->dVC = 0.f;
+	lpi->dVM = 0.f;
 	lpi->vcVertexCount = 0;
 	lpi->pendingSplat.fromMnee = false;
 	lpi->pendingSplat.valid = false;
@@ -2709,6 +2727,10 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 					lpi->dVC = VCMis(usedCosLight / (emissionPdfW * pickPdf));
 				} else
 					lpi->dVC = 0.f;
+				// Vertex merging (M7): dVM = dVC * misVcWeightFactor
+				// (CPU TraceLightPath - 0 when merging is off)
+				lpi->dVM = lpi->dVC *
+						pathTracer->vertexConnect.misVcWeightFactor;
 			}
 		} else
 			flux = BLACK;
@@ -3051,6 +3073,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						VLOAD3F(&rays[gid].d.x))));
 				lpi->dVCM *= factor;
 				lpi->dVC *= factor;
+				lpi->dVM *= factor;
 			}
 
 			// Caustic focus cache: remember the first delta-specular
@@ -3088,6 +3111,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					v->throughputB = tp.z;
 					v->dVCM = lpi->dVCM;
 					v->dVC = lpi->dVC;
+					v->dVM = lpi->dVM;
 					v->lightID = lpi->lightGroupID;
 					// 1-based depth (PathVertexVM::depth convention)
 					v->depth = lpi->depth.depth + 1;
@@ -3327,12 +3351,21 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						else
 							BSDF_Pdf(bsdf, sampledDir, NULL, &bsdfRevPdfW
 									MATERIALS_PARAM);
+						const float lMisVcW = pathTracer->vertexConnect.
+								misVcWeightFactor;
+						const float lMisVmW = pathTracer->vertexConnect.
+								misVmWeightFactor;
 						if (bsdfEvent & SPECULAR) {
 							lpi->dVCM = 0.f;
-							lpi->dVC *= VCMis(cosSampledDir);
+							const float specFactor = VCMis(cosSampledDir);
+							lpi->dVC *= specFactor;
+							lpi->dVM *= specFactor;
 						} else {
-							lpi->dVC = VCMis(cosSampledDir / bsdfPdfW) *
-									(lpi->dVC * VCMis(bsdfRevPdfW) + lpi->dVCM);
+							const float w = VCMis(cosSampledDir / bsdfPdfW);
+							lpi->dVC = w * (lpi->dVC * VCMis(bsdfRevPdfW) +
+									lpi->dVCM + lMisVmW);
+							lpi->dVM = w * (lpi->dVM * VCMis(bsdfRevPdfW) +
+									lpi->dVCM * lMisVcW + 1.f);
 							lpi->dVCM = VCMis(1.f / bsdfPdfW);
 						}
 					}
@@ -3383,6 +3416,11 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 		// vcVertexCount) and the vertex cache itself
 		, __global LightPathInfo *lightPathInfos
 		, __global const VCLightVertex* restrict lightVertices
+		// M7 efficiency map + vertex merging spatial hash
+		// (no parens in comments here - the cl2msl arg parser
+		// bracket-matches this list literally)
+		, __global float *vcEffStats
+		, __global uint *vcMergeHash
 		) {
 	WAVEFRONT_GUARD
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -3408,12 +3446,44 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 	const uint lightTaskCount = taskConfig->pathTracer.lightTracing.lightTaskCount;
 	const bool vcLive = lightVertices && (vcSlotsPerTask > 0u) &&
 			(lightTaskCount > 0u);
-	// Each eye task pairs with a fixed light task's subpath cache:
-	// unbiased (the light sub-path is independent of the eye path),
-	// deterministic and read-only
-	const uint lightTask = vcLive ? (uint)(gid % lightTaskCount) : 0u;
-	const uint count = vcLive ?
-			min(lightPathInfos[lightTask].vcVertexCount, vcSlotsPerTask) : 0u;
+	// M7 probabilistic connection: the candidate pool is the union of
+	// poolTasks light tasks' vertex caches. Task j of the pool pairs as
+	// (gid + j*poolStride) % lightTaskCount - j=0 reproduces the M6
+	// gid%lightTaskCount pairing. The flat cursor c indexes
+	// [0, poolTasks*slotsPerTask) and decodes to (j, slot) below.
+	const uint vcPoolTasks = vcLive ? min(
+			taskConfig->pathTracer.vertexConnect.poolTasks,
+			lightTaskCount) : 1u;
+	const uint vcPoolStride = max(1u, lightTaskCount / vcPoolTasks);
+	const uint vcPoolSize = vcLive ? (vcPoolTasks * vcSlotsPerTask) : 0u;
+	// Expected connect budget per eye vertex (0 = connect every
+	// candidate - the deterministic M6 walk)
+	const uint vcConnects = taskConfig->pathTracer.vertexConnect.connects;
+
+	// M7 efficiency-aware allocation: the sample's screen tile indexes
+	// the CAS-accumulated map (tile lum / spent rays + global pair).
+	// After warmup the per-vertex budget is scaled by the tile's
+	// measured efficiency relative to the global average - the map is
+	// a pure proposal-shaping device (q_i already carries the exact
+	// Horvitz-Thompson correction), so any map state stays unbiased.
+	const uint vcTilesX = (filmWidth + 15u) >> 4;
+	const uint vcTilesY = (filmHeight + 15u) >> 4;
+	const uint vcNTiles = vcTilesX * vcTilesY;
+	const uint vcTile = min(sampleResult->pixelX >> 4, vcTilesX - 1u) +
+			min(sampleResult->pixelY >> 4, vcTilesY - 1u) * vcTilesX;
+	float vcK = (float)vcConnects;
+	if (vcEffStats && (vcConnects > 0u)) {
+		const float gL = vcEffStats[2u * vcNTiles];
+		const float gR = vcEffStats[2u * vcNTiles + 1u];
+		// Warmup gate: wait until the map averages a few rays per tile
+		if (gR > (float)vcNTiles * 4.f) {
+			const float tL = vcEffStats[vcTile];
+			const float tR = vcEffStats[vcNTiles + vcTile];
+			const float gEff = gL / gR;
+			const float tEff = (tR > 0.f) ? (tL / tR) : gEff;
+			vcK = (float)vcConnects * clamp(tEff / gEff, .125f, 4.f);
+		}
+	}
 
 	const float3 eyeP = VLOAD3F(&eyeBsdf->hitPoint.p.x);
 	const float3 eyeShadeN = VLOAD3F(&eyeBsdf->hitPoint.shadeN.x);
@@ -3453,14 +3523,111 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			// The light path vertex is visible - accumulate the deferred
 			// contribution (misWeight*geometryTerm*eyeEval*lightEval*
 			// lightThroughput) folded with the segment's volume transport
+			const float3 landed = connectionThroughput * MAKE_FLOAT3(
+					taskState->vcPendingR, taskState->vcPendingG,
+					taskState->vcPendingB);
 			SampleResult_AddDirectLight(&taskConfig->film,
 					sampleResult, taskState->vcPendingLightID,
 					taskState->vcPendingEvent,
-					eyeThroughput,
-					connectionThroughput * MAKE_FLOAT3(
-						taskState->vcPendingR, taskState->vcPendingG,
-						taskState->vcPendingB),
-					1.f);
+					eyeThroughput, landed, 1.f);
+			// Efficiency map: landed connect luminance on this tile.
+			// eyeThroughput is left out on purpose - the map tracks
+			// the transport the connect step itself discovers, which
+			// is the quantity the allocation should follow.
+			if (vcEffStats) {
+				const float l = fabs(landed.x) + fabs(landed.y) +
+						fabs(landed.z);
+				AtomicAddFloat(&vcEffStats[vcTile], l);
+				AtomicAddFloat(&vcEffStats[2u * vcNTiles], l);
+			}
+		}
+	}
+
+	//----------------------------------------------------------------------
+	// Vertex merging (M7, Georgiev'12 VCM): at this eye vertex's first
+	// visit (vcCursor == 0), gather every cached light vertex inside
+	// mergeRadius via the spatial hash and evaluate the VM contribution
+	// directly - no shadow ray (the merge is a density estimate, not a
+	// connection). SmallVCM RangeQuery::Process + the vmNormalization
+	// factor of the caller; MIS per tech. rep. (37)-(39).
+	//----------------------------------------------------------------------
+	const bool vcMerge = vcLive && vcMergeHash &&
+			taskConfig->pathTracer.vertexConnect.mergeEnable;
+	if (vcMerge && (taskState->vcCursor == 0u) &&
+			!BSDF_IsDelta(eyeBsdf MATERIALS_PARAM)) {
+		const float r = taskConfig->pathTracer.vertexConnect.mergeRadius;
+		const float r2 = r * r;
+		const float misVcW = taskConfig->pathTracer.vertexConnect.
+				misVcWeightFactor;
+		const float vmNorm = taskConfig->pathTracer.vertexConnect.vmNorm;
+		const int cx0 = (int)floor((eyeP.x - r) / r);
+		const int cx1 = (int)floor((eyeP.x + r) / r);
+		const int cy0 = (int)floor((eyeP.y - r) / r);
+		const int cy1 = (int)floor((eyeP.y + r) / r);
+		const int cz0 = (int)floor((eyeP.z - r) / r);
+		const int cz1 = (int)floor((eyeP.z + r) / r);
+		for (int cx = cx0; cx <= cx1; ++cx)
+		for (int cy = cy0; cy <= cy1; ++cy)
+		for (int cz = cz0; cz <= cz1; ++cz) {
+			const uint h = VCMergeCellHash(cx, cy, cz);
+			const uint cnt = min(vcMergeHash[h], VC_MERGE_CAPACITY);
+			for (uint s = 0u; s < cnt; ++s) {
+				const uint vIdx = vcMergeHash[VC_MERGE_BUCKETS +
+						h * VC_MERGE_CAPACITY + s];
+				if (vIdx >= taskConfig->pathTracer.vertexConnect.
+						vertexCount)
+					continue;
+				__global const VCLightVertex *lv = &lightVertices[vIdx];
+				if (lv->seq == 0u)
+					continue;
+				const float3 p2p = VLOAD3F(&lv->bsdf.hitPoint.p.x) - eyeP;
+				const float d2 = dot(p2p, p2p);
+				if ((d2 <= 0.f) || (d2 > r2))
+					continue;
+				// The photon direction: the light vertex's incoming
+				// direction is where the merged vertex receives light
+				// from (SmallVCM WorldDirFix convention)
+				const float3 lightDir = VLOAD3F(
+						&lv->bsdf.hitPoint.fixedDir.x);
+				BSDFEvent eyeEvent;
+				float eyePdfW;
+				const float3 eyeBsdfEval = BSDF_Evaluate(eyeBsdf,
+						lightDir, &eyeEvent, &eyePdfW
+						MATERIALS_PARAM);
+				if (Spectrum_IsBlack(eyeBsdfEval) || (eyePdfW <= 0.f))
+					continue;
+				float eyeRevPdfW;
+				BSDF_Pdf(eyeBsdf, lightDir, NULL, &eyeRevPdfW
+						MATERIALS_PARAM);
+				// Continuation-probability folds (SmallVCM
+				// ContinuationProb): dirPdfW by the eye vertex's RR
+				// prob, revPdfW by the light vertex's - the light-side
+				// proxy is its stored throughput (SmallVCM uses a
+				// reflectance-based prob we do not carry)
+				if (pathInfo->depth.depth + 1u >=
+						taskConfig->pathTracer.rrDepth)
+					eyePdfW *= RussianRouletteProb(taskConfig->pathTracer.
+							rrImportanceCap, eyeBsdfEval);
+				if (lv->depth >= taskConfig->pathTracer.rrDepth)
+					eyeRevPdfW *= RussianRouletteProb(taskConfig->pathTracer.
+							rrImportanceCap, MAKE_FLOAT3(lv->throughputR,
+							lv->throughputG, lv->throughputB));
+				const float wLight = lv->dVCM * misVcW +
+						lv->dVM * VCMis(eyePdfW);
+				const float wEye = pathInfo->dVCM * misVcW +
+						pathInfo->dVM * VCMis(eyeRevPdfW);
+				const float misWeight = 1.f / (wLight + 1.f + wEye);
+				const float3 contrib = (misWeight * vmNorm) *
+						eyeBsdfEval * MAKE_FLOAT3(lv->throughputR,
+						lv->throughputG, lv->throughputB);
+				if (isnan(contrib.x) || isinf(contrib.x) ||
+						isnan(contrib.y) || isinf(contrib.y) ||
+						isnan(contrib.z) || isinf(contrib.z))
+					continue;
+				SampleResult_AddDirectLight(&taskConfig->film,
+						sampleResult, lv->lightID, eyeEvent,
+						eyeThroughput, contrib, 1.f);
+			}
 		}
 	}
 
@@ -3471,9 +3638,57 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 	//----------------------------------------------------------------------
 	bool queued = false;
 	// CPU ConnectVertices gate: delta eye vertices can not connect
-	if ((count > 0u) && !BSDF_IsDelta(eyeBsdf MATERIALS_PARAM)) {
-		uint k = taskState->vcCursor;
-		for (; k < count; ++k) {
+	if ((vcPoolSize > 0u) && !BSDF_IsDelta(eyeBsdf MATERIALS_PARAM)) {
+		// First visit at this eye vertex (cursor still at 0): score the
+		// whole candidate pool. The scores drive the probabilistic
+		// inclusion q_i = clamp(connects*score_i/scoreSum, qFloor, 1);
+		// an included candidate's contribution is weighted 1/q_i
+		// (Horvitz-Thompson), so the estimator stays unbiased for any
+		// positive q_i - the score is only a variance tool. The floor
+		// keeps candidates whose proxy underestimates them reachable.
+		if ((vcConnects > 0u) && (taskState->vcCursor == 0u)) {
+			float scoreSum = 0.f;
+			for (uint c = 0u; c < vcPoolSize; ++c) {
+				const uint lt = (gid + (c / vcSlotsPerTask) *
+						vcPoolStride) % lightTaskCount;
+				const uint k = c - (c / vcSlotsPerTask) * vcSlotsPerTask;
+				if (k >= min(lightPathInfos[lt].vcVertexCount,
+						vcSlotsPerTask))
+					continue;
+				__global const VCLightVertex *lv =
+						&lightVertices[lt * vcSlotsPerTask + k];
+				if (lv->seq == 0u)
+					continue;
+				const float3 p2p = VLOAD3F(&lv->bsdf.hitPoint.p.x) - eyeP;
+				const float d2 = dot(p2p, p2p);
+				if (d2 <= 0.f)
+					continue;
+				const float3 dir = p2p * (1.f / sqrt(d2));
+				// Cheap contribution proxy: light throughput x |cos|
+				// geometry (|cos|, not clamped, so transmissive BSDFs
+				// keep a nonzero proposal weight)
+				scoreSum += (lv->throughputR + lv->throughputG +
+						lv->throughputB) *
+						fabs(dot(eyeShadeN, dir)) *
+						fabs(dot(VLOAD3F(&lv->bsdf.hitPoint.shadeN.x),
+								-dir)) / d2;
+			}
+			taskState->vcScoreSum = scoreSum;
+		}
+		const float vcQFloor = .5f / (float)vcPoolSize;
+		const uint vcSalt = (gid * 747796405u) ^
+				((pathInfo->depth.depth + 1u) * 2654435761u) ^
+				(GuidingPass(taskConfig, gid, samplesBuff) * 83492791u);
+
+		uint c = taskState->vcCursor;
+		for (; c < vcPoolSize; ++c) {
+			const uint j = c / vcSlotsPerTask;
+			const uint k = c - j * vcSlotsPerTask;
+			const uint lightTask = (gid + j * vcPoolStride) %
+					lightTaskCount;
+			if (k >= min(lightPathInfos[lightTask].vcVertexCount,
+					vcSlotsPerTask))
+				continue;
 			__global const VCLightVertex *lv =
 					&lightVertices[lightTask * vcSlotsPerTask + k];
 
@@ -3488,6 +3703,28 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 				continue;
 			const float p2pDistance = sqrt(p2pDistance2);
 			const float3 p2pDir = p2p / p2pDistance;
+
+			const float cosThetaAtCamera = dot(eyeShadeN, p2pDir);
+			const float cosThetaAtLight =
+					dot(VLOAD3F(&lv->bsdf.hitPoint.shadeN.x), -p2pDir);
+
+			// Probabilistic connection: draw the inclusion test on the
+			// cheap score before paying the BSDF evaluations
+			float vcQ = 1.f;
+			if (vcConnects > 0u) {
+				const float scoreSum = taskState->vcScoreSum;
+				const float score =
+						(lv->throughputR + lv->throughputG +
+						lv->throughputB) * fabs(cosThetaAtCamera) *
+						fabs(cosThetaAtLight) / p2pDistance2;
+				vcQ = (scoreSum > 0.f) ?
+						clamp(vcK * score / scoreSum,
+								vcQFloor, 1.f) : vcQFloor;
+				const float u = GuidingHash(vcSalt ^
+						(c * 2891336453u)) * (1.f / 4294967296.f);
+				if (u >= vcQ)
+					continue;
+			}
 
 			// Check eye vertex BSDF
 			BSDFEvent eyeEvent;
@@ -3513,9 +3750,6 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			BSDF_Pdf(&lv->bsdf, -p2pDir, NULL, &lightBsdfRevPdfW
 					MATERIALS_PARAM);
 
-			const float cosThetaAtCamera = dot(eyeShadeN, p2pDir);
-			const float cosThetaAtLight =
-					dot(VLOAD3F(&lv->bsdf.hitPoint.shadeN.x), -p2pDir);
 			// The cosine terms are inside the Evaluate()s (CPU parity)
 			const float geometryTerm = 1.f / p2pDistance2;
 
@@ -3546,10 +3780,13 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			const float lightBsdfPdfA = PdfWtoA(lightPdfW, p2pDistance,
 					cosThetaAtCamera);
 
+			const float vcMisVmW = taskConfig->pathTracer.vertexConnect.
+					misVmWeightFactor;
 			const float lightWeight = VCMis(eyeBsdfPdfA) *
-					(lv->dVCM + lv->dVC * VCMis(lightRevPdfW));
+					(vcMisVmW + lv->dVCM + lv->dVC * VCMis(lightRevPdfW));
 			const float eyeWeight = VCMis(lightBsdfPdfA) *
-					(pathInfo->dVCM + pathInfo->dVC * VCMis(eyeRevPdfW));
+					(vcMisVmW + pathInfo->dVCM + pathInfo->dVC *
+					VCMis(eyeRevPdfW));
 			const float misWeight = 1.f / (lightWeight + 1.f + eyeWeight);
 
 			//--------------------------------------------------------------
@@ -3580,7 +3817,9 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 					lv->bsdf.hitPoint.interiorVolumeIndex :
 					lv->bsdf.hitPoint.exteriorVolumeIndex;
 
-			const float3 pending = (misWeight * geometryTerm) *
+			// 1/vcQ: Horvitz-Thompson correction for the probabilistic
+			// inclusion (identity in the deterministic full walk)
+			const float3 pending = (misWeight * geometryTerm / vcQ) *
 					eyeBsdfEval * lightBsdfEval *
 					MAKE_FLOAT3(lv->throughputR, lv->throughputG,
 							lv->throughputB);
@@ -3590,12 +3829,17 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 			taskState->vcPendingLightID = lv->lightID;
 			taskState->vcPendingEvent = eyeEvent;
 			taskState->vcPending = 1u;
-			taskState->vcCursor = k;
+			taskState->vcCursor = c;
 			queued = true;
+			// Efficiency map: one connect ray spent on this tile
+			if (vcEffStats) {
+				AtomicAddFloat(&vcEffStats[vcNTiles + vcTile], 1.f);
+				AtomicAddFloat(&vcEffStats[2u * vcNTiles + 1u], 1.f);
+			}
 			break;
 		}
 		if (!queued)
-			taskState->vcCursor = count;
+			taskState->vcCursor = vcPoolSize;
 	}
 
 	if (!queued) {
@@ -3605,6 +3849,56 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 		taskState->state = sampleResult->lastPathVertex ?
 				MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
 	}
+}
+
+//------------------------------------------------------------------------------
+// Vertex merging hash rebuild (M7)
+//
+// Two tiny kernels enqueued once per iteration before MK_VC_CONNECT
+// (kernel launches are serialized, so no internal synchronization is
+// needed). Reset clears the per-bucket counters; Build re-inserts every
+// current vertex record under the cell of its position. Stale index
+// slots can not linger: each iteration rewrites the whole table.
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_VCResetMergeHash(
+		__global uint *vcMergeHash
+		) {
+	const size_t gid = get_global_id(0);
+	if (gid >= VC_MERGE_BUCKETS)
+		return;
+	vcMergeHash[gid] = 0u;
+}
+
+__kernel void AdvancePaths_VCBuildMergeHash(
+		__constant const GPUTaskConfiguration* restrict taskConfig
+		, __global const LightPathInfo* restrict lightPathInfos
+		, __global const VCLightVertex* restrict lightVertices
+		, __global uint *vcMergeHash
+		) {
+	const size_t gid = get_global_id(0);
+	if (gid >= taskConfig->pathTracer.vertexConnect.vertexCount)
+		return;
+	// Only this pass's vertices belong in the grid: slots past the
+	// task's current vcVertexCount still hold records written by a
+	// previous pass (seq != 0) and must not merge
+	const uint slotsPerTask = taskConfig->pathTracer.vertexConnect.
+			slotsPerTask;
+	const uint task = (uint)gid / slotsPerTask;
+	if ((uint)gid - task * slotsPerTask >=
+			lightPathInfos[task].vcVertexCount)
+		return;
+	__global const VCLightVertex *lv = &lightVertices[gid];
+	if (lv->seq == 0u)
+		return;
+	const float r = taskConfig->pathTracer.vertexConnect.mergeRadius;
+	const float3 p = VLOAD3F(&lv->bsdf.hitPoint.p.x);
+	const uint h = VCMergeCellHash((int)floor(p.x / r),
+			(int)floor(p.y / r), (int)floor(p.z / r));
+	const uint slot = atomic_inc(&vcMergeHash[h]);
+	if (slot < VC_MERGE_CAPACITY)
+		vcMergeHash[VC_MERGE_BUCKETS + h * VC_MERGE_CAPACITY + slot] =
+				(uint)gid;
 }
 
 //------------------------------------------------------------------------------

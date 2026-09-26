@@ -84,6 +84,16 @@ OPENCL_FORCE_INLINE float VCMis(const float a) {
 	return a * a;
 }
 
+// Vertex merging (M7): spatial hash cell index -> bucket id
+// (VC_MERGE_BUCKETS is a power of two)
+OPENCL_FORCE_INLINE uint VCMergeCellHash(const int cx, const int cy,
+		const int cz) {
+	uint h = (uint)cx * 0x8da6b343u ^ (uint)cy * 0xd8163841u ^
+			(uint)cz * 0xcb1ab31fu;
+	h ^= h >> 16;
+	return h & (VC_MERGE_BUCKETS - 1u);
+}
+
 OPENCL_FORCE_INLINE void GenerateEyePath(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global GPUTaskDirectLight *taskDirectLight,
@@ -146,7 +156,13 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 		if (Camera_GetPDF(camera, ray, 0.f, &cameraPdfW,
 				&fluxToRadianceFactor) && (cameraPdfW > 0.f))
 			pathInfo->dVCM = VCMis(1.f / cameraPdfW);
-		pathInfo->dVC = 0.f;
+		// With vertex merging on the camera vertex itself is a valid
+		// merge/connect endpoint (BiDirVMCPU convention: dVC = dVM = 1);
+		// without it BIDIRCPU's pure-BPT init is dVC = dVM = 0
+		const bool vcMerge = taskConfig->pathTracer.vertexConnect.
+				mergeEnable != 0u;
+		pathInfo->dVC = vcMerge ? 1.f : 0.f;
+		pathInfo->dVM = vcMerge ? 1.f : 0.f;
 	}
 
 	// Initialize the path state
@@ -2074,6 +2090,21 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 // Depth cap: TREE_MAX_DEPTH is 12 on the host; anything deeper means a
 // corrupt upload and must not loop forever.
 #define GUIDE_MAX_DEPTH 32u
+
+// Float atomic add via CAS on the raw bits - the only float atomic
+// needed on device (OpenCL has no atomic float add; cl2msl provides
+// atomic_cmpxchg for both backends).
+OPENCL_FORCE_INLINE void AtomicAddFloat(__global float *addr,
+		const float v) {
+	uint cur = as_uint(*addr);
+	for (;;) {
+		const uint prev = atomic_cmpxchg((__global uint *)addr, cur,
+				as_uint(as_float(cur) + v));
+		if (prev == cur)
+			return;
+		cur = prev;
+	}
+}
 
 OPENCL_FORCE_INLINE uint GuidingHash(uint x) {
 	// murmur3 32-bit finalizer (matches the CPU GuidingHash)

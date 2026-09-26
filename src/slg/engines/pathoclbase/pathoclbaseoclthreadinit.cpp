@@ -644,6 +644,35 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		vc.vertexCount = renderEngine->lightTaskCount * vc.slotsPerTask;
 		if (vc.vertexCount == 0)
 			vc.enabled = false;
+
+		// Vertex merging (M7, Georgiev'12 VCM): absolute radius from the
+		// scene-radius fraction, then the SmallVCM MIS constants. The
+		// merge hash covers the whole light population (nVM =
+		// lightTaskCount) while a connect pool spans poolTasks sub-paths
+		// (nVC), so etaVCM = PI*r^2*nVM/nVC. vmNorm is the VM density
+		// normalization 1/(PI*r^2*nVM) - progressive shrinkage can be
+		// added later by re-scaling all three terms per pass.
+		if (vc.enabled && vc.mergeEnable && (renderEngine->lightTaskCount > 0)) {
+			const float r = Max(1e-6f, vc.mergeRadius *
+					renderEngine->compiledScene->worldBSphere.rad);
+			const float nVM = (float)renderEngine->lightTaskCount;
+			const float nVC = (float)Max(1u, vc.poolTasks);
+			const float etaVCM = M_PI * r * r * nVM / nVC;
+			const float misVcW = 1.f / (etaVCM * etaVCM); // VCMis(1/etaVCM)
+			const float misVmW = etaVCM * etaVCM;          // VCMis(etaVCM)
+			if (isinf(misVcW) || isnan(misVcW)) {
+				SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+						"] WARNING: path.vertexconnection.mergeradius too "
+						"small for the task geometry; merging disabled.");
+				vc.mergeEnable = 0;
+			} else {
+				vc.mergeRadius = r;
+				vc.misVcWeightFactor = misVcW;
+				vc.misVmWeightFactor = misVmW;
+				vc.vmNorm = 1.f / (M_PI * r * r * nVM);
+			}
+		} else
+			vc.mergeEnable = 0;
 	} else {
 		if (vc.enabled)
 			SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
@@ -1240,6 +1269,34 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 				"VCLightVertices");
 	else
 		intersectionDevice.FreeBuffer(&vcVerticesBuff);
+
+	// Vertex merging (M7): spatial hash over the light-vertex cache -
+	// VC_MERGE_BUCKETS cells x VC_MERGE_CAPACITY flat indices plus one
+	// atomic fill counter per bucket. Rebuilt every iteration by the
+	// VCResetMergeHash/VCBuildMergeHash kernels so bucket placement
+	// always reflects the current vertex positions.
+	const auto &vcm = renderEngine->taskConfig.pathTracer.vertexConnect;
+	if (vcm.enabled && vcm.mergeEnable) {
+		std::vector<u_int> zeroHash(
+				VC_MERGE_BUCKETS * (VC_MERGE_CAPACITY + 1), 0u);
+		intersectionDevice.AllocBufferRW(&vcMergeHashBuff, zeroHash.data(),
+				sizeof(u_int) * zeroHash.size(), "VCMergeHash");
+	} else
+		intersectionDevice.FreeBuffer(&vcMergeHashBuff);
+
+	// Efficiency-aware connect allocation (M7): per-16px-tile counters
+	// (landed luminance, spent connect rays) plus a global pair, all
+	// float and CAS-accumulated on device. The kernel derives the tile
+	// geometry from filmWidth/filmHeight with the same formula.
+	const auto &vcfg = renderEngine->taskConfig.pathTracer.vertexConnect;
+	if (vcfg.enabled && (vcfg.connects > 0) && vcfg.adaptive) {
+		const u_int effTilesX = (renderEngine->GetFilm().GetWidth() + 15) / 16;
+		const u_int effTilesY = (renderEngine->GetFilm().GetHeight() + 15) / 16;
+		std::vector<float> zeroEff(2 * effTilesX * effTilesY + 2, 0.f);
+		intersectionDevice.AllocBufferRW(&vcEffStatsBuff, zeroEff.data(),
+				sizeof(float) * zeroEff.size(), "VCEffStats");
+	} else
+		intersectionDevice.FreeBuffer(&vcEffStatsBuff);
 
 	// Caustic focus cache (guided emission): per-light ring of the last
 	// LIGHT_FOCUS_K productive target positions (float4: xyz + aim

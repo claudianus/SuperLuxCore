@@ -184,6 +184,32 @@ typedef struct {
 		// Total records in lightVertices[] (lightTaskCount*slotsPerTask;
 		// 0 when the buffer is absent)
 		unsigned int vertexCount;
+		// Probabilistic connection (M7, Popov'15 PCBPT): the candidate
+		// pool is the union of poolTasks light tasks' vertex caches
+		// (1 = the paired task only, deterministic); connects is the
+		// expected shadow-ray budget per eye vertex (0 = connect every
+		// candidate). When 0 < connects < pool size each candidate is
+		// included with q_i = min(1, connects*score_i/scoreSum) and its
+		// contribution weighted by 1/q_i (Horvitz-Thompson, unbiased).
+		unsigned int connects;
+		unsigned int poolTasks;
+		// Efficiency-aware allocation (M7): when set, the connect
+		// budget per eye vertex is scaled by the measured efficiency
+		// (landed luminance per spent connect ray) of the sample's
+		// screen-space tile relative to the global average.
+		int adaptive;
+		// Vertex merging (M7, Georgiev'12 VCM): cached light vertices
+		// are additionally indexed by a spatial hash over mergeRadius
+		// cells; each eye vertex merges all in-radius candidates with
+		// the SmallVCM VM MIS (dVM carried on both sub-paths).
+		int mergeEnable;
+		float mergeRadius;
+		// SmallVCM constants for the merge MIS, computed at init:
+		// etaVCM = PI*r^2*nVM/nVC with nVM = lightTaskCount (the hash
+		// covers the whole light population) and nVC = poolTasks;
+		// misVcWeightFactor = Mis(1/etaVCM), misVmWeightFactor =
+		// Mis(etaVCM), vmNorm = 1/(PI*r^2*nVM).
+		float misVcWeightFactor, misVmWeightFactor, vmNorm;
 	} vertexConnect;
 
 	// PhotonGI cache settings

@@ -343,6 +343,13 @@ protected:
 	// at [t * slotsPerTask + k]. Written by MK_LIGHT_VERTEX, read by
 	// MK_VC_CONNECT (paired eye task g reads task g % lightTaskCount).
 	luxrays::HardwareDeviceBuffer *vcVerticesBuff;
+	// M7: screen-space connect-efficiency map (tile lum + ray counts +
+	// 2 global counters, all float, CAS-accumulated on device)
+	luxrays::HardwareDeviceBuffer *vcEffStatsBuff;
+	// M7 vertex merging: spatial hash over vcVerticesBuff -
+	// VC_MERGE_BUCKETS x VC_MERGE_CAPACITY vertex indices + per-bucket
+	// counters, rebuilt each iteration by the merge-hash kernels
+	luxrays::HardwareDeviceBuffer *vcMergeHashBuff;
 	luxrays::HardwareDeviceBuffer *directLightVolInfosBuff;
 	luxrays::HardwareDeviceBuffer *pixelFilterBuff;
 
@@ -380,6 +387,10 @@ protected:
 	// Vertex connection (M6): eye-state kernel connecting the current
 	// eye vertex to the paired light task's stored vertices
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_VC_CONNECT;
+	// Vertex merging (M7): per-iteration spatial-hash rebuild over the
+	// light-vertex cache (reset counters, insert current vertices)
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_VCResetMergeHash;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_VCBuildMergeHash;
 	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
 	// queues once per iteration from the authoritative taskState->state;
 	// BucketHistogram counts the per-(state, lambda) task population

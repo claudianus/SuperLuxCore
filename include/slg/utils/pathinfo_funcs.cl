@@ -46,6 +46,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	// camera ray exists
 	pathInfo->dVCM = 0.f;
 	pathInfo->dVC = 0.f;
+	pathInfo->dVM = 0.f;
 	pathInfo->vcFoldVCM = 1.f;
 	pathInfo->vcFoldVC = 1.f;
 }

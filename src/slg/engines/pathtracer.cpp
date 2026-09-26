@@ -99,6 +99,8 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
 		guidingEnable(false), guidingRisK(0), spectralEnable(false),
 		vertexConnectEnable(false),
+		vertexConnectBudget(0), vertexConnectPoolTasks(1),
+		vertexConnectAdaptive(true), vertexConnectMergeRadius(0.f),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true) {
@@ -2659,6 +2661,14 @@ void PathTracer::ParseOptions(
 	// vertex cache on; force one through the same promotion light
 	// tracing uses when the user enabled neither.
 	vertexConnectEnable = cfg.Get(defaultProps.Get("path.vertexconnection.enable")).Get<bool>();
+	// M7: probabilistic connection controls. "connects" is the expected
+	// shadow-ray budget per eye vertex (0 = every candidate in the pool);
+	// "pool" is how many light tasks' vertex caches form the candidate
+	// pool (1 = the paired light task only).
+	vertexConnectBudget = cfg.Get(defaultProps.Get("path.vertexconnection.connects")).Get<u_int>();
+	vertexConnectPoolTasks = Max(1u, cfg.Get(defaultProps.Get("path.vertexconnection.pool")).Get<u_int>());
+	vertexConnectAdaptive = cfg.Get(defaultProps.Get("path.vertexconnection.adaptive")).Get<bool>();
+	vertexConnectMergeRadius = Max(0.f, cfg.Get(defaultProps.Get("path.vertexconnection.mergeradius")).Get<float>());
 	if (vertexConnectEnable && !hybridBackForwardEnable) {
 		hybridBackForwardEnable = true;
 		hybridBackForwardPartition = cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>();
@@ -2901,6 +2911,17 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.portal.count")(0) <<
 			Property("path.portal.weight")(.3f) <<
 			Property("path.vertexconnection.enable")(false) <<
+			// M7 probabilistic connection (PCBPT, Popov et al. 2015):
+			// expected connect budget per eye vertex (0 = all candidates)
+			// and the light-task pool size per eye vertex.
+			Property("path.vertexconnection.connects")(0) <<
+			Property("path.vertexconnection.pool")(1) <<
+			// Efficiency-aware budget scaling (screen-space efficiency
+			// map, Grittmann et al. 2022 style strategy allocation)
+			Property("path.vertexconnection.adaptive")(true) <<
+			// Vertex merging (M7, Georgiev'12 VCM): merge radius as a
+			// fraction of the scene bounding-sphere radius (0 = off)
+			Property("path.vertexconnection.mergeradius")(0.f) <<
 			Property("path.restir.gi.enable")(false) <<
 			Property("path.restir.gi.candidates")(4) <<
 			Property("path.restir.gi.temporal.enable")(true) <<

@@ -443,6 +443,21 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 				*program, "AdvancePaths_MK_VC_CONNECT");
 		advancePathsKernel_MK_VC_CONNECT = std::move(kernel);
 		advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
+
+		// Vertex merging (M7): the spatial hash over the vertex cache is
+		// rebuilt every iteration (reset counters, re-insert all current
+		// vertices) so bucket placement always matches the positions the
+		// connect pass sees this iteration.
+		if (renderEngine->taskConfig.pathTracer.vertexConnect.mergeEnable) {
+			auto [k1, w1] = CompileKernel(intersectionDevice,
+					*program, "AdvancePaths_VCResetMergeHash");
+			advancePathsKernel_VCResetMergeHash = std::move(k1);
+			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, w1);
+			auto [k2, w2] = CompileKernel(intersectionDevice,
+					*program, "AdvancePaths_VCBuildMergeHash");
+			advancePathsKernel_VCBuildMergeHash = std::move(k2);
+			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, w2);
+		}
 	}
 
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex
@@ -735,6 +750,28 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 				argIndex++, lightPathInfosBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
 				argIndex++, vcVerticesBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
+				argIndex++, vcEffStatsBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_VC_CONNECT,
+				argIndex++, vcMergeHashBuff);
+	}
+	// Vertex merging (M7): per-iteration hash rebuild kernels - minimal
+	// arg lists, not the full KERNEL_ARGS tail.
+	if (advancePathsKernel_VCResetMergeHash) {
+		u_int argIndex = 0;
+		intersectionDevice.SetKernelArg(advancePathsKernel_VCResetMergeHash,
+				argIndex++, vcMergeHashBuff);
+	}
+	if (advancePathsKernel_VCBuildMergeHash) {
+		u_int argIndex = 0;
+		intersectionDevice.SetKernelArg(advancePathsKernel_VCBuildMergeHash,
+				argIndex++, taskConfigBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_VCBuildMergeHash,
+				argIndex++, lightPathInfosBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_VCBuildMergeHash,
+				argIndex++, vcVerticesBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_VCBuildMergeHash,
+				argIndex++, vcMergeHashBuff);
 	}
 }
 
@@ -832,6 +869,19 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	// the paired light subpath's stored vertices. Runs after the
 	// direct-light stage (the eye vertex exists once MK_RT_DL /
 	// MK_DL_SAMPLE_BSDF have run) and before the next-bounce emission.
+	// Vertex merging (M7): rebuild the spatial hash over the current
+	// vertex positions first - the light cache was last written by
+	// MK_LIGHT_VERTEX of the previous iteration, so the rebuild sees
+	// stable records (kernel launches are serialized).
+	if (advancePathsKernel_VCResetMergeHash)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_VCResetMergeHash,
+				HardwareDeviceRange(VC_MERGE_BUCKETS),
+				HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (advancePathsKernel_VCBuildMergeHash)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_VCBuildMergeHash,
+				HardwareDeviceRange(
+						renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount),
+				HardwareDeviceRange(advancePathsWorkGroupSize));
 	if (advancePathsKernel_MK_VC_CONNECT)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_VC_CONNECT,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
@@ -898,6 +948,18 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	// their state's flat queue region (AdvancePaths_BuildQueues).
 	intersectionDevice.EnqueueKernel(advancePathsKernel_BuildQueues,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+
+	// Vertex merging (M7): rebuild the spatial hash once per wavefront
+	// iteration - the MK_VC_CONNECT state launch below consumes it.
+	if (advancePathsKernel_VCResetMergeHash)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_VCResetMergeHash,
+				HardwareDeviceRange(VC_MERGE_BUCKETS),
+				HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (advancePathsKernel_VCBuildMergeHash)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_VCBuildMergeHash,
+				HardwareDeviceRange(
+						renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount),
+				HardwareDeviceRange(advancePathsWorkGroupSize));
 
 	// Debug (LUXRAYS_WAVEFRONT_DEBUG=1): validate that every queued task
 	// index really is in the queue's state and appears exactly once,

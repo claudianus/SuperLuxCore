@@ -35,12 +35,19 @@ GPU_ONLY_FLAGS = ("path.lighttracing.enable", "path.lighttracing.only",
 
 def cpu_spec(spec):
     ref = dict(spec)
-    ref["engine"] = "PATHCPU"
+    # Optional estimator-family reference override: scenes exercising a
+    # GPU feature PATHCPU can not match (e.g. vertex merging needs the
+    # VCM engine) name their reference explicitly via "ref_engine";
+    # "ref_cfg_extra" then replaces the GPU cfg entirely.
+    ref["engine"] = spec.get("ref_engine", "PATHCPU")
     ref["sampler"] = CPU_ONLY_SAMPLER_FALLBACK.get(spec["sampler"],
             spec["sampler"])
-    ref["cfg_extra"] = "\n".join(
-            ln for ln in spec.get("cfg_extra", "").splitlines()
-            if not any(ln.startswith(f) for f in GPU_ONLY_FLAGS)) + "\n"
+    if "ref_cfg_extra" in spec:
+        ref["cfg_extra"] = spec["ref_cfg_extra"]
+    else:
+        ref["cfg_extra"] = "\n".join(
+                ln for ln in spec.get("cfg_extra", "").splitlines()
+                if not any(ln.startswith(f) for f in GPU_ONLY_FLAGS)) + "\n"
     return ref
 
 
@@ -85,7 +92,7 @@ def main():
             spec["spp"] = args.spp
         scene = load_scene(spec)
 
-        print(f"\n=== {name}: PATHCPU (ref) ===", flush=True)
+        print(f"\n=== {name}: {spec.get('ref_engine', 'PATHCPU')} (ref) ===", flush=True)
         ref = render(scene, cpu_spec(spec), spp=spec["spp"])
         save_ppm(ref, out / f"{name}_cpu.ppm")
         print(f"  mean luminance {luminance(ref).mean():.5f}", flush=True)

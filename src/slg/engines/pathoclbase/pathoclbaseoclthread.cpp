@@ -137,6 +137,8 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	restirReservoirsBuff = nullptr;
 	mneeSeedsBuff = nullptr;
 	vcVerticesBuff = nullptr;
+	vcEffStatsBuff = nullptr;
+	vcMergeHashBuff = nullptr;
 	directLightVolInfosBuff = nullptr;
 	pixelFilterBuff = nullptr;
 
@@ -157,6 +159,8 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	advancePathsKernel_MK_SPLAT_SAMPLE = nullptr;
 	advancePathsKernel_MK_NEXT_SAMPLE = nullptr;
 	advancePathsKernel_MK_GENERATE_CAMERA_RAY = nullptr;
+	advancePathsKernel_VCResetMergeHash = nullptr;
+	advancePathsKernel_VCBuildMergeHash = nullptr;
 	advancePathsKernel_BuildQueues = nullptr;
 	advancePathsKernel_BucketHistogram = nullptr;
 
@@ -251,6 +255,8 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&restirReservoirsBuff);
 	intersectionDevice.FreeBuffer(&mneeSeedsBuff);
 	intersectionDevice.FreeBuffer(&vcVerticesBuff);
+	intersectionDevice.FreeBuffer(&vcEffStatsBuff);
+	intersectionDevice.FreeBuffer(&vcMergeHashBuff);
 	intersectionDevice.FreeBuffer(&directLightVolInfosBuff);
 	intersectionDevice.FreeBuffer(&pixelFilterBuff);
 	intersectionDevice.FreeBuffer(&taskQueueBuff);

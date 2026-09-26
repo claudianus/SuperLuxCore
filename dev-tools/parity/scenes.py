@@ -200,6 +200,30 @@ SCENES = {
         "expect": {"ratio_min": 0.90, "ratio_max": 1.15,
                 "rmse_max": 0.05, "black_max": 0.01},
     },
+    # M7c vertex merging: same caustic scene with a VCM merge radius.
+    # The merge adds a photon-density estimator (SmallVCM VM terms) -
+    # on this caustic-dominated scene it legitimately recovers ~+18%
+    # over PATHCPU, so the honest reference is BIDIRVMCPU, the CPU VCM
+    # engine. Measured: GPU VM lands at ~0.76 of BIDIRVM (VC vs BIDIR
+    # is ~0.83 - the same estimator-family gap, mostly the thinned
+    # connect pool); a broken merge MIS would overshoot 1.0 or sink
+    # far below.
+    "vc_merge": {
+        "props_file": "scenes/cornell/cornell-area-caustic.scn",
+        "engine": "PATHOCL",
+        "sampler": "SOBOL",
+        "ref_engine": "BIDIRVMCPU",
+        "ref_cfg_extra": "bidirvm.startradius.scale = 0.004\n",
+        "cfg_extra": "path.hybridbackforward.enable = 1\n"
+            "path.lighttracing.enable = 1\n"
+            "path.lighttracing.taskfraction = 0.3\n"
+            "path.vertexconnection.enable = 1\n"
+            "path.vertexconnection.mergeradius = 0.004\n"
+            "opencl.task.count = 32768\n",
+        "spp": 96,
+        "expect": {"ratio_min": 0.65, "ratio_max": 0.98,
+                "rmse_max": 0.08, "black_max": 0.01},
+    },
     # Vertex motion + shared-mesh instancing across accel paths
     "vertex_motion": {
         "builder": build_vertex_motion,

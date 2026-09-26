@@ -268,6 +268,15 @@ public:
 	// caustic-only splat gate and the hybrid diffuse-cut are replaced by
 	// the SmallVCM MIS weights (misVm/misVc = 0 -> pure BPT).
 	bool vertexConnectEnable;
+	// Probabilistic connection (M7): expected connect budget per eye
+	// vertex (0 = every candidate), the number of light tasks pooled
+	// per eye vertex (1 = paired task only) and whether the budget is
+	// scaled by measured per-tile connect efficiency.
+	u_int vertexConnectBudget, vertexConnectPoolTasks;
+	bool vertexConnectAdaptive;
+	// Vertex merging (M7): merge radius as a fraction of the scene
+	// bounding-sphere radius (0 disables merging)
+	float vertexConnectMergeRadius;
 	// Caustic focus cache: guided light emission toward remembered
 	// productive targets (see LIGHT_FOCUS_K in pathoclbase_datatypes.cl
 	// for the GPU ring; the CPU table below mirrors it). Unbiased

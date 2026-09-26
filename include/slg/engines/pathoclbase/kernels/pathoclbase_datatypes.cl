@@ -107,15 +107,27 @@ typedef struct {
 	BSDF bsdf;
 	// Light-subpath throughput up to this vertex (excludes the connect edge)
 	float throughputR, throughputG, throughputB;
-	// SmallVCM MIS bookkeeping of the light prefix (misVmWeightFactor and
-	// misVcWeightFactor are 0 - pure BDPT; dVM is not carried)
-	float dVCM, dVC;
+	// SmallVCM MIS bookkeeping of the light prefix. dVM is carried for
+	// the vertex-merging strategy (M7); it stays inert when merging is
+	// disabled (misVcWeightFactor = 0 -> pure BDPT like before)
+	float dVCM, dVC, dVM;
 	unsigned int lightID;
 	// 1-based light-subpath depth (mirrors PathVertexVM::depth)
 	unsigned int depth;
 	// Seqlock: 0 = never written, odd = write in flight, even = stable
 	unsigned int seq;
 } VCLightVertex;
+
+// Vertex merging (M7, Georgiev'12 VCM): the light-vertex cache is
+// indexed by a spatial hash rebuilt every iteration - VC_MERGE_BUCKETS
+// power-of-two cells (cell size = mergeRadius), each holding up to
+// VC_MERGE_CAPACITY flat vertex indices. vcMergeHash layout:
+// [0, BUCKETS) = atomic fill counters, [BUCKETS, BUCKETS*(1+CAP)) =
+// per-bucket index lists.
+#define VC_MERGE_BUCKETS 65536u
+#define VC_MERGE_CAPACITY 16u
+// VCMergeCellHash lives in pathoclbase_funcs.cl (this header is also
+// compiled as host C++)
 
 // Caustic focus cache: per-light ring of the last LIGHT_FOCUS_K world
 // positions where a successfully-splatted light path crossed its first
@@ -180,6 +192,9 @@ typedef struct {
 	// slots of this task's current subpath inside lightVertices[]
 	// (the paired eye task connects to slots [0, vcVertexCount)).
 	float dVCM, dVC;
+	// Vertex-merging bookkeeping (M7): same recurrence as dVC with the
+	// misVcWeightFactor cross-term (SmallVCM SubPathState::dVM)
+	float dVM;
 	unsigned int vcVertexCount;
 
 	// A camera connect blocked by a delta occluder is being solved by
@@ -486,6 +501,10 @@ typedef struct {
 	unsigned int vcPendingLightID;
 	unsigned int vcPendingEvent;
 	float vcPendingR, vcPendingG, vcPendingB;
+	// Sum of the candidate scores over the connect pool of the current
+	// eye vertex (evaluated once when the cursor starts). Drives the
+	// probabilistic-connection inclusion probability q_i (M7).
+	float vcScoreSum;
 
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,

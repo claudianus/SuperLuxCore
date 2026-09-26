@@ -48,10 +48,11 @@ typedef struct {
 	int isAdaptiveCaustic;
 
 	// Vertex connection (M6) eye-prefix MIS bookkeeping, per CPU
-	// BiDirCPURenderThread (misVmWeightFactor/misVcWeightFactor = 0 ->
-	// pure BDPT; dVM is not carried). dVCM inits to MIS(1/cameraPdfW)
-	// at MK_GENERATE_CAMERA_RAY.
-	float dVCM, dVC;
+	// BiDirCPURenderThread. dVM (M7) carries the vertex-merging
+	// bookkeeping; with merging disabled it stays at the same values
+	// as dVC (misVcWeightFactor = 0 -> pure BDPT as before).
+	// dVCM inits to MIS(1/cameraPdfW) at MK_GENERATE_CAMERA_RAY.
+	float dVCM, dVC, dVM;
 	// The MIS fold applied at the last hit (dVCM *= vcFoldVCM,
 	// dVC *= vcFoldVC) - stored so a pass-through vertex (not a real
 	// vertex on the CPU side) can undo it at bounce time.

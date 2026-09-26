@@ -108,6 +108,17 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.vertexConnect.enabled = pathTracer->vertexConnectEnable;
 	compiledPathTracer.vertexConnect.slotsPerTask = 0;
 	compiledPathTracer.vertexConnect.vertexCount = 0;
+	compiledPathTracer.vertexConnect.connects = pathTracer->vertexConnectBudget;
+	compiledPathTracer.vertexConnect.poolTasks = pathTracer->vertexConnectPoolTasks;
+	compiledPathTracer.vertexConnect.adaptive = pathTracer->vertexConnectAdaptive;
+	// Vertex merging (M7): the absolute radius and the MIS constants
+	// need lightTaskCount + the scene radius - filled at device init.
+	compiledPathTracer.vertexConnect.mergeEnable =
+			(pathTracer->vertexConnectMergeRadius > 0.f) ? 1 : 0;
+	compiledPathTracer.vertexConnect.mergeRadius = pathTracer->vertexConnectMergeRadius;
+	compiledPathTracer.vertexConnect.misVcWeightFactor = 0.f;
+	compiledPathTracer.vertexConnect.misVmWeightFactor = 0.f;
+	compiledPathTracer.vertexConnect.vmNorm = 0.f;
 
 	// MNEE specular caustics (pathtracer_mnee.cpp): the kernel port runs the
 	// same single vertex solver (path.mnee.enable / path.mnee.maxiterations).
