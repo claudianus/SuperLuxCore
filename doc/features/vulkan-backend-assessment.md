@@ -1,10 +1,15 @@
 # Vulkan backend — cross-vendor GPU path + HWRT: feasibility assessment
 
-Status: **M1 core path working on Apple Silicon (experimental)** —
-PATHOCL renders correctly through Vulkan/MoltenVK (see
-[Implementation status](#implementation-status-apple-silicon) below).
-Earlier: **M0 spike PASSED** (2026-09-23). `VK_KHR_ray_query` verified
-working on Apple M5 Pro via MoltenVK PR #2771 experimental RT build:
+Status: **M3 working on Apple Silicon (experimental)** — all 21 PATHOCL
+kernels compile via clspv→SPIR-V (`spirv-val` clean) and a 1280×720
+PATHOCL render passes regression (`vulkan-regression.sh --full`), with
+BLAS/TLAS + `rayQuery` hardware intersection and scene-edit AS rebuild
+(M2). Remaining: cold-compile time (tens of minutes, mitigated by two
+cache layers), MoltenVK codegen nondeterminism (retry loop), teardown
+872 B leak, and native Vulkan driver validation (M4). Earlier:
+**M0 spike PASSED** (2026-09-23). `VK_KHR_ray_query`
+verified working on Apple M5 Pro via MoltenVK PR #2771 experimental RT
+build:
 588 Mrays/s closest-hit, 508 Mrays/s occlusion, 9216/9216 rays matching
 CPU brute force exactly (t, primID, instance index, barycentrics), 2-level
 instance AS with transforms verified. Bench + reproduction:
@@ -160,7 +165,7 @@ Verified end-to-end on Apple M5 Pro via MoltenVK (2026-09):
 - **Opt-in**: Vulkan devices are enumerated in `GetOpenCLDeviceDescs()`
   and `OCLRenderEngine`, but are only selected via an explicit
   `opencl.devices.select` mask — `opencl.gpu.use` never auto-picks them.
-- **BlendLuxCore**: `gpu_backend = "VULKAN"` preference, device
+- **SuperBlendLuxCore**: `gpu_backend = "VULKAN"` preference, device
   filtering/selection strings, build-availability warning; the
   external-render runner re-derives the selection string in the child
   process via `BLC_GPU_BACKEND`.
@@ -224,13 +229,34 @@ fixes verified by `xcrun metal` on the generated MSL:
    `&expr` in `reinterpret_cast<device spvUnsafeArray<T,N>*>` when the
    pointee is an array — layout-identical, so the cast is a no-op
    (`335eaf6c`).
+6. **Module-scope PSB variables** — clspv's
+   `-module-constants-in-storage-buffer` emits
+   `OpVariable ... PhysicalStorageBuffer <constant-composite>` for
+   kernel constant tables, referenced by `OpConvertPtrToU`. Compiler
+   only registers Private/Workgroup/Output storage in
+   `global_variables`, and SPIR-V 1.4+'s interface rule hides the rest,
+   so `&_N` was emitted with no declaration (`undeclared identifier
+   '_23'` in `AdvancePaths_MK_RT_DL`). `emit_resources` now emits them
+   as program-scope `constant` globals, and `bda_array_pointer_cast`
+   routes their address through `reinterpret_cast<ulong>` (MSL bans a
+   direct `constant`→`device` pointer cast) — fork commits `f7e6f6da`
+   + `69472361` on `SPIRV-Cross@luxcore-psb-msl-fixes`.
 
 ### Known limitations (this port)
 
 - **Compile time dominates**: cold pipeline creation for all 21 kernels
-  is tens of minutes (largest kernel ~3.5–8 min in AGX codegen). Metal's
-  system shader cache makes warm runs ~4× faster; `.spv` cache skips
-  clspv entirely. Fine for development, not yet shippable UX.
+  is tens of minutes (largest kernel ~3.5–8 min in AGX codegen). Two
+  cache layers mitigate: per-kernel `.spv`+`.map` under
+  `~/.luxcore/vkcache` (content-keyed on the pruned module — skips
+  clspv entirely on hit) and a persistent `VkPipelineCache`
+  (`vkpipe-<pipelineCacheUUID>.bin`, seeded at `Start()`, serialized at
+  `Stop()`) which skips MoltenVK's SPIR-V→MSL→Metal codegen on warm
+  runs (update test: 1350 s cold → 10 s warm). If the seed blob is
+  rejected (a serialized entry whose stored MSL no longer compiles —
+  the "poisoned cache" failure mode), Start() retries with an empty
+  cache so one bad entry can't wedge every run; pipeline creation also
+  retries ≤4× for cold-compile flakes. Fine for development, still
+  not shippable UX for cold starts.
 - **MoltenVK-specific**: path goes OpenCL C → clspv → SPIR-V →
   SPIRV-Cross → MSL → Metal. Native Vulkan drivers (NV/AMD/Intel) skip
   the MSL stage entirely — the SPIRV-Cross fixes above are Apple-only

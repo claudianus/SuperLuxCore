@@ -394,6 +394,27 @@ properties; `LUX_PG_*` envs survive only as debug fallbacks.
   the clspv toolchain + MoltenVK into `~/.luxcore/vktools` (layout
   mirrors the clspv build tree — `opt`/`llvm-dis` resolve via
   `<clspv>/../third_party/llvm/bin`). `LUXRAYS_CLSPV` still wins if set.
+- MoltenVK fork rebuild (after editing External/SPIRV-Cross —
+  `MoltenVKShaderConverter/SPIRV-Cross` is a symlink to it, branch
+  `luxcore-psb-msl-fixes` on github.com/claudianus/SPIRV-Cross):
+  SPIRV-Cross is NOT rebuilt by `make macos` — it's a prebuilt static
+  lib. Sequence:
+  1) `xcodebuild build -project ExternalDependencies.xcodeproj
+     -scheme SPIRV-Cross-macOS -destination "generic/platform=macOS" -quiet`
+  2) `cp External/build/Intermediates/XCFrameworkStaging/Release/Platform/
+     libSPIRVCross.a External/build/Release/SPIRVCross.xcframework/
+     macos-arm64_x86_64/`
+  3) `xcodebuild build -project MoltenVKPackaging.xcodeproj
+     -scheme "MoltenVK Package (macOS only)"
+     -destination "generic/platform=macOS" -quiet`
+  4) install `Package/Release/MoltenVK/dynamic/dylib/macOS/
+     libMoltenVK.dylib` → `~/.luxcore/vktools/lib/` + `codesign -s -`.
+  `LUXRAYS_MVK_SHADER_DUMP=<dir>` dumps each compiled shader's .spv +
+  generated .metal — required to see SPIRV-Cross codegen failures.
+  Module-scope `OpVariable PhysicalStorageBuffer` (clspv
+  `-module-constants-in-storage-buffer` constant tables) was the last
+  MSL codegen hole: emitted as program-scope `constant` + `ulong`-hop
+  cast (fork `f7e6f6da`,`69472361`).
 - Bool scene props must be typed: `scene.spill.enable = true` inside
   `SetFromString` parses to false (lexical_cast accepts only 0/1) —
   spill silently no-ops. Use `= 1` or a typed `Property(name, True)`.

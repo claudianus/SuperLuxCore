@@ -247,6 +247,13 @@ static void EnableMoltenVKRayTracing() {
 	LuxMVKConfig *cfg = (LuxMVKConfig *)buf.data();
 	cfg->advertiseExtensions = 1; // MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL
 	cfg->enableExperimentalRayTracing = VK_TRUE;
+	// LUXRAYS_MVK_SHADER_DUMP=<dir>: dump each shader's .spv + generated
+	// .metal — the only way to inspect MoltenVK's SPIRV-Cross output when
+	// a kernel's MSL fails to compile.
+	static const string dumpDir = getenv("LUXRAYS_MVK_SHADER_DUMP") ?
+			getenv("LUXRAYS_MVK_SHADER_DUMP") : "";
+	if (!dumpDir.empty())
+		cfg->shaderDumpDir = dumpDir.c_str();
 	size_t put = got;
 	setCfg(nullptr, buf.data(), &put);
 }
@@ -596,6 +603,15 @@ void VulkanDevice::Start() {
 		// Invalid/stale blobs are rejected by the driver per spec.
 		VkResult rc = vkCreatePipelineCache((VkDevice)device, &ci, nullptr,
 				(VkPipelineCache *)&pipeCache);
+		if (rc != VK_SUCCESS && !seed.empty()) {
+			// A poisoned blob (e.g. a serialized entry whose stored MSL no
+			// longer compiles) fails the whole create; drop the seed and
+			// still run with a fresh in-session cache.
+			ci.initialDataSize = 0;
+			ci.pInitialData = nullptr;
+			rc = vkCreatePipelineCache((VkDevice)device, &ci, nullptr,
+					(VkPipelineCache *)&pipeCache);
+		}
 		if (rc != VK_SUCCESS) {
 			pipeCache = nullptr;
 			LR_LOG(deviceContext, "[Device " << GetName() <<
