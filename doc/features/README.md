@@ -27,14 +27,21 @@ ask for.
 | Blackbody + Whitenoise | [textures.md](textures.md) | `5d38878b6` | cornell/bb-test, whitenoise-* | CPU/OCL/Metal |
 | Hair + Disney | [hair.md](hair.md) + [disney.md](disney.md) | `a8785faa2` | strands, hairmat-test, cornell-disney | CPU/OCL/Metal |
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
-| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn | **Apple only** (Metal HWRT) |
+| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn + BlendLuxCore adapter A/B (parity < MC noise) | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
-| Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
-| Wavefront task queues (M1, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` queues (branch `feature/wavefront-queues`) | cornell | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
+| Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material+geometry deltas (A6-III) `2579a019`, `c28f40f0` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
+| Wavefront task queues (M1+M2, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` M1, `f424a8552` M2 λ-bucketed queues (branch `feature/wavefront-queues`) | cornell, cornell-spectral | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
+| Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc | — | design only |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.
+> Maintenance: `45310f556` ExtMeshProp sizeless-layer fix (E7 fallback
+> regression), `3925d3248` robin_hood→tsl::robin_map, `861a5ea24` dead
+> vendored assets (~47MB). Regression automation:
+> `dev-tools/wavefront-regression.sh` (`abfe20a23`, strands_hair case
+> `f89210cf5`) and `dev-tools/parity-regression.sh` (`03dc67b74`, CPU/GPU
+> centre-value gate for scenes/parity).
 
 ## How the criteria are met
 
@@ -80,11 +87,12 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
   in `src/luxrays/core/context.cpp`. Linux/Windows pipelines build the
   portable CPU + OpenCL paths unaffected; `LUXRAYS_DISABLE_METAL` is an
   opt-out even on Apple.
-- **Known portability fragility:** `luxrays_metalobj` in
-  `src/luxrays/CMakeLists.txt` hardcodes `armv8`/`Release` conan
-  `full_deploy` include paths. It builds on this machine's profile but may
-  need a `${CMAKE_OSX_ARCHITECTURES}`-aware path before a non-arm64 / other-
-  config macOS pipeline run — flagged for the CI pass.
+- ~~**Known portability fragility**~~ — fixed in `268475781`:
+  `luxrays_metalobj` now links the Conan imported targets
+  (`OpenImageIO::OpenImageIO`, `OpenEXR::OpenEXR`, `Imath::Imath`,
+  `TBB::tbb`) instead of hardcoded `armv8`/`Release` `full_deploy`
+  paths, so dependency version/arch/config bumps no longer break the
+  Metal object build. Verified Release + Debug.
 - cl2msl-translated kernels are C99-compatible (no C++/STL in `.cl`), keeping
   both the OpenCL and Metal compilations working.
 - A regression/benchmark matrix over scene x engine x feature is a roadmap

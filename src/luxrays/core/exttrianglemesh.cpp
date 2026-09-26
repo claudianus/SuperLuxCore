@@ -236,6 +236,21 @@ void ExtTriangleMesh::Init(
 	if (meshAlphas)
 		alphas = *meshAlphas;
 
+	// Layers installed through the raw shared_ptr constructor carry a
+	// pointer but no size (ExtMeshProp(Layer) never sets _size), leaving
+	// HasAlphas()/HasUVs()==true while GetLayerSize()==0 — GetAlpha()
+	// then asserts in debug builds and Merge()/CopyLayer() read a
+	// zero-length span. These are per-vertex attributes by contract,
+	// so normalize a sizeless layer to the vertex count.
+	for (u_int i = 0; i < EXTMESH_MAX_DATA_COUNT; ++i) {
+		if (uvs.LayerHasValues(i) && uvs.GetLayerSize() == 0)
+			uvs.SetLayer(i, uvs.GetLayer(i), GetTotalVertexCount());
+		if (cols.LayerHasValues(i) && cols.GetLayerSize() == 0)
+			cols.SetLayer(i, cols.GetLayer(i), GetTotalVertexCount());
+		if (alphas.LayerHasValues(i) && alphas.GetLayerSize() == 0)
+			alphas.SetLayer(i, alphas.GetLayer(i), GetTotalVertexCount());
+	}
+
 	Preprocess();
 }
 

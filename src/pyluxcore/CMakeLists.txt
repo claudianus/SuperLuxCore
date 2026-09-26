@@ -37,7 +37,7 @@ target_link_libraries(pyluxcore PRIVATE
     OpenVDB::openvdb
     pybind11::pybind11
     Python::Module
-    robin_hood::robin_hood
+    tsl::robin_map
     openimageio::openimageio
     embree::embree
 )

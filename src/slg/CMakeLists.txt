@@ -521,7 +521,7 @@ target_link_libraries(slg-core PRIVATE
   embree::embree
   openimageio::openimageio
   nlohmann_json::nlohmann_json
-  robin_hood::robin_hood
+  tsl::robin_map
   OpenMP::OpenMP_CXX
 )
 

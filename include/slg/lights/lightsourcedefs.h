@@ -20,7 +20,7 @@
 #define	_SLG_LIGHTSOURCEDEFINITIONS_H
 
 #include <functional>
-#include <robin_hood.h>
+#include <tsl/robin_map.h>
 
 #include "luxrays/utils/properties.h"
 #include "slg/lights/light.h"
@@ -141,7 +141,7 @@ private:
 	std::vector<u_int> lightTypeCount;
 
 	// Below, the actual owner of Light objects
-	robin_hood::unordered_flat_map<std::string, LightSourceUPtr> lightsByName;
+	tsl::robin_map<std::string, LightSourceUPtr> lightsByName;
 
 	// Following containers just store references to lights
 	std::vector<std::reference_wrapper<LightSource>> lights;

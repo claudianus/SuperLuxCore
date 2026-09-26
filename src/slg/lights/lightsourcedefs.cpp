@@ -57,7 +57,7 @@ LightSourceUPtr LightSourceDefinitions::DefineLightSource(LightSourceUPtr&& newL
 
 	if (e != lightsByName.end()) {
 		// Light source already exists
-		auto oldLight = std::move(e->second);
+		auto oldLight = std::move(e.value());
 
 		// Update name/LightSource definition
 		lightsByName.erase(e);
@@ -137,7 +137,7 @@ LightSourceUPtr LightSourceDefinitions::DeleteLightSource(const string &name) {
 		throw runtime_error("Reference to an undefined LightSource in LightSourceDefinitions::DeleteLightSource(): " + name);
 
 
-	auto oldLight = std::move(e->second);
+	auto oldLight = std::move(e.value());
 	lightsByName.erase(e);
 	return oldLight;
 }
@@ -231,7 +231,7 @@ void LightSourceDefinitions::Preprocess(SceneConstRef scene, const bool useRTMod
 	envLightSources.clear();
 	fill(lightTypeCount.begin(), lightTypeCount.end(), 0);
 	// To accelerate the light pointer to light index lookup
-	robin_hood::unordered_flat_map<
+	tsl::robin_map<
 		const LightSource *,
 		u_int
 	> light2indexLookupAccel;

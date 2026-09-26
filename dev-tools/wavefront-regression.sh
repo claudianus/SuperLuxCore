@@ -165,6 +165,10 @@ EOF
 FAIL=0
 run_case cornell        scenes/cornell/cornell.scn          0 64 || FAIL=1
 run_case cornell_spectral scenes/cornell/cornell-spectral.scn 1 128 || FAIL=1
+# strands.hair covers the ExtTriangleMesh alpha/color layer path
+# (9.3M tris + curve data) — it is the regression test for the
+# sizeless-ExtMeshProp-layer crash fixed in the E7 fallback work.
+run_case strands_hair   scenes/strands/hair.scn             0 8 || FAIL=1
 
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL WAVEFRONT REGRESSION TESTS PASSED"

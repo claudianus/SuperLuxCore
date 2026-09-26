@@ -40,3 +40,22 @@ centre ≈ 1.48 instead of 4). The fix gates the timed overload behind
 `MTLAccelerationStructureMotionInstanceDescriptor` (any leaf has a motion
 transform). Static AS use the untimed `intersect(ray, as)` overload, which
 hits correctly; motion AS keep timed interpolation.
+
+## Post-fix measurement (2026-09, M5 Pro, Release)
+
+- `emissive-direct`: centre = (4,4,4) on both PATHCPU and PATHOCL/Metal
+  HWRT (pre-fix Metal centre ≈ 1.48 — leak gone).
+- `whiteenv`: centre = (0,0,0) on both (pre-fix Metal centre ≈ 0.625).
+- Cornell at 64 spp: image-mean delta ~0.5%, per-pixel absDelta p95 =
+  0.02 — residual CPU↔GPU difference is Monte-Carlo noise from
+  independent RNG streams, not a backend divergence.
+
+Gate guidance: `dev-tools/parity-regression.sh` runs these scenes on
+CPU + GPU and range-checks the centre pixels (4.0±0.20, 0.0+0.02).
+Exact equality is NOT stable here — the centre pixel's filter footprint
+grazes the quad edge, so samplers report 3.98–4.0 legitimately (Metal
+measured 3.9844 at 8spp, converging to 4.0 at 64spp). The band still
+catches the leak class (1.48 / 0.625) with huge margin. Do **not** gate
+stochastic renders per-pixel at <1e-3 — even same-backend re-seeds
+exceed that. For general scenes compare image means (<~1–2% at 64spp)
+or run to high-spp convergence.

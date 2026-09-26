@@ -85,7 +85,7 @@ target_link_libraries(luxcore PRIVATE
     slg-kernels
     luxrays
     bcd
-    robin_hood::robin_hood
+    tsl::robin_map
     boost::boost
     spdlog::spdlog_header_only
     fmt::fmt
@@ -101,7 +101,7 @@ target_link_libraries(luxcore_static PRIVATE
     slg-kernels
     luxrays
     bcd
-    robin_hood::robin_hood
+    tsl::robin_map
     boost::boost
     spdlog::spdlog_header_only
     fmt::fmt

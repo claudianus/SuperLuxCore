@@ -279,15 +279,17 @@ target_include_directories(luxrays_metalobj PRIVATE
   ${PROJECT_SOURCE_DIR}/deps/cuew/include
   ${PROJECT_SOURCE_DIR}/deps/clew/include
   ${PROJECT_SOURCE_DIR}/deps/optix-7.1.0/include
-  ${GENERATED_INCLUDE_DIR}
-  # the full_deploy dependency tree (the same include paths the main
-  # luxrays target gets from its conan-generated configs)
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/boost/1.88.0/Release/armv8/include
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/onetbb/2023.0.0/Release/armv8/include
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/openimageio/3.1.14.0/Release/armv8/include
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/imath/3.2.2/Release/armv8/include
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/openexr/3.4.13/Release/armv8/include
-  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/embree/4.4.1/Release/armv8/include)
+  ${GENERATED_INCLUDE_DIR})
+# Dependency include dirs come from the conan-generated imported targets
+# (INTERFACE_INCLUDE_DIRECTORIES propagates through target_link_libraries),
+# which resolves version/arch/config-correct paths automatically.
+target_link_libraries(luxrays_metalobj PRIVATE
+  boost::boost
+  onetbb::onetbb
+  openimageio::openimageio
+  Imath::Imath
+  openexr::openexr
+  embree::embree)
 set_property(TARGET luxrays_metalobj PROPERTY POSITION_INDEPENDENT_CODE ON)
 # Propagate the Metal archive: every luxrays consumer (pyluxcore,
 # samples, tests) links BOTH archives - libluxrays.a references the

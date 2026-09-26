@@ -6,8 +6,8 @@
     "prerelease": ""
   },
   "Dependencies": {
-    "user": "LuxCoreRender",
-    "release": "2.2.3"
+    "user": "claudianus",
+    "release": "2.4.0"
   },
   "Build": {
     "gcc": "14",

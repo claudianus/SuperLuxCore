@@ -849,7 +849,7 @@ string Scene::EncodeTriangleLightNamePrefix(const string &objectName) {
 
 	const string prefix = objectName + "__triangle__light__";
 
-	return (boost::format("TL%0zx_") % robin_hood::hash_bytes(prefix.data(), sizeof(char) * prefix.size())).str();
+	return (boost::format("TL%0zx_") % std::hash<std::string>()(prefix)).str();
 }
 
 ImageMapConstSPtr Scene::GetRandomImageMap() const { return randomImageMap; }
