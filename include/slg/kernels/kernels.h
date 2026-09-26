@@ -132,6 +132,8 @@ extern std::string KernelSource_dlsc_types;
 extern std::string KernelSource_dlsc_funcs;
 extern std::string KernelSource_elvc_types;
 extern std::string KernelSource_elvc_funcs;
+extern std::string KernelSource_lightbvh_types;
+extern std::string KernelSource_lightbvh_funcs;
 extern std::string KernelSource_scene_types;
 extern std::string KernelSource_scene_funcs;
 extern std::string KernelSource_spectral_funcs;

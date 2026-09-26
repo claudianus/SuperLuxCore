@@ -265,13 +265,15 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 			} else if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
 				// The previous vertex picked its NEE distribution: a
 				// shadow-catcher-only-infinite vertex used the infinite
-				// distribution (no DLSC lookup - CPU parity)
+				// distribution (no DLSC/light-BVH lookup - CPU parity)
 				const float lightPickProb = LightStrategy_SampleLightPdf(
 						pathInfo->lastOnlyInfiniteLights ?
 								infiniteLightSourcesDistribution : lightsDistribution,
 						pathInfo->lastOnlyInfiniteLights ? NULL : dlscAllEntries,
 						dlscDistributions, dlscBVHNodes,
 						dlscRadius2, dlscNormalCosAngle,
+						pathInfo->lastOnlyInfiniteLights ? NULL : lightBVHNodes,
+						lightBVHLightToLeaf, lightBVHMinDist2,
 						VLOAD3F(&ray->o.x), VLOAD3F(&pathInfo->lastShadeN.x),
 						pathInfo->lastFromVolume,
 						light->lightSceneIndex);
@@ -331,13 +333,15 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 		} else if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
 			// Same distribution the previous vertex's NEE drew from:
 			// shadow-catcher-only-infinite vertices use the infinite
-			// distribution (no DLSC lookup - CPU parity)
+			// distribution (no DLSC/light-BVH lookup - CPU parity)
 			const float lightPickProb = LightStrategy_SampleLightPdf(
 					pathInfo->lastOnlyInfiniteLights ?
 							infiniteLightSourcesDistribution : lightsDistribution,
 					pathInfo->lastOnlyInfiniteLights ? NULL : dlscAllEntries,
 					dlscDistributions, dlscBVHNodes,
 					dlscRadius2, dlscNormalCosAngle,
+					pathInfo->lastOnlyInfiniteLights ? NULL : lightBVHNodes,
+					lightBVHLightToLeaf, lightBVHMinDist2,
 					VLOAD3F(&ray->o.x), VLOAD3F(&pathInfo->lastShadeN.x),
 					pathInfo->lastFromVolume,
 					light->lightSceneIndex);
@@ -616,6 +620,8 @@ OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
 				onlyInfLights ? NULL : dlscAllEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
+				onlyInfLights ? NULL : lightBVHNodes,
+				lightBVHLightToLeaf, lightBVHMinDist2,
 				VLOAD3F(&bsdf->hitPoint.p.x), curShadeN,
 				bsdf->isVolume,
 				eLightIndex);
@@ -712,9 +718,11 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 	const bool onlyInfLights = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM);
 	__global const float* restrict lightDist = onlyInfLights ?
 			infiniteLightSourcesDistribution : lightsDistribution;
-	// The infinite distribution has no DLSC coverage (CPU parity)
+	// The infinite distribution has no DLSC/light-BVH coverage (CPU parity)
 	__global const DLSCacheEntry* restrict dlscEntries =
 			onlyInfLights ? NULL : dlscAllEntries;
+	__global const LightBVHNode* restrict lightBVH =
+			onlyInfLights ? NULL : lightBVHNodes;
 	const float3 landingShadeN = BSDF_GetLandingShadeN(bsdf);
 
 	bool anyValid = false;
@@ -742,6 +750,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
+				lightBVH, lightBVHLightToLeaf, lightBVHMinDist2,
 				VLOAD3F(&bsdf->hitPoint.p.x), landingShadeN,
 				bsdf->isVolume,
 				u_i, &candPickPdf);
@@ -865,6 +874,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
+				lightBVH, lightBVHLightToLeaf, lightBVHMinDist2,
 				VLOAD3F(&bsdf->hitPoint.p.x), landingShadeN,
 				bsdf->isVolume,
 				eLightIndex);
@@ -1152,6 +1162,8 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		infiniteLightSourcesDistribution : lightsDistribution;
 	__global const DLSCacheEntry* restrict dlscEntries =
 		onlyInfLights ? NULL : dlscAllEntries;
+	__global const LightBVHNode* restrict lightBVH =
+		onlyInfLights ? NULL : lightBVHNodes;
 
 	// Pick a light source to sample
 	float lightPickPdf;
@@ -1217,6 +1229,7 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 					dlscEntries,
 					dlscDistributions, dlscBVHNodes,
 					dlscRadius2, dlscNormalCosAngle,
+					lightBVH, lightBVHLightToLeaf, lightBVHMinDist2,
 					// DLSC cache entries are keyed on the landing SHADE
 					// normal (CPU GetLandingShadeN parity)
 					VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingShadeN(bsdf),
@@ -1325,6 +1338,7 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
+				lightBVH, lightBVHLightToLeaf, lightBVHMinDist2,
 				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingShadeN(bsdf),
 				bsdf->isVolume,
 				u0, &lightPickPdf);
@@ -1537,6 +1551,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 				lightsDistribution,
 				dlscAllEntries, dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
+				lightBVHNodes, lightBVHLightToLeaf, lightBVHMinDist2,
 				VLOAD3F(&tmpBsdf->hitPoint.p.x),
 				// DLSC entries are keyed on the landing shade normal
 				BSDF_GetLandingShadeN(tmpBsdf),
@@ -6337,6 +6352,12 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global const IndexBVHArrayNode* restrict dlscBVHNodes \
 		, const float dlscRadius2 \
 		, const float dlscNormalCosAngle \
+		/* Light BVH strategy (E&K'18): node array + per-light leaf \
+		 * index table. Null for the other strategies; gated like \
+		 * dlscAllEntries at the call sites */ \
+		, __global const LightBVHNode* restrict lightBVHNodes \
+		, __global const uint* restrict lightBVHLightToLeaf \
+		, const float lightBVHMinDist2 \
 		, __global const ELVCacheEntry* restrict elvcAllEntries \
 		, __global const float* restrict elvcDistributions \
 		, __global const uint* restrict elvcTileDistributionOffsets \

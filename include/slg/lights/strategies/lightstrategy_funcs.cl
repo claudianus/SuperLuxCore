@@ -24,9 +24,17 @@ OPENCL_FORCE_INLINE uint LightStrategy_SampleLights(
 		__global const float* restrict dlscDistributions,
 		__global const IndexBVHArrayNode* restrict dlscBVHNodes,
 		const float dlscRadius2, const float dlscNormalCosAngle,
+		__global const LightBVHNode* restrict lightBVHNodes,
+		__global const uint* restrict lightBVHLightToLeaf,
+		const float lightBVHMinDist2,
 		const float3 p, const float3 n,
 		const bool isVolume,
 		const float u, float *pdf) {
+	// Light BVH strategy: hierarchical importance traversal (E&K'18) -
+	// mutually exclusive with DLSC and the flat distributions
+	if (lightBVHNodes)
+		return LightBVH_SampleLights(lightBVHNodes, p, n, isVolume,
+				lightBVHMinDist2, u, pdf);
 #if !defined(RENDER_ENGINE_RTPATHOCL)
 	if (dlscAllEntries) {
 		// DLSC strategy
@@ -66,9 +74,17 @@ OPENCL_FORCE_INLINE float LightStrategy_SampleLightPdf(
 		__global const float* restrict dlscDistributions,
 		__global const IndexBVHArrayNode* restrict dlscBVHNodes,
 		const float dlscRadius2, const float dlscNormalCosAngle,
+		__global const LightBVHNode* restrict lightBVHNodes,
+		__global const uint* restrict lightBVHLightToLeaf,
+		const float lightBVHMinDist2,
 		const float3 p, const float3 n,
 		const bool isVolume,
 		const uint lightIndex) {
+	// Light BVH strategy: the pdf of a light is the product of the
+	// branch probabilities along its root-to-leaf path
+	if (lightBVHNodes)
+		return LightBVH_SampleLightPdf(lightBVHNodes, lightBVHLightToLeaf,
+				p, n, isVolume, lightBVHMinDist2, lightIndex);
 #if !defined(RENDER_ENGINE_RTPATHOCL)
 	if (dlscAllEntries) {
 		// DLSC strategy

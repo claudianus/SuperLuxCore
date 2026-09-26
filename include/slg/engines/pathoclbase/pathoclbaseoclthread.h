@@ -255,6 +255,8 @@ protected:
 	luxrays::HardwareDeviceBuffer *dlscAllEntriesBuff;
 	luxrays::HardwareDeviceBuffer *dlscDistributionsBuff;
 	luxrays::HardwareDeviceBuffer *dlscBVHNodesBuff;
+	luxrays::HardwareDeviceBuffer *lightBVHNodesBuff;
+	luxrays::HardwareDeviceBuffer *lightBVHLightToLeafBuff;
 	luxrays::HardwareDeviceBuffer *elvcAllEntriesBuff;
 	luxrays::HardwareDeviceBuffer *elvcDistributionsBuff;
 	luxrays::HardwareDeviceBuffer *elvcTileDistributionOffsetsBuff;

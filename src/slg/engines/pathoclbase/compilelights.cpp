@@ -121,13 +121,33 @@ void CompiledScene::CompileDLSC(const LightStrategyDLSCache& dlscLightStrategy) 
 void CompiledScene::CompileLightStrategy() {
 	dlscRadius2 = 0.f;
 	dlscNormalCosAngle = 0.f;
-			
+	lightBVHMinDist2 = 0.f;
+
 	//--------------------------------------------------------------------------
 	// Compile lightDistribution
 	//--------------------------------------------------------------------------
 
 	auto& illuminateLightStrategy = scene.GetLightSources().GetIlluminateLightStrategy();
-	
+
+	// Light BVH strategy (E&K'18): node array + per-light leaf table;
+	// empty for every other strategy. LightStrategyLightBVH is a
+	// DistributionLightStrategy so it is handled by the first branch
+	// below - check the concrete type before it.
+	lightBVHNodes.clear();
+	lightBVHLightToLeaf.clear();
+	if (const auto *bvhStrategy = dynamic_cast<const LightStrategyLightBVH *>(
+			&illuminateLightStrategy)) {
+		const auto &n = bvhStrategy->GetNodes();
+		lightBVHNodes.resize(n.size());
+		std::copy_n(n.begin(), n.size(), lightBVHNodes.begin());
+
+		const auto &l2l = bvhStrategy->GetLightToLeaf();
+		lightBVHLightToLeaf.resize(l2l.size());
+		std::copy_n(l2l.begin(), l2l.size(), lightBVHLightToLeaf.begin());
+
+		lightBVHMinDist2 = bvhStrategy->GetMinDist2();
+	}
+
 	// Check if it is an DistributionLightStrategy
 	try {
 		auto& distributionIllumLightStrategy =

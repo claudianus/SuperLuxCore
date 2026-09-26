@@ -183,6 +183,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_light_types <<
 			slg::ocl::KernelSource_dlsc_types <<
 			slg::ocl::KernelSource_elvc_types <<
+			slg::ocl::KernelSource_lightbvh_types <<
 			slg::ocl::KernelSource_pgic_types <<
 			// Spectral helpers/tables must precede every consumer
 			// (hitpoint funcs, texture eval ops, materials, film splat)
@@ -270,6 +271,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_camera_funcs <<
 			slg::ocl::KernelSource_dlsc_funcs <<
 			slg::ocl::KernelSource_elvc_funcs <<
+			slg::ocl::KernelSource_lightbvh_funcs <<
 			slg::ocl::KernelSource_lightstrategy_funcs <<
 			slg::ocl::KernelSource_light_funcs <<
 			slg::ocl::KernelSource_filter_funcs <<
@@ -550,6 +552,9 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, dlscBVHNodesBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, cscene->dlscRadius2);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, cscene->dlscNormalCosAngle);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightBVHNodesBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightBVHLightToLeafBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, cscene->lightBVHMinDist2);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, elvcAllEntriesBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, elvcDistributionsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, elvcTileDistributionOffsetsBuff);

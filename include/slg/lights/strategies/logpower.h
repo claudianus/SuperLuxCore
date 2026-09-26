@@ -47,6 +47,11 @@ public:
 	static LightStrategyUPtr FromProperties(const luxrays::Properties &cfg);
 
 protected:
+	// Strategies deriving from the log-power flat distribution (e.g.
+	// LightStrategyLightBVH) register their own type through this ctor.
+	LightStrategyLogPower(const LightStrategyType t) :
+		DistributionLightStrategy(t) { }
+
 	static luxrays::PropertiesUPtr GetDefaultProps();
 };
 

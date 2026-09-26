@@ -190,6 +190,9 @@ typedef struct {
 	__global const float* restrict dlscDistributions, \
 	__global const IndexBVHArrayNode* restrict dlscBVHNodes, \
 	const float dlscRadius2, const float dlscNormalCosAngle, \
+	__global const LightBVHNode* restrict lightBVHNodes, \
+	__global const uint* restrict lightBVHLightToLeaf, \
+	const float lightBVHMinDist2, \
 	__global const ELVCacheEntry* restrict elvcAllEntries, \
 	__global const float* restrict elvcDistributions, \
 	__global const uint* restrict elvcTileDistributionOffsets, \
@@ -208,6 +211,9 @@ typedef struct {
 	dlscBVHNodes, \
 	dlscRadius2, \
 	dlscNormalCosAngle, \
+	lightBVHNodes, \
+	lightBVHLightToLeaf, \
+	lightBVHMinDist2, \
 	elvcAllEntries, \
 	elvcDistributions, \
 	elvcTileDistributionOffsets, \
@@ -215,7 +221,7 @@ typedef struct {
 	elvcRadius2, \
 	elvcNormalCosAngle, \
 	elvcTilesXCount, \
-	elvcTilesXCount \
+	elvcTilesYCount \
 	MATERIALS_PARAM
 
 #endif

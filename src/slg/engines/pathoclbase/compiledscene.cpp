@@ -162,6 +162,8 @@ size_t CompiledScene::SpillHostStaging() {
 	spill(dlscAllEntries, "dlscentries");
 	spill(dlscDistributions, "dlscdist");
 	spill(dlscBVHArrayNode, "dlscbvh");
+	spill(lightBVHNodes, "lightbvh");
+	spill(lightBVHLightToLeaf, "lightbvhl2l");
 	spill(elvcAllEntries, "elvcentries");
 	spill(elvcDistributions, "elvcdist");
 	spill(elvcTileDistributionOffsets, "elvctileoff");

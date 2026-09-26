@@ -136,6 +136,8 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/lights/light_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/lights/strategies/dlsc_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/lights/strategies/dlsc_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/lights/strategies/lightbvh_types.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/lights/strategies/lightbvh_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/lights/strategies/lightstrategy_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/lights/visibility/elvc_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/lights/visibility/elvc_funcs.cl
@@ -357,6 +359,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/dlscacheimpl/dlscoctree.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/dlscacheimpl/dlscbvh.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/distributionlightstrategy.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/lightbvh.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/lightstrategy.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/logpower.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/restirdi.cpp
@@ -666,6 +669,8 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/dlsc_funcs_kernel.cpp
   ${generated_kernels_dir}/elvc_types_kernel.cpp
   ${generated_kernels_dir}/elvc_funcs_kernel.cpp
+  ${generated_kernels_dir}/lightbvh_types_kernel.cpp
+  ${generated_kernels_dir}/lightbvh_funcs_kernel.cpp
   ${generated_kernels_dir}/lightstrategy_funcs_kernel.cpp
   ${generated_kernels_dir}/scene_types_kernel.cpp
   ${generated_kernels_dir}/scene_funcs_kernel.cpp

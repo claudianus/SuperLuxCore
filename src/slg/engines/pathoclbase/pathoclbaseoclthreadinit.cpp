@@ -339,7 +339,18 @@ void PathOCLBaseOCLRenderThread::InitLights() {
 		intersectionDevice.FreeBuffer(&dlscDistributionsBuff);
 		intersectionDevice.FreeBuffer(&dlscBVHNodesBuff);
 	}
-	
+
+	// Light BVH strategy (E&K'18): node array + per-light leaf table
+	if (cscene->lightBVHNodes.size() > 0) {
+		intersectionDevice.AllocBufferRO(&lightBVHNodesBuff, &cscene->lightBVHNodes[0],
+			cscene->lightBVHNodes.size() * sizeof(slg::ocl::LightBVHNode), "Light BVH nodes");
+		intersectionDevice.AllocBufferRO(&lightBVHLightToLeafBuff, &cscene->lightBVHLightToLeaf[0],
+			cscene->lightBVHLightToLeaf.size() * sizeof(u_int), "Light BVH leaf table");
+	} else {
+		intersectionDevice.FreeBuffer(&lightBVHNodesBuff);
+		intersectionDevice.FreeBuffer(&lightBVHLightToLeafBuff);
+	}
+
 	if (cscene->elvcAllEntries.size() > 0) {
 		intersectionDevice.AllocBufferRO(&elvcAllEntriesBuff, &cscene->elvcAllEntries[0],
 			cscene->elvcAllEntries.size() * sizeof(slg::ocl::ELVCacheEntry), "ELVC all entries");

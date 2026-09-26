@@ -31,6 +31,7 @@
 #include "slg/scene/scene.h"
 #include "slg/scene/sceneobject.h"
 #include "slg/lights/strategies/dlscache.h"
+#include "slg/lights/strategies/lightbvh.h"
 #include "slg/lights/visibility/envlightvisibilitycache.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/cameras/camera.h"
@@ -131,6 +132,11 @@ public:
 	luxrays::SpillableArray<float> dlscDistributions;
 	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> dlscBVHArrayNode;
 	float dlscRadius2, dlscNormalCosAngle;
+	// Light BVH strategy (E&K'18): implicit-layout node array and the
+	// per-light leaf index table; empty for the other strategies
+	luxrays::SpillableArray<slg::ocl::LightBVHNode> lightBVHNodes;
+	luxrays::SpillableArray<u_int> lightBVHLightToLeaf;
+	float lightBVHMinDist2;
 	// EnvLightVisibilityCache related data
 	luxrays::SpillableArray<slg::ocl::ELVCacheEntry> elvcAllEntries;
 	luxrays::SpillableArray<float> elvcDistributions;
