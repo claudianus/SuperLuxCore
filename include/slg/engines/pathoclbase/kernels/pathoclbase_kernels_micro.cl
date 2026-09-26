@@ -4040,4 +4040,34 @@ __kernel void AdvancePaths_BuildQueues(
 	taskQueueBuf[state * taskQueueStride + slot] = gid;
 }
 
+// M3a: device-side exclusive prefix + per-state totals, replacing the
+// host readback / host prefix / host upload round trip (one blocking
+// host<->device sync per iteration on OpenCL, a full queue drain on
+// Metal/Vulkan). One work-item per state:
+//  - writes each lambda segment's base into taskQueueBase (BuildQueues
+//    then advances them as atomic append cursors),
+//  - writes the state total into taskQueueTotals (the WAVEFRONT_GUARD
+//    lane bound; also read back on a resync cadence for launch sizing),
+//  - re-zeroes the histogram counters for the next iteration —
+//    taskQueueCount is consumed only by this kernel, so the host
+//    zeroing write disappears too.
+__kernel void AdvancePaths_QueuePrefix(
+		__global uint *taskQueueCount,
+		__global uint *taskQueueBase,
+		__global uint *taskQueueTotals,
+		const uint queueStateCount
+		) {
+	const uint s = get_global_id(0);
+	if (s >= queueStateCount)
+		return;
+
+	uint base = 0;
+	for (uint l = 0; l < SLG_SPECTRAL_BINS; ++l) {
+		taskQueueBase[s * SLG_SPECTRAL_BINS + l] = base;
+		base += taskQueueCount[s * SLG_SPECTRAL_BINS + l];
+		taskQueueCount[s * SLG_SPECTRAL_BINS + l] = 0;
+	}
+	taskQueueTotals[s] = base;
+}
+
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

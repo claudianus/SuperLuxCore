@@ -6470,11 +6470,11 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		 * taskQueueBuf[taskQueueState * taskQueueStride + gid]
 		 * instead of indexing task arrays directly. A per-iteration
 		 * BuildQueues kernel refills the queues from the
-		 * authoritative taskState->state. taskQueueCount holds
-		 * NUM_STATES * SLG_SPECTRAL_BINS histogram counters
-		 * (per-state totals are their sums; M2 lambda bucketing). */ \
+		 * authoritative taskState->state. taskQueueTotals holds
+		 * NUM_STATES per-state totals written by QueuePrefix (M3a:
+		 * the lane bound is a single load). */ \
 		, __global const uint* restrict taskQueueBuf \
-		, __global const uint* restrict taskQueueCount \
+		, __global const uint* restrict taskQueueTotals \
 		, const uint taskQueueStride \
 		, const uint taskQueueState \
 		, const uint wavefrontEnable \
@@ -6542,15 +6542,14 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 // rounded up to the workgroup size (OpenCL requires global size to be
 // a multiple of it); lanes beyond the compacted queue length exit
 // before dereferencing the queue, whose tail slots hold stale task
-// indices from the previous iteration. The state launch covers the
-// sum of the per-(state, lambda) histogram counters (M2 lambda
-// bucketing keeps the queue layout flat). Must be the first statement
-// of every AdvancePaths_MK_* kernel.
+// indices from the previous iteration. The launch size is the
+// last-resynced total, which may lag the queue contents by up to a
+// resync period (M3a) - undersized launches leave tail entries for the
+// next BuildQueues pass, oversized ones early-out here. The bound is
+// the device-side QueuePrefix total, exact for THIS iteration's queue.
+// Must be the first statement of every AdvancePaths_MK_* kernel.
 #define WAVEFRONT_GUARD \
-	if (get_global_id(0) >= \
-			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS] + \
-			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 1] + \
-			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 2]) \
+	if (get_global_id(0) >= taskQueueTotals[taskQueueState]) \
 		return; \
 	const size_t gid = WAVEFRONT_GID;
 #else

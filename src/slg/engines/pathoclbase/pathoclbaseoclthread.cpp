@@ -164,6 +164,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	advancePathsKernel_VCBuildMergeHash = nullptr;
 	advancePathsKernel_BuildQueues = nullptr;
 	advancePathsKernel_BucketHistogram = nullptr;
+	advancePathsKernel_QueuePrefix = nullptr;
 
 	// Wavefront per-state task queues (B2/E3): opt-in via env
 	// LUXRAYS_WAVEFRONT_QUEUES=1 while the dense path stays the default
@@ -174,6 +175,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	taskQueueBuff = nullptr;
 	taskQueueCountBuff = nullptr;
 	taskQueueBaseBuff = nullptr;
+	taskQueueTotalsBuff = nullptr;
 	taskLambdaBuff = nullptr;
 
 	initKernelArgsCount  = 0;
@@ -264,6 +266,7 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&taskQueueBuff);
 	intersectionDevice.FreeBuffer(&taskQueueCountBuff);
 	intersectionDevice.FreeBuffer(&taskQueueBaseBuff);
+	intersectionDevice.FreeBuffer(&taskQueueTotalsBuff);
 	intersectionDevice.FreeBuffer(&taskLambdaBuff);
 
 	// Compiled-scene buffers. These are allocated by the Init*() functions

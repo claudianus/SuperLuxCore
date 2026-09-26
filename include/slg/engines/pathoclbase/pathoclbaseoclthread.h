@@ -398,31 +398,40 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_VCBuildMergeHash;
 	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
 	// queues once per iteration from the authoritative taskState->state;
-	// BucketHistogram counts the per-(state, lambda) task population
-	// first so the host can compute the lambda-segment bases.
+	// BucketHistogram counts the per-(state, lambda) task population;
+	// QueuePrefix computes the lambda-segment bases + per-state totals
+	// on device (M3a: no host sync in the wavefront loop).
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_BuildQueues;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_BucketHistogram;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_QueuePrefix;
 	size_t advancePathsWorkGroupSize;
 
 	// Wavefront queues (B2/E3): taskQueueBuff holds
 	// WAVEFRONT_NUM_STATES * taskCount uint task indices laid out flat
 	// per state, with the M2 lambda-bucketed ordering inside each
 	// segment. taskQueueCountBuff holds WAVEFRONT_NUM_STATES *
-	// WAVEFRONT_NUM_LAMBDA counters (histogram output); taskQueueBaseBuff
-	// holds the same-shaped per-(state, lambda) segment bases uploaded
-	// by the host and consumed as atomic cursors by BuildQueues;
+	// WAVEFRONT_NUM_LAMBDA counters (histogram output; QueuePrefix
+	// re-zeroes them after reading, so no host zeroing write is needed);
+	// taskQueueBaseBuff holds the same-shaped per-(state, lambda)
+	// segment bases written by QueuePrefix and consumed as atomic
+	// cursors by BuildQueues; taskQueueTotalsBuff holds
+	// WAVEFRONT_NUM_STATES totals (WAVEFRONT_GUARD lane bound, also read
+	// back once per iteration to size the state launches);
 	// taskLambdaBuff caches the per-task lambda bucket written by the
 	// histogram kernel. Allocated only when wavefrontQueues is enabled
 	// (env LUXRAYS_WAVEFRONT_QUEUES=1).
 	luxrays::HardwareDeviceBuffer *taskQueueBuff;
 	luxrays::HardwareDeviceBuffer *taskQueueCountBuff;
 	luxrays::HardwareDeviceBuffer *taskQueueBaseBuff;
+	luxrays::HardwareDeviceBuffer *taskQueueTotalsBuff;
 	luxrays::HardwareDeviceBuffer *taskLambdaBuff;
 	bool wavefrontQueues;
-	// Host-side snapshot of the per-(state, lambda) queue counters,
-	// refreshed by EnqueueAdvancePathsWavefront each iteration;
-	// wavefrontQueueTotals caches the per-state sums used for launch
-	// sizing.
+	// wavefrontQueueTotals is the per-iteration totals readback used to
+	// size the state launches (compact launches are the wavefront win;
+	// measured: stale sizing starves tail entries and costs ~6x).
+	// wavefrontQueueCounts is filled only in LUXRAYS_WAVEFRONT_DEBUG
+	// builds (reconstructed from the post-BuildQueues segment-end
+	// cursors).
 	std::vector<u_int> wavefrontQueueCounts;
 	std::vector<u_int> wavefrontQueueTotals;
 

@@ -852,13 +852,17 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		intersectionDevice.AllocBufferRW(&taskQueueBuff, nullptr,
 				sizeof(u_int) * WAVEFRONT_NUM_STATES * taskCount, "taskQueue");
 		// M2 lambda bucketing: per-(state, lambda) histogram counters
-		// and segment bases, plus the per-task lambda cache.
-		intersectionDevice.AllocBufferRW(&taskQueueCountBuff, nullptr,
-				sizeof(u_int) * WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA,
-				"taskQueueCount");
+		// and segment bases, plus the per-task lambda cache. The
+		// counters start zeroed (QueuePrefix re-zeroes them after every
+		// read, so the buffer needs a host write only once here).
+		static const u_int zeros[WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA] = { 0u };
+		intersectionDevice.AllocBufferRW(&taskQueueCountBuff, (void *)zeros,
+				sizeof(zeros), "taskQueueCount");
 		intersectionDevice.AllocBufferRW(&taskQueueBaseBuff, nullptr,
 				sizeof(u_int) * WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA,
 				"taskQueueBase");
+		intersectionDevice.AllocBufferRW(&taskQueueTotalsBuff, nullptr,
+				sizeof(u_int) * WAVEFRONT_NUM_STATES, "taskQueueTotals");
 		intersectionDevice.AllocBufferRW(&taskLambdaBuff, nullptr,
 				sizeof(u_int) * taskCount, "taskLambda");
 		wavefrontQueueCounts.assign(WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA, 0u);

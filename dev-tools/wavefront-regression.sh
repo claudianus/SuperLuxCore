@@ -19,6 +19,9 @@
 # Exit code 0 = all cases passed, 1 = at least one failed.
 
 set -u
+# pipefail: the compare_png | tee pipeline must propagate the
+# comparison's exit status (tee alone always succeeds).
+set -o pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
@@ -143,7 +146,13 @@ EOF
         return 1
     fi
 
-    # Queue integrity: every debug counter must stay zero.
+    # Queue integrity: WFDBG records must exist (an absent record would
+    # make the counter check below a vacuous pass) and every debug
+    # counter must stay zero.
+    if ! grep -q "\[WFDBG" "$WORK/$name.wf.log"; then
+        echo "[$name] FAIL: no WFDBG queue records in log - wavefront debug did not run"
+        return 1
+    fi
     local bad
     bad=$(grep -oE "oob=[0-9]+|dup=[0-9]+|badState=[0-9]+|badLambda=[0-9]+" \
           "$WORK/$name.wf.log" | grep -v "=0" | head -1)
