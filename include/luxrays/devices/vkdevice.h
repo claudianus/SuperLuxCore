@@ -80,6 +80,7 @@ public:
 	bool hasRayQuery;
 	bool hasAccelStruct;
 	bool hasUnifiedMemory;
+	bool hasScalarBlockLayout;
 
 	friend class Context;
 protected:

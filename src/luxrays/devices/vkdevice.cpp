@@ -34,6 +34,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #include "luxrays/devices/vkdevice.h"
 #include "luxrays/kernels/kernels.h"
@@ -102,11 +105,12 @@ static string GetOptPath() {
 	return "opt"; // PATH lookup
 }
 
-// When volkInitialize's leaf-name dlopen fails (no Vulkan SDK on PATH,
-// no DYLD_* env), dlopen MoltenVK by absolute path and hand its
-// vkGetInstanceProcAddr to volkInitializeCustom — dyld does not match
-// leaf-name dlopens against images loaded by another path.
-static bool LoadMoltenVKCustom() {
+// Module handle of the MoltenVK dylib we loaded (RTLD_LOCAL — its symbols
+// are invisible to dlsym(RTLD_DEFAULT), so the handle must be kept for
+// private API lookups).
+static void *moltenVKModule = nullptr;
+
+static vector<string> GetMoltenVKCandidates() {
 	vector<string> candidates;
 	const char *env = getenv("LUXRAYS_MOLTENVK");
 	if (env && env[0])
@@ -118,14 +122,22 @@ static bool LoadMoltenVKCustom() {
 				"/.luxcore/vktools/lib/libMoltenVK.dylib");
 	// Next to the module containing this code (wheel/site-packages)
 	Dl_info info;
-	if (dladdr((const void *)&LoadMoltenVKCustom, &info) && info.dli_fname) {
+	if (dladdr((const void *)&GetMoltenVKCandidates, &info) && info.dli_fname) {
 		const string dir = string(info.dli_fname).substr(0,
 				string(info.dli_fname).find_last_of('/'));
 		candidates.push_back(dir + "/libMoltenVK.dylib");
 		candidates.push_back(dir + "/vulkan/libMoltenVK.dylib");
 	}
 #endif
-	for (const auto &p : candidates) {
+	return candidates;
+}
+
+// When volkInitialize's leaf-name dlopen fails (no Vulkan SDK on PATH,
+// no DYLD_* env), dlopen MoltenVK by absolute path and hand its
+// vkGetInstanceProcAddr to volkInitializeCustom — dyld does not match
+// leaf-name dlopens against images loaded by another path.
+static bool LoadMoltenVKCustom() {
+	for (const auto &p : GetMoltenVKCandidates()) {
 		void *mod = dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL);
 		if (!mod)
 			continue;
@@ -133,12 +145,111 @@ static bool LoadMoltenVKCustom() {
 				dlsym(mod, "vkGetInstanceProcAddr");
 		if (gipa) {
 			volkInitializeCustom(gipa);
-			if (vkCreateInstance)
+			if (vkCreateInstance) {
+				moltenVKModule = mod;
 				return true;
+			}
 		}
 	}
 	return false;
 }
+
+#if defined(__APPLE__)
+// MoltenVK private configuration. MVKConfiguration is append-only across
+// releases (see mvk_private_api.h), so a prefix mirror plus the size
+// round-trip in vkGet/SetMoltenVKConfigurationMVK is ABI-safe. MoltenVK
+// hides VK_KHR_acceleration_structure/ray_query from device enumeration
+// unless enableExperimentalRayTracing is set (and restricts the advertised
+// extension list unless advertiseExtensions == ALL); both default to
+// disabled and cannot be reached via environment variables at runtime
+// because MoltenVK snapshots NSProcessInfo at process launch.
+struct LuxMVKConfig {
+	uint32_t debugMode;
+	uint32_t shaderConversionFlipVertexY;
+	uint32_t synchronousQueueSubmits;
+	uint32_t prefillMetalCommandBuffers;
+	uint32_t maxActiveMetalCommandBuffersPerQueue;
+	uint32_t supportLargeQueryPools;
+	uint32_t presentWithCommandBuffer;
+	uint32_t swapchainMinMagFilterUseNearest;
+	uint64_t metalCompileTimeout;
+	uint32_t performanceTracking;
+	uint32_t performanceLoggingFrameCount;
+	uint32_t displayWatermark;
+	uint32_t specializedQueueFamilies;
+	uint32_t switchSystemGPU;
+	uint32_t fullImageViewSwizzle;
+	uint32_t defaultGPUCaptureScopeQueueFamilyIndex;
+	uint32_t defaultGPUCaptureScopeQueueIndex;
+	uint32_t fastMathEnabled;
+	uint32_t logLevel;
+	uint32_t traceVulkanCalls;
+	uint32_t forceLowPowerGPU;
+	uint32_t semaphoreUseMTLFence;
+	uint32_t semaphoreSupportStyle;
+	uint32_t autoGPUCaptureScope;
+	const char *autoGPUCaptureOutputFilepath;
+	uint32_t texture1DAs2D;
+	uint32_t preallocateDescriptors;
+	uint32_t useCommandPooling;
+	uint32_t useMTLHeap;
+	uint32_t activityPerformanceLoggingStyle;
+	uint32_t apiVersionToAdvertise;
+	uint32_t advertiseExtensions;           // 1 == MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL
+	uint32_t resumeLostDevice;
+	uint32_t useMetalArgumentBuffers;
+	uint32_t shaderSourceCompressionAlgorithm;
+	uint32_t shouldMaximizeConcurrentCompilation;
+	float timestampPeriodLowPassAlpha;
+	uint32_t useMetalPrivateAPI;
+	const char *shaderDumpDir;
+	uint32_t shaderLogEstimatedGLSL;
+	uint32_t liveCheckAllResources;
+	uint32_t enableExperimentalRayTracing;  // gates accelerationStructures feature
+	// Newer MoltenVK releases append members + padding here; the size
+	// round-trip covers the tail.
+};
+
+typedef VkResult (VKAPI_PTR *PFN_vkGetMoltenVKConfigurationMVK)(
+		void *ignored, void *pConfiguration, size_t *pConfigurationSize);
+typedef VkResult (VKAPI_PTR *PFN_vkSetMoltenVKConfigurationMVK)(
+		void *ignored, const void *pConfiguration, size_t *pConfigurationSize);
+
+static void EnableMoltenVKRayTracing() {
+	// RTLD_LOCAL hides the private API from RTLD_DEFAULT; resolve through
+	// the module we loaded, else scan loaded images for a MoltenVK dylib
+	// (covers the Vulkan-ICD path where the loader opened it).
+	void *mod = moltenVKModule;
+	if (!mod) {
+		const uint32_t n = _dyld_image_count();
+		for (uint32_t i = 0; i < n && !mod; ++i) {
+			const char *nm = _dyld_get_image_name(i);
+			if (nm && strstr(nm, "MoltenVK"))
+				mod = dlopen(nm, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+		}
+	}
+	auto getCfg = mod ? (PFN_vkGetMoltenVKConfigurationMVK)
+			dlsym(mod, "vkGetMoltenVKConfigurationMVK") : nullptr;
+	auto setCfg = mod ? (PFN_vkSetMoltenVKConfigurationMVK)
+			dlsym(mod, "vkSetMoltenVKConfigurationMVK") : nullptr;
+	if (!getCfg || !setCfg)
+		return; // native Vulkan driver or older MoltenVK
+
+	// Learn MoltenVK's expected struct size, then round-trip the config.
+	size_t sz = 0;
+	const VkResult qr = getCfg(nullptr, nullptr, &sz);
+	if ((qr != VK_SUCCESS && qr != VK_INCOMPLETE) || sz < sizeof(LuxMVKConfig))
+		return; // layout older than our mirror: leave config untouched
+	vector<char> buf(sz, 0);
+	size_t got = sz;
+	getCfg(nullptr, buf.data(), &got);
+	LuxMVKConfig *cfg = (LuxMVKConfig *)buf.data();
+	cfg->advertiseExtensions = 1; // MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL
+	cfg->enableExperimentalRayTracing = VK_TRUE;
+	size_t put = got;
+	setCfg(nullptr, buf.data(), &put);
+}
+#endif
 
 static void InitVulkanLibrary() {
 	if (vulkanInitialized)
@@ -146,8 +257,12 @@ static void InitVulkanLibrary() {
 	vulkanInitialized = true;
 
 	// volkInitialize dlopens the loader (or libMoltenVK directly).
-	if (volkInitialize() == VK_SUCCESS || LoadMoltenVKCustom())
+	if (volkInitialize() == VK_SUCCESS || LoadMoltenVKCustom()) {
+#if defined(__APPLE__)
+		EnableMoltenVKRayTracing();
+#endif
 		vulkanAvailable = true;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -161,7 +276,8 @@ VulkanDeviceDescription::VulkanDeviceDescription(VkPhysicalDeviceHandle physDev,
 		maxComputeWorkGroupInvocations(128), maxPushConstantsSize(128),
 		maxStorageBuffersPerStage(64), maxBoundDescriptorSets(4),
 		maxStorageBufferRange(1u << 27),
-		hasRayQuery(false), hasAccelStruct(false), hasUnifiedMemory(false) {
+		hasRayQuery(false), hasAccelStruct(false), hasUnifiedMemory(false),
+		hasScalarBlockLayout(false) {
 
 	VkPhysicalDeviceProperties props;
 	vkGetPhysicalDeviceProperties((VkPhysicalDevice)physDev, &props);
@@ -182,6 +298,23 @@ VulkanDeviceDescription::VulkanDeviceDescription(VkPhysicalDeviceHandle physDev,
 			hasRayQuery = true;
 		if (!strcmp(e.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME))
 			hasAccelStruct = true;
+	}
+
+	// scalarBlockLayout is required by every kernel we compile
+	// (clspv -scalar-block-layout): it is a Vulkan 1.2 core feature and
+	// exists as VK_EXT_scalar_block_layout for older drivers. MoltenVK
+	// tolerates its absence; native drivers do not.
+	if (props.apiVersion >= VK_API_VERSION_1_2) {
+		VkPhysicalDeviceVulkan12Features v12{
+				VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+		VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+		f2.pNext = &v12;
+		vkGetPhysicalDeviceFeatures2((VkPhysicalDevice)physDev, &f2);
+		hasScalarBlockLayout = (v12.scalarBlockLayout == VK_TRUE);
+	} else {
+		for (const auto &e : exts)
+			if (!strcmp(e.extensionName, VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME))
+				hasScalarBlockLayout = true;
 	}
 
 	// Unified memory heuristic (Apple / integrated)
@@ -366,9 +499,33 @@ void VulkanDevice::Start() {
 				exts.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 	}
 
+	// Every shader we compile is emitted with scalar block layout
+	// (clspv -scalar-block-layout): LuxCore structs use OpenCL/C packing
+	// that std430 cannot express. Refuse early with a clear message on
+	// drivers lacking the feature instead of misreading descriptor data.
+	if (!deviceDesc.hasScalarBlockLayout)
+		throw runtime_error("Vulkan device '" + deviceDesc.GetName() +
+				"' lacks scalarBlockLayout support (required by LuxCore kernels)");
+
 	VkPhysicalDeviceBufferDeviceAddressFeatures bdaF{
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
 	bdaF.bufferDeviceAddress = VK_TRUE;
+
+	// scalarBlockLayout: core feature on Vulkan 1.2+; the EXT struct and
+	// extension name cover pre-1.2 drivers (rare on LuxCore-class GPUs).
+	VkPhysicalDeviceProperties devProps;
+	vkGetPhysicalDeviceProperties(phys, &devProps);
+	VkPhysicalDeviceVulkan12Features v12F{
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+	VkPhysicalDeviceScalarBlockLayoutFeatures extSblF{
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
+	const bool api12 = devProps.apiVersion >= VK_API_VERSION_1_2;
+	if (api12)
+		v12F.scalarBlockLayout = VK_TRUE;
+	else {
+		extSblF.scalarBlockLayout = VK_TRUE;
+		exts.push_back(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
+	}
 
 	VkPhysicalDeviceAccelerationStructureFeaturesKHR asF{
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
@@ -378,6 +535,11 @@ void VulkanDevice::Start() {
 	rqF.rayQuery = VK_TRUE;
 
 	void *featTail = &bdaF;
+	if (api12) {
+		v12F.pNext = featTail; featTail = &v12F;
+	} else {
+		extSblF.pNext = featTail; featTail = &extSblF;
+	}
 	if (wantRT) {
 		asF.pNext = featTail; featTail = &asF;
 		rqF.pNext = featTail; featTail = &rqF;

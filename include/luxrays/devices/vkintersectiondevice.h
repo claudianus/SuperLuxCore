@@ -51,7 +51,10 @@ public:
 			HardwareDeviceBuffer *rayHitBuff,
 			const unsigned int rayCount);
 
-	virtual bool HasHWSupport() const override { return hasRayTracing; }
+	virtual bool HasHWSupport() const override {
+		// Device capability before Start(), the actual path taken after.
+		return rtAccel ? true : hasRayTracing;
+	}
 
 	friend class Context;
 
@@ -59,6 +62,13 @@ protected:
 	virtual void Update();
 
 	HardwareIntersectionKernelUPtr kernel;
+
+	// VK_KHR_ray_query + VK_KHR_acceleration_structure state. Opaque to
+	// keep Vulkan types out of the header; nullptr => SW traversal kernel.
+	struct VulkanRTAccel;
+	std::unique_ptr<VulkanRTAccel> rtAccel;
+	VulkanRTAccel *BuildRTAccel();
+	void FreeRTAccel();
 };
 
 }

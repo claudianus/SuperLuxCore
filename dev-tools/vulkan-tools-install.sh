@@ -8,16 +8,21 @@
 # bundled LLVM tools relative to the clspv binary:
 #   <clspv>/../third_party/llvm/bin/{opt,llvm-dis}
 #
-#   vktools/bin/clspv, clspv-reflection
+#   vktools/bin/clspv, clspv-reflection, glslangValidator
 #   vktools/third_party/llvm/bin/{opt,llvm-dis}
 #   vktools/lib/libMoltenVK.dylib          (macOS)
 #
-# Override sources via env: LUXRAYS_CLSPV, LUXRAYS_MOLTENVK, LUX_VKTOOLS.
+# glslangValidator compiles the GL_EXT_ray_query HWRT shader (OpenCL C /
+# clspv cannot express rayQuery* SPIR-V ops).
+#
+# Override sources via env: LUXRAYS_CLSPV, LUXRAYS_GLSLANG,
+# LUXRAYS_MOLTENVK, LUX_VKTOOLS.
 set -euo pipefail
 
 WORKSPACE="$(cd "$(dirname "$0")/../.." && pwd)"
 VKRT="${LUX_VKRT:-$WORKSPACE/dev-tools/vkrt}"
 CLSPV="${LUXRAYS_CLSPV:-$VKRT/clspv/build/bin/clspv}"
+GLSLANG="${LUXRAYS_GLSLANG:-$VKRT/glslang/build/StandAlone/glslangValidator}"
 MVK="${LUXRAYS_MOLTENVK:-$VKRT/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib}"
 DEST="${LUX_VKTOOLS:-$HOME/.luxcore/vktools}"
 
@@ -38,6 +43,12 @@ for t in opt llvm-dis; do
 	[ -x "$LLVM_BIN/$t" ] || { echo "missing: $LLVM_BIN/$t" >&2; exit 1; }
 	install -m 0755 "$LLVM_BIN/$t" "$DEST/third_party/llvm/bin/$t"
 done
+
+if [ -x "$GLSLANG" ]; then
+	install -m 0755 "$GLSLANG" "$DEST/bin/glslangValidator"
+else
+	echo "note: no glslangValidator at $GLSLANG (HWRT ray-query shader needs it)" >&2
+fi
 
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$MVK" ]; then
 	install -m 0755 "$MVK" "$DEST/lib/libMoltenVK.dylib"

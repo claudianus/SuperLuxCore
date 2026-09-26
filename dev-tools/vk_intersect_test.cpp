@@ -4,6 +4,12 @@
 //   -> EnqueueTraceRayBuffer on GPU, results checked against the CPU BVH
 //   accelerator (accel->Intersect) ray by ray.
 //
+// On RT-capable devices the same binary exercises the HWRT path instead:
+//   VulkanIntersectionDevice::BuildRTAccel -> BLAS/TLAS build
+//   -> GL_EXT_ray_query compute shader (glslang -> SPIR-V)
+// LUXRAYS_VULKAN_RT=0 forces the SW traversal kernel, so both paths can be
+// regression-tested on the same machine.
+//
 // Mirrors the standalone dev-tools/vkrt/bench/bvh_test.cpp harness, but all
 // GPU work goes through the LuxCore device layer.
 #include "luxrays/core/context.h"
@@ -39,19 +45,58 @@ int main() {
 	}
 	auto idevices = ctx.AddIntersectionDevices(vkDescs);
 
-	// Two-triangle quad (same geometry as the standalone harness)
-	VertexBuffer verts(4);
-	verts[0] = Point(-1.f, -1.f, 0.f);
-	verts[1] = Point( 1.f, -1.f, 0.f);
-	verts[2] = Point( 1.f,  1.f, 0.f);
-	verts[3] = Point(-1.f,  1.f, 0.f);
-	TriangleBuffer tris(2);
-	tris[0] = Triangle(0, 1, 2);
-	tris[1] = Triangle(0, 2, 3);
-	auto mesh = std::make_unique<TriangleMesh>(std::move(verts), std::move(tris));
-
 	auto dataSet = std::make_shared<DataSet>(ctx);
-	dataSet->Add(*mesh);
+	// DataSet stores non-owning Mesh* — keep meshes alive for the test.
+	std::vector<std::unique_ptr<TriangleMesh>> meshes;
+
+	// Mesh 0: two-triangle quad in the z=0 plane (same as the old harness)
+	{
+		VertexBuffer verts(4);
+		verts[0] = Point(-1.f, -1.f, 0.f);
+		verts[1] = Point( 1.f, -1.f, 0.f);
+		verts[2] = Point( 1.f,  1.f, 0.f);
+		verts[3] = Point(-1.f,  1.f, 0.f);
+		TriangleBuffer tris(2);
+		tris[0] = Triangle(0, 1, 2);
+		tris[1] = Triangle(0, 2, 3);
+		meshes.push_back(std::make_unique<TriangleMesh>(std::move(verts), std::move(tris)));
+		dataSet->Add(*meshes.back());
+	}
+	// Mesh 1: second quad behind the first (exercises instanceCustomIndex ->
+	// meshIndex mapping on the HWRT path)
+	{
+		VertexBuffer verts(4);
+		verts[0] = Point(-2.f, -2.f, -3.f);
+		verts[1] = Point( 2.f, -2.f, -3.f);
+		verts[2] = Point( 2.f,  2.f, -3.f);
+		verts[3] = Point(-2.f,  2.f, -3.f);
+		TriangleBuffer tris(2);
+		tris[0] = Triangle(0, 1, 2);
+		tris[1] = Triangle(0, 2, 3);
+		meshes.push_back(std::make_unique<TriangleMesh>(std::move(verts), std::move(tris)));
+		dataSet->Add(*meshes.back());
+	}
+	// Mesh 2: 10x10 tessellated plane at z=+2 (200 triangles, stresses
+	// primitiveIndex -> triangleIndex mapping)
+	{
+		const int N = 10;
+		VertexBuffer verts((N + 1) * (N + 1));
+		for (int y = 0; y <= N; ++y)
+			for (int x = 0; x <= N; ++x)
+				verts[y * (N + 1) + x] = Point(
+						-1.f + 2.f * x / N, -1.f + 2.f * y / N, 2.f);
+		TriangleBuffer tris(2 * N * N);
+		for (int y = 0; y < N; ++y)
+			for (int x = 0; x < N; ++x) {
+				const int q = 2 * (y * N + x);
+				const u_int a = y * (N + 1) + x;
+				tris[q]     = Triangle(a, a + 1, a + N + 2);
+				tris[q + 1] = Triangle(a, a + N + 2, a + N + 1);
+			}
+		meshes.push_back(std::make_unique<TriangleMesh>(std::move(verts), std::move(tris)));
+		dataSet->Add(*meshes.back());
+	}
+
 	dataSet->SetAcceleratorType(ACCEL_BVH);
 	dataSet->Preprocess();
 	ctx.SetDataSet(dataSet);
@@ -59,31 +104,51 @@ int main() {
 
 	auto &dev = dynamic_cast<HardwareIntersectionDeviceRef>(idevices[0].get());
 
-	// Ray set: hits tri0, hits tri1, miss, masked, plus edge cases
-	std::vector<Ray> rays(8);
-	auto mk = [&](int i, float ox, float oy, float dx, float dy, unsigned flags = RAY_FLAGS_NONE) {
-		rays[i] = Ray(Point(ox, oy, 1.f), Vector(dx, dy, -1.f));
-		rays[i].flags = flags;
+	// Rays: per-triangle hits on every mesh, misses, masked, mint/maxt
+	// range culling, and angled rays landing on specific grid cells.
+	std::vector<Ray> rays;
+	auto mk = [&](float ox, float oy, float oz, float dx, float dy, float dz,
+			unsigned flags = RAY_FLAGS_NONE, float mint = 0.f,
+			float maxt = INFINITY) {
+		rays.push_back(Ray(Point(ox, oy, oz), Vector(dx, dy, dz)));
+		rays.back().flags = flags;
+		rays.back().mint = mint;
+		rays.back().maxt = maxt;
 	};
 	// NOTE: keep hit points strictly inside one triangle — the shared
 	// quad diagonal (x == y) is claimed by both leaves and either answer
 	// is valid.
-	mk(0,  0.5f, -0.5f, 0.f, 0.f);           // tri 0 (x > y)
-	mk(1, -0.5f,  0.5f, 0.f, 0.f);           // tri 1 (x < y)
-	mk(2,  5.0f,  5.0f, 0.f, 0.f);           // miss (outside quad)
-	mk(3,  0.5f, -0.5f, 0.f, 0.f, RAY_FLAGS_MASKED); // masked -> untouched
-	mk(4,  0.0f, -0.9f, 0.f, 0.f);           // near bottom edge, tri 0
-	mk(5, -0.9f,  0.9f, 0.f, 0.f);           // near top-left, tri 1
-	mk(6,  0.0f,  0.0f, 0.4f, 0.2f);         // angled ray, lands x>y -> tri 0
-	mk(7,  0.2f, -0.4f, 0.f, 0.f);           // tri 0
+	mk( 0.5f, -0.5f,  1.f, 0.f, 0.f, -1.f);          // mesh 0, tri 0 (x > y)
+	mk(-0.5f,  0.5f,  1.f, 0.f, 0.f, -1.f);          // mesh 0, tri 1 (x < y)
+	mk( 5.0f,  5.0f,  1.f, 0.f, 0.f, -1.f);          // miss (outside all)
+	mk( 0.5f, -0.5f,  1.f, 0.f, 0.f, -1.f,
+			RAY_FLAGS_MASKED);                       // masked -> untouched
+	mk( 0.0f, -0.9f,  1.f, 0.f, 0.f, -1.f);          // mesh 0 near bottom edge
+	mk(-0.9f,  0.9f,  1.f, 0.f, 0.f, -1.f);          // mesh 0 near top-left
+	mk( 0.0f,  0.0f,  1.f, 0.4f, 0.2f, -1.f);        // angled, lands x>y
+	mk( 0.2f, -0.4f,  1.f, 0.f, 0.f, -1.f);          // mesh 0, tri 0
+	mk( 1.5f, -1.5f,  1.f, 0.f, 0.f, -1.f);          // through quad gap -> mesh 1
+	mk(-1.5f,  1.5f,  1.f, 0.f, 0.f, -1.f);          // mesh 1
+	mk( 0.53f, -0.5f,  3.f, 0.f, 0.f, -1.f);         // mesh 2 grid cell (off-diag)
+	mk(-0.75f, 0.28f, 3.f, 0.f, 0.f, -1.f);          // mesh 2 other cell (off-diag)
+	mk( 0.5f, -0.5f,  1.f, 0.f, 0.f, -1.f,
+			RAY_FLAGS_NONE, 0.f, 0.5f);              // maxt short -> miss
+	mk( 0.5f, -0.5f,  1.f, 0.f, 0.f, -1.f,
+			RAY_FLAGS_NONE, 1.5f);                   // mint past mesh 0 -> mesh 1
+	mk( 0.5f, -0.5f,  1.f, 0.f, 0.f, -1.f,
+			RAY_FLAGS_MASKED);                       // second masked ray
 
 	const u_int n = rays.size();
 	std::vector<RayHit> gpuHits(n);
 	for (auto &h : gpuHits) h.SetMiss();
-	// The kernel writes nothing for masked rays: pre-fill a sentinel so a
+	// The kernels write nothing for masked rays: pre-fill a sentinel so a
 	// spurious write would be caught.
-	gpuHits[3].t = -777.f; gpuHits[3].b1 = -777.f; gpuHits[3].b2 = -777.f;
-	gpuHits[3].meshIndex = 777; gpuHits[3].triangleIndex = 777;
+	for (u_int i = 0; i < n; ++i)
+		if (rays[i].flags & RAY_FLAGS_MASKED) {
+			gpuHits[i].t = -777.f;
+			gpuHits[i].b1 = -777.f; gpuHits[i].b2 = -777.f;
+			gpuHits[i].meshIndex = 777; gpuHits[i].triangleIndex = 777;
+		}
 
 	HardwareDeviceBuffer *rayBuff = nullptr, *hitBuff = nullptr;
 	dev.AllocBufferRW(&rayBuff, rays.data(), sizeof(Ray) * n, "rays");
@@ -114,6 +179,8 @@ int main() {
 			(gpuHits[i].Miss() == cpuHit.Miss()) &&
 			(gpuHits[i].Miss() ||
 			 (std::fabs(gpuHits[i].t - cpuHit.t) < 1e-5f &&
+			  std::fabs(gpuHits[i].b1 - cpuHit.b1) < 1e-5f &&
+			  std::fabs(gpuHits[i].b2 - cpuHit.b2) < 1e-5f &&
 			  gpuHits[i].meshIndex == cpuHit.meshIndex &&
 			  gpuHits[i].triangleIndex == cpuHit.triangleIndex));
 		if (!ok) {
