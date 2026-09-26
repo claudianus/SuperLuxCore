@@ -81,7 +81,9 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
-		guidingEnable(false), spectralEnable(false) {
+		guidingEnable(false), spectralEnable(false),
+		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
+		restirGITemporalEnable(true), restirGISpatialEnable(true) {
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -767,6 +769,35 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				cosSampledDir = -1.f;
 				bsdfEvent = pathInfo.lastBSDFEvent;
 			} else {
+				// ReSTIR GI (G1): at a depth-0 non-delta vertex the
+				// first-bounce continuation is resampled from the
+				// per-pixel reservoir + K fresh candidates. On success
+				// the winner's direction replaces the BSDF draw below;
+				// outEval already carries the RIS weight W and outPdfW
+				// is the marginal selection density (1/W) used for MIS
+				// bookkeeping at later vertices and env hits.
+				bool giSelected = false;
+				if (restirGI && restirGIEnable &&
+						sampleResult.firstPathVertex && !bsdf.IsDelta()) {
+					Vector giDir;
+					float giPdfW;
+					BSDFEvent giEvent;
+					Spectrum giEval;
+					if (restirGI->ResampleFirstBounce(device, scene,
+							eyeRay.time, bsdf, pathInfo.volume,
+							bsdf.hitPoint.p,
+							sampleResult.pixelX, sampleResult.pixelY,
+							sampler.GetPass(), restirGICandidates,
+							restirGITemporalEnable, restirGISpatialEnable,
+							&giDir, &giEval, &giPdfW, &giEvent)) {
+						sampledDir = giDir;
+						bsdfSample = giEval;
+						bsdfPdfW = giPdfW;
+						cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN, giDir));
+						bsdfEvent = giEvent;
+						giSelected = true;
+					}
+				}
 				// Path guiding (P1-3 M1, CPU only): train on every
 				// non-delta arrival, but guide glossy bounces only.
 				// Rationale: diffuse cosine-BSDF sampling is already
@@ -826,7 +857,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					}
 					pathGuidingCache->Record(bsdf.hitPoint.p, -eyeRay.d,
 							localValue / arrival);
-					if (guidingEnable && tryGuide && takeGuideSide) {
+					if (guidingEnable && tryGuide && takeGuideSide && !giSelected) {
 						float guidePdfW;
 						Vector guideDir;
 						// Sample() is total under tryGuide (table miss falls
@@ -917,7 +948,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						}
 					}
 				}
-				if (!guided) {
+				if (!guided && !giSelected) {
 					// Inside the mixture (tryGuide) either side uses the
 					// rescaled conditional uniform (a full [0,1) uniform
 					// given the selector outcome); elsewhere the raw draw
@@ -1472,6 +1503,13 @@ void PathTracer::ParseOptions(
 	spectralEnable = cfg.Get(defaultProps.Get("path.spectral.enable")).Get<bool>();
 	Spectral::SetEnabled(spectralEnable);
 
+	// ReSTIR GI (G1, CPU): per-pixel first-bounce reservoir. The store
+	// itself is engine-owned; only the toggles live here.
+	restirGIEnable = cfg.Get(defaultProps.Get("path.restir.gi.enable")).Get<bool>();
+	restirGICandidates = Max(1, cfg.Get(defaultProps.Get("path.restir.gi.candidates")).Get<int>());
+	restirGITemporalEnable = cfg.Get(defaultProps.Get("path.restir.gi.temporal.enable")).Get<bool>();
+	restirGISpatialEnable = cfg.Get(defaultProps.Get("path.restir.gi.spatial.enable")).Get<bool>();
+
 	// Update eye sample size (9 classic dims + 1 path-guiding bin pick)
 	eyeSampleBootSize = 5 + (spectralEnable ? 1 : 0); // +1 wavelength draw
 	eyeSampleStepSize = 10;
@@ -1524,6 +1562,10 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.gi.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.gi.candidates")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.gi.temporal.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.gi.spatial.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.spectral.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.depth")) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.cap")) <<
@@ -1548,6 +1590,10 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.mnee.seedcache")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
+			Property("path.restir.gi.enable")(false) <<
+			Property("path.restir.gi.candidates")(4) <<
+			Property("path.restir.gi.temporal.enable")(true) <<
+			Property("path.restir.gi.spatial.enable")(true) <<
 			Property("path.spectral.enable")(false) <<
 			Property("path.pathdepth.total")(6) <<
 			Property("path.pathdepth.diffuse")(4) <<

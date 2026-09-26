@@ -44,8 +44,8 @@ namespace ocl { namespace pathoclbase {
 class PathOCLBaseRenderEngine;
 
 // Number of per-state wavefront task queues: mirrors the PathState
-// enum in pathoclbase_datatypes.cl (MK_* states 0..12)
-inline constexpr u_int WAVEFRONT_NUM_STATES = 13;
+// enum in pathoclbase_datatypes.cl (MK_* states 0..14)
+inline constexpr u_int WAVEFRONT_NUM_STATES = 15;
 // Spectral hero-wavelength buckets per state queue (B2/E3 M2). Matches
 // SLG_SPECTRAL_BINS (3 spectral bins ride in the float3 channels).
 // Non-spectral builds bucket everything into lambda 0, which reproduces
@@ -315,6 +315,10 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_DL_SAMPLE_BSDF;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_MNEE_NEXT_VERTEX;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_RESTIR;
+	// ReSTIR GI (G1 GPU): two-stage tail resolution of the first-bounce
+	// candidate rays queued by MK_GENERATE_NEXT_VERTEX_RAY.
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_GI_BOUNCE;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_GI_RESOLVE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;

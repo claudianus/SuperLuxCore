@@ -184,7 +184,10 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		const u_int raySlotCount = taskCount * (1u +
 				((engine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
 				(engine->taskConfig.pathTracer.restir.visCandCount +
-				RESTIR_PIXEL_MERGES_MAX) : 0u));
+				RESTIR_PIXEL_MERGES_MAX) : 0u) +
+				2u * engine->taskConfig.pathTracer.restirGI.giCandCount +
+				((engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+				1u : 0u));
 		for (u_int i = 0; i < iterations; ++i) {
 			// Trace rays (tail slots hold the ReSTIR visibility
 			// candidate shadow rays)
@@ -204,6 +207,7 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		totalIterations += iterations;
 
 		intersectionDevice.FinishQueue();
+
 		const double timeKernelEnd = WallClockTime();
 		totalKernelTime += timeKernelEnd - timeKernelStart;
 

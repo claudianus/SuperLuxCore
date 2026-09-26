@@ -32,13 +32,14 @@ using namespace slg;
 
 PathCPURenderEngine::PathCPURenderEngine(RenderConfigRef rcfg) :
 		CPUNoTileRenderEngine(rcfg), photonGICache(nullptr),
-		pathGuidingCache(nullptr),
+		pathGuidingCache(nullptr), restirGI(nullptr),
 		lightSampleSplatter(nullptr), lightSamplerSharedData(nullptr) {
 }
 
 PathCPURenderEngine::~PathCPURenderEngine() {
 	delete photonGICache;
 	delete pathGuidingCache;
+	delete restirGI;
 }
 
 void PathCPURenderEngine::InitFilm() {
@@ -160,6 +161,22 @@ void PathCPURenderEngine::StartLockLess() {
 	pathTracer.SetPathGuidingCache(pathGuidingCache);
 
 	//--------------------------------------------------------------------------
+	// ReSTIR GI (G1): per-pixel first-bounce reservoir, shared by all
+	// render threads (advisory lock-free access inside).
+	//--------------------------------------------------------------------------
+
+	delete restirGI;
+	restirGI = nullptr;
+	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.restir.gi.enable")).Get<bool>()) {
+		restirGI = new RestirGI();
+		restirGI->Init(GetFilm().GetWidth(), GetFilm().GetHeight());
+		SLG_LOG("[PathCPURenderEngine] ReSTIR GI enabled (candidates=" <<
+				cfg.Get(PathTracer::GetDefaultProps()->Get(
+					"path.restir.gi.candidates")).Get<int>() << ")");
+	}
+	pathTracer.SetRestirGI(restirGI);
+
+	//--------------------------------------------------------------------------
 
 	CPUNoTileRenderEngine::StartLockLess();
 }
@@ -184,6 +201,12 @@ void PathCPURenderEngine::StopLockLess() {
 void PathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
 	if (lightSamplerSharedData)
 		lightSamplerSharedData->Reset();
+
+	// Reservoirs key on film pixels; a scene edit invalidates the
+	// stored x2's (bounded-bias reuse would still be safe via the
+	// Jacobian + V test, but a reset is cheaper than stale entries).
+	if (restirGI)
+		restirGI->Reset();
 
 	CPURenderEngine::EndSceneEditLockLess(editActions);
 }

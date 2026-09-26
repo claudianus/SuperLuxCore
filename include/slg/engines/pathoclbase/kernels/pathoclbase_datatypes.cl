@@ -64,7 +64,19 @@ typedef enum {
 	// into each candidate's target, runs the reservoir merge, emits the
 	// winner's real shadow ray into rays[gid] and continues to
 	// MK_DL_SAMPLE_BSDF.
-	MK_RT_RESTIR = 12
+	MK_RT_RESTIR = 12,
+	// ReSTIR GI (G1 GPU): two-stage tail resolution of the first-bounce
+	// candidate rays queued by MK_GENERATE_NEXT_VERTEX_RAY.
+	// - MK_RT_GI_BOUNCE consumes the bounce-ray hits: builds each hit
+	//   candidate's x2 BSDF (tmpBsdf, sequentially), records x2's
+	//   emission and queues the one-sample NEE shadow ray into the
+	//   second half of the task's GI tail.
+	// - MK_RT_GI_RESOLVE consumes the NEE hits, assembles the proxy
+	//   targets, runs the RIS + temporal/spatial merges, stores the
+	//   pre-spatial reservoir and hands the winner to
+	//   MK_GENERATE_NEXT_VERTEX_RAY through the task's result record.
+	MK_RT_GI_BOUNCE = 13,
+	MK_RT_GI_RESOLVE = 14
 } PathState;
 
 typedef struct {
@@ -192,6 +204,86 @@ typedef struct {
 // 64 bounds the per-merge inflation while leaving real transfers
 // untouched; the bias is bounded and only affects the outlier tail.
 #define RESTIR_MERGE_MAX_TARGET_RATIO 64.f
+
+// ReSTIR GI (G1 GPU): per-pixel first-bounce reservoir, appended to
+// restirReservoirs[] after the DI data (see taskConfig.pathTracer.
+// restirGI.giReservoirOffset). Mirrors the CPU RestirGI::Reservoir
+// semantics: the stored winner is a candidate bounce direction with
+// its x2 endpoint and one-sample proxy radiance lHat; a merge
+// reconnects x2 to the current x1 and carries the Jacobian of the
+// solid-angle shift.
+typedef struct {
+	float x1X, x1Y, x1Z;		// shading vertex the reservoir was stored at
+	float x1nX, x1nY, x1nZ;		// x1 geometry normal (same-surface gate)
+	float x2X, x2Y, x2Z;		// candidate bounce hit point (isMiss == 0)
+	float x2nX, x2nY, x2nZ;		// x2 geometry normal (Jacobian)
+	float dirX, dirY, dirZ;		// winning direction from x1
+	float lHatR, lHatG, lHatB;	// stored one-sample proxy radiance at x2
+	float wSum;
+	float target;				// winner's pi_hat at storage time
+	unsigned int m;				// proposal draws (0 = no reservoir yet)
+	unsigned int isMiss;		// winner hit the environment
+	// Writer's sample-pass stamp, used as a seqlock: the store writes
+	// 0xFFFFFFFF first, fills the payload, then publishes the stamp
+	// last. Temporal merges read it before AND after snapshotting the
+	// entry (and pair it with RestirGIResult.vSeq for the visibility
+	// ray), so a torn or superseded record is always rejected. Unlike
+	// the CPU side (a handful of threads rarely collide on a pixel),
+	// thousands of GPU tasks hit the same pixel's reservoir inside a
+	// single pass: without the stamp the temporal merge would fold a
+	// just-written wSum back into itself several times per pass and
+	// the GRIS weight compounds geometrically (measured ~1e7x hot
+	// pixels on cornell). Temporal merges only accept entries stamped
+	// with a strictly older pass; spatial merges intentionally keep
+	// same-pass neighbours (that IS the spatial semantics).
+	unsigned int pass;
+} RestirGIReservoir;
+
+// ReSTIR GI (G1 GPU): one record per candidate bounce ray queued into
+// the GI tail of rays[]/rayHits[] (slots [giCandRayBase + gid*2K ..];
+// the second half holds the NEE shadow rays resolved in
+// MK_RT_GI_RESOLVE). The x2 hit point itself is recomputed from
+// ray+hit at resolve time; only data not recoverable from the trace
+// results is stored here.
+typedef struct {
+	float dirX, dirY, dirZ;		// candidate direction from x1
+	float fcosR, fcosG, fcosB;	// f_r * |cos| at x1
+	float pdfW;					// BSDF proposal pdf (0 = culled)
+	unsigned int event;			// BSDFEvent of the proposal
+	unsigned int miss;			// 0 = hit, 1 = env miss (NEE slot masked)
+	float x2nX, x2nY, x2nZ;		// x2 geometry normal (hit only)
+	float emisR, emisG, emisB;	// x2 emission toward x1, or env radiance
+	float neeR, neeG, neeB;		// lightRad * eval2 / (pdfW2 * pickPdf);
+								// the binary V is folded in at resolve
+} RestirGICandidate;
+
+// ReSTIR GI (G1 GPU): resolve -> MK_GENERATE_NEXT_VERTEX_RAY handoff.
+// The resolve cannot write the continuation ray itself (the AddVertex/
+// RR/throughput bookkeeping lives in MK_GENERATE), so it records the
+// resampled (dir, fcos*W, risPdfW, event) triple here and re-enters
+// MK_GENERATE, which consumes it in place of a fresh BSDF draw.
+// pending: 0 = no GI decision, 1 = consume this record, 2 = the
+// resolve found no usable winner -> take a normal BSDF sample (the
+// same conditioned fallback as the CPU side's "return false").
+typedef struct {
+	float dirX, dirY, dirZ;
+	float bsdfR, bsdfG, bsdfB;	// fcos * W continuation factor
+	float pdfW;					// risPdfW: RIS marginal selection density
+	unsigned int event;
+	unsigned int pending;
+	// Dense-dispatch trace barrier (same role as MneeState.needsTrace):
+	// MK_RT_GI_BOUNCE sets it when it queues the NEE shadow rays, so the
+	// MK_RT_GI_RESOLVE launch in the SAME advance pass skips the task
+	// (the NEE hits only exist after the next trace).
+	unsigned int needsTrace;
+	// Seqlock tag for the temporal visibility ray: MK_RT_GI_BOUNCE
+	// records the pass stamp of the stored entry it queues the ray
+	// against; MK_RT_GI_RESOLVE accepts the merge only if the entry's
+	// stamp still matches, so a reservoir rewritten between bounce and
+	// resolve can never pair a stale occlusion test with a new sample.
+	// 0xFFFFFFFF = no ray queued.
+	unsigned int vSeq;
+} RestirGIResult;
 
 // MNEE seed cache (E4): fixed-size hash grid of converged single-vertex
 // manifold solutions. 16384 entries * 32B = 512KB.

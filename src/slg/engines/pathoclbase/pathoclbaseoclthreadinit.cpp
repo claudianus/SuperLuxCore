@@ -507,6 +507,86 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		renderEngine->taskConfig.pathTracer.restir.visCandDataOffset = 0;
 	}
 
+	// ReSTIR GI (G1 GPU): the GI state shares restirReservoirsBuff -
+	// per-pixel GI reservoirs then per-task candidate/result records,
+	// appended after the DI regions. The bounce + NEE candidate rays
+	// ride a second tail of rays[]/rayHits[] (2K slots per task). All
+	// offsets below are in RestirReservoir-slot units; byte sizes are
+	// rounded up to whole slots like the DI candidate region.
+	{
+		namespace podt = slg::ocl::pathoclbase;
+		auto &gi = renderEngine->taskConfig.pathTracer.restirGI;
+		auto &restir = renderEngine->taskConfig.pathTracer.restir;
+		const u_int reservoirCount = restir.reservoirCount;
+		// Byte size of the DI candidate region that precedes the GI
+		// data (0 when visibility is off).
+		const size_t diCandBytes = (restir.visCandCount > 0u) ?
+				(size_t)taskCount * (restir.visCandCount +
+				RESTIR_PIXEL_MERGES_MAX) * sizeof(podt::RestirVisCandidate) : 0;
+		const u_int diCandSlots = (u_int)((diCandBytes +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+		const u_int giReservoirSlots = (u_int)(((size_t)reservoirCount *
+				sizeof(podt::RestirGIReservoir) +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+
+		if (gi.enabled) {
+			gi.reservoirCount = reservoirCount;
+			gi.giCandCount = Min(4u, gi.candidateCount);
+
+			// Low-resource guard, same pattern as the DI tail: the GI
+			// tail costs taskCount * (2K rays+hits) plus taskCount *
+			// (K RestirGICandidate + 1 RestirGIResult) bytes of
+			// reservoir buffer. Cap K so the extra stays under a fixed
+			// budget; all arithmetic in 64-bit (u_int products can
+			// overflow at 512K tasks).
+			const u_int bytesPerCand =
+					(u_int)(2u * (sizeof(Ray) + sizeof(RayHit)) +
+					sizeof(podt::RestirGICandidate));
+			const size_t giByteBudget = (size_t)256 * 1024 * 1024;
+			const u_int maxKByMem = (bytesPerCand > 0 && taskCount > 0) ?
+					(u_int)Max<long long>(0ll, (long long)Min<size_t>(
+					4u, (giByteBudget - (size_t)taskCount *
+					sizeof(podt::RestirGIResult)) /
+					((size_t)taskCount * bytesPerCand))) : 0u;
+			if (gi.giCandCount > maxKByMem) {
+				SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+						"] ReSTIR GI candidates clamped from " <<
+						gi.giCandCount << " to " << maxKByMem <<
+						" (taskCount=" << taskCount << ", budget=" <<
+						giByteBudget / 1024 / 1024 << "MB)");
+				gi.giCandCount = maxKByMem;
+			}
+			if (gi.giCandCount == 0u)
+				gi.enabled = false;
+		}
+		if (gi.enabled) {
+			// The GI ray tail starts right after the DI tail
+			gi.giCandRayBase = taskCount * (1u +
+					((restir.visCandCount > 0u) ?
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u));
+			gi.giReservoirOffset = reservoirCount + diCandSlots;
+			gi.giCandDataOffset = gi.giReservoirOffset + giReservoirSlots;
+			// Per-task record block: K candidates + 1 result record,
+			// rounded up to whole reservoir slots
+			gi.giCandStride = (u_int)(((size_t)gi.giCandCount *
+					sizeof(podt::RestirGICandidate) +
+					sizeof(podt::RestirGIResult) +
+					sizeof(podt::RestirReservoir) - 1) /
+					sizeof(podt::RestirReservoir));
+		} else {
+			gi.reservoirCount = 0;
+			gi.giCandCount = 0;
+			gi.giCandRayBase = taskCount * (1u +
+					((restir.visCandCount > 0u) ?
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u));
+			gi.giReservoirOffset = reservoirCount + diCandSlots;
+			gi.giCandDataOffset = gi.giReservoirOffset;
+			gi.giCandStride = 0;
+		}
+	}
+
 	intersectionDevice.AllocBufferRO(&taskConfigBuff, &renderEngine->taskConfig, sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration), "GPUTaskConfiguration");
 
 	//--------------------------------------------------------------------------
@@ -854,11 +934,16 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// ReSTIR visibility (E2a/E2d): rays/hits hold taskCount regular rays
 	// plus, when the visibility target is on, taskCount *
 	// (visCandCount + RESTIR_PIXEL_MERGES_MAX) candidate and merge
-	// shadow rays.
+	// shadow rays; ReSTIR GI (G1) appends taskCount * (2*giCandCount + 1)
+	// bounce + NEE + temporal-merge visibility rays behind them
+	// (giCandRayBase matches this tail start in InitGPUTaskBuffer()).
 	const u_int raySlotCount = taskCount * (1u +
 			((renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
 			(renderEngine->taskConfig.pathTracer.restir.visCandCount +
-			RESTIR_PIXEL_MERGES_MAX) : 0u));
+			RESTIR_PIXEL_MERGES_MAX) : 0u) +
+			2u * renderEngine->taskConfig.pathTracer.restirGI.giCandCount +
+			((renderEngine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+			1u : 0u));
 	intersectionDevice.AllocBufferRW(&raysBuff, nullptr, sizeof(Ray) * raySlotCount, "Ray");
 	intersectionDevice.AllocBufferRW(&hitsBuff, nullptr, sizeof(RayHit) * raySlotCount, "RayHit");
 
@@ -915,14 +1000,30 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 				(renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
 				taskCount * (renderEngine->taskConfig.pathTracer.restir.visCandCount +
 				RESTIR_PIXEL_MERGES_MAX) : 0u;
+		// ReSTIR GI (G1 GPU): per-pixel GI reservoirs then the per-task
+		// candidate/result records follow the DI region. The offsets
+		// were computed in InitGPUTaskBuffer() (giReservoirOffset/
+		// giCandDataOffset/giCandStride, all in reservoir-slot units).
+		const auto &gi = renderEngine->taskConfig.pathTracer.restirGI;
+		const u_int giTotalSlots = (gi.giCandCount > 0u) ?
+				(gi.giCandDataOffset + taskCount * gi.giCandStride) :
+				(gi.giReservoirOffset + (u_int)(
+				((size_t)gi.reservoirCount *
+				sizeof(slg::ocl::pathoclbase::RestirGIReservoir) +
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) - 1) /
+				sizeof(slg::ocl::pathoclbase::RestirReservoir)));
 		const u_int totalCount = reservoirCount + (u_int)(
 				((size_t)candTailCount *
 				sizeof(slg::ocl::pathoclbase::RestirVisCandidate) +
 				sizeof(slg::ocl::pathoclbase::RestirReservoir) - 1) /
 				sizeof(slg::ocl::pathoclbase::RestirReservoir));
-		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(totalCount);
+		// giReservoirOffset == reservoirCount + DI candidate slots, so
+		// the GI total is the end of the buffer whenever GI is enabled.
+		const u_int allocCount = (gi.reservoirCount > 0u) ?
+				giTotalSlots : totalCount;
+		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(allocCount);
 		intersectionDevice.AllocBufferRW(&restirReservoirsBuff, zeroReservoirs.data(),
-				sizeof(slg::ocl::pathoclbase::RestirReservoir) * totalCount, "RestirReservoirs");
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) * allocCount, "RestirReservoirs");
 	}
 
 	//--------------------------------------------------------------------------

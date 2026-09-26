@@ -27,6 +27,7 @@
 #include "slg/bsdf/bsdf.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/pathguiding.h"
+#include "slg/engines/restirgi.h"
 #include "slg/utils/pathinfo.h"
 
 namespace slg {
@@ -104,6 +105,9 @@ public:
 
 	void SetPathGuidingCache(const PathGuidingCache *cache) { pathGuidingCache = cache; }
 	const PathGuidingCache *GetPathGuidingCache() const { return pathGuidingCache; }
+
+	void SetRestirGI(RestirGI *gi) { restirGI = gi; }
+	RestirGI *GetRestirGI() const { return restirGI; }
 
 	void ParseOptions(
 		luxrays::PropertiesConstRef cfg,
@@ -207,6 +211,14 @@ public:
 	// reused as Newton warm-start seeds for nearby attempts.
 	bool mneeSeedCacheEnable;
 
+	// ReSTIR GI (G1) settings (path.restir.gi.*): the CPU implementation
+	// runs through the restirGI store below; the GPU kernels read the
+	// mirrored taskConfig.pathTracer.restirGI copy.
+	bool restirGIEnable;
+	u_int restirGICandidates;
+	bool restirGITemporalEnable;
+	bool restirGISpatialEnable;
+
 private:
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
 			luxrays::Ray &eyeRay, PathVolumeInfo &volInfo,
@@ -281,6 +293,12 @@ private:
 	// sampling (path.guiding.tablefile, empty = inline CPU training).
 	bool guidingEnable;
 	std::string guidingTableFile;
+
+	// ReSTIR GI (G1): per-pixel first-bounce reservoir, owned by the
+	// engine and shared by all render threads (advisory lock-free
+	// access). Null when disabled. Path-level state - not a light
+	// strategy - so it lives here, not in LightStrategy.
+	RestirGI *restirGI;
 
 	static const Film::FilmChannels eyeSampleResultsChannels;
 	static const Film::FilmChannels lightSampleResultsChannels;

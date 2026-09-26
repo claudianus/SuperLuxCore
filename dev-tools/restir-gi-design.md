@@ -1,9 +1,13 @@
 # ReSTIR GI / PT — E2 continuation design
 
-Status: **design stage** — no code yet. Roadmap item E2 (the
-"ReSTIR PT/GI/PG" remainder after E2a–E2d landed). This document fixes
-the scope, estimator math, integration points and validation plan so
-the implementation lands in reviewable chunks like the DI stages did.
+Status: **G1 + G1-b CPU + G2 GPU implemented** —
+`src/slg/engines/restirgi.cpp` (PATHCPU) and the `pathoclbase` kernel
+tail (PATHOCL/TILEPATHOCL, OpenCL + Metal) share the same estimator and
+`path.restir.gi.*` properties. e19 covers both backends (10/10).
+Roadmap item E2 (the "ReSTIR PT/GI/PG" remainder after E2a–E2d
+landed). This document fixes the scope, estimator math, integration
+points and validation plan so the implementation lands in reviewable
+chunks like the DI stages did.
 
 ## What / why
 
@@ -50,6 +54,19 @@ is scaled by the RIS weight. Properties:
   property that makes this viable: proxy quality trades variance, not
   bias.
 
+- **Support floor (found during validation, e19)**: a proxy π̂ must be
+  nonzero wherever the integrand `f_r·G·L_real` is nonzero. L̂ is a
+  one-sample estimate whose binary-V shadow ray reports 0 for
+  occluded-but-lit x2's — without a floor those directions could never
+  win and their true indirect contribution is dropped (measured −4.5%
+  darkening at K=8; at K=1 the all-zero-target redraw instead
+  conditioned on "proxy dark" and measured +6%). Implementation adds
+  `eps = 5% · max_i L̂_i` to every candidate's proxy, and on the
+  degenerate all-zero-target edge returns the fresh winner with the
+  plain BSDF payoff (`W = 1/pdfW`) rather than redrawing — both keep
+  supp(π̂) ⊇ supp(f·cos) and restored e19's unbiasedness gate
+  (K=1 now matches the BSDF baseline to 4 decimal places).
+
 **Deferred (documented, not implemented in G1):**
 
 - Recursive GI (L̂ including x2's own indirect reservoir) — feedback
@@ -63,44 +80,43 @@ is scaled by the RIS weight. Properties:
 - Deeper-vertex GI (depth ≥ 1 x1) — same machinery, but per-pixel
   reservoir semantics assume primary hits for the pixel gate.
 
-## Reservoir layout
+## Reservoir layout (as implemented, `RestirGI::Reservoir`, ~64B)
 
-`RestirGIReservoir` (per pixel, ~64B, same slab discipline as
-`RestirReservoir`):
+- `x1` hit point + geometric normal (shift source)
+- `x2` hit point + geometric normal (Jacobian cosine on shifts)
+- `dir` = x1→x2 (or the env-miss direction)
+- `L̂(x2)` proxy radiance (3 floats)
+- `wSum`, `M`, `target` (=π̂ at store time), `isMiss`
 
-- `x2` hit point (3 floats), `x2` geometric normal (3 floats)
-- `x1` hit point + geometric normal (same-surface merge gate, E2b rule)
-- `L̂(x2)` proxy radiance (Spectrum, 3 floats)
-- `wSum`, `M`, `target` (=π̂ at store time)
-- incident direction ω (x1→x2, 3 floats) — needed to re-evaluate
-  `f_r`/`G` at merge time without re-tracing
-- replayable BSDF draws that produced x2 (`u4`-equivalent, for the
-  E2c-style exact-sample replay on shifts)
+One entry per film pixel — screen-space by construction, so no
+same-surface gate is needed for the temporal merge (the pixel's own
+x1 is the shift source; J = 1 on static geometry).
 
 ## Estimator (G1, per depth-0 vertex)
 
-1. Candidate 0: the path's BSDF continuation ray (already traced by
-   the normal pipeline — zero marginal cost until x2 is shaded).
-2. Candidates 1..K-1: extra BSDF samples → bounce rays → x2 hits.
-   Each candidate's π̂ needs x2's direct light: one light pick + one
-   shadow ray at x2 (rides the candidate tail queue, same pattern as
-   E2a/E2d — the tail stride becomes `visCandCount + merges + giK`).
-3. `wSum += π̂_i/q_i` per candidate, `M += 1`; merge temporal reservoir
-   (same pixel → Jacobian 1 on static geometry), then ≤2 gated pixel
-   neighbours with the **Jacobian-corrected reconnection shift**:
-   `b_nbr = wSum_nbr·(π̂_new/π̂_old)·J` where
-   `J = G(x1_cur, x2) / G(x1_nbr, x2)` — the solid-angle↔area measure
-   correction the GI paper requires (the DI shift needs no J because
-   the sample lives on a light, not on a scene surface).
-   `RESTIR_MERGE_MAX_TARGET_RATIO` clamps the composite ratio.
-4. Winner x2: the path physically continues through it (existing
+1. Candidates 0..K-1: BSDF samples → bounce rays → x2 hits (CPU
+   traces them inline via the Embree accelerator; the GPU port will
+   ride the E2a-style tail queue). Each candidate's π̂ needs x2's
+   direct light: one light pick + one shadow ray at x2.
+2. `wSum += π̂_i/q_i` per candidate, `M += 1`; merge the pixel's
+   temporal reservoir with the **Jacobian-corrected reconnection
+   shift**: `b_nbr = wSum_nbr·(π̂_new/π̂_old)·J` where
+   `J = (|cos_x2(x2→x1_cur)|/d_cur²)/(|cos_x2(x2→x1_src)|/d_src²)`
+   and the reconnected segment x1_cur→x2 is visibility-tested (the
+   E2d rule — cheap on CPU). `RESTIR_GI_MAX_TARGET_RATIO = 64` clamps
+   the composite ratio, mirroring `RESTIR_MERGE_MAX_TARGET_RATIO`.
+3. Winner x2: the path physically continues through it (existing
    ray/next-vertex machinery) with `pathThroughput *= W`
-   (`W = wSum/(M·π̂)`). Everything past x2 (RR, depth, MIS on later
-   bounces) is untouched — the reservoir only decides *which* x2.
+   (`W = wSum/(M·π̂)`, `M` capped at 2K). Everything past x2 (RR,
+   depth, MIS on later bounces) is untouched — the reservoir only
+   decides *which* x2. `outPdfW = 1/W` is the RIS marginal density
+   used for MIS bookkeeping.
 
 Delta BSDF at x1 skips GI (same rule as DI). The estimator never
-creates NaN/Inf: empty reservoirs contribute nothing, and a culled
-winner is excluded by `π̂ ≤ 0` before acceptance.
+creates NaN/Inf: empty reservoirs contribute nothing, culled winners
+are excluded by `π̂ ≤ 0`, and the all-zero-target edge returns the
+fresh winner with its BSDF payoff instead of redrawing (see the
+support-floor note above).
 
 ## Integration points
 
@@ -126,25 +142,109 @@ CPU (`pathtracer.cpp` / `LightStrategyRestirDI`-adjacent):
 BlendLuxCore: `restir_gi_enable` checkbox beside the existing ReSTIR
 visibility toggle once validated.
 
-## Properties
+## Properties (as implemented, PATHCPU)
 
-- `lightstrategy.restir.gi.enable` (default 0)
-- `lightstrategy.restir.gi.candidates` (K fresh candidates, default 4;
-  budget rule mirrors DI — merge slots subtract from K)
-- `lightstrategy.restir.gi.temporal.enable` / `.spatial.enable`
-  (default 1/1)
-- `lightstrategy.restir.gi.depth` — max x1 depth (G1: 0)
+- `path.restir.gi.enable` (default 0)
+- `path.restir.gi.candidates` (K fresh candidates, default 4)
+- `path.restir.gi.temporal.enable` (default 1) — temporal merge with
+  the reconnection shift + binary-V test.
+- `path.restir.gi.spatial.enable` (default 1) — G1-b: up to 2
+  neighbour pixels in a 5x5 window, same-surface gated on x1 (E2b
+  constants), Jacobian-corrected shift + binary-V test; the stored
+  reservoir keeps its pre-spatial state so merge weights cannot feed
+  back.
 
-## Validation plan (mirrors e14/e16/e18 structure)
+## Validation status
 
-- `dev-tools/e19_restir_gi_test.py`: indirect-heavy scene (enclosed
-  room, light through an opening — cornell with blocked direct light);
-  gates: unbiased mean within 3% vs converged reference, bounded RMSE,
-  finite output, temporal/spatial/vis combos, K=1 deterministic edge.
-- CPU/GPU parity on the same scene (e9-style centre-value gate).
-- Regression: e14/e16/e17/e18 must stay green (the tail stride grows —
-  the E2a OOB lesson applies: allocate before use).
-- Cost report: rays/sample before/after on cornell + interior.
+- `dev-tools/e19_restir_gi_test.py` (cornell, 160×120):
+  unbiased mean within 3% vs a 512-spp reference, RMSE bounded at 3×
+  the plain baseline, finite output, temporal combo — **CPU 5/5 +
+  GPU 5/5 PASS**. The K=1 edge case was used to isolate the
+  support-floor bias (above). The GPU section additionally asserts a
+  merge-explosion tripwire (bulk pixel-ratio p99 < 3 and the >8x
+  hot-pixel fraction < 0.5%) — see the GPU concurrency notes below.
+- Regression: e14/e16/e17/e18 stay green.
+
+## GPU port (G2, as implemented)
+
+Three new pipeline stages on `pathoclbase` (dense + wavefront
+dispatch, OpenCL and Metal):
+
+1. `MK_GENERATE_NEXT_VERTEX_RAY` (depth-0, non-delta x1) draws K BSDF
+   proposals and queues their bounce rays into the GI tail —
+   `candRays[0..K-1]`.
+2. `MK_RT_GI_BOUNCE` consumes the hits, builds each hit's x2 BSDF in
+   the task's `tmpBsdf` scratch (`BSDF_Init` re-derives the material
+   from the `RayHit`), records emission/env radiance, and queues one
+   NEE shadow ray per hit candidate — `candRays[K..2K-1]`. It also
+   queues the temporal-visibility ray into `candRays[2K]`
+   (x1 → stored x2 reconnected segment; masked when no usable entry).
+3. `MK_RT_GI_RESOLVE` folds the NEE visibility into the proxies, runs
+   RIS + temporal + spatial merges, stores the pre-spatial reservoir
+   and hands the winner to `MK_GENERATE_NEXT_VERTEX_RAY` through the
+   task's `RestirGIResult` record (`pending`/`dir`/`bsdf·W`/`pdfW`).
+
+The tail stride is `1 + DI slots + 2K + 1` (the last slot is the
+temporal V-ray); GI candidate/result records live in
+`restirReservoirs[]` after the per-pixel `RestirGIReservoir` region
+(`giReservoirOffset`, `giCandDataOffset`, `giCandStride`,
+`giCandRayBase` in `taskConfig.pathTracer.restirGI`). K is host-clamped
+to ≤ 4 and further reduced by a 256 MB tail budget.
+
+### GPU concurrency findings (why Metal exploded and OpenCL did not)
+
+- **Pass stamp** (`RestirGIReservoir.pass`): thousands of tasks touch
+  the same pixel's reservoir inside one pass; without a stamp the
+  temporal merge folds a just-written wSum back into itself and the
+  weight compounds geometrically. Temporal merges accept only entries
+  stamped `pass < own pass`; spatial merges intentionally keep
+  same-pass neighbours.
+- **Seqlock publish**: the store writes `pass = 0xFFFFFFFF` first and
+  the real stamp *last*; merges snapshot the entry and re-read the
+  stamp afterwards, rejecting torn or superseded reads. On Metal
+  (weaker store ordering + translated atomics) unsynchronized
+  read/write produced measurable corruption; OpenCL's device path
+  happened to hide the same window.
+- **vSeq pairing** (`RestirGIResult.vSeq`): the bounce tags the
+  visibility ray with the entry's stamp; the resolve accepts the
+  merge only if the entry still carries that stamp — a reservoir
+  rewritten between bounce and resolve can never pair a stale
+  occlusion test with a new sample.
+- **Representative-winner gate on the temporal merge** (same 5%
+  filter as spatial): rejects stored entries whose winner target is
+  disproportionately small vs `wSum/m` — a corruption signature that
+  otherwise injects a large stale block.
+- **GuidingPass sampler-type dispatch** (pre-existing latent bug the
+  GI work exposed): `GuidingPass` cast `samplesBuff` to
+  `RandomSample` unconditionally, so on Sobol it read RNG state as the
+  pass — garbage stamps made the temporal gate effectively random and
+  also polluted guiding seeds. Now dispatches on
+  `taskConfig->sampler.type` (TilePath/Sobol/Random layouts).
+
+Residual known-good tail: merges still produce a handful of
+~10–300× pixels at low spp (e.g. a stale-bright proxy whose reconnected
+segment keeps a saturated ratio) — the CPU path shows the same tail
+(max ≈ 70x on cornell at 32 spp, both merge paths), it shrinks with
+spp (64×48 test: max ratio ≈ 1.2 at 32 spp), and the e19 tripwire
+gates on bulk statistics rather than the max.
+- **Cost report (measured)**: on cornell at K=4 the resample costs
+  ~2.2× wall time per 64 spp (K bounce rays + K NEE probes per depth-0
+  vertex) and does *not* reduce RMSE there — cornell's indirect is
+  diffuse and smooth, so BSDF sampling is already near-optimal. The
+  honest G1 status is "estimator correct, reuse machinery in place";
+  the variance win requires scenes with concentrated indirect
+  (interior-through-window) and is expected to come from the GPU port
+  where the candidate rays ride the tail queue.
+- **classroom-hdr (measured, Metal, 160×120)**: the "concentrated
+  indirect" follow-up scene (sky.exr gain 10 through window portals).
+  At 32 spp vs a 512-spp reference: GI mean matches the off baseline
+  exactly (gi/off = 1.000, both ≈ 0.152) and p9999 tails are identical
+  (~3.7 both) — the estimator is unbiased and stable on a textured
+  real scene — but RMSE is still a wash (gi/off ≈ 1.03). The dominant
+  error at these settings is primary-light + first-bounce noise, not
+  the indirect tail ReSTIR GI reuses; a win case needs a scene where
+  indirect dominates image error (e.g. glossy-indirect or multi-bounce
+  interiors) or deeper-vertex GI (deferred).
 
 ## Risks
 

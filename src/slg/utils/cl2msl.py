@@ -151,9 +151,9 @@ inline size_t get_num_groups(uint d) { return 1; }
 #define native_recip(x) (1.0f / (x))
 
 // Half-float loads: Metal exposes half types
-inline float vload_half(size_t o, const device half *p) { (void)o; return (float)p[0]; }
-inline float vload_half(size_t o, const thread half *p) { (void)o; return (float)p[0]; }
-inline void vstore_half(float v, size_t o, device half *p) { (void)o; p[0] = (half)v; }
+inline float vload_half(size_t o, const device half *p) { return (float)p[o]; }
+inline float vload_half(size_t o, const thread half *p) { return (float)p[o]; }
+inline void vstore_half(float v, size_t o, device half *p) { p[o] = (half)v; }
 
 inline uint atomic_inc(device metal::atomic_uint *a) { return metal::atomic_fetch_add_explicit(a, 1u, metal::memory_order_relaxed); }
 inline uint atomic_inc(device uint *p) {
@@ -161,18 +161,18 @@ inline uint atomic_inc(device uint *p) {
     return metal::atomic_fetch_add_explicit(ap, 1u, metal::memory_order_relaxed);
 }
 
-inline float2 vload2(size_t o, const device float *p) { (void)o; return *(const device float2 *)p; }
-inline float3 vload3(size_t o, const device float *p) { (void)o; return *(const device float3 *)p; }
-inline float4 vload4(size_t o, const device float *p) { (void)o; return *(const device float4 *)p; }
-inline void vstore2(float2 v, size_t o, device float *p) { (void)o; *(device float2 *)p = v; }
-inline void vstore3(float3 v, size_t o, device float *p) { (void)o; *(device float3 *)p = v; }
-inline void vstore4(float4 v, size_t o, device float *p) { (void)o; *(device float4 *)p = v; }
-inline float2 vload2(size_t o, const thread float *p) { (void)o; return *(const thread float2 *)p; }
-inline float3 vload3(size_t o, const thread float *p) { (void)o; return *(const thread float3 *)p; }
-inline float4 vload4(size_t o, const thread float *p) { (void)o; return *(const thread float4 *)p; }
-inline void vstore2(float2 v, size_t o, thread float *p) { (void)o; *(thread float2 *)p = v; }
-inline void vstore3(float3 v, size_t o, thread float *p) { (void)o; *(thread float3 *)p = v; }
-inline void vstore4(float4 v, size_t o, thread float *p) { (void)o; *(thread float4 *)p = v; }
+inline float2 vload2(size_t o, const device float *p) { return float2(p[o], p[o + 1]); }
+inline float3 vload3(size_t o, const device float *p) { return float3(p[o], p[o + 1], p[o + 2]); }
+inline float4 vload4(size_t o, const device float *p) { return float4(p[o], p[o + 1], p[o + 2], p[o + 3]); }
+inline void vstore2(float2 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; }
+inline void vstore3(float3 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; }
+inline void vstore4(float4 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; p[o + 3] = v.w; }
+inline float2 vload2(size_t o, const thread float *p) { return float2(p[o], p[o + 1]); }
+inline float3 vload3(size_t o, const thread float *p) { return float3(p[o], p[o + 1], p[o + 2]); }
+inline float4 vload4(size_t o, const thread float *p) { return float4(p[o], p[o + 1], p[o + 2], p[o + 3]); }
+inline void vstore2(float2 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; }
+inline void vstore3(float3 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; }
+inline void vstore4(float4 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; p[o + 3] = v.w; }
 
 inline uint as_uint(float x) { return as_type<uint>(x); }
 inline int as_int(float x) { return as_type<int>(x); }
@@ -324,9 +324,9 @@ inline size_t get_num_groups(uint d) { return 1; }
 #define native_recip(x) (1.0f / (x))
 
 // Half-float loads: Metal exposes half types
-inline float vload_half(size_t o, const device half *p) { (void)o; return (float)p[0]; }
-inline float vload_half(size_t o, const thread half *p) { (void)o; return (float)p[0]; }
-inline void vstore_half(float v, size_t o, device half *p) { (void)o; p[0] = (half)v; }
+inline float vload_half(size_t o, const device half *p) { return (float)p[o]; }
+inline float vload_half(size_t o, const thread half *p) { return (float)p[o]; }
+inline void vstore_half(float v, size_t o, device half *p) { p[o] = (half)v; }
 
 inline uint atomic_inc(device metal::atomic_uint *a) { return metal::atomic_fetch_add_explicit(a, 1u, metal::memory_order_relaxed); }
 inline uint atomic_inc(device uint *p) {
@@ -334,18 +334,18 @@ inline uint atomic_inc(device uint *p) {
     return metal::atomic_fetch_add_explicit(ap, 1u, metal::memory_order_relaxed);
 }
 
-inline float2 vload2(size_t o, const device float *p) { (void)o; return *(const device float2 *)p; }
-inline float3 vload3(size_t o, const device float *p) { (void)o; return *(const device float3 *)p; }
-inline float4 vload4(size_t o, const device float *p) { (void)o; return *(const device float4 *)p; }
-inline void vstore2(float2 v, size_t o, device float *p) { (void)o; *(device float2 *)p = v; }
-inline void vstore3(float3 v, size_t o, device float *p) { (void)o; *(device float3 *)p = v; }
-inline void vstore4(float4 v, size_t o, device float *p) { (void)o; *(device float4 *)p = v; }
-inline float2 vload2(size_t o, const thread float *p) { (void)o; return *(const thread float2 *)p; }
-inline float3 vload3(size_t o, const thread float *p) { (void)o; return *(const thread float3 *)p; }
-inline float4 vload4(size_t o, const thread float *p) { (void)o; return *(const thread float4 *)p; }
-inline void vstore2(float2 v, size_t o, thread float *p) { (void)o; *(thread float2 *)p = v; }
-inline void vstore3(float3 v, size_t o, thread float *p) { (void)o; *(thread float3 *)p = v; }
-inline void vstore4(float4 v, size_t o, thread float *p) { (void)o; *(thread float4 *)p = v; }
+inline float2 vload2(size_t o, const device float *p) { return float2(p[o], p[o + 1]); }
+inline float3 vload3(size_t o, const device float *p) { return float3(p[o], p[o + 1], p[o + 2]); }
+inline float4 vload4(size_t o, const device float *p) { return float4(p[o], p[o + 1], p[o + 2], p[o + 3]); }
+inline void vstore2(float2 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; }
+inline void vstore3(float3 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; }
+inline void vstore4(float4 v, size_t o, device float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; p[o + 3] = v.w; }
+inline float2 vload2(size_t o, const thread float *p) { return float2(p[o], p[o + 1]); }
+inline float3 vload3(size_t o, const thread float *p) { return float3(p[o], p[o + 1], p[o + 2]); }
+inline float4 vload4(size_t o, const thread float *p) { return float4(p[o], p[o + 1], p[o + 2], p[o + 3]); }
+inline void vstore2(float2 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; }
+inline void vstore3(float3 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; }
+inline void vstore4(float4 v, size_t o, thread float *p) { p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z; p[o + 3] = v.w; }
 
 inline uint as_uint(float x) { return as_type<uint>(x); }
 inline int as_int(float x) { return as_type<int>(x); }

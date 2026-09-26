@@ -356,6 +356,8 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{advancePathsKernel_MK_HIT_OBJECT, "AdvancePaths_MK_HIT_OBJECT"},
 		{advancePathsKernel_MK_RT_DL, "AdvancePaths_MK_RT_DL"},
 		{advancePathsKernel_MK_RT_RESTIR, "AdvancePaths_MK_RT_RESTIR"},
+		{advancePathsKernel_MK_RT_GI_BOUNCE, "AdvancePaths_MK_RT_GI_BOUNCE"},
+		{advancePathsKernel_MK_RT_GI_RESOLVE, "AdvancePaths_MK_RT_GI_RESOLVE"},
 		{advancePathsKernel_MK_DL_ILLUMINATE, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{advancePathsKernel_MK_DL_SAMPLE_BSDF, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
 		{advancePathsKernel_MK_MNEE_NEXT_VERTEX, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
@@ -564,6 +566,8 @@ constexpr u_int MK_GENERATE_CAMERA_RAY = 9;
 constexpr u_int MK_DONE = 10;
 constexpr u_int MK_MNEE_NEXT_VERTEX = 11;
 constexpr u_int MK_RT_RESTIR = 12;
+constexpr u_int MK_RT_GI_BOUNCE = 13;
+constexpr u_int MK_RT_GI_RESOLVE = 14;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
@@ -577,6 +581,10 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_DL, filmIndex, MK_RT_DL);
 	if (advancePathsKernel_MK_RT_RESTIR)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_RESTIR, filmIndex, MK_RT_RESTIR);
+	if (advancePathsKernel_MK_RT_GI_BOUNCE)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_GI_BOUNCE, filmIndex, MK_RT_GI_BOUNCE);
+	if (advancePathsKernel_MK_RT_GI_RESOLVE)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_GI_RESOLVE, filmIndex, MK_RT_GI_RESOLVE);
 	if (advancePathsKernel_MK_DL_ILLUMINATE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_ILLUMINATE, filmIndex, MK_DL_ILLUMINATE);
 	if (advancePathsKernel_MK_DL_SAMPLE_BSDF)
@@ -661,6 +669,16 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	// to the next path vertex in the same iteration).
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_MNEE_NEXT_VERTEX,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// ReSTIR GI (G1 GPU): consume the GI bounce hits and queue the NEE
+	// rays. The resolve launch below skips the just-queued tasks via
+	// the needsTrace flag (their NEE hits only exist after the next
+	// trace pass).
+	if (advancePathsKernel_MK_RT_GI_BOUNCE)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_BOUNCE,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (advancePathsKernel_MK_RT_GI_RESOLVE)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_RESOLVE,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_SPLAT_SAMPLE,
@@ -786,6 +804,8 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_DL_ILLUMINATE, MK_DL_ILLUMINATE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_DL_SAMPLE_BSDF, MK_DL_SAMPLE_BSDF},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_MNEE_NEXT_VERTEX, MK_MNEE_NEXT_VERTEX},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_BOUNCE, MK_RT_GI_BOUNCE},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_RESOLVE, MK_RT_GI_RESOLVE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, MK_GENERATE_NEXT_VERTEX_RAY},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_SPLAT_SAMPLE, MK_SPLAT_SAMPLE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_NEXT_SAMPLE, MK_NEXT_SAMPLE},

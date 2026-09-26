@@ -101,6 +101,20 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.restir.visCandRayBase = 0;
 	compiledPathTracer.restir.visCandDataOffset = 0;
 
+	// ReSTIR GI (G1 GPU): mirrors the pathTracer->restirGI* settings
+	// parsed from path.restir.gi.*. The buffer offsets and the effective
+	// candidate count are filled at device init (they depend on the film
+	// sub-region and the task count).
+	compiledPathTracer.restirGI.enabled = pathTracer->restirGIEnable;
+	compiledPathTracer.restirGI.candidateCount = pathTracer->restirGICandidates;
+	compiledPathTracer.restirGI.temporalEnable = pathTracer->restirGITemporalEnable;
+	compiledPathTracer.restirGI.spatialEnable = pathTracer->restirGISpatialEnable;
+	compiledPathTracer.restirGI.reservoirCount = 0;
+	compiledPathTracer.restirGI.giReservoirOffset = 0;
+	compiledPathTracer.restirGI.giCandDataOffset = 0;
+	compiledPathTracer.restirGI.giCandRayBase = 0;
+	compiledPathTracer.restirGI.giCandCount = 0;
+
 	CompilePhotonGI();
 
 	compiledPathTracer.albedo.specularSetting = (slg::ocl::AlbedoSpecularSetting)pathTracer->albedoSpecularSetting;

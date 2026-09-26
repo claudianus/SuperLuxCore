@@ -25,6 +25,7 @@
 #include "slg/engines/pathtracer.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/pathguiding.h"
+#include "slg/engines/restirgi.h"
 #include "slg/samplers/sampler.h"
 #include "slg/film/film.h"
 #include "slg/film/filmsamplesplatter.h"
@@ -96,6 +97,9 @@ protected:
 	SamplerSharedDataSPtr lightSamplerSharedData;  // Shared data, shared ownership
 	PhotonGICache *photonGICache;
 	PathGuidingCache *pathGuidingCache;
+	// ReSTIR GI (G1): engine-owned per-pixel first-bounce reservoir
+	// (path.restir.gi.enable). Shared by all render threads.
+	RestirGI *restirGI;
 };
 
 }

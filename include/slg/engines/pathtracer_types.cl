@@ -66,6 +66,30 @@ typedef struct {
 		unsigned int visCandDataOffset;
 	} restir;
 
+	// ReSTIR GI (G1 GPU): per-pixel first-bounce reservoir resampling
+	// (kernel port of RestirGI::ResampleFirstBounce; see
+	// dev-tools/restir-gi-design.md). The state lives entirely inside
+	// restirReservoirs[] (GI reservoirs + candidate/result records are
+	// appended after the DI data) and the GI tail of rays[]/rayHits[]
+	// (2K+1 slots per task: K bounce rays, then K NEE shadow rays, then
+	// the temporal-merge visibility ray).
+	struct {
+		int enabled;
+		unsigned int candidateCount;	// requested K
+		int temporalEnable;
+		int spatialEnable;
+		// Buffer layout (filled at device init; RestirReservoir-slot
+		// units inside restirReservoirs[], ray slots inside rays[]):
+		unsigned int reservoirCount;	// GI per-pixel reservoir count
+		unsigned int giReservoirOffset;	// first GI reservoir slot
+		unsigned int giCandDataOffset;	// first candidate-record slot
+		unsigned int giCandStride;		// per-task record block stride
+										// (K RestirGICandidate + 1
+										// RestirGIResult, slot units)
+		unsigned int giCandRayBase;		// first GI tail slot in rays[]
+		unsigned int giCandCount;		// effective K (memory clamped)
+	} restirGI;
+
 	// MNEE (Manifold Next Event Estimation): direct light sampling through
 	// a delta specular chain x0 -> ... -> y. The kernel port of
 	// PathTracer::MNEEDirectSampling() (single vertex) and

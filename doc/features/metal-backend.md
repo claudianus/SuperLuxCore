@@ -36,6 +36,10 @@ outperforms software BVH traversal as scene size grows.
 - Full engine renders (luxball, Cornell, TILEPATHOCL) on Apple M5 Pro.
 - HWRT intersection + motion blur + instance refit verified.
 - CPU↔GPU parity checked per feature (e.g. blackbody/whitenoise bit-exact).
+- `dev-tools/e20_metal_imagemap_test.py` — HALF/FLOAT image-map
+  infinite-light parity vs OpenCL + PATHCPU (regresses the
+  `vload_half`/`vloadn`/`vstoren` shims ignoring their element offset,
+  which made HALF image maps read as a constant first texel on Metal).
 
 ## Platforms
 
