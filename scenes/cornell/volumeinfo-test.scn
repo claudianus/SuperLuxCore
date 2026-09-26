@@ -1,0 +1,59 @@
+scene.camera.lookat.orig = 0.5 -2.5 0.5
+scene.camera.lookat.target = 0.5 0.5 0.5
+scene.camera.fieldofview = 40
+scene.camera.screenwindow = -1.0 1.0 -1.0 1.0
+
+# --- What a Cycles Volume Info material exports ---
+# Volume Info.Density -> Principled Volume density:
+#   scattering = scale(albedo, densitygrid)
+scene.textures.density.type = densitygrid
+scene.textures.density.wrap = black
+scene.textures.density.storage = float
+scene.textures.density.nx = 8
+scene.textures.density.ny = 8
+scene.textures.density.nz = 8
+scene.textures.density.mapping.type = globalmapping3d
+scene.textures.density.data = 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.028 0.15 0.15 0.028 0.0 0.0 0.0 0.0 0.024 0.129 0.129 0.024 0.0 0.0 0.0 0.0 0.02 0.107 0.107 0.02 0.0 0.0 0.0 0.0 0.016 0.086 0.086 0.016 0.0 0.0 0.0 0.0 0.012 0.064 0.064 0.012 0.0 0.0 0.0 0.0 0.008 0.043 0.043 0.008 0.0 0.0 0.0 0.0 0.004 0.021 0.021 0.004 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.028 0.293 0.473 0.473 0.293 0.028 0.0 0.0 0.024 0.251 0.405 0.405 0.251 0.024 0.0 0.0 0.02 0.209 0.338 0.338 0.209 0.02 0.0 0.0 0.016 0.167 0.27 0.27 0.167 0.016 0.0 0.0 0.012 0.126 0.203 0.203 0.126 0.012 0.0 0.0 0.008 0.084 0.135 0.135 0.084 0.008 0.0 0.0 0.004 0.042 0.068 0.068 0.042 0.004 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.15 0.473 0.764 0.764 0.473 0.15 0.0 0.0 0.129 0.405 0.655 0.655 0.405 0.129 0.0 0.0 0.107 0.338 0.546 0.546 0.338 0.107 0.0 0.0 0.086 0.27 0.437 0.437 0.27 0.086 0.0 0.0 0.064 0.203 0.328 0.328 0.203 0.064 0.0 0.0 0.043 0.135 0.218 0.218 0.135 0.043 0.0 0.0 0.021 0.068 0.109 0.109 0.068 0.021 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.15 0.473 0.764 0.764 0.473 0.15 0.0 0.0 0.129 0.405 0.655 0.655 0.405 0.129 0.0 0.0 0.107 0.338 0.546 0.546 0.338 0.107 0.0 0.0 0.086 0.27 0.437 0.437 0.27 0.086 0.0 0.0 0.064 0.203 0.328 0.328 0.203 0.064 0.0 0.0 0.043 0.135 0.218 0.218 0.135 0.043 0.0 0.0 0.021 0.068 0.109 0.109 0.068 0.021 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.028 0.293 0.473 0.473 0.293 0.028 0.0 0.0 0.024 0.251 0.405 0.405 0.251 0.024 0.0 0.0 0.02 0.209 0.338 0.338 0.209 0.02 0.0 0.0 0.016 0.167 0.27 0.27 0.167 0.016 0.0 0.0 0.012 0.126 0.203 0.203 0.126 0.012 0.0 0.0 0.008 0.084 0.135 0.135 0.084 0.008 0.0 0.0 0.004 0.042 0.068 0.068 0.042 0.004 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.028 0.15 0.15 0.028 0.0 0.0 0.0 0.0 0.024 0.129 0.129 0.024 0.0 0.0 0.0 0.0 0.02 0.107 0.107 0.02 0.0 0.0 0.0 0.0 0.016 0.086 0.086 0.016 0.0 0.0 0.0 0.0 0.012 0.064 0.064 0.012 0.0 0.0 0.0 0.0 0.008 0.043 0.043 0.008 0.0 0.0 0.0 0.0 0.004 0.021 0.021 0.004 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+
+scene.textures.albedo.type = constfloat3
+scene.textures.albedo.value = 0.9 0.85 0.8
+
+scene.textures.scatter.type = scale
+scene.textures.scatter.texture1 = albedo
+scene.textures.scatter.texture2 = density
+
+# Volume Info.Flame -> Kelvin -> blackbody -> * flame mask -> emission
+scene.textures.flameK.type = scale
+scene.textures.flameK.texture1 = density
+scene.textures.flameK.texture2 = 3000.0
+
+scene.textures.firebb.type = blackbody
+scene.textures.firebb.temperature = flameK
+scene.textures.firebb.normalize = 1
+
+scene.textures.emit.type = scale
+scene.textures.emit.texture1 = firebb
+scene.textures.emit.texture2 = density
+
+scene.volumes.fire.type = heterogeneous
+scene.volumes.fire.absorption = 0.0 0.0 0.0
+scene.volumes.fire.scattering = scatter
+scene.volumes.fire.asymmetry = 0.0 0.0 0.0
+scene.volumes.fire.emission = emit
+scene.volumes.fire.steps.size = 0.02
+scene.volumes.fire.steps.maxcount = 256
+scene.volumes.fire.multiscattering = 0
+scene.volumes.fire.ior = 1.0
+
+scene.materials.volmat.type = glass
+scene.materials.volmat.kr = 1.0 1.0 1.0
+scene.materials.volmat.kt = 1.0 1.0 1.0
+scene.materials.volmat.interiorior = 1.0
+scene.materials.volmat.exteriorior = 1.0
+scene.materials.volmat.volume.interior = fire
+
+scene.objects.firebox.ply = scenes/cornell/unitcube.ply
+scene.objects.firebox.material = volmat
+
+scene.lights.env.type = infinite
+scene.lights.env.gain = 0.02 0.02 0.02
