@@ -1,7 +1,8 @@
 # Wavefront completion + λ-alignment (B2 / E3)
 
-Status: **M1 implemented** (opt-in, `LUXRAYS_WAVEFRONT_QUEUES=1`;
-validated on OpenCL + Metal — see "M1 status" below). M2/M3 pending.
+Status: **M1/M2/M3a implemented** (opt-in, `LUXRAYS_WAVEFRONT_QUEUES=1`;
+validated on OpenCL + Metal — see "M1 status" / "M2 status" / "M3a
+status" below). M3b-e remain optional follow-ups.
 Related: roadmap Phase B item B2, engine goal E3.
 
 ## Current state
@@ -265,6 +266,35 @@ default needs an A/B benchmark pass first (M2 scope).
   a per-state λ-only launch split (extra parallelism when a state is
   dominated by one λ) is a possible follow-up, as is reusing the
   same histogram→prefix→place pipeline for M3 material buckets.
+
+## M3a status (implemented 2026-09-25, `88f425ffe`)
+
+The dominant deficit identified in the M2 benchmark — the per-iteration
+blocking host sync pair (read histogram → host prefix → upload bases) —
+was removed by moving the prefix computation on-device:
+
+- `AdvancePaths_BucketHistogram` → **`AdvancePaths_QueuePrefix`** (device
+  exclusive prefix over the per-(state,λ) counters → `taskQueueBase`
+  cursors + `taskQueueTotals` + re-zeroed counts) → `AdvancePaths_BuildQueues`
+  → one guarded launch per non-empty state (`WAVEFRONT_GUARD` vs
+  `taskQueueTotals[state]`).
+- Host round trips per iteration: 2 syncs → **1** (a single 72-byte
+  `taskQueueTotals` readback to size the launches).
+- **Re-measured on cornell 720×720, PATHOCL Metal, 30 s**: dense
+  ~9.5M samples/s vs wavefront ~24M samples/s — **~2.5× reversal of the
+  M2 verdict**. Dense launches every state kernel at taskCount and
+  early-outs internally; wavefront launches only queued lanes, so the
+  compact dispatch now wins decisively on this workload.
+- **Do not remove the totals readback**: measured ~6× regression when
+  launch sizes used stale totals — tasks landing in a queue tail beyond
+  the stale launch size sit unexecuted until the next resync (the guard
+  protects lanes, not progress).
+- Metal/Vulkan `EnqueueReadBuffer` ignores the blocking flag and drains
+  the queue — batch host reads.
+- Dense stays the default. Re-benchmark on classroom/luxball/spectral
+  and a large divergent scene before considering promotion; M3b-e
+  (append-at-transition, material bucketing, indexed RT dispatch, small
+  kernel fusion) remain un-evaluated options.
 
 ## Regression test
 

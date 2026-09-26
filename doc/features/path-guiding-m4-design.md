@@ -1,6 +1,7 @@
 # Path Guiding M4 — SOTA unbiased indirect transport: research survey & design
 
-Status: **M4a stabilized** (adaptive SD-tree + per-leaf vMF mixtures +
+Status: **design doc — 구현 완료** (M4a→M4e/M5/P5까지 랜딩; 현행 상태는
+`path-guiding.md`의 P5 섹션 참조). 이하 M4a stabilized 시점 기록 —
 variance-aware target + persistent statistics, CPU; GPU transitional via
 coarse-table snapshot). **M4b RIS product guiding implemented** — K-candidate
 resampling against t(ω)=f|cos|·L̂(ω) with consistent MIS density p̂=t/Ẑ

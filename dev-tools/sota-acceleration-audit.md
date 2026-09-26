@@ -3,18 +3,27 @@
 작성일: 2026-09-25 · 기준 트리: `feature/wavefront-queues` (HEAD `6f3dbcddb`)
 비교 기준: Cycles 4.x/5.x, Arnold 7.x, V-Ray 7, RenderMan 27/XPU, Hyperion,
 MoonRay, Redshift/Octane 및 2024–2026 공개 연구(SG/EG/HPGR) 수준.
+**갱신(같은 날 후반, HEAD `034fcb4df`)**: §0/§2/§4/§5에 Cryptomatte·LPE·
+light linking·P5 guiding·wavefront M3a·Vulkan M3 랜딩을 반영.
 
 ## 0. 요약 판정
 
 **라이트 트랜스포트·샘플링 알고리즘 커버리지는 메인스트림 프로덕션
 렌더러의 SOTA와 동등하며, 상당수 항목에서 초과한다.** 특히 GPU에서의
-path guiding, ReSTIR DI/GI, vertex merging, LMNEE/MGE, 잔차 추적 볼륨,
-적응형 커스틱 파티션은 출시 중인 상용 렌더러 중 동등 기능을 제공하는
-곳이 드물다(대부분 CPU 전용이거나 아예 없음).
+path guiding, ReSTIR DI/GI, vertex connection/merging, LMNEE/MGE,
+잔차 추적 볼륨, 적응형 커스틱 파티션은 출시 중인 상용 렌더러 중
+동등 기능을 제공하는 곳이 드물다(대부분 CPU 전용이거나 아예 없음).
 
-**뒤처지는 영역은 알고리즘이 아니라 프로덕션 인프라다**: Cryptomatte,
-LPE(라이트 패스 표현식), deep EXR, light/shadow linking, OSL, USD/Hydra,
-full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
+같은 날의 후속 랜딩으로 프로덕션 인프라 갭의 상당 부분이 해소됐다:
+**Cryptomatte(object/material+manifest)**, **LPE**(bounded NFA),
+**light linking**(64비트 수신자 마스크), **적응형 robust clamping**,
+**path.guiding.* 정식 프로퍼티화**, **wavefront M3a**(디바이스 prefix,
+cornell 실측 dense 대비 ~2.5x).
+
+**남은 뒤처짐**: deep EXR, shadow linking, OSL, USD/Hydra, full
+wavefront 기본 활성화(추가 workload 검증 필요), Vulkan 네이티브
+드라이버 검증·콜드 컴파일 시간(M3 본질은 완료: 21/21 커널 + 720p
+렌더 PASS), 그리고 수만 씬 규모의 전투 검증.
 
 ---
 
@@ -36,7 +45,7 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 |---|---|---|---|---|
 | Path guiding (SD-tree + vMF) | `pathguiding.cpp` (1191줄), `pathguiding.h` | ✅ | ✅ | **초과(GPU)/동등(CPU)** — OpenPGL 채택 렌더러(Cycles·V-Ray·Karma·Hyperion)는 CPU만. SuperLuxCore는 flattened SD-tree+vMF를 GPU 커널에서 평가. variance-aware target(Rath'20), flux-fraction split, pending radiance records, peak/count 기반 mixture weight까지 구현 |
 | RIS product guiding (M4b) | `pathtracer.cpp` risZhat 경로 | ✅ | ⚠️ 부분 | **초과** — BSDF×L̂ product resampling은 최신 연구 수준, OpenPGL에도 없음 |
-| Portal guiding (M5) | `pathtracer.cpp` portal 경로, BLC 라이트 포털 오브젝트 | ✅ | ❌ | 동등+(adaptive share는 field 기반이라 단순 portal보다 진보됐으나 GPU 미지원) |
+| Portal guiding (M5) | `pathtracer.cpp` portal 경로, BLC 라이트 포털 오브젝트 | ✅ | ✅ | 동등+ — GPU 포털 랜딩(`065623c8e`, MK_HIT_OBJECT 게이트+`portal_*` 커널, portal_slit 4/4 PASS). adaptive share는 field 기반으로 단순 portal보다 진보 |
 | ReSTIR GI (G1/G2) | `restirgi.cpp` + `MK_RT_GI_*` 커널 | ✅ | ✅ | **초과** — first-bounce reservoir + spatial reuse. 오프라인 렌더러에 ReSTIR GI는 없음 |
 
 ### 1-C. 커스틱스 / SDS 경로
@@ -85,8 +94,8 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 | Metal HWRT (native AS) | `metalrtaccel.mm`, `metalintersectiondevice.mm` | **동등** — MTLAccelerationStructure 삼각형+네이티브 커브+모션블러 AS+인스턴스 리핏. Cycles MetalRT와 동일 계열 |
 | 커브 HW 프리미티브 | `strands.cpp` + curve AS | 동등(MetalRT curve) |
 | Micro-kernel 스테이트 머신 | 16개 `MK_*` 커널 | 기반 완료 |
-| Wavefront 큐 (M1/M2) | `BuildQueues`, `BucketHistogram`, λ-segment | **부분** — M3 compaction/정렬 미착수. Hyperion·XPU·Cycles GPU는 full wavefront |
-| Vulkan 백엔드 | `vkdevice.cpp`, clspv 파이프라인 | 실험 단계(M0/M1 PASS) — 멀티벤더 확장 경로 |
+| Wavefront 큐 (M1/M2/M3a) | `BuildQueues`, `QueuePrefix`, λ-segment | **↘M3a 랜딩**(`88f425ffe`) — 디바이스 prefix, cornell ~2.5x. 잔여: M3b-e 옵션+기본 활성화 판단. Hyperion·XPU·Cycles GPU는 full wavefront |
+| Vulkan 백엔드 | `vkdevice.cpp`, clspv 파이프라인, HWRT | 실험 단계 → **M3 본질 완료**(`da59a1d13` BLAS/TLAS+ray_query, `76a132516` 캐시, 21/21 커널+720p 렌더 PASS) — 네이티브 드라이버/콜드컴파일 잔여 |
 
 ### 1-G. 디노이즈 / 후처리
 
@@ -146,13 +155,13 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 | 잔차 비율 추적 볼륨 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 스펙트럴 | ✅3빈 hero-λ | ❌ | ❌ | ⚠️일부 | ⚠️일부 | ❌ | ⚠️Octane |
 | HWRT | ✅Metal | ✅OptiX/HIPRT/MetalRT | ✅OptiX | ✅ | ✅ | ✅ | ✅ |
-| Full wavefront | ⚠️M2 opt-in | ✅ | ✅GPU | ✅ | ✅XPU | ✅ | ✅ |
+| Full wavefront | ⚠️M3a opt-in (~2.5x cornell) | ✅ | ✅GPU | ✅ | ✅XPU | ✅ | ✅ |
 | OIDN | ✅+Metal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Temporal denoise | ✅자체 D1 | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ | ✅ |
-| Cryptomatte | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| LPE | ❌ | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Cryptomatte | ✅(object/material) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| LPE | ✅(PATH 계열) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | Deep EXR | ❌ | ⚠️ | ✅ | ⚠️ | ✅ | ✅ | ❌ |
-| Light linking | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Light linking | ✅(64비트 수신자 마스크) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OSL | ❌ | ✅ | ✅ | ❌ | ✅Rix | ❌ | ⚠️ |
 | USD/Hydra | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | 분산 렌더 | ❌ | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -184,12 +193,12 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 
 | 우선 | 갭 | 영향 | 난이도 |
 |---|---|---|---|
-| 1 | **Full wavefront M3** (alive compaction + λ/재질 정렬, 기본 활성화) | GPU 대형씬 스루풋 — 프로덕션 GPU 렌더러의 핵심 | 중 |
-| 2 | **Cryptomatte** (object/material) | 합성 파이프라인 필수 AOV | 저 |
-| 3 | **Light linking / light groups 확장** | 아티스트 제어 — 모든 프로덕션에 존재 | 중 |
-| 4 | **LPE(라이트 패스 표현식) 또는 확장 AOV 분해** | 합성 유연성 | 중~고 |
-| 5 | **Path guiding CPU 성숙도/OpenPGL 검토** — 커스텀 SD-tree는 훌륭하나 OpenPGL의 VMF quadtree+SIMD는 더 검증됨. GPU 계약 유지하며 CPU 트레이너만 교체 가능 | 간접광 수렴 | 중 |
-| 6 | **Deep EXR / Cryptomatte EXR 채널 규약** | VFX 합성 | 중 |
+| 1 | ~~**Full wavefront M3**~~ → **M3a 랜딩**(`88f425ffe`). 잔여: 추가 workload 재측정 → 기본 활성화 판단, M3b-e 옵션 | GPU 대형씬 스루풋 | 중 |
+| 2 | ~~**Cryptomatte**~~ → ✅ 랜딩(`eedefb2dc`). 잔여: asset-level | 합성 파이프라인 필수 AOV | 저 |
+| 3 | ~~**Light linking**~~ → ✅ 랜딩(`c5d529195`/`1a811b64e`). 잔여: shadow linking | 아티스트 제어 | 중 |
+| 4 | ~~**LPE**~~ → ✅ 랜딩(`283dd3ee0`). 잔여: BIDIR/LT 범위, 표현력 확장 | 합성 유연성 | 중~고 |
+| 5 | ~~**Path guiding CPU 성숙도**~~ → ✅ P5 랜딩(`aafe53bfd`): `path.guiding.*` 정식화+BIC-K+계층 폴백+.bcf 영속. 잔여: OpenPGL 트레이너 비교는 선택 사항 | 간접광 수렴 | 중 |
+| 6 | **Deep EXR** | VFX 합성 | 중 |
 | 7 | **스펙트럴 심화** — 4빈, n/k DB, λ범위 확장, 형광 | 스펙트럴 충실도 (P0-3) | 중 |
 | 8 | **USD/Hydra delegate** | 파이프라인 채택 | 고 |
 | 9 | **OSL** | 셰이딩 표현력 | 고(선택) |
@@ -197,22 +206,24 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 | 11 | **ReSTIR PT/PG** (Lin'22, Wyman'25) — 연구급, 상용 선행 없음 | 연구 우위 유지 | 고 |
 | 12 | **PhotonGI GPU화** | CPU-only 캐시의 병목 | 중 |
 | 13 | **>VRAM 스트리밍** (ClusterResidencyPool 완성) | 디스크리트 VRAM 플랫폼 | 고 |
+| 14 | **Vulkan M4 완결** — M3 랜딩(전 커널 디스패치+720p 렌더 PASS), 네이티브 드라이버 검증·콜드 컴파일 개선 잔여 | 멀티벤더 | 중 |
 
 ## 5. 알고리즘 완성도 관련 잔여 리스크
 
-- **Wavefront M3 미착수** — 현재 큐는 per-state 리필+λ 버킷까지.
-  compaction/정렬 없이는 큰 발산 씬에서 스테이트 런치 오버헤드가
-  남는다.
-- **Path guiding bounce-side 신뢰도** — pending record flush·tree
-  snapshot의 CPU/GPU 동등성은 최근까지 검증 진행 중이었고,
-  LUX_PG_* 환경 플래그가 실험 경로로 남아 있다. 정식 릴리스 전에
-  플래그 정리 필요.
+- **Wavefront M3a 랜딩됨, 다만 추가 workload 검증 잔여** — 디바이스
+  prefix로 host sync 2→1, cornell 실측 ~2.5x 역전. totals readback은
+  필수(stale sizing ~6x 회귀). 추가 씬(classroom/luxball/spectral/
+  대형씬)에서 재측정 전까지 dense 기본 유지.
+- **Path guiding 신뢰도 — P5로 대부분 해소** — `path.guiding.*` 정식
+  프로퍼티가 CPU/GPU 공통 `SettingsFromProperties`를 통해 단일 경로화,
+  LUX_PG_*는 디버그 폴백. 잔여: 장기 수렴·필드 동기 드리프트 회귀.
 - **ReSTIR 장기 수렴** — bounded-bias clamp(64×) 의존 구간 존재.
   unbiased 보장 경계를 문서화해야 한다.
 - **Vertex merging bias** — VCM merge는 본질적으로 consistent-biased
   (progressive shrinkage 미구현). BIDIRVMCPU 레퍼런스와의
   장기 수렴 게이트가 필요.
-- **포털 가이딩 GPU 부재** — M5는 CPU 전용. GPU 포트 시 parity 필요.
+- ~~**포털 가이딩 GPU 부재**~~ — `065623c8e`로 GPU 포털 랜딩
+  (portal_slit 4/4 PASS, Metal+OpenCL). 해소됨.
 - **Metropolis 경로** — `metropolis.cpp` 샘플러는 존재하나 MLT
   통합 엔진으로의 승격 상태는 미검증.
 - **CUDA/OptiX 디노이저·가속** — macOS 개발 환경에서 미검증 경로.
@@ -222,11 +233,11 @@ full wavefront compaction, 그리고 수만 씬 규모의 전투 검증.
 1. **엔진 알고리즘 트랙은 "초과" 구간을 유지·정착시키는 데 집중.**
    ReSTIR/가이딩/VCM의 장기 수렴·바이어스 게이트를 회귀로 고정하고,
    실험 env 플래그를 정식 프로퍼티로 승격.
-2. **M3 wavefront 완결이 GPU 스루풋 최대 단일 레버.** 정렬+compaction
-   후 기본 활성화 여부를 실측으로 결정.
-3. **프로덕션 인프라 갭은 채택 저항이 큰 순서로**: Cryptomatte →
-   light linking → 확장 AOV 분해 → deep EXR → USD/Hydra.
-   이 영역이 "연구 프로토타입"과 "프로덕션 렌더러"의 실질 경계다.
+2. **Wavefront M3a가 스루풋 레버로 랜딩됨** — 다음 단계는 워크로드별
+   재측정 매트릭스로 기본 활성화/자동 선택 판단, M3b-e는 측정 후 옵션.
+3. **프로덕션 인프라 갭은 상당수 해소** — Cryptomatte·light linking·LPE
+   랜딩. 잔여 우선순위: deep EXR → shadow linking → crypto asset level →
+   USD/Hydra. 이 영역이 "연구 프로토타입"과 "프로덕션 렌더러"의 실질 경계다.
 4. **스펙트럴은 3빈→4빈+n/k DB가 다음 단계.** 이미 상용 대비 유일한
    차별점이므로 깊이를 더하는 가치가 크다.
 5. **OpenPGL은 CPU 트레이너 교체 후보로만 검토.** GPU 계약(flattened

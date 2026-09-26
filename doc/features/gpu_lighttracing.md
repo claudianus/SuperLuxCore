@@ -231,18 +231,18 @@ environment hits when `hybridBackForward.enabled`
 skip caustic-path contributions the same way; the config fields are
 `include/slg/engines/pathtracer_types.cl:113-115`, compiled at `compilepathtracer.cpp:43-44`.
 
-What the GPU side is missing today:
+What the GPU side ~~is missing today~~ **was missing at design time — all
+landed** (kept as the implementation checklist):
 
-- `LightSource::Emit` — `light_funcs.cl` implements `*_Illuminate` for 14
-  light types but no `*_Emit`.
-- The emit-strategy distribution — `CompileLightStrategy`
-  (`compilelights.cpp:121-195`) uploads only the *illuminate* and
-  *infinite-light* distributions, not `GetEmitLightStrategy()`'s.
-- Camera inverse projection — `camera_funcs.cl` has `GenerateRay`,
-  `PerspectiveCamera_LocalSampleLens` (107), `MotionSystem_Sample`
-  (233-236), but no `GetSamplePosition`/`ProjectToImage`/`GetPDF`, and the
-  GPU structs lack `pixelArea` (persp), `cameraPdf` (ortho) and world-space
-  `dir`.
+- `LightSource::Emit` — ✅ `09081cc54` ported `*_Emit` for the light
+  types; `61a637029` extended coverage to sphere/map-sphere/projection/
+  map-point + directional-map triangles (`emit` distribution enabled in
+  `compilelights.cpp`).
+- The emit-strategy distribution — ✅ `GetEmitLightStrategy()` uploads
+  now; every current light type is supported (unsupported future types
+  get zero weight + a startup warning).
+- Camera inverse projection — ✅ `41a9e03f5`: `GetSamplePosition`/
+  `ProjectToImage`/pdf + `pixelArea`/`cameraPdf` fields.
 - A screen-normalized film channel on the GPU — stripped at
   `pathoclbaseoclthreadfilm.cpp:120`; the GPU `Filter` struct is only
   `{widthX, widthY}` (`include/slg/film/filters/filter_types.cl:72-74`) and

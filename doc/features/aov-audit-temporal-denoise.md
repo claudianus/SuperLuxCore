@@ -1,7 +1,8 @@
 # Render pass (AOV) audit + temporal animation denoising plan
 
-Status: D0 + D1 implemented (commits `74aa37f11`, `99e3e2637`, and the
-TEMPORAL_ACCUMULATE plugin commit). Updated 2026-09-24.
+Status: D0 + D1 implemented (commits `74aa37f11`, `99e3e2637`, `0ef11800d`,
+`5f8502d51`); Cryptomatte + LPE + adaptive clamping landed 2026-09-25
+(`eedefb2dc`, `283dd3ee0`, `b7b78178d`). Updated 2026-09-25.
 
 ## Part 1 — AOV audit vs production baseline
 
@@ -24,32 +25,20 @@ vs. what production pipelines expect (Cycles/Arnold/RenderMan/V-Ray).
 
 ### Gaps, ordered by production impact
 
-1. **`MOTION_VECTOR` — missing, highest priority.**
-   Required by: OIDN 3 temporal mode, any temporal reprojection filter,
-   compositing motion blur, TAA. Infrastructure already exists:
-   `MotionSystem.Sample(time)` (camera + object transforms), first-hit
-   `SampleResult.position`. Design: at the first visible vertex, project the
-   hit point through camera+object motion sampled at shutter edges
-   (extrapolate to frame −1/+1 when shutter < 1 frame) → screen-space
-   backward (cur→prev) and forward (cur→next) flow, 4 floats/px.
-   Limitation: LuxCore has transform motion only (no deformation blur yet),
-   so MV covers camera+object motion; deformation MV comes with deformation
-   blur later. Must land in CPU `pathtracer.cpp` + OpenCL kernels +
-   `sampleresult`/`film` channels for parity.
-2. **`VARIANCE` — missing.** Per-pixel radiance variance (E[x²]−E[x]²).
-   Arnold `noice` requires variance AOVs for temporal denoising; our own
-   temporal filter also needs it for per-pixel confidence. Cheap: one extra
-   accumulation buffer. The BCD `FilmDenoiser` already accumulates sample
-   covariance internally — exposing it as a channel is straightforward.
+1. **`MOTION_VECTOR` — ✅ landed** (`74aa37f11`, see D0 notes below).
+   `{vx, vy, valid, objectMotion}` forward flow at the first visible hit,
+   CPU+GPU parity. Transform motion only on GPU (vertex-motion buffers not
+   plumbed into path kernels); env-miss uses a 1e6 projection point.
+2. **`VARIANCE` — ✅ landed** (`74aa37f11`). `GenericFrameBuffer<4,1,float>`
+   accumulates E[x²]; output = `max(E[x²]−E[x]², 0)`, HDR-only.
 3. **`VOLUME` split — missing.** Volume scattering folds into the
    diffuse/glossy component channels. `bsdf.IsVolume()` is already tracked
    in the path tracer (`pathtracer.cpp`), so DIRECT_VOLUME/INDIRECT_VOLUME
    channels are a small plumbing change. Needed for volumetric relight/comp.
-4. **`CRYPTOMATTE` — missing.** Industry-standard hashed ID mattes
-   (object/material/asset). Our per-sample single IDs
-   (`materialID`/`objectID`) are compatible with the Cryptomatte
-   coverage-ranking model (accumulate top-N IDs across samples). Medium work:
-   coverage accumulation + manifest JSON in EXR metadata.
+4. **`CRYPTOMATTE` — ✅ landed 2026-09-25** (`eedefb2dc`):
+   `film.outputs.*.type = CRYPTOMATTE_OBJECT` / `CRYPTOMATTE_MATERIAL`,
+   coverage-ranking accumulation + MurmurHash3 manifest in EXR metadata.
+   Remaining: asset-level mattes, per-sample rank depth tuning.
 5. **`ENVIRONMENT` — missing.** Environment-light contribution currently
    folds into DIRECT_*. Separate pass wanted for relight workflows; needs an
    env-light flag in `AddDirectLight` (we already distinguish env lights in
@@ -60,7 +49,9 @@ vs. what production pipelines expect (Cycles/Arnold/RenderMan/V-Ray).
    film save path.
 7. **Nice-to-have:** `AO`, `SUBSURFACE` split (SSS currently inside
    diffuse), shadow-catcher AOV (`SampleResult.isHoldout` exists — check
-   completeness), LPEs (component splits + light groups cover most cases).
+   completeness). ~~LPEs~~ — ✅ landed 2026-09-25 (`film.lpe.N.expression`
+   bounded-NFA AOVs, PATHCPU/PATHOCL scope; BIDIR/light-tracing paths do
+   not carry LPE state).
 
 ### Denoiser-aux completeness
 
@@ -69,9 +60,9 @@ vs. what production pipelines expect (Cycles/Arnold/RenderMan/V-Ray).
 | albedo        | yes      | yes             | (diffuse demod) | `ALBEDO` ✓ |
 | normal        | yes      | yes             | yes         | `AVG_SHADING_NORMAL` ✓ |
 | depth/viewZ   | -        | yes             | yes         | `DEPTH` ✓ |
-| motion vec    | -        | **required**    | yes         | **missing** |
-| prev/future frame | -    | **required**    | history     | plumbing missing |
-| variance      | -        | optional        | internal    | **missing** |
+| motion vec    | -        | **required**    | yes         | `MOTION_VECTOR` ✓ |
+| prev/future frame | -    | **required**    | history     | TEMPORAL_ACCUMULATE state EXR ✓ |
+| variance      | -        | optional        | internal    | `VARIANCE` ✓ |
 | hit distance  | -        | -               | yes         | derivable from `DEPTH` |
 
 ## Part 2 — Temporal animation denoising

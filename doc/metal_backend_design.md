@@ -1,9 +1,10 @@
 # Metal Backend Integration Design (luxrays + slg)
 
-Status: design + first hooks (DEVICE_TYPE_METAL_GPU registered in
-luxrays/core/device.h|cpp). This document is the blueprint for the full
-integration; all performance numbers below are measured on the M5 Pro
-machine this work was done on (see metal-poc/).
+Status: **implemented** (design blueprint — the backend shipped; see
+`features/metal-backend.md` for the delivered state). DEVICE_TYPE_METAL_GPU
+registered in luxrays/core/device.h|cpp. This document is the blueprint
+for the full integration; all performance numbers below are measured on
+the M5 Pro machine this work was done on (see metal-poc/).
 
 ## Measured evidence (M5 Pro, 20 CU Apple GPU)
 

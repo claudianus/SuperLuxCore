@@ -328,6 +328,29 @@ classes D G S + directions R T + V.
   `dev-tools/e42_lpe_visual.py` (720p luxball-hdr: CE/C<RD>E/
   C<RD><RD>+E/C<RS>.*E decomposition + AgX Punchy beauty).
 
+## Cryptomatte (`CRYPTOMATTE_OBJECT` / `CRYPTOMATTE_MATERIAL`)
+
+Hashed-ID matte AOVs (`eedefb2dc`). Per-pixel (id, coverage) pairs keyed
+on the FIRST camera-visible surface's murmur3-float id
+(`include/luxrays/utils/murmurhash.h` — `hash_to_float` keeps the sign
+bit, clamps only the exponent off 0/255 per the Cryptomatte spec).
+
+- `CryptoFrameBuffer<6>`: LEVELS (id,coverage) slots + trailing weight.
+  Film merge re-inserts pairs by id — element-wise add would corrupt
+  slot order across sources. GPU slot claim is lock-free
+  `atomic_cmpxchg` on `cryptoObjectID`/`cryptoMaterialID`.
+- Ids emitted coverage-descending with id-bits tie-break
+  (deterministic). EXR: `<Name><rank2d>.RGBA` (CryptoObject00..02) +
+  `cryptomatte/<key>/{name,hash,conversion}` + JSON manifest (scene-
+  owned, injected as opaque film metadata).
+- Recorded at first hit on eye paths (path tracer, bidir eye+connect,
+  MNEE splats); misses write 0. GPU: `cryptoID` on
+  SceneObject/Material/SampleResult; HitPoint carries the object id.
+- Regression: `dev-tools/e40_cryptomatte_test.py` (13/13: ids, coverage
+  vs alpha exact match, EXR channels/metadata/manifest, GPU parity);
+  `dev-tools/e40_cryptomatte_visual.py` (720p).
+- Remaining: asset-level mattes, deeper rank coverage tuning.
+
 ## Path guiding (`path.guiding.*`)
 
 Adaptive SD-tree + per-leaf vMF mixtures (see
@@ -386,6 +409,16 @@ properties; `LUX_PG_*` envs survive only as debug fallbacks.
   BOTH OPENCL_GPU and METAL_GPU (same physical GPU) and crashes inside
   AGX OpenCL-over-Metal encode — pre-existing, unrelated to spilling.
   Select a single device.
+- pybind11 `py::smart_holder` + non-owning reference returns: a method
+  returning `const unique_ptr<T>&` (e.g. `RenderConfigImpl::GetProperties`)
+  can only materialize by aliasing the parent's shared holder — it throws
+  "Non-owning holder (load_as_shared_ptr)" when the Python wrapper itself
+  is the non-owning one (`RenderSession.GetRenderConfig()` returns a
+  `cref` to the session's member). Fix pattern used in
+  `pysuperluxcore.cpp`: `GetProperties` returns `Clone()` (owned) and
+  `GetRenderConfig` carries `py::keep_alive<0,1>` so the borrowed config
+  wrapper keeps the session alive. Prefer `GetProperty(name)` (returns by
+  value) for scalar reads.
 - Vulkan on macOS needs MoltenVK loaded: `volkInitialize` only tries
   leaf-name dlopens (no DYLD_* env → silent zero-device enumeration).
   vkdevice falls back to `dlopen(abs path)+volkInitializeCustom` over

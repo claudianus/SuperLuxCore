@@ -2,14 +2,21 @@
 
 작성일: 2026-09 · 기준 트리: `feature/wavefront-queues`
 선행 문서: `dev-tools/sota-acceleration-audit.md` (갭 선정 근거)
+**갱신 2026-09-25: 갭 1~5 전부 랜딩됨.** 아래 §0에 랜딩 상태 반영,
+본문은 구현 설계 기록으로 보존.
 
 대상 갭 (감사 보고서 우선순위 순):
 
 1. **Wavefront M3** — compaction+정렬+기본 활성화 (GPU 대형씬 스루풋)
+   → **M3a 랜딩** (`88f425ffe`, 디바이스 QueuePrefix — cornell ~2.5x)
 2. **Cryptomatte** — 모든 프로덕션 보유, 미구현
+   → **✅ 랜딩** (`eedefb2dc`, `CRYPTOMATTE_OBJECT`/`_MATERIAL`)
 3. **Light linking** — 라이트↔오브젝트 조명 관계 필터
+   → **✅ 랜딩** (`c5d529195` 64비트 그룹 + `1a811b64e`, BLC UI 완비)
 4. **LPE** (light path expression) — 확장 AOV 분해
+   → **✅ 랜딩** (`283dd3ee0`, bounded NFA `film.lpe.N.*`)
 5. **Path guiding 성숙도** — OpenPGL 검증 아이디어 선별 이식
+   → **✅ P5 랜딩** (`aafe53bfd`, 정식 `path.guiding.*`+BIC-K+폴백+영속성)
 
 공통 원칙: CPU/GPU 기능 parity, unbiased 보존, 어댑터 즉시 노출,
 720p+ 시각 회귀 검증, feature-chunk 단위 리뷰 가능성.
@@ -20,11 +27,11 @@
 
 | 갭 | 현재 상태 | 결정적 사실 |
 |---|---|---|
-| Wavefront | M1(큐 인덱싱)+M2(λ버켓) opt-in 구현 완료, `LUXRAYS_WAVEFRONT_QUEUES=1` | **전 워크로드에서 dense 대비 −7~−17% 패배** (cornell −17%, classroom −7%, luxball −8%, spectral −15%). `wavefront-design.md` M2 status, `roadmap.md:33` |
-| Cryptomatte | `OBJECT_ID`/`MATERIAL_ID` 단일 ID 채널만 존재 | FNV-1a 24bit 안정 objectID 이미 확보 (`parseobjects.cpp:NameToObjectID`) — 매니페스트 기반 멀티 ID 없음 |
-| Light linking | 없음. 라이트그룹은 **출력 그루핑**(radiance group)용으로만 존재 | GPU `BSDF::sceneObjectIndex`, CPU `BSDF::GetSceneObject()` 이미 존재 — 수신 오브젝트 식별 인프라 있음 |
-| LPE | 없음. `EyePathInfo`에 `lastBSDFEvent` 단일 이벤트만 | 이벤트 원시재료(`BSDFEvent`, depth 카운터)는 있으나 시퀀스 상태 없음 |
-| Path guiding | SD-tree+vMF 자체 구현, GPU 계약 확정, RIS product guiding | `LUX_PG_*` env 플래그 10여 개 실험 경로로 잔존, cold-leaf 하드 게이트, K=4 고정 EM |
+| Wavefront | **M3a 랜딩** — 디바이스 QueuePrefix로 host sync 2→1 (`88f425ffe`) | cornell 720²/30s Metal: dense ~9.5M vs wavefront ~24M samples/s (**~2.5x 역전** — 구 −7~−17% 판정은 M3a 이전 측정). totals readback(72B/iter)은 런치 사이징에 필수. dense 디폴트 유지 |
+| Cryptomatte | **✅ 랜딩** `film.outputs.N.type=CRYPTOMATTE_OBJECT/_MATERIAL` + MurmurHash3 매니페스트 | e40 회귀 통과. 잔여: asset-level 매트, rank 깊이 튜닝 |
+| Light linking | **✅ 랜딩** 수신자 기반 64비트 링크 그룹 (`scene.{objects,lights}.X.linkgroups`, `.linkmode`) | e41 회귀 8/8. NEE+직접 emitter hit+LT 첫 정점 필터, 간접 바운스는 의도적 미필터 |
+| LPE | **✅ 랜딩** `film.lpe.N.expression` bounded NFA (≤32 상태, ≤8 식) | e42 회귀 통과. 범위: PATHCPU/PATHOCL — BIDIR/LT 경로는 LPE 상태 미보유 |
+| Path guiding | **✅ P5 랜딩** — 정식 `path.guiding.*` 프로퍼티(CPU/GPU 공통 `SettingsFromProperties`), BIC-적응 K, 계층 콜드리프 폴백, .bcf 영속 | `LUX_PG_*` env는 디버그 폴백으로 격하. e43 회귀 |
 
 ---
 
@@ -56,29 +63,30 @@ dense 경로는 같은 반복에 11개 커널을 `taskCount` 전체에 올리고
 M3는 "재질 버켓 추가"가 아니라 **위 4개 비용을 제거해 dense를 이기는
 스케줄러 재설계**로 정의한다. 재질 버켓은 그 위의 옵션 실험.
 
-### 1.2 M3a: 호스트 동기화 제거 (최우선, 단독 가치 최대)
+### 1.2 M3a: 호스트 동기화 제거 — ✅ 랜딩 (`88f425ffe`, 2026-09-25)
 
 핵심 관찰: `WAVEFRONT_GUARD` (`pathoclbase_funcs.cl:6521`)가 이미
 `gid >= count` early-out을 한다. **런치 크기는 상한일 뿐 정확할 필요가 없다.**
 
-설계: 고정 크기 런치 + 디바이스 사이드 prefix.
+구현된 구조 (랜딩된 형태):
 
 - `AdvancePaths_BucketHistogram`: 유지 (taskCount 전체 스캔, atomic 카운터).
-- 신규 `AdvancePaths_QueuePrefix`: 1개 워크그룹 커널. 36개 카운터의
-  exclusive prefix를 디바이스에서 계산 → `taskQueueBase` 직접 기록.
-  호스트 왕복 제거.
+- `AdvancePaths_QueuePrefix`: 디바이스 exclusive prefix → `taskQueueBase`
+  커서 + `taskQueueTotals` + 카운트 재제로를 단일 패스로 수행. 구 host
+  read-histogram→host-prefix→upload-bases 라운드트립(2 sync)이 1 sync로.
 - `AdvancePaths_BuildQueues`: 유지 (`taskQueueBase` atomic cursor append).
-- **런치 크기 = `taskCount` 고정** (또는 이전 반복 카운트의 stale 값 — 아래).
-  각 커널 첫 명령이 `queueCount` 읽기 → 빈 상태는 워크그룹당 1회 브로드캐스트
-  읽기 후 종료. 호스트는 카운트를 **읽지 않는다** → blocking sync 0.
+- 런치 크기는 `taskQueueTotals[state]` — **반복당 1회 72B readback**.
+  totals 없는 런치 사이징은 채택되지 않았다: 실측에서 stale/lagged
+  totals가 **~6x 회귀**를 만들었다(큐 테일에 착륙한 태스크가 다음
+  resync까지 미실행 — 가드는 레인을 보호하지 진행을 보장하지 않음).
+- Metal/Vulkan은 `EnqueueReadBuffer`가 큐 드레인이므로 host read를
+  배치하는 것이 필수 — 디바이스 prefix 도입으로 sync 자체는 1회로 수렴.
 
-잔여 비용: histogram+build 2패스 + 커널 수(17). 빈 상태 런치는 가드 종료로
-수 µs → dense의 state-check 비용과 동급.
-
-**Stale-count 런치 사이징** (선택 최적화): 카운트를 *비동기* readback해
-**다음 반복의** 런치 크기로 사용. 큐는 매 반복 재구축되므로 stale 크기로
-부족하게 띄운 태스크는 다음 반복 큐에 다시 들어감 → 정확성 무손실, 지연만.
-마진 `min(taskCount, prevCount*1.2+1024)`로 언더런치 억제.
+**실측 결과**: cornell 720×720 PATHOCL Metal 30s — dense ~9.5M vs
+wavefront ~24M samples/s (**~2.5x**). dense가 모든 상태 커널을 taskCount
+전체에 띄우고 내부 early-out하는 반면 wavefront는 큐에 든 레인만
+디스패치 — COMPACT 런치의 이득이 오버헤드를 역전했다. 구 −7~−17%
+판정(§0 구 표기)은 M3a 이전 측정으로 폐기. M3b~M3e는 미실험/잔여 옵션.
 
 ### 1.3 M3b: append-at-transition (단일 패스, 빌드 패스 제거) — 평가 후 결정
 
@@ -522,17 +530,17 @@ BIC(로그우도 − ½k·log n) 최대 모델 선택. 단일모드 리프의 �
 
 ## 7. 페이즈·의존성·리스크
 
-| Phase | 내용 | 의존성 | 게이트 |
+| Phase | 내용 | 의존성 | 게이트 / 상태 (9/25) |
 |---|---|---|---|
-| P0 | 공통 인프라: murmurhash 유틸, film 채널 추가 절차 문서화 검증(더미 채널 1개 end-to-end) | — | 채널 파이프라인 동작 확인 |
-| P1 | Cryptomatte (object+material) | P0 | §2.6 테스트 + EXR 스펙 검증 |
-| P2 | Light linking (illumination, flat+BVH) | — | §3.6 테스트, MIS 일관 |
-| P3 | Wavefront M3a (sync 제거) | — | 동기 제거 후 회귀 재측정 → 계속/중단 결정 |
-| P4 | LPE (eye-path 완전) | P0(채널) | §4.5 AOV 동치성 |
-| P5 | Guiding 5.1+5.2+5.5 (fallback, adaptive K, 프로퍼티화) | — | §5.6 테스트 |
-| P6 | Wavefront M3b-e (조건부) | P3 결과 | dense 대비 승리 워크로드 존재 |
-| P7 | Guiding 5.3 PAVMM + GPU 포맷 v4 | P5 | CPU A/B 이득 확인 시 |
-| P8 | Shadow linking, crypto asset layer, LPE light-path 정확 평가 | P2,P1,P4 | 각 테스트 |
+| P0 | 공통 인프라: murmurhash 유틸, film 채널 추가 절차 문서화 검증(더미 채널 1개 end-to-end) | — | ✅ 완료 |
+| P1 | Cryptomatte (object+material) | P0 | ✅ 랜딩 `eedefb2dc` — e40 PASS |
+| P2 | Light linking (illumination, flat+BVH) | — | ✅ 랜딩 `c5d529195`+`1a811b64e` — e41 8/8 |
+| P3 | Wavefront M3a (sync 제거) | — | ✅ 랜딩 `88f425ffe` — cornell ~2.5x. 단, totals readback은 유지(stale sizing ~6x 회귀 실측 — §1.2의 "정확성 무손실"은 맞으나 진행 지연 비용이 컸음) |
+| P4 | LPE (eye-path 완전) | P0(채널) | ✅ 랜딩 `283dd3ee0` — e42 PASS. 범위: PATHCPU/PATHOCL |
+| P5 | Guiding 5.1+5.2+5.5 (fallback, adaptive K, 프로퍼티화) | — | ✅ 랜딩 `aafe53bfd` — 계층 폴백+BIC-K+`path.guiding.*` 정식화, e43 PASS |
+| P6 | Wavefront M3b-e (조건부) | P3 결과 | 조건부 — 추가 workload에서 먼저 측정 |
+| P7 | Guiding 5.3 PAVMM + GPU 포맷 v4 | P5 | 잔여 — CPU A/B 이득 확인 시 |
+| P8 | Shadow linking, crypto asset layer, LPE light-path 정확 평가 | P2,P1,P4 | 잔여 — 미착수 |
 
 **리스크·롤백**:
 - Wavefront: 게이트 미달 시 코드는 opt-in 유지, 큐 인프라는 다른 기능

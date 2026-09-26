@@ -87,10 +87,11 @@ Implementation notes:
   Huang needs for the true geometric azimuth; Cycles Hair Info → these AOVs
   via the node reader.
 - `cyHairFile` out-of-bounds read fixed.
-- Hair geometry is tessellated to triangles (ribbon/solid modes); native Metal
-  curve primitives are a roadmap item (E7) — current cost is tessellation
-  overhead, not a wrong default.
-- BlendLuxCore: native Hair material node (`model`, `roughness`,
+- Hair geometry: native Metal Catmull-Rom curve primitives landed
+  (`d32bfe3cd`, E7) on the Metal HWRT path; tessellation remains the
+  fallback. Emissive strands force the tessellated path (`d46a6abe0`)
+  so sampling geometry matches intersection geometry.
+- SuperBlendLuxCore: native Hair material node (`model`, `roughness`,
   `aspectratio`, lobe scales, all colorization modes) and Cycles Principled
   Hair reader mapping (model enum CHIANG/HUANG → `model`).
 

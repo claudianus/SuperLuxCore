@@ -2894,7 +2894,15 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 		py::init(&RenderConfig_LoadFile),
         py::call_guard<py::gil_scoped_release>()
 	)
-    .def("GetProperties", &luxcore::detail::RenderConfigImpl::GetProperties)
+    // GetProperties() returns the internal config by const unique_ptr&
+    // (non-owning). Under py::smart_holder a unique_ptr& return can only be
+    // materialized by aliasing the parent's shared holder — which fails with
+    // "Non-owning holder (load_as_shared_ptr)" when the RenderConfig wrapper
+    // itself is the non-owning one returned by RenderSession.GetRenderConfig().
+    // Clone the Properties so the result is always owned.
+    .def("GetProperties", [](const luxcore::detail::RenderConfigImpl &self) {
+        return self.GetProperties()->Clone();
+    })
     .def("GetProperty", &luxcore::detail::RenderConfigImpl::GetProperty)
     .def("GetScene", &RenderConfig_GetScene)
     .def("HasCachedKernels", &luxcore::detail::RenderConfigImpl::HasCachedKernels)
@@ -2943,7 +2951,10 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 	)
 	//TODO
     //.def("GetRenderConfig", &RenderSession_GetRenderConfig)
-    .def("GetRenderConfig", &luxcore::detail::RenderSessionImpl::GetRenderConfig)
+    // The returned config is a non-owning reference into the session:
+    // keep the session alive while the wrapper is in use.
+    .def("GetRenderConfig", &luxcore::detail::RenderSessionImpl::GetRenderConfig,
+         py::keep_alive<0, 1>())
     // Long running calls release the GIL: kernel compilation (i.e. the
     // Metal path is a multi-second cl2msl + Metal compiler run) happens
     // inside Start(), and WaitNewFrame()/WaitForDone()/Stop() block on
