@@ -125,7 +125,11 @@ public:
 		const float u3, const float u4,
 		const EyePathInfo &pathInfo, const luxrays::Spectrum &pathThrouput,
 		const BSDF &bsdf, SampleResult *sampleResult,
-		const bool useBSDFEVal = true) const;
+		const bool useBSDFEVal = true,
+		// M4b RIS product guiding: this path's candidate-weight mean
+		// Zhat (>0 activates the pHat = t/Zhat bounce density in MIS;
+		// 0 keeps the plain/mixture competitor).
+		const float risZhat = 0.f) const;
 
 	void RenderEyePath(
 		luxrays::IntersectionDeviceRef device,
@@ -401,6 +405,101 @@ private:
 	// sampling (path.guiding.tablefile, empty = inline CPU training).
 	bool guidingEnable;
 	std::string guidingTableFile;
+
+	// Portal-guided bounce sampling (M5, path.portal.*): artist-placed
+	// planar rects marking apertures through which light enters a space
+	// (window, doorway, slit). With probability portalShare the bounce
+	// direction is proposed by aiming at a uniform point on a rect - a
+	// directional technique with an analytic solid-angle density,
+	// folded into the one-sample MIS alongside BSDF/guide. This is the
+	// routing fix for scenes whose variance lives in "did the path
+	// transit the opening" - directional guiding fields cannot resolve
+	// features narrower than their lobe width.
+	struct PortalRect {
+		luxrays::Point v0;		// one rect corner
+		luxrays::Vector e1, e2;	// edge vectors from v0
+		luxrays::Vector n;		// unit normal
+		float invArea;
+		// 2x2 Gram coefficients for the inside-rect solve
+		float g11, g12, g22, invDet;
+
+		luxrays::Point SamplePoint(const float u, const float v) const {
+			return v0 + u * e1 + v * e2;
+		}
+		// Solid-angle density of direction d from p under this rect's
+		// uniform-area proposal: r^2/(A*|cos_s|), zero when the ray
+		// misses the rect or runs parallel to its plane.
+		float PdfW(const luxrays::Point &p, const luxrays::Vector &d) const {
+			const float dn = luxrays::Dot(d, n);
+			if (dn == 0.f)
+				return 0.f;
+			const float t = luxrays::Dot(v0 - p, n) / dn;
+			if (!(t > 0.f))
+				return 0.f;
+			const luxrays::Vector ds = (p + t * d) - v0;
+			const float u = invDet * (g22 * luxrays::Dot(ds, e1) - g12 * luxrays::Dot(ds, e2));
+			const float v = invDet * (g11 * luxrays::Dot(ds, e2) - g12 * luxrays::Dot(ds, e1));
+			if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f)
+				return 0.f;
+			return t * t * invArea / fabsf(dn);
+		}
+	};
+	std::vector<PortalRect> portals;
+	float portalShare;
+
+	// Aggregate portal proposal density: the bounce picks one rect
+	// uniformly, so the marginal is (1/N)*sum of the per-rect pdfs.
+	float PortalPdfW(const luxrays::Point &p, const luxrays::Vector &d) const {
+		float sum = 0.f;
+		for (u_int i = 0; i < portals.size(); ++i)
+			sum += portals[i].PdfW(p, d);
+		return sum / portals.size();
+	}
+	// False when p lies on every portal's plane (the proposal would be
+	// degenerate: all candidate directions run in-plane). Must be
+	// mirrored exactly between the bounce side and the DL-side density.
+	bool PortalUsableAt(const luxrays::Point &p) const {
+		for (u_int i = 0; i < portals.size(); ++i)
+			if (fabsf(luxrays::Dot(p - portals[i].v0, portals[i].n)) > 1e-4f)
+				return true;
+		return false;
+	}
+	// Half-space gate for the portal proposal (env LUX_PG_PORTALSIDE):
+	// +1 fires only on the +n side of a portal, -1 only on -n, 0
+	// (default) on both. Lets a one-sided aperture skip wasting draws
+	// on vertices behind the portal.
+	float portalSideGate = 0.f;
+	bool PortalSideOK(const luxrays::Point &p) const {
+		if (portalSideGate == 0.f)
+			return true;
+		for (u_int i = 0; i < portals.size(); ++i) {
+			const float s = luxrays::Dot(p - portals[i].v0, portals[i].n);
+			if (s * portalSideGate > 1e-4f)
+				return true;
+		}
+		return false;
+	}
+	// The aperture must sit in the surface's upper hemisphere - a portal
+	// behind the shading normal can never deliver light to this vertex,
+	// so proposing it would burn the share on zero-contribution draws.
+	bool PortalFacingOK(const luxrays::Point &p, const luxrays::Vector &n) const {
+		for (u_int i = 0; i < portals.size(); ++i) {
+			const luxrays::Vector d = portals[i].v0 +
+					.5f * (portals[i].e1 + portals[i].e2) - p;
+			if (luxrays::Dot(d, n) > 0.f)
+				return true;
+		}
+		return false;
+	}
+	// Adaptive portal share (M5): the technique earns the fraction of
+	// the leaf's incident field arriving through the aperture -
+	// Sum_i Omega_i * Lhat(d_i) / leafTotal, capped by portalShare. A
+	// slit-dominated leaf gets the full share; a leaf lit mostly by
+	// interreflection keeps its bounce budget. Falls back to the full
+	// share while the field is untrained (early exploration).
+	// Env LUX_PG_PORTALADAPT=0 disables the adaptation (fixed share).
+	bool portalAdapt = true;
+	float PortalShareAt(const luxrays::Point &p) const;
 
 	// ReSTIR GI (G1): per-pixel first-bounce reservoir, owned by the
 	// engine and shared by all render threads (advisory lock-free

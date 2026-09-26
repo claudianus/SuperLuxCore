@@ -56,8 +56,17 @@ class RestirGI {
 public:
 	// One reservoir per film pixel (screen-space reuse needs a pixel
 	// context, unlike the DI world-space hash grid). Entries are
-	// advisory data shared between render threads: a torn read yields
-	// a bounded wrong-weight merge, never a crash.
+	// advisory data shared between render threads.
+	//
+	// pass is a seqlock stamp (GPU parity: RestirGIReservoir.pass).
+	// A store publishes 0xFFFFFFFF first and the real pass index LAST;
+	// a reader snapshots the entry and accepts it only when the stamp
+	// is unchanged across the read, which rejects both torn mid-write
+	// entries and - through the "strictly older pass" temporal gate -
+	// entries stored by a sibling thread running a NEWER pass (those
+	// would feed a wSum already containing this pass's draws back into
+	// the merge, compounding it geometrically). All stamp access goes
+	// through std::atomic_ref so the entry stays a POD aggregate.
 	struct Reservoir {
 		float x1[3];		// primary hit point (shift source)
 		float x1n[3];		// primary geometric normal
@@ -69,6 +78,7 @@ public:
 		float target;		// pi_hat of the stored winner
 		u_int m;			// accumulated candidate count
 		u_int isMiss;		// 1 = winner was a miss (env direction)
+		u_int pass;			// seqlock stamp, see above
 	};
 
 	RestirGI() : filmW(0), filmH(0) { }

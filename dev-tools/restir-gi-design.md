@@ -227,6 +227,26 @@ segment keeps a saturated ratio) — the CPU path shows the same tail
 (max ≈ 70x on cornell at 32 spp, both merge paths), it shrinks with
 spp (64×48 test: max ratio ≈ 1.2 at 32 spp), and the e19 tripwire
 gates on bulk statistics rather than the max.
+
+### Audit follow-ups (CPU parity + failed-shift mass)
+
+- **CPU seqlock + pass stamp**: the CPU `Reservoir` grew the same
+  `pass` stamp the GPU entry carries, read/written through
+  `std::atomic_ref` so the struct stays a POD. Merges snapshot the
+  entry under `acquire` and re-check the stamp afterwards; temporal
+  merges require a strictly older pass, spatial merges accept any
+  consistent (non-mid-write) entry. Without it, torn reads and
+  same/future-pass feedback injected arbitrary wSum - measured as the
+  e19 CPU T3 regression (RMSE 0.0315 vs 0.0092 baseline, 3.4x gate).
+- **Failed shifts do not count toward M** (both CPU and GPU, temporal
+  and spatial): a reconnected segment that is degenerate, occluded, or
+  (GPU) unvalidated by `vSeq` produces a sample outside the current
+  target domain; crediting its `m` anyway inflated `mTotal` with draws
+  that could never win and systematically darkened the output (cornell
+  temporal-only mean −3.5% → −1.9% vs reference; GPU gi+merges mean
+  −1.2% → −0.3%, RMSE 0.0112 → 0.0095). In-domain draws with zero
+  target (black BSDF eval) still count, matching the fresh-candidate
+  convention.
 - **Cost report (measured)**: on cornell at K=4 the resample costs
   ~2.2× wall time per 64 spp (K bounce rays + K NEE probes per depth-0
   vertex) and does *not* reduce RMSE there — cornell's indirect is

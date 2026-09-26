@@ -257,12 +257,10 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 
 	ReservoirGrid *grid = GetThreadGrid();
 
-	LightSourcePtr reservoir = nullptr;
 	float wSum = 0.f;
 	LightSourcePtr reservoirLight = nullptr;
 	float reservoirPdf = 0.f;
 	float reservoirTarget = 0.f;
-	u_int reservoirM = 0;
 	// Winning FRESH candidate's light-surface sample (visibility path):
 	// the candidate's own sample doubles as the contribution sample, so
 	// it is returned through lightSurfaceUs and the caller's payoff
@@ -301,7 +299,13 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 	u_int mTotal = 0;
 	u_int mergeCount = 0;
 
-	if (grid && spatialReuseEnable) {
+	// The own-cell merge (offset 0) is the CPU counterpart of the GPU
+	// per-pixel temporal reservoir: the same bucket is re-read across
+	// passes at nearby shade points. Neighbour cells are the spatial
+	// merge. temporal.enable alone therefore runs the own-cell merge
+	// too (previously the flag was parsed but never consumed - a
+	// silent no-op on CPU while the GPU honoured it).
+	if (grid && (spatialReuseEnable || temporalReuseEnable)) {
 		const Point &p = bsdf.hitPoint.p;
 		const int cx = (int)floorf(p.x / CELL_SIZE);
 		const int cy = (int)floorf(p.y / CELL_SIZE);
@@ -328,7 +332,8 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		// also amplified stale wSum feedback into runaway output weights).
 		// Mirror that here: under visibility the own-cell merge (the CPU
 		// temporal equivalent - same bucket across passes) still runs.
-		const int oMax = (kTemporalOnly || visibilityEnable) ? 1 : 7;
+		const int oMax = (kTemporalOnly || visibilityEnable ||
+				!spatialReuseEnable) ? 1 : 7;
 		for (int o = 0; o < oMax && merges < MAX_NEIGHBOR_MERGES; ++o) {
 			const int dx = OFFS[o][0], dy = OFFS[o][1], dz = OFFS[o][2];
 			{
@@ -393,7 +398,6 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 							(nbTargetNew / entry.targetAtStore);
 
 					wSum += bNbr;
-					reservoirM += entry.sampleCount;
 					mTotal += entry.sampleCount;
 					++merges;
 					++mergeCount;
@@ -403,7 +407,6 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 					const float r = AcceptRand(acceptSeed,
 							1000u + (dx + 3) + 7u * (dy + 3) + 49u * (dz + 3));
 					if (!reservoirLight || r < accept) {
-						reservoir = nbLight;
 						reservoirLight = nbLight;
 						reservoirPdf = nbSourcePdf;
 						reservoirTarget = nbTargetNew;
@@ -519,14 +522,12 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		const float targetWeight = lum / (candidatePdf * directPdfW);
 
 		wSum += targetWeight;
-		++reservoirM;
 
 		// Weighted reservoir update (single-pass algorithm from the
 		// ReSTIR paper): accept candidate i with prob w_i / wSum
 		const float accept = (wSum > 0.f) ? (targetWeight / wSum) : 0.f;
 		const float r = AcceptRand(acceptSeed, i);
 		if (!reservoirLight || r < accept) {
-			reservoir = candidate;
 			reservoirLight = candidate;
 			reservoirPdf = candidatePdf;
 			reservoirTarget = targetWeight;
@@ -558,7 +559,10 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 	// under normal mass makes W = wSum/(M*target) astronomical, and the
 	// next merge divides by it (1e26 image means observed). Not storing
 	// cannot bias anyone (fewer future candidates, all counted).
-	if (grid && reservoirLight && wSum > 0.f &&
+	// The store is also skipped when no reuse mode is on - nothing
+	// would ever read it back.
+	if (grid && (spatialReuseEnable || temporalReuseEnable) &&
+			reservoirLight && wSum > 0.f &&
 			reservoirTarget >= .05f * wSum / (float)Max(mTotal, 1u)) {
 		const Point &p = bsdf.hitPoint.p;
 		const u_int slot = GridHash(

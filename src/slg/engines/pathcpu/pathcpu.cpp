@@ -151,12 +151,25 @@ void PathCPURenderEngine::StartLockLess() {
 	delete pathGuidingCache;
 	pathGuidingCache = nullptr;
 	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.guiding.enable")).Get<bool>()) {
-		const BSphere &bsphere = renderConfig.GetScene().GetSceneBSphere();
-		const Point cubeMin(bsphere.center.x - bsphere.rad,
-				bsphere.center.y - bsphere.rad,
-				bsphere.center.z - bsphere.rad);
-		pathGuidingCache = new PathGuidingCache(cubeMin, 2.f * bsphere.rad);
-		SLG_LOG("[PathCPURenderEngine] Path guiding (M1) enabled");
+		// Optional warm start: path.guiding.tablefile loads a previously
+		// dumped read tree (LUX_PG_DUMP) and keeps training on top of it.
+		const string tableFile = cfg.Get(Property("path.guiding.tablefile")("")).Get<string>();
+		if (!tableFile.empty()) {
+			pathGuidingCache = PathGuidingCache::Load(tableFile);
+			if (pathGuidingCache) {
+				SLG_LOG("[PathCPURenderEngine] Path guiding table loaded: " << tableFile);
+			} else {
+				SLG_LOG("WARNING: unable to load path guiding table file: " << tableFile);
+			}
+		}
+		if (!pathGuidingCache) {
+			const BSphere &bsphere = renderConfig.GetScene().GetSceneBSphere();
+			const Point cubeMin(bsphere.center.x - bsphere.rad,
+					bsphere.center.y - bsphere.rad,
+					bsphere.center.z - bsphere.rad);
+			pathGuidingCache = new PathGuidingCache(cubeMin, 2.f * bsphere.rad);
+		}
+		SLG_LOG("[PathCPURenderEngine] Path guiding (M4) enabled");
 	}
 	pathTracer.SetPathGuidingCache(pathGuidingCache);
 

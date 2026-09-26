@@ -29,7 +29,8 @@ using namespace slg;
 // RTPathCPU specific sampler shared data
 //------------------------------------------------------------------------------
 
-RTPathCPUSamplerSharedData::RTPathCPUSamplerSharedData(FilmPtr film) :
+RTPathCPUSamplerSharedData::RTPathCPUSamplerSharedData(FilmPtr film,
+		const u_int zf) :
 	engineFilm(film),
 	SamplerSharedData()
 {
@@ -39,6 +40,7 @@ RTPathCPUSamplerSharedData::RTPathCPUSamplerSharedData(FilmPtr film) :
 	filmSubRegion[3] = 0;
 	filmSubRegionWidth =  0;
 	filmSubRegionHeight = 0;
+	zoomFactor = Max(1u, zf);
 
 	Reset(film);
 }
@@ -80,6 +82,29 @@ void RTPathCPUSamplerSharedData::Reset() {
 			const u_int j = Min(Floor2UInt(rnd.floatValue() * pixelCount), pixelCount - 1);
 			Swap(pixelRenderSequence[i], pixelRenderSequence[j]);
 		}
+
+		// Build the coarse first-frame pixel list (one sample per
+		// zoomFactor x zoomFactor block) and shuffle it: a scattered order
+		// covers the whole frame with the first pass, so the user sees a
+		// dithered full image instead of a row band filling bottom-to-top.
+		const u_int zf = Max(1u, zoomFactor);
+		const u_int cw = (filmSubRegionWidth + zf - 1) / zf;
+		const u_int ch = (filmSubRegionHeight + zf - 1) / zf;
+		const u_int coarseCount = cw * ch;
+		firstFrameSequence.resize(coarseCount);
+
+		for (u_int y = 0; y < ch; ++y)
+			for (u_int x = 0; x < cw; ++x) {
+				PixelCoord &pc = firstFrameSequence[x + y * cw];
+				pc.x = x * zf;
+				pc.y = y * zf;
+			}
+
+		RandomGenerator rndFF(321);
+		for (u_int i = 0; i < coarseCount; ++i) {
+			const u_int j = Min(Floor2UInt(rndFF.floatValue() * coarseCount), coarseCount - 1);
+			Swap(firstFrameSequence[i], firstFrameSequence[j]);
+		}
 	}
 
 	step = 0;
@@ -88,7 +113,12 @@ void RTPathCPUSamplerSharedData::Reset() {
 std::unique_ptr<SamplerSharedData> RTPathCPUSamplerSharedData::FromProperties(
 	const Properties &cfg, const RandomGeneratorUPtr & rndGen, FilmPtr film
 ) {
-	return std::make_unique<RTPathCPUSamplerSharedData>(film);
+	// zoomFactor must reach the ctor: Reset() inside builds the coarse
+	// first-frame pixel sequence with it
+	const u_int zf = (u_int)Max(1,
+		cfg.Get(Property("rtpathcpu.zoomphase.size")(4)).Get<int>());
+
+	return std::make_unique<RTPathCPUSamplerSharedData>(film, zf);
 }
 
 //------------------------------------------------------------------------------
@@ -127,38 +157,48 @@ void RTPathCPUSampler::Reset(FilmPtr flm) {
 
 	myStep = sharedData->step.fetch_add(1);
 	frameHeight = RoundUp<u_int>(sharedData->filmSubRegionHeight, engine->zoomFactor);
-	currentX = 0;
-	currentY = (myStep * engine->zoomFactor) % frameHeight;
+	if (myStep < sharedData->firstFrameSequence.size()) {
+		const auto &pc = sharedData->firstFrameSequence[myStep];
+		currentX = pc.x;
+		currentY = pc.y;
+	} else {
+		currentX = 0;
+		currentY = 0;
+	}
 	linesDone = 0;
 	firstFrameDone = false;
 }
 
 void RTPathCPUSampler::NextPixel() {
 	if (!firstFrameDone) {
-		// Render one pixel every engine->zoomFactor x engine->zoomFactor on the first frame
-		currentX += engine->zoomFactor;
+		// First frame: render one pixel every engine->zoomFactor x
+		// engine->zoomFactor block, visiting the coarse pixels in a shuffled
+		// order so the preview covers the whole image right away.
+		myStep = sharedData->step.fetch_add(1);
 
-		if (currentX >= sharedData->filmSubRegionWidth) {
+		if (myStep < sharedData->firstFrameSequence.size()) {
+			const auto &pc = sharedData->firstFrameSequence[myStep];
+			currentX = pc.x;
+			currentY = pc.y;
+
 			// This should be done as atomic operation but it is only for statistics
 			// (adding the effective number of samples rendered, not the pixels count)
-			film->AddSampleCount(threadIndex, sharedData->filmSubRegionWidth / (double)engine->zoomFactor, 0.0);
+			film->AddSampleCount(threadIndex, 1.0, 0.0);
+		} else {
+			// Signal the main thread after have finished the rendering
+			// of the first frame
+			std::unique_lock<std::mutex> lock(engine->firstFrameMutex);
+
+			++(engine->firstFrameThreadDoneCount);
+
+			engine->firstFrameCondition.notify_one();
+
+			firstFrameDone = true;
+
+			// Hand off to the normal path with a coherent state
 			currentX = 0;
-			myStep = sharedData->step.fetch_add(1);
 			currentY = (myStep * engine->zoomFactor) % frameHeight;
 			linesDone = 0;
-
-			const bool stillOnFirstFrame = (myStep * engine->zoomFactor < frameHeight);
-			if (!stillOnFirstFrame) {
-				// Signal the main thread after have finished the rendering
-				// of the first frame
-				std::unique_lock<std::mutex> lock(engine->firstFrameMutex);
-
-				++(engine->firstFrameThreadDoneCount);
-
-				engine->firstFrameCondition.notify_one();
-				
-				firstFrameDone = true;
-			}
 		}
 	} else {
 		// Normal rendering

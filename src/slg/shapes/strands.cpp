@@ -686,7 +686,7 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 		(dynamic_cast<const PerspectiveCamera&>(scene.GetCamera())).orig :
 		Point();
 
-	Vector previousDir;
+	Vector previousDir(0.f, 0.f, 1.f);
 	Vector previousX;
 	// I'm using quaternion here in order to avoid Gimbal lock problem
 	Quaternion trans;
@@ -723,7 +723,11 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 			}
 
 			if (hairPoints.size() > 1) {
-				const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
+				// Only the rotation part of the LookAt matrix is used, so
+				// build it from `dir` (already degenerate-safe) instead of
+				// hairPoints[1] - hairPoints[0] which may be coincident.
+				const Transform dirTrans = LookAt(Point(),
+						Point(dir.x, dir.y, dir.z), up);
 				trans = Quaternion(dirTrans.m);
 			}
 		} else {
@@ -842,7 +846,7 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 	// Normalized position along the strand (0 = root, 1 = tip)
 	const float strandUStep = 1.f / Max(1, (int)hairPoints.size() - 1);
 
-	Vector previousDir;
+	Vector previousDir(0.f, 0.f, 1.f);
 	Vector previousX, previousY, previousZ;
 	// I'm using quaternion here in order to avoid Gimbal lock problem
 	Quaternion trans;
@@ -870,7 +874,10 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 				up = Vector(1.f, 0.f, 0.f);
 
 			if (hairPoints.size() > 1) {
-				const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
+				// See TessellateRibbon(): build the frame from `dir` so
+				// coincident first segments cannot produce a NaN matrix.
+				const Transform dirTrans = LookAt(Point(),
+						Point(dir.x, dir.y, dir.z), up);
 				trans = Quaternion(dirTrans.m);
 			}
 		} else {

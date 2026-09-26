@@ -1,0 +1,33 @@
+# Harder variant of pg-indirect: a blocker plate in front of the divider
+# window shrinks the light entry to a 0.24 x 0.3 slit, so the front
+# compartment is lit by a strongly peaked indirect field - the regime
+# where spatial-directional guiding must beat cosine sampling.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -4.0 1.5
+scene.camera.lookat.target = 0.0 2.0 1.2
+scene.camera.fieldofview = 50
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+
+scene.materials.Wall.type = glossy2
+scene.materials.Wall.kd = 0.7 0.7 0.7
+scene.materials.Wall.ks = 0.15 0.15 0.15
+scene.materials.Wall.uroughness = 0.5
+scene.materials.Wall.vroughness = 0.5
+scene.materials.Light.type = matte
+scene.materials.Light.kd = 0.0 0.0 0.0
+scene.materials.Light.emission = 60.0 60.0 60.0
+scene.materials.Light.emission.id = 0
+
+scene.objects.Room.material = Wall
+scene.objects.Room.ply = scenes/cornell/pg-room.ply
+scene.objects.Emitter.material = Light
+scene.objects.Emitter.ply = scenes/cornell/pg-light.ply
+
+# Blocker plate just in front of the divider window (divider at y=2,
+# window x in [-0.5,0.5], z in [1.4,2.6]); leaves a small slit open.
+scene.objects.Blocker.material = Wall
+scene.objects.Blocker.type = inlinedmesh
+scene.objects.Blocker.vertices = -0.55 1.95 1.35   0.55 1.95 1.35   0.55 1.95 2.65   -0.55 1.95 2.65   -0.12 1.95 1.85   0.12 1.95 1.85   0.12 1.95 2.15   -0.12 1.95 2.15
+# frame = 4 quads around the hole (quad corners 0-3, hole corners 4-7)
+scene.objects.Blocker.faces = 0 1 5  0 5 4   1 2 6  1 6 5   2 3 7  2 7 6   3 0 4  3 4 7

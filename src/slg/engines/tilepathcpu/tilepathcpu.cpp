@@ -136,6 +136,12 @@ void TilePathCPURenderEngine::StartLockLess() {
 	}
 	pathTracer.SetPathGuidingCache(pathGuidingCache);
 
+	// ReSTIR GI is implemented only by PathCPURenderEngine (and by the
+	// GPU kernels); warn instead of silently ignoring the flag here.
+	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.restir.gi.enable")).Get<bool>())
+		SLG_LOG("WARNING: path.restir.gi.enable is not supported by TILEPATHCPU "
+				"(use PATHCPU, RTPATHCPU or an OpenCL engine)");
+
 	//--------------------------------------------------------------------------
 
 	CPURenderEngine::StartLockLess();

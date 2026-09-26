@@ -79,6 +79,19 @@ Light strategy `restir_di` plugs into the existing light-selection path:
   ~1.0-1.8x worse RMSE than the unweighted baseline at low SPP on both
   backends (e16/e18 T2 asserts the spread stays bounded, not that V is
   always a win).
+- Reuse is **primary-hit (depth-0) only** on GPU. The per-pixel
+  reservoir's stored target is measured at that pixel's depth-0 point;
+  merging it at a deeper vertex without re-evaluating the stored
+  winner's target is not a valid GRIS merge (the pi_new/pi_old ratio
+  degenerates to 1 and scales the output weight by an arbitrary
+  factor). The temporal merge, spatial merge and reservoir store are
+  all gated on `depth == 0` (fixed in the audit; deeper vertices
+  previously merged the primary reservoir and biased the estimate).
+- On CPU, `lightstrategy.restir.temporal.enable` runs the own-cell
+  merge alone when spatial reuse is off (previously the flag was
+  parsed but never consumed - a silent no-op while the GPU honoured
+  it). The own-cell bucket is the CPU counterpart of the GPU
+  per-pixel temporal reservoir.
 - Experimental stages are gated default-off pending regression coverage.
 
 ## Test scenes / validation

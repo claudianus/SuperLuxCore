@@ -500,11 +500,20 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 
 	// The per-pixel ReSTIR reservoir count (one slot per film pixel);
 	// the spatial merge is screen-space (E2b), so no separate grid
-	// region follows them.
+	// region follows them. The DI reservoirs are only consumed by the
+	// temporal/spatial reuse paths, while the GI reservoirs are read
+	// and rewritten unconditionally whenever GI runs (RestirGI_Resolve
+	// publishes the pre-spatial state every bounce) - so the buffer is
+	// skipped only when neither feature is enabled at all.
 	{
+		const auto &restirCfg = renderEngine->taskConfig.pathTracer.restir;
+		const auto &giCfg = renderEngine->taskConfig.pathTracer.restirGI;
+		const bool diReuse = restirCfg.enabled &&
+				(restirCfg.temporalEnable || restirCfg.spatialEnable);
 		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
 		renderEngine->taskConfig.pathTracer.restir.reservoirCount =
-				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth();
+				(diReuse || giCfg.enabled) ?
+				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth() : 0;
 	}
 
 	// GPU light tracing (doc/features/gpu_lighttracing.md): light tasks

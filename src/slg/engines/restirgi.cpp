@@ -25,6 +25,8 @@
 // scope. GPU port is a follow-up (the candidate/merge tail-queue
 // pattern already exists for the DI stage).
 
+#include <atomic>
+
 #include "slg/engines/restirgi.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
@@ -51,6 +53,7 @@ void RestirGI::Reset() {
 		e.target = 0.f;
 		e.m = 0;
 		e.isMiss = 0;
+		e.pass = 0;
 	}
 }
 
@@ -239,75 +242,113 @@ bool RestirGI::ResampleFirstBounce(
 	// pi_new = 0 (the E2d rule, cheap on CPU where traces are inline).
 	//----------------------------------------------------------------------
 	Reservoir *stored = Lookup(pixelX, pixelY);
+	Reservoir storedSnap = Reservoir();
 	Vector storedDir;
 	Spectrum storedEval;
 	BSDFEvent storedEvent = (BSDFEvent)0;
 	float storedTargetNew = 0.f;
-	if (temporalEnable && stored && (stored->m > 0) &&
-			(stored->wSum > 0.f) && (stored->target > 0.f)) {
-		mTotal += stored->m;
-
-		float piNew = 0.f;
-		float J = 1.f;
-		bool visible = true;
-		bool hasDir = false;
-		if (stored->isMiss) {
-			storedDir = Vector(stored->dir[0], stored->dir[1],
-					stored->dir[2]);
-			hasDir = true;
-		} else {
-			const Point x2(stored->x2[0], stored->x2[1], stored->x2[2]);
-			const Vector dv = x2 - x1;
-			const float dCur = dv.Length();
-			if (dCur > MachineEpsilon::E(x1)) {
-				storedDir = dv / dCur;
+	// Seqlock read (GPU parity): sibling threads publish stores to this
+	// slot concurrently, so snapshot the entry, verify the stamp is
+	// unchanged afterwards and only merge strictly OLDER passes - a
+	// same/future-pass entry already carries draws correlated with this
+	// pass and feeding it back compounds wSum geometrically (the GPU
+	// path measured ~1e7 hot pixels on cornell without this gate).
+	const u_int p0 = stored ?
+		std::atomic_ref<u_int>(stored->pass).load(
+				std::memory_order_acquire) : 0xFFFFFFFFu;
+	if (temporalEnable && (p0 != 0xFFFFFFFFu) && (p0 < pass)) {
+		const Reservoir snap = *stored;
+		if ((snap.m > 0) && (snap.wSum > 0.f) && (snap.target > 0.f) &&
+				// Representative-winner gate (GPU parity): a stored
+				// winner whose target is far below the reservoir's
+				// mean weight indicates a torn/stale entry; merging
+				// it compounds the wSum error.
+				(snap.target >= 0.05f * snap.wSum / (float)snap.m) &&
+				// Seqcheck: the stamp must be unchanged across the
+				// snapshot, else a sibling store raced the read.
+				(std::atomic_ref<u_int>(stored->pass).load(
+						std::memory_order_acquire) == p0)) {
+			float piNew = 0.f;
+			float J = 1.f;
+			bool visible = true;
+			bool hasDir = false;
+			if (snap.isMiss) {
+				storedDir = Vector(snap.dir[0], snap.dir[1],
+						snap.dir[2]);
 				hasDir = true;
+			} else {
+				const Point x2(snap.x2[0], snap.x2[1], snap.x2[2]);
+				const Vector dv = x2 - x1;
+				const float dCur = dv.Length();
+				if (dCur > MachineEpsilon::E(x1)) {
+					storedDir = dv / dCur;
+					hasDir = true;
 
-				// Binary visibility of the reconnected segment
-				Ray vRay(bsdf.GetRayOrigin(storedDir), storedDir,
-						0.f, dCur - MachineEpsilon::E(x2), time);
-				PathVolumeInfo vVolInfo = volInfo;
-				RayHit vHit;
-				BSDF vBsdf;
-				Spectrum vThroughput;
-				visible = !scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | SHADOW_RAY,
-						&vVolInfo, GIRandom(baseSeed, 0x40u), &vRay,
-						&vHit, &vBsdf, &vThroughput, nullptr, nullptr,
-						true);
+					// Binary visibility of the reconnected segment
+					Ray vRay(bsdf.GetRayOrigin(storedDir), storedDir,
+							0.f, dCur - MachineEpsilon::E(x2), time);
+					PathVolumeInfo vVolInfo = volInfo;
+					RayHit vHit;
+					BSDF vBsdf;
+					Spectrum vThroughput;
+					visible = !scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | SHADOW_RAY,
+							&vVolInfo, GIRandom(baseSeed, 0x40u), &vRay,
+							&vHit, &vBsdf, &vThroughput, nullptr, nullptr,
+							true);
 
-				// Jacobian of the solid-angle shift src -> cur
-				const Vector toSrc = Point(stored->x1[0], stored->x1[1],
-						stored->x1[2]) - x2;
-				const float dSrc = toSrc.Length();
-				if (dSrc > 0.f) {
-					const Normal n2(stored->x2n[0], stored->x2n[1],
-							stored->x2n[2]);
-					const float cosCur = fabsf(Dot(n2, -storedDir));
-					const float cosSrc = fabsf(Dot(n2, toSrc / dSrc));
-					const float denom = cosSrc * dCur * dCur;
-					if (denom > 0.f)
-						J = (cosCur * dSrc * dSrc) / denom;
+					// Jacobian of the solid-angle shift src -> cur
+					const Vector toSrc = Point(snap.x1[0], snap.x1[1],
+							snap.x1[2]) - x2;
+					const float dSrc = toSrc.Length();
+					if (dSrc > 0.f) {
+						const Normal n2(snap.x2n[0], snap.x2n[1],
+								snap.x2n[2]);
+						const float cosCur = fabsf(Dot(n2, -storedDir));
+						const float cosSrc = fabsf(Dot(n2, toSrc / dSrc));
+						const float denom = cosSrc * dCur * dCur;
+						if (denom > 0.f)
+							J = (cosCur * dSrc * dSrc) / denom;
+					}
 				}
 			}
-		}
-		if (hasDir && visible) {
-			float pdfS;
-			storedEval = bsdf.Evaluate(storedDir, &storedEvent, &pdfS);
-			// Same support floor as the fresh candidates (see above);
-			// stored->target already carries its own pass's eps.
-			piNew = storedEval.Y() * (Spectrum(stored->lHat[0],
-					stored->lHat[1], stored->lHat[2]).Y() + eps);
-		}
+			if (hasDir && visible) {
+				// A failed shift (no reconnected segment, or the
+				// segment is occluded at THIS x1) produces a sample
+				// outside the current target domain - it is rejected
+				// and does NOT count toward M. Counting it anyway
+				// inflates mTotal with draws that could never win
+				// here and darkens the output measurably (cornell
+				// temporal-only: -3.5% -> -1.9% vs reference).
+				mTotal += snap.m;
 
-		// GRIS merge weight with the Jacobian and the defensive clamp
-		const float ratio = Min((piNew / stored->target) * J,
-				RESTIR_GI_MAX_TARGET_RATIO);
-		const float bNbr = stored->wSum * ratio;
-		wSum += bNbr;
-		const float r = GIRandom(baseSeed, 0x41u);
-		if ((winner < 0) || (r < bNbr / wSum))
-			winner = (int)K;
-		storedTargetNew = piNew;
+				float pdfS;
+				storedEval = bsdf.Evaluate(storedDir, &storedEvent, &pdfS);
+				// Same support floor as the fresh candidates (see
+				// above); snap.target already carries its own pass's
+				// eps.
+				piNew = storedEval.Y() * (Spectrum(snap.lHat[0],
+						snap.lHat[1], snap.lHat[2]).Y() + eps);
+			}
+
+			// GRIS merge weight with the Jacobian and the defensive clamp
+			const float ratio = Min((piNew / snap.target) * J,
+					RESTIR_GI_MAX_TARGET_RATIO);
+			const float bNbr = snap.wSum * ratio;
+			wSum += bNbr;
+			const float r = GIRandom(baseSeed, 0x41u);
+			// A zero-weight merge cannot become the winner even when
+			// nothing else was selected: its target is 0, so resolution
+			// would reject it anyway - and skipping the write keeps the
+			// un-evaluated shift fields out of the winner record.
+			if (((winner < 0) && (bNbr > 0.f)) || (r < bNbr / wSum)) {
+				winner = (int)K;
+				// Only capture the winning stored fields when the
+				// merge actually wins - the snapshot stays valid for
+				// the incumbent resolution below.
+				storedSnap = snap;
+			}
+			storedTargetNew = piNew;
+		}
 	}
 
 	//----------------------------------------------------------------------
@@ -349,16 +390,16 @@ bool RestirGI::ResampleFirstBounce(
 			out.dir = storedDir;
 			out.fcos = storedEval;
 			out.target = storedTargetNew;
-			out.lHat = Spectrum(stored->lHat[0], stored->lHat[1],
-					stored->lHat[2]);
-			out.miss = stored->isMiss;
+			out.lHat = Spectrum(storedSnap.lHat[0], storedSnap.lHat[1],
+					storedSnap.lHat[2]);
+			out.miss = storedSnap.isMiss;
 			out.event = storedEvent;
 			out.pdfW = 0.f;
 			if (!out.miss) {
-				out.x2 = Point(stored->x2[0], stored->x2[1],
-						stored->x2[2]);
-				out.x2n = Normal(stored->x2n[0], stored->x2n[1],
-						stored->x2n[2]);
+				out.x2 = Point(storedSnap.x2[0], storedSnap.x2[1],
+						storedSnap.x2[2]);
+				out.x2n = Normal(storedSnap.x2n[0], storedSnap.x2n[1],
+						storedSnap.x2n[2]);
 			}
 		} else {
 			out.dir = dirs[winner];
@@ -380,6 +421,12 @@ bool RestirGI::ResampleFirstBounce(
 	//----------------------------------------------------------------------
 	Reservoir *slot = Lookup(pixelX, pixelY);
 	if (slot && haveOut) {
+		// Seqlock publish (GPU parity): invalidate the stamp first and
+		// write the real pass last. A reader mid-write either sees the
+		// old stamp, the INVALID marker or the new stamp - the merge's
+		// before/after stamp comparison rejects all three cases.
+		std::atomic_ref<u_int>(slot->pass).store(0xFFFFFFFFu,
+				std::memory_order_relaxed);
 		slot->x1[0] = x1.x; slot->x1[1] = x1.y; slot->x1[2] = x1.z;
 		slot->x1n[0] = bsdf.hitPoint.geometryN.x;
 		slot->x1n[1] = bsdf.hitPoint.geometryN.y;
@@ -396,6 +443,8 @@ bool RestirGI::ResampleFirstBounce(
 		slot->target = out.target;
 		slot->m = mTotal;
 		slot->isMiss = out.miss;
+		std::atomic_ref<u_int>(slot->pass).store(pass,
+				std::memory_order_release);
 	}
 
 	//----------------------------------------------------------------------
@@ -424,25 +473,37 @@ bool RestirGI::ResampleFirstBounce(
 					Lookup((u_int)nx, (u_int)ny) : nullptr;
 			if (!nbr || (nbr == stored))
 				continue;
-			if (!(nbr->m > 0) || !(nbr->wSum > 0.f) ||
-					!(nbr->target > 0.f))
+			// Seqlock read like the temporal merge above: neighbour
+			// entries are written by other threads concurrently, so
+			// snapshot the record and accept it only if the stamp
+			// brackets the read unchanged. Same-pass stores are valid
+			// merge sources (they hold this pass's post-temporal
+			// reservoirs) - only mid-write entries are rejected.
+			const u_int np0 = std::atomic_ref<u_int>(nbr->pass).
+					load(std::memory_order_acquire);
+			if (np0 == 0xFFFFFFFFu)
+				continue;
+			const Reservoir nSnap = *nbr;
+			if (!(nSnap.m > 0) || !(nSnap.wSum > 0.f) ||
+					!(nSnap.target > 0.f))
 				continue;
 			// Representative-winner gate (E2b): a fluke tiny-target
 			// winner explodes pi_new/pi_old on re-evaluation.
-			if (nbr->target < 0.05f * nbr->wSum / (float)nbr->m)
+			if (nSnap.target < 0.05f * nSnap.wSum / (float)nSnap.m)
 				continue;
 			// Same-surface gate on the primary vertex
-			const float ddx = nbr->x1[0] - x1.x,
-					ddy = nbr->x1[1] - x1.y,
-					ddz = nbr->x1[2] - x1.z;
+			const float ddx = nSnap.x1[0] - x1.x,
+					ddy = nSnap.x1[1] - x1.y,
+					ddz = nSnap.x1[2] - x1.z;
 			if (ddx * ddx + ddy * ddy + ddz * ddz > maxDist2)
 				continue;
-			const float dn = nbr->x1n[0] * curX1n.x +
-					nbr->x1n[1] * curX1n.y + nbr->x1n[2] * curX1n.z;
+			const float dn = nSnap.x1n[0] * curX1n.x +
+					nSnap.x1n[1] * curX1n.y + nSnap.x1n[2] * curX1n.z;
 			if (dn < 0.9063f)
 				continue;
-
-			mTotal += nbr->m;
+			if (std::atomic_ref<u_int>(nbr->pass).load(
+					std::memory_order_acquire) != np0)
+				continue;
 
 			// Reconnect the neighbour's x2 to this x1 (same shift as the
 			// temporal merge above)
@@ -450,11 +511,11 @@ bool RestirGI::ResampleFirstBounce(
 			float J = 1.f;
 			bool visible = true;
 			bool hasDir = false;
-			if (nbr->isMiss) {
-				nbDir = Vector(nbr->dir[0], nbr->dir[1], nbr->dir[2]);
+			if (nSnap.isMiss) {
+				nbDir = Vector(nSnap.dir[0], nSnap.dir[1], nSnap.dir[2]);
 				hasDir = true;
 			} else {
-				const Point nx2(nbr->x2[0], nbr->x2[1], nbr->x2[2]);
+				const Point nx2(nSnap.x2[0], nSnap.x2[1], nSnap.x2[2]);
 				const Vector dv = nx2 - x1;
 				const float dCur = dv.Length();
 				if (dCur > MachineEpsilon::E(x1)) {
@@ -474,12 +535,12 @@ bool RestirGI::ResampleFirstBounce(
 							&vHit, &vBsdf, &vThroughput, nullptr,
 							nullptr, true);
 
-					const Vector toSrc = Point(nbr->x1[0], nbr->x1[1],
-							nbr->x1[2]) - nx2;
+					const Vector toSrc = Point(nSnap.x1[0], nSnap.x1[1],
+							nSnap.x1[2]) - nx2;
 					const float dSrc = toSrc.Length();
 					if (dSrc > 0.f) {
-						const Normal n2(nbr->x2n[0], nbr->x2n[1],
-								nbr->x2n[2]);
+						const Normal n2(nSnap.x2n[0], nSnap.x2n[1],
+								nSnap.x2n[2]);
 						const float cosCur = fabsf(Dot(n2, -nbDir));
 						const float cosSrc = fabsf(Dot(n2,
 								toSrc / dSrc));
@@ -494,31 +555,36 @@ bool RestirGI::ResampleFirstBounce(
 			Spectrum nbEval;
 			BSDFEvent nbEvent = (BSDFEvent)0;
 			if (hasDir && visible) {
+				// Failed shifts (no segment / occluded at this x1) are
+				// rejected without counting their mass - see the
+				// temporal merge above for the darkening-bias rationale.
+				mTotal += nSnap.m;
+
 				float pdfS;
 				nbEval = bsdf.Evaluate(nbDir, &nbEvent, &pdfS);
-				piNew = nbEval.Y() * (Spectrum(nbr->lHat[0],
-						nbr->lHat[1], nbr->lHat[2]).Y() + eps);
+				piNew = nbEval.Y() * (Spectrum(nSnap.lHat[0],
+						nSnap.lHat[1], nSnap.lHat[2]).Y() + eps);
 			}
 
-			const float ratio = Min((piNew / nbr->target) * J,
+			const float ratio = Min((piNew / nSnap.target) * J,
 					RESTIR_GI_MAX_TARGET_RATIO);
-			const float bNbr = nbr->wSum * ratio;
+			const float bNbr = nSnap.wSum * ratio;
 			wSum += bNbr;
 			const float r = GIRandom(baseSeed, 0x60u + k);
-			if (!haveOut || (r < bNbr / wSum)) {
+			if ((!haveOut && (bNbr > 0.f)) || (r < bNbr / wSum)) {
 				out.dir = nbDir;
 				out.fcos = nbEval;
 				out.target = piNew;
-				out.lHat = Spectrum(nbr->lHat[0], nbr->lHat[1],
-						nbr->lHat[2]);
-				out.miss = nbr->isMiss;
+				out.lHat = Spectrum(nSnap.lHat[0], nSnap.lHat[1],
+						nSnap.lHat[2]);
+				out.miss = nSnap.isMiss;
 				out.event = nbEvent;
 				out.pdfW = 0.f;
 				if (!out.miss) {
-					out.x2 = Point(nbr->x2[0], nbr->x2[1],
-							nbr->x2[2]);
-					out.x2n = Normal(nbr->x2n[0], nbr->x2n[1],
-							nbr->x2n[2]);
+					out.x2 = Point(nSnap.x2[0], nSnap.x2[1],
+							nSnap.x2[2]);
+					out.x2n = Normal(nSnap.x2n[0], nSnap.x2n[1],
+							nSnap.x2n[2]);
 				}
 				haveOut = true;
 				outIsFresh = false;

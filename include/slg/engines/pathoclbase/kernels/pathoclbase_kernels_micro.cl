@@ -716,11 +716,17 @@ __kernel void AdvancePaths_MK_RT_RESTIR(
 			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Y SAMPLER_PARAM),
 			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Z SAMPLER_PARAM),
 			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_W SAMPLER_PARAM),
-			taskConfig->pathTracer.restir.temporalEnable,
-			// Store: only depth-0 vertices refresh the per-pixel
-			// reservoir (same rule as DirectLight_Illuminate()); the
-			// store also feeds the screen-space spatial merge, so it
-			// runs when either reuse mode is on.
+			// The stored slot is a PRIMARY-HIT reservoir: its target
+			// was evaluated at the previous pass's depth-0 point of
+			// this pixel. Merging it at a deeper vertex without
+			// re-evaluating the stored winner's target is not a valid
+			// GRIS merge (the pi_new/pi_old ratio degenerates to 1 and
+			// the output weight is multiplied by an arbitrary
+			// p(x_cur)/p(x_src) factor - a real bias). The merges and
+			// the store are therefore all depth-0 only, matching the
+			// classic ReSTIR-DI G-buffer-reservoir design.
+			taskConfig->pathTracer.restir.temporalEnable &&
+					(pathInfo->depth.depth == 0),
 			(taskConfig->pathTracer.restir.temporalEnable ||
 					taskConfig->pathTracer.restir.spatialEnable) &&
 					(pathInfo->depth.depth == 0),
@@ -1046,7 +1052,12 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				&task->tmpHitPoint,
 				rays[gid].time,
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_X SAMPLER_PARAM),
-				taskConfig->pathTracer.restir.spatialEnable,
+				// Neighbour-pixel reservoirs are primary-hit data:
+				// merging them at deeper vertices is off-design (the
+				// same-surface gate nearly always rejects there anyway)
+				// and wastes a Light_Illuminate per merge slot.
+				taskConfig->pathTracer.restir.spatialEnable &&
+						(pathInfo->depth.depth == 0),
 				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
 				filmWidth, taskConfig->pathTracer.restir.reservoirCount,
 				restirReservoirs
@@ -1074,17 +1085,24 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_W SAMPLER_PARAM),
 				taskConfig->pathTracer.restir.enabled,
 				taskConfig->pathTracer.restir.candidateCount,
-				taskConfig->pathTracer.restir.temporalEnable,
-				// Store: only depth-0 vertices refresh the per-pixel
-				// reservoir (see DirectLight_Illuminate()); the store
-				// also feeds the screen-space spatial merge, so it runs
-				// when either reuse mode is on.
+				// Reuse is primary-hit only: the per-pixel reservoir's
+				// stored target is measured at the previous pass's
+				// depth-0 point, so merging it at a deeper vertex
+				// without re-evaluation is not a valid GRIS merge
+				// (arbitrary pi_new/pi_old bias). The spatial merge
+				// re-evaluates targets but the same-surface gate
+				// rejects deeper vertices almost always - gating both
+				// merges to depth 0 is cheaper and matches the
+				// reservoir's documented semantics.
+				taskConfig->pathTracer.restir.temporalEnable &&
+						(pathInfo->depth.depth == 0),
 				(taskConfig->pathTracer.restir.temporalEnable ||
 						taskConfig->pathTracer.restir.spatialEnable) &&
 						(pathInfo->depth.depth == 0),
 				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
 				restirReservoirs,
-				taskConfig->pathTracer.restir.spatialEnable,
+				taskConfig->pathTracer.restir.spatialEnable &&
+						(pathInfo->depth.depth == 0),
 				filmWidth,
 				taskConfig->pathTracer.restir.reservoirCount,
 				&taskDirectLight->illumInfo
@@ -1439,10 +1457,13 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					const float3 guideEvalDouble = BSDF_Evaluate(bsdf,
 							guideDir, &guideEvent, &guideBsdfPdfW
 							MATERIALS_PARAM);
-					// Same Disney double-cos workaround as the CPU side
+					// Same Disney double-cos workaround as the CPU side:
+					// DISNEY only - every other Evaluate already returns
+					// single-cos f*|cos| (volumes: phase*albedo, no cos).
 					const float cosLocal = fabs(Frame_ToLocal(&bsdf->frame, guideDir).z);
-					const float3 guideEval = (cosLocal > 1e-3f) ?
-							guideEvalDouble / cosLocal : BLACK;
+					const float3 guideEval = (mats[bsdf->materialIndex].type == DISNEY) ?
+							((cosLocal > 1e-3f) ? guideEvalDouble / cosLocal : BLACK) :
+							guideEvalDouble;
 					if (!Spectrum_IsBlack(guideEval)) {
 						const float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
 						if (mixPdfW > 0.f) {

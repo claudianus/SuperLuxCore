@@ -205,6 +205,18 @@ if (WIN32 OR LINUX)
   find_package(nvrtc REQUIRED)
 endif()
 
+# Never link tbbmalloc_proxy: at load time it registers a malloc zone ahead of
+# the system zone, so libsystem_malloc calls __TBB_malloc_safer_msize() on every
+# foreign pointer in find_zone_and_free()/malloc_make_purgeable(). For a pointer
+# at the start of a mapped region that probe reads an unmapped page
+# (EXC_BAD_ACCESS). pyluxcore is dlopen'd into Blender, so the proxy hijacks the
+# host allocator mid-process and crashes it. TBB::tbbmalloc itself is unaffected.
+if (TARGET onetbb::onetbb)
+  get_property(_tbb_ils TARGET onetbb::onetbb PROPERTY INTERFACE_LINK_LIBRARIES)
+  list(REMOVE_ITEM _tbb_ils TBB::tbbmalloc_proxy)
+  set_property(TARGET onetbb::onetbb PROPERTY INTERFACE_LINK_LIBRARIES "${_tbb_ils}")
+endif()
+
 # Bison/Flex
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)

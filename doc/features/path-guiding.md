@@ -79,6 +79,20 @@ inspection and A/B renders:
   by this vertex's local value. Storing it at the current vertex under
   `-eyeRay.d` learned the reversed transport direction (paths guided
   back along the camera chain instead of toward the radiance).
+- **Fixed (E26):** the guide-side `Evaluate` correction divided the
+  result by the local cosine for EVERY non-volume material. The
+  division exists only to undo Disney's double-cosine quirk (Disney's
+  `Evaluate` returns `f * cos^2` — see disney.md); every other material
+  already returns the single-cos `f * |cos|` the mixture weight expects.
+  Applying it unconditionally stripped the cosine from matte, glossy,
+  cloth, hair, ... — guided bounces were over-weighted by ~1/cos (a
+  biased brightening, strongest at grazing angles). The division is now
+  gated on `MATERIAL_TYPE == DISNEY` on both CPU
+  (`pathtracer.cpp`) and the OpenCL kernel
+  (`pathoclbase_kernels_micro.cl`); volumes keep their pass-through
+  (phase * albedo, no cosine). Regression:
+  `dev-tools/e26_pathguiding_cosine_test.py` (guided/unguided mean on
+  pg-indirect: 1.001 CPU, 0.96 GPU — the buggy variant drifts high).
 
 ## Volume scattering vertices (M3)
 

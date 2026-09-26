@@ -620,10 +620,13 @@ bool Scene_DefineBlenderStrands(
   move(filteredPoints.begin(), filteredPoints.end(), strands.GetPointsArray());
 
   const bool useCameraPosition = true;
-  scene->DefineStrands(shapeName, strands,
-    tessellationType, adaptiveMaxDepth, adaptiveError,
-    solidSideCount, solidCapBottom, solidCapTop,
-    useCameraPosition);
+  {
+    py::gil_scoped_release release;
+    scene->DefineStrands(shapeName, strands,
+      tessellationType, adaptiveMaxDepth, adaptiveError,
+      solidSideCount, solidCapBottom, solidCapTop,
+      useCameraPosition);
+  }
 
   // Record the raw-input -> filtered control-point mapping on the
   // mesh's strand motion recipe so SetStrandsVertexMotion() accepts
@@ -1098,10 +1101,13 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
   move(filteredPoints.begin(), filteredPoints.end(), strands.GetPointsArray());
 
   const bool useCameraPosition = true;
-  scene->DefineStrands(shapeName, strands,
-    tessellationType, adaptiveMaxDepth, adaptiveError,
-    solidSideCount, solidCapBottom, solidCapTop,
-    useCameraPosition);
+  {
+    py::gil_scoped_release release;
+    scene->DefineStrands(shapeName, strands,
+      tessellationType, adaptiveMaxDepth, adaptiveError,
+      solidSideCount, solidCapBottom, solidCapTop,
+      useCameraPosition);
+  }
 
   // Record the raw-input -> filtered control-point mapping on the
   // mesh's strand motion recipe so SetStrandsVertexMotion() accepts

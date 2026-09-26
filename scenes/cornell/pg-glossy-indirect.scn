@@ -1,0 +1,37 @@
+# Product-guiding showcase: the front compartment floor is GLOSSY
+# (roughness 0.18), so the usable bounce directions form a lobe around
+# the mirror direction AND must intersect the slit-lit wall patch. Pure
+# BSDF sampling wastes samples outside the lit patch; the learned field
+# concentrates the lobe on it.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -4.0 1.5
+scene.camera.lookat.target = 0.0 2.0 1.0
+scene.camera.fieldofview = 50
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+
+scene.materials.Wall.type = matte
+scene.materials.Wall.kd = 0.7 0.7 0.7
+scene.materials.GlossyFloor.type = glossy2
+scene.materials.GlossyFloor.kd = 0.02 0.02 0.02
+scene.materials.GlossyFloor.ks = 0.6 0.6 0.6
+scene.materials.GlossyFloor.uroughness = 0.18
+scene.materials.GlossyFloor.vroughness = 0.18
+scene.materials.Light.type = matte
+scene.materials.Light.kd = 0.0 0.0 0.0
+scene.materials.Light.emission = 60.0 60.0 60.0
+scene.materials.Light.emission.id = 0
+
+# Room without the floor plane? pg-room contains all walls; we overlay a
+# glossy floor plate inside the front compartment (y in [0,2]).
+scene.objects.Room.material = Wall
+scene.objects.Room.ply = scenes/cornell/pg-room.ply
+scene.objects.Emitter.material = Light
+scene.objects.Emitter.ply = scenes/cornell/pg-light.ply
+
+# Glossy floor plate covering the front compartment floor (y<2 side);
+# z is up in this scene.
+scene.objects.Floor.material = GlossyFloor
+scene.objects.Floor.type = inlinedmesh
+scene.objects.Floor.vertices = -2 0 0.02   2 0 0.02   2 2 0.02   -2 2 0.02
+scene.objects.Floor.faces = 0 1 2  0 2 3

@@ -1634,11 +1634,6 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 				// Seqcheck: the stamp must be unchanged across the
 				// snapshot, else sibling stores raced the read.
 				(stored->pass == p0)) {
-			// The proposal mass counts toward M even when the
-			// reconnected segment turns out occluded (CPU parity:
-			// restirgi.cpp adds nbr->m before the visibility test).
-			mTotal += snap.m;
-
 			float piNew = 0.f;
 			float J = 1.f;
 			bool hasDir = false;
@@ -1684,6 +1679,16 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 						!(candRays[2u * K].flags & RAY_FLAGS_MASKED) &&
 						(candHits[2u * K].meshIndex == NULL_INDEX);
 			if (hasDir && mergeVisible) {
+				// A failed shift (degenerate or occluded reconnected
+				// segment, or an unvalidated vSeq pairing) produces a
+				// sample outside the current target domain - reject it
+				// WITHOUT counting its mass. Adding m anyway inflates
+				// mTotal with draws that could never win here, which
+				// measurably darkens the output (CPU temporal-only on
+				// cornell: -3.5% -> -1.9% vs reference after the same
+				// change in restirgi.cpp).
+				mTotal += snap.m;
+
 				float pdfS;
 				BSDFEvent evS;
 				stEval = BSDF_Evaluate(x1bsdf, stDir, &evS, &pdfS
@@ -1698,7 +1703,10 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			const float bNbr = snap.wSum * ratio;
 			wSum += bNbr;
 			const float r = RestirGI_Hash(baseSeed, 0x41u);
-			if (!haveOut || (r < bNbr / wSum)) {
+			// A zero-weight merge cannot become the winner even when
+			// nothing else was selected (CPU parity: its target is 0
+			// and the resolve would reject it anyway).
+			if ((!haveOut && (bNbr > 0.f)) || (r < bNbr / wSum)) {
 				outDir = stDir;
 				outFcos = stEval;
 				outTarget = piNew;
@@ -1806,8 +1814,6 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			if (nbr->pass != np0)
 				continue;
 
-			mTotal += nSnap.m;
-
 			float3 nbDir = (float3)(0.f, 0.f, 1.f);
 			float J = 1.f;
 			bool hasDir = false;
@@ -1842,6 +1848,11 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			float3 nbEval = BLACK;
 			uint nbEvent = 0u;
 			if (hasDir) {
+				// Failed shifts (degenerate reconnected segment) are
+				// rejected without counting their mass - same rule as
+				// the temporal merge above.
+				mTotal += nSnap.m;
+
 				float pdfS;
 				BSDFEvent evS;
 				nbEval = BSDF_Evaluate(x1bsdf, nbDir, &evS, &pdfS
@@ -1856,7 +1867,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			const float bNbr = nSnap.wSum * ratio;
 			wSum += bNbr;
 			const float r = RestirGI_Hash(baseSeed, 0x60u + k);
-			if (!haveOut || (r < bNbr / wSum)) {
+			if ((!haveOut && (bNbr > 0.f)) || (r < bNbr / wSum)) {
 				outDir = nbDir;
 				outFcos = nbEval;
 				outTarget = piNew;

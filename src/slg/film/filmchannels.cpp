@@ -38,8 +38,15 @@ void Film::FreeChannels() {
 }
 
 void Film::AddChannel(const FilmChannelType type, PropertiesRPtr prop) {
-	if (initialized)
+	if (initialized) {
+		// RenderSession::Parse re-runs Film::Parse on a live film (e.g.
+		// BlendLuxCore's denoiser pipeline refresh): re-requesting an
+		// already-defined channel is a no-op, only genuinely new channels
+		// are impossible past initialization.
+		if (channels.count(type))
+			return;
 		throw runtime_error("It is only possible to add a channel to a Film before initialization");
+	}
 
 	channels.insert(type);
 	switch (type) {

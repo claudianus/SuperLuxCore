@@ -161,6 +161,51 @@ static void LuxCore_KernelCacheFill2(PropertiesRPtr config) {
   KernelCacheFill(config);
 }
 
+// The C++ KernelCacheFill() progress handler is a plain function pointer, so
+// the Python callable has to live in a static trampoline target. Fills are
+// serialized by the mutex (only one progress handler can be live at a time).
+// The callback object is intentionally leaked: static destruction would
+// decref it after interpreter shutdown.
+static std::mutex kernelCacheFillProgressMutex;
+static py::object *kernelCacheFillProgressCallback = new py::object();
+
+static void KernelCacheFillProgressTrampoline(
+		const size_t index, const size_t count) {
+	py::gil_scoped_acquire gil;
+	try {
+		(*kernelCacheFillProgressCallback)(index, count);
+	} catch (py::error_already_set &e) {
+		e.discard_as_unraisable("KernelCacheFill progress callback");
+	}
+}
+
+// Bound with call_guard<gil_scoped_release>: the whole body runs without the
+// GIL, so every Python object access is wrapped in gil_scoped_acquire.
+static void LuxCore_KernelCacheFill3(
+		PropertiesRPtr config, const py::object &progress) {
+	std::lock_guard<std::mutex> lock(kernelCacheFillProgressMutex);
+	if (progress.is_none()) {  // Py_None pointer compare, safe without GIL
+		KernelCacheFill(config);
+		return;
+	}
+
+	{
+		py::gil_scoped_acquire gil;
+		*kernelCacheFillProgressCallback = progress;
+	}
+	try {
+		KernelCacheFill(config, &KernelCacheFillProgressTrampoline);
+	} catch (...) {
+		py::gil_scoped_acquire gil;
+		*kernelCacheFillProgressCallback = py::none();
+		throw;
+	}
+	{
+		py::gil_scoped_acquire gil;
+		*kernelCacheFillProgressCallback = py::none();
+	}
+}
+
 //------------------------------------------------------------------------------
 // OpenVDB helper functions
 //------------------------------------------------------------------------------
@@ -794,7 +839,10 @@ static void Film_GetOutputUInt1(
 
         u_int *buffer = (u_int *)view.buf;
 
-        film.GetOutput<unsigned int>(type, buffer, index, executeImagePipeline);
+        {
+          py::gil_scoped_release release;
+          film.GetOutput<unsigned int>(type, buffer, index, executeImagePipeline);
+        }
 
         PyBuffer_Release(&view);
       } else {
@@ -848,7 +896,10 @@ static void Film_UpdateOutputFloat1(
 
         float *buffer = (float *)view.buf;
 
-        film.UpdateOutput<float>(type, buffer, index, executeImagePipeline);
+        {
+          py::gil_scoped_release release;
+          film.UpdateOutput<float>(type, buffer, index, executeImagePipeline);
+        }
 
         PyBuffer_Release(&view);
       } else {
@@ -880,7 +931,10 @@ static void Film_UpdateOutputFloat1(
               throw std::runtime_error("Film Output not available: " + luxrays::ToString(type));
             }
 
-            film.UpdateOutput<float>(type, bglBuffer->buf.asfloat, index, executeImagePipeline);
+            {
+              py::gil_scoped_release release;
+              film.UpdateOutput<float>(type, bglBuffer->buf.asfloat, index, executeImagePipeline);
+            }
           } else
             throw std::runtime_error("Not enough space in the Blender bgl.Buffer of Film.UpdateOutputFloat() method: " +
                 luxrays::ToString(bglBuffer->dimensions[0] * sizeof(float)) + " instead of " + luxrays::ToString(outputSize));
@@ -991,8 +1045,11 @@ static void Scene_DefineImageMap(
     if (!PyObject_GetBuffer(obj.ptr(), &view, PyBUF_SIMPLE)) {
       if ((size_t)view.len >= width * height * channels * sizeof(float)) {
         float *buffer = (float *)view.buf;
-        scene->DefineImageMap(imgMapName, buffer, gamma, channels,
-            width, height, Scene::DEFAULT, Scene::REPEAT);
+        {
+          py::gil_scoped_release release;
+          scene->DefineImageMap(imgMapName, buffer, gamma, channels,
+              width, height, Scene::DEFAULT, Scene::REPEAT);
+        }
 
         PyBuffer_Release(&view);
       } else {
@@ -1246,7 +1303,10 @@ static void Scene_DefineMesh1(
   }
 
   mesh->SetName(meshName);
-  scene->DefineMesh(std::move(mesh));
+  {
+    py::gil_scoped_release release;
+    scene->DefineMesh(std::move(mesh));
+  }
 }
 
 static void Scene_DefineMesh2(
@@ -1354,7 +1414,10 @@ static void Scene_DefineMeshExt1(
 	}
 
   mesh->SetName(meshName);
-  scene->DefineMesh(std::move(mesh));
+  {
+    py::gil_scoped_release release;
+    scene->DefineMesh(std::move(mesh));
+  }
 }
 
 static void Scene_DefineMeshExt2(
@@ -1580,8 +1643,10 @@ static void Scene_DefineMeshExt3(
 
 
 	// Insert mesh into the scene
-	scene->DefineMesh(std::move(newMesh));
-
+	{
+		py::gil_scoped_release release;
+		scene->DefineMesh(std::move(newMesh));
+	}
 }
 
 static void Scene_SetMeshVertexAOV(
@@ -1591,7 +1656,10 @@ static void Scene_SetMeshVertexAOV(
 	std::vector<float> v;
 	GetArray<float>(data, v);
 
-	scene->SetMeshVertexAOV(meshName, index, v);
+	{
+		py::gil_scoped_release release;
+		scene->SetMeshVertexAOV(meshName, index, v);
+	}
 }
 
 static void Scene_SetMeshTriangleAOV(
@@ -1603,7 +1671,10 @@ static void Scene_SetMeshTriangleAOV(
   std::vector<float> t;
   GetArray<float>(data, t);
 
-  scene->SetMeshTriangleAOV(meshName, index, t);
+  {
+    py::gil_scoped_release release;
+    scene->SetMeshTriangleAOV(meshName, index, t);
+  }
 }
 
 static void Scene_SetMeshAppliedTransformation(
@@ -1612,7 +1683,10 @@ static void Scene_SetMeshAppliedTransformation(
     const py::object &transformation) {
   float mat[16];
   GetMatrix4x4(transformation, mat);
-  scene->SetMeshAppliedTransformation(meshName, mat);
+  {
+    py::gil_scoped_release release;
+    scene->SetMeshAppliedTransformation(meshName, mat);
+  }
 }
 
 // Per-vertex deformation motion blur (E9): `times` is a (S,) float array
@@ -1647,8 +1721,11 @@ static void Scene_SetMeshVertexMotion(
     flatVerts.insert(flatVerts.end(), src, src + (size_t)v.shape(0) * 3);
   }
 
-  scene->SetMeshVertexMotion(meshName,
-      t.data(0), timesCount, flatVerts.data(), flatVerts.size());
+  {
+    py::gil_scoped_release release;
+    scene->SetMeshVertexMotion(meshName,
+        t.data(0), timesCount, flatVerts.data(), flatVerts.size());
+  }
 }
 
 // Strand deformation motion (E9 phase 5b): `times` is a (S,) float
@@ -1684,8 +1761,11 @@ static void Scene_SetStrandsVertexMotion(
     flatPoints.insert(flatPoints.end(), src, src + (size_t)v.shape(0) * 3);
   }
 
-  scene->SetStrandsVertexMotion(meshName,
-      t.data(0), timesCount, flatPoints.data(), flatPoints.size());
+  {
+    py::gil_scoped_release release;
+    scene->SetStrandsVertexMotion(meshName,
+        t.data(0), timesCount, flatPoints.data(), flatPoints.size());
+  }
 }
 
 static void Scene_DefineStrands(
@@ -1874,10 +1954,13 @@ static void Scene_DefineStrands(
   else
     throw std::runtime_error("Tessellation type unknown in method Scene.DefineStrands(): " + tessellationTypeStr);
 
-  scene->DefineStrands(shapeName, strands,
-      tessellationType, adaptiveMaxDepth, adaptiveError,
-      solidSideCount, solidCapBottom, solidCapTop,
-      useCameraPosition);
+  {
+    py::gil_scoped_release release;
+    scene->DefineStrands(shapeName, strands,
+        tessellationType, adaptiveMaxDepth, adaptiveError,
+        solidSideCount, solidCapBottom, solidCapTop,
+        useCameraPosition);
+  }
 }
 
 static void Scene_DuplicateObject(const SceneImplPtr & scene,
@@ -1888,7 +1971,10 @@ static void Scene_DuplicateObject(const SceneImplPtr & scene,
   float mat[16];
   GetMatrix4x4(transformation, mat);
 
-  scene->DuplicateObject(srcObjName, dstObjName, mat, objectID);
+  {
+    py::gil_scoped_release release;
+    scene->DuplicateObject(srcObjName, dstObjName, mat, objectID);
+  }
 }
 
 static void Scene_DuplicateObjectMulti(const SceneImplPtr & scene,
@@ -1943,8 +2029,11 @@ static void Scene_DuplicateObjectMulti(const SceneImplPtr & scene,
   float *transformationsBuffer = (float *)transformationsView.buf;
   u_int *objectIDsBuffer = (u_int *)objectIDsView.buf;
 
-  scene->DuplicateObject(srcObjName, dstObjNamePrefix, count,
-      transformationsBuffer, objectIDsBuffer);
+  {
+    py::gil_scoped_release release;
+    scene->DuplicateObject(srcObjName, dstObjNamePrefix, count,
+        transformationsBuffer, objectIDsBuffer);
+  }
 
   PyBuffer_Release(&transformationsView);
   PyBuffer_Release(&objectIDsView);
@@ -1978,7 +2067,10 @@ static void Scene_DuplicateMotionObject(const SceneImplPtr & scene,
           transVec[transIndex++] = mat[i];
       }
 
-      scene->DuplicateObject(srcObjName, dstObjName, steps, &timesVec[0], &transVec[0], objectID);
+      {
+        py::gil_scoped_release release;
+        scene->DuplicateObject(srcObjName, dstObjName, steps, &timesVec[0], &transVec[0], objectID);
+      }
     } else
       throw std::runtime_error("Wrong data type for the list of transformation values of method Scene.DuplicateObject()");
   } else
@@ -2065,8 +2157,11 @@ static void Scene_DuplicateMotionObjectMulti(const SceneImplPtr & scene,
     float *timesBuffer = (float *)timesView.buf;
     float *transformationsBuffer = (float *)transformationsView.buf;
     u_int *objectIDsBuffer = (u_int *)objectIDsView.buf;
-    scene->DuplicateObject(srcObjName, dstObjName, count, steps, timesBuffer,
-        transformationsBuffer, objectIDsBuffer);
+    {
+      py::gil_scoped_release release;
+      scene->DuplicateObject(srcObjName, dstObjName, count, steps, timesBuffer,
+          transformationsBuffer, objectIDsBuffer);
+    }
 
     PyBuffer_Release(&timesView);
     PyBuffer_Release(&transformationsView);
@@ -2087,7 +2182,10 @@ static void Scene_DeleteObjects(const SceneImplPtr & scene,
       throw std::runtime_error("Unsupported data type included in Scene.DeleteObjects() list: " + objType);
   }
 
-  scene->DeleteObjects(names);
+  {
+    py::gil_scoped_release release;
+    scene->DeleteObjects(names);
+  }
 }
 
 static void Scene_DeleteLights(const SceneImplPtr & scene,
@@ -2104,7 +2202,10 @@ static void Scene_DeleteLights(const SceneImplPtr & scene,
       throw std::runtime_error("Unsupported data type included in Scene.DeleteLights() list: " + objType);
   }
 
-  scene->DeleteLights(names);
+  {
+    py::gil_scoped_release release;
+    scene->DeleteLights(names);
+  }
 }
 
 static void Scene_UpdateObjectTransformation(const SceneImplPtr & scene,
@@ -2113,7 +2214,10 @@ static void Scene_UpdateObjectTransformation(const SceneImplPtr & scene,
 ) {
 	float mat[16];
 	GetMatrix4x4(transformation, mat);
-	scene->UpdateObjectTransformation(objName, mat);
+	{
+		py::gil_scoped_release release;
+		scene->UpdateObjectTransformation(objName, mat);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -2287,8 +2391,15 @@ PYBIND11_MODULE(pyluxcore, m) {
   m.def("AddFileNameResolverPath", &AddFileNameResolverPath);
   m.def("GetFileNameResolverPaths", &GetFileNameResolverPaths);
 
-  m.def("KernelCacheFill", &LuxCore_KernelCacheFill1);
-  m.def("KernelCacheFill", &LuxCore_KernelCacheFill2);
+  // Long running call (compiles all GPU kernels): release the GIL so
+  // Blender's UI thread stays alive, and offer an optional
+  // KernelCacheFill(config, callable(index, count)) progress callback.
+  m.def("KernelCacheFill", &LuxCore_KernelCacheFill1,
+      py::call_guard<py::gil_scoped_release>());
+  m.def("KernelCacheFill", &LuxCore_KernelCacheFill2,
+      py::call_guard<py::gil_scoped_release>());
+  m.def("KernelCacheFill", &LuxCore_KernelCacheFill3,
+      py::call_guard<py::gil_scoped_release>());
 
   //--------------------------------------------------------------------------
   // Property class
@@ -2611,21 +2722,31 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def(
 		py::init(&SceneImpl::Create<luxrays::PropertiesRPtr, luxrays::PropertiesRPtr>),
 		py::keep_alive<1, 2>(),
-		py::keep_alive<1, 3>()
+		py::keep_alive<1, 3>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
     .def(
 		py::init(&SceneImpl::Create<luxrays::PropertiesRPtr>),
 		py::arg("resizePolicyProps") = nullptr,
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
     .def(
 		py::init(&SceneImpl::Create<std::string>),
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
     .def("ToProperties", &luxcore::detail::SceneImpl::ToProperties)
     .def("GetCamera", &Scene_GetCamera)
     .def("GetLightCount", &luxcore::detail::SceneImpl::GetLightCount)
     .def("GetObjectCount", &luxcore::detail::SceneImpl::GetObjectCount)
+    // The scene mutation calls below all release the GIL: BlendLuxCore's
+    // viewport runs them on a session worker thread and a held GIL would
+    // freeze Blender's UI thread for the whole call (mesh uploads, image
+    // loading in Parse(), instancing duplication). Wrappers taking py::
+    // arguments convert their inputs under the GIL first, then release it
+    // inside right before the SceneImpl call; pure C++ signatures use
+    // call_guard<gil_scoped_release> on the binding instead.
     .def("DefineImageMap", &Scene_DefineImageMap)
     .def("IsImageMapDefined", &luxcore::detail::SceneImpl::IsImageMapDefined)
     .def("DefineMesh", &Scene_DefineMesh1)
@@ -2657,7 +2778,8 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("IsMeshDefined", &luxcore::detail::SceneImpl::IsMeshDefined)
     .def("IsTextureDefined", &luxcore::detail::SceneImpl::IsTextureDefined)
     .def("IsMaterialDefined", &luxcore::detail::SceneImpl::IsMaterialDefined)
-    .def("Parse", &luxcore::detail::SceneImpl::Parse, py::keep_alive<1, 2>())
+    .def("Parse", &luxcore::detail::SceneImpl::Parse, py::keep_alive<1, 2>(),
+         py::call_guard<py::gil_scoped_release>())
     .def("DuplicateObject", &Scene_DuplicateObject)
     .def("DuplicateObject", &Scene_DuplicateObjectMulti)
     .def("DuplicateObject", &Scene_DuplicateMotionObject)
@@ -2665,13 +2787,20 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("DeleteObjects", &Scene_DeleteObjects)
     .def("DeleteLights", &Scene_DeleteLights)
     .def("UpdateObjectTransformation", &Scene_UpdateObjectTransformation)
-    .def("UpdateObjectMaterial", &luxcore::detail::SceneImpl::UpdateObjectMaterial)
-    .def("DeleteObject", &luxcore::detail::SceneImpl::DeleteObject)
-    .def("DeleteLight", &luxcore::detail::SceneImpl::DeleteLight)
-    .def("RemoveUnusedImageMaps", &luxcore::detail::SceneImpl::RemoveUnusedImageMaps)
-    .def("RemoveUnusedTextures", &luxcore::detail::SceneImpl::RemoveUnusedTextures)
-    .def("RemoveUnusedMaterials", &luxcore::detail::SceneImpl::RemoveUnusedMaterials)
-    .def("RemoveUnusedMeshes", &luxcore::detail::SceneImpl::RemoveUnusedMeshes)
+    .def("UpdateObjectMaterial", &luxcore::detail::SceneImpl::UpdateObjectMaterial,
+         py::call_guard<py::gil_scoped_release>())
+    .def("DeleteObject", &luxcore::detail::SceneImpl::DeleteObject,
+         py::call_guard<py::gil_scoped_release>())
+    .def("DeleteLight", &luxcore::detail::SceneImpl::DeleteLight,
+         py::call_guard<py::gil_scoped_release>())
+    .def("RemoveUnusedImageMaps", &luxcore::detail::SceneImpl::RemoveUnusedImageMaps,
+         py::call_guard<py::gil_scoped_release>())
+    .def("RemoveUnusedTextures", &luxcore::detail::SceneImpl::RemoveUnusedTextures,
+         py::call_guard<py::gil_scoped_release>())
+    .def("RemoveUnusedMaterials", &luxcore::detail::SceneImpl::RemoveUnusedMaterials,
+         py::call_guard<py::gil_scoped_release>())
+    .def("RemoveUnusedMeshes", &luxcore::detail::SceneImpl::RemoveUnusedMeshes,
+         py::call_guard<py::gil_scoped_release>())
     .def("Save", &luxcore::detail::SceneImpl::Save)
   ;
 
@@ -2680,14 +2809,18 @@ PYBIND11_MODULE(pyluxcore, m) {
   //--------------------------------------------------------------------------
 
   py::class_<luxcore::detail::RenderConfigImpl, py::smart_holder>(m, "RenderConfig")
-    .def(
+    // GIL released in the ctors: engine/device creation can compile the
+    // intersection kernels and would otherwise freeze the calling UI thread.
+	.def(
 		py::init(&RenderConfigImpl::Create<luxrays::PropertiesRPtr>),
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+        py::call_guard<py::gil_scoped_release>()
 	)
     .def(
 		py::init(&RenderConfigImpl::Create<luxrays::PropertiesRPtr, SceneImpl&>),
 		py::keep_alive<1, 2>(),
-		py::keep_alive<1, 3>()
+		py::keep_alive<1, 3>(),
+        py::call_guard<py::gil_scoped_release>()
 	)
     //.def(py::init(&RenderConfig_LoadFile)) TODO
     .def("GetProperties", &luxcore::detail::RenderConfigImpl::GetProperties)
@@ -2718,21 +2851,24 @@ PYBIND11_MODULE(pyluxcore, m) {
   py::class_<luxcore::detail::RenderSessionImpl, py::smart_holder>(m, "RenderSession")
 	.def(
 		py::init<>(&RenderSessionImpl::Create<luxcore::detail::RenderConfigImpl&>),
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
 
 	.def(
 		py::init<>(&RenderSessionImpl::Create
 			<RenderConfigImplRef, std::string&, std::string&>
 		),
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
 
 	.def(
 		py::init<>(&RenderSessionImpl::Create
 			<RenderConfigImpl&, RenderStateImplRPtr&, FilmImplStandalone& >
 		),
-		py::keep_alive<1, 2>()
+		py::keep_alive<1, 2>(),
+		py::call_guard<py::gil_scoped_release>()
 	)
 	//TODO
     //.def("GetRenderConfig", &RenderSession_GetRenderConfig)
@@ -2766,7 +2902,8 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("WaitForDone", &luxcore::detail::RenderSessionImpl::WaitForDone,
          py::call_guard<py::gil_scoped_release>())
     .def("HasDone", &luxcore::detail::RenderSessionImpl::HasDone)
-    .def("Parse", &luxcore::detail::RenderSessionImpl::Parse)
+    .def("Parse", &luxcore::detail::RenderSessionImpl::Parse,
+         py::call_guard<py::gil_scoped_release>())
     .def("GetRenderState", &RenderSession_GetRenderState, py::return_value_policy::take_ownership)
     .def("SaveResumeFile", &luxcore::detail::RenderSessionImpl::SaveResumeFile,
          py::call_guard<py::gil_scoped_release>())

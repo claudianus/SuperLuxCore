@@ -140,13 +140,36 @@ static bool GuidingDiffuse() {
 	return kDiffuse;
 }
 
-static bool GuidingIndirect() {
-	static const bool kIndirect = []() {
-		const char *e = getenv("LUX_PG_INDIRECT");
-		return !e || (atoi(e) != 0);
+// M4b: RIS product-guiding candidate count (env LUX_PG_RISK, default
+// 0 = off; >1 resamples K mixture-proposal draws against the product
+// target f*|cos|*Lhat). The RIS proposal is the same adaptive mixture;
+// K=1 degenerates to the plain mixture path bit-for-bit.
+static int GuidingRisK() {
+	static const int k = []() {
+		const char *e = getenv("LUX_PG_RISK");
+		return e ? atoi(e) : 0;
 	}();
-	return kIndirect;
+	return k;
 }
+
+// Contribution split diagnostic (LUX_PG_CONTRIB): accumulates the film's
+// total direct-light and emission-hit contributions across all paths so
+// a guided/unguided run can be decomposed per technique.
+static std::atomic<double> g_dbgDL{0.0}, g_dbgEmit{0.0};
+static std::atomic<u_int> g_dbgEmitN{0u}, g_dbgDLN{0u}, g_dbgPortalN{0u},
+		g_dbgPortalHitN{0u};
+static const bool kContribDump = (getenv("LUX_PG_CONTRIB") != nullptr);
+static struct ContribDump {
+	~ContribDump() {
+		if (kContribDump)
+			fprintf(stderr, "CONTRIB dl=%.6g emit=%.6g total=%.6g "
+					"dlN=%u emitN=%u portalN=%u portalHitN=%u\n",
+					g_dbgDL.load(), g_dbgEmit.load(),
+					g_dbgDL.load() + g_dbgEmit.load(),
+					g_dbgDLN.load(), g_dbgEmitN.load(),
+					g_dbgPortalN.load(), g_dbgPortalHitN.load());
+	}
+} g_contribDump;
 
 // Is this vertex's BSDF a usable guiding target? The glossiness cutoff
 // exists only to skip near-smooth lobes the coarse field cannot resolve
@@ -154,7 +177,11 @@ static bool GuidingIndirect() {
 // the LUX_PG_DIFFUSE opt-in unreachable (matte reports glossiness 0 and
 // always failed the cutoff). A pure-diffuse bounce is guided when the
 // flag is on; a glossy bounce still needs enough roughness for the field.
-static bool GuidableBsdf(const BSDF &bsdf) {
+// Under RIS product guiding the BSDF-side candidates in the mixture
+// resolve any lobe themselves, so the cutoff relaxes to a thin band
+// above delta (the field only has to cover the directions the BSDF
+// would not try).
+static bool GuidableBsdf(const BSDF &bsdf, const bool ris = false) {
 	// Volume scattering vertices: the phase function ignores the incident
 	// radiance field (isotropic/HG lobes sample blind), so guiding is
 	// always worthwhile; the smooth 128-bin field cannot resolve a
@@ -162,8 +189,9 @@ static bool GuidableBsdf(const BSDF &bsdf) {
 	// mostly BSDF-sampled and MIS keeps any field unbiased.
 	if (bsdf.IsVolume())
 		return true;
-	return ((bsdf.GetEventTypes() & GLOSSY) != 0) ?
-			(bsdf.GetGlossiness() >= GuidingGloss()) : GuidingDiffuse();
+	if ((bsdf.GetEventTypes() & GLOSSY) != 0)
+		return bsdf.GetGlossiness() >= (ris ? .05f : GuidingGloss());
+	return GuidingDiffuse();
 }
 
 static u_int GuidingHash(u_int x) {
@@ -229,6 +257,30 @@ void PathTracer::ResetEyeSampleResults(vector<SampleResult> &sampleResults) {
 // RenderEyeSample methods
 //------------------------------------------------------------------------------
 
+// Adaptive portal share (M5): the technique earns the fraction of the
+// leaf's incident field arriving through the aperture,
+// Sum_i Omega_i * Lhat(d_i) / leafTotal, capped by portalShare. A
+// slit-dominated leaf gets the full share; a leaf lit mostly by
+// interreflection keeps its bounce budget. Falls back to the full
+// share while the field is untrained (early exploration stays useful).
+float PathTracer::PortalShareAt(const Point &p) const {
+	if (!portalAdapt || !(guidingEnable && pathGuidingCache &&
+			pathGuidingCache->CanGuide(p)))
+		return portalShare;
+	const float tot = Max(pathGuidingCache->ReadTotal(p), 1e-9f);
+	float fSum = 0.f;
+	for (u_int i = 0; i < portals.size(); ++i) {
+		const PortalRect &pr = portals[i];
+		const Vector dc = pr.v0 + .5f * (pr.e1 + pr.e2) - p;
+		const float d2 = Max(Dot(dc, dc), 1e-12f);
+		const Vector dn = dc / sqrtf(d2);
+		// rect solid angle ~ projected area / r^2
+		const float omega = fabsf(Dot(dn, pr.n)) / (pr.invArea * d2);
+		fSum += omega * pathGuidingCache->IncidentEstimate(p, dn);
+	}
+	return Clamp(fSum / tot, 0.f, portalShare);
+}
+
 PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
 		const float time,
@@ -236,7 +288,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 		const float u3, const float u4,
 		const EyePathInfo &pathInfo, const Spectrum &pathThroughput,
 		const BSDF &bsdf, SampleResult *sampleResult,
-		const bool useBSDFEVal) const {
+		const bool useBSDFEVal, const float risZhat) const {
 	if (!bsdf.IsDelta()) {
 		// Select the light strategy to use
 		auto& lightStrategy =
@@ -338,15 +390,78 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							// (CanGuide is monotonic, so a DL-time/ bounce-
 							// time flip is a negligible transient.)
 							float bouncePdfW = bsdfPdfW;
-							if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
+							static const bool kRisNoDl =
+									(getenv("LUX_PG_RISDL") != nullptr);
+							static const bool kRisMixPdf =
+									(getenv("LUX_PG_RISMIXPDF") != nullptr);
+							if (risZhat > 0.f && kRisMixPdf) {
+								// RISMIXPDF diagnostic: the bounce-side MIS
+								// density is the winner's mixture pdf - the
+								// same function on the DL side.
+								const float wDl = PathGuidingCache::MixWeight(
+										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
+										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
+								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl *
+										pathGuidingCache->Pdf(bsdf.hitPoint.p,
+											bsdf.hitPoint.shadeN, shadowRay.d,
+											bsdf.IsVolume());
+							} else if (risZhat > 0.f && !kRisNoDl) {
+								// RIS product guiding (M4b): the bounce
+								// technique's effective density at omega is
+								// pHat = t(omega)/zHatMis with t = f|cos|*Lhat
+								// (single-cos convention, matching the
+								// candidate loop) - zHatMis comes from an
+								// independent candidate pool so the density
+								// is decorrelated from the winner selection.
+								float tEval = bsdfEval.Filter();
+								if (bsdf.GetMaterialType() == DISNEY) {
+									const float cosLocal = fabsf(
+											bsdf.GetFrame().ToLocal(shadowRay.d).z);
+									tEval = (cosLocal > 1e-3f) ?
+											bsdfEval.Filter() / cosLocal : 0.f;
+								}
+								static const bool kFlatT = (getenv("LUX_PG_FLATT") != nullptr);
+								static const float kCapT = []() {
+									const char *e = getenv("LUX_PG_CAPT");
+									return e ? (float)atof(e) : 0.f;
+								}();
+								float lhat = kFlatT ? 1.f :
+										pathGuidingCache->IncidentEstimate(
+											bsdf.hitPoint.p, shadowRay.d);
+								if (kCapT > 0.f && lhat > kCapT)
+									lhat = kCapT;
+								bouncePdfW = tEval * lhat / risZhat;
+							} else if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
 								GuidableBsdf(bsdf) &&
 									((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
 									pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
 								const float wDl = PathGuidingCache::MixWeight(
-										pathGuidingCache->ReadTotal(bsdf.hitPoint.p));
+										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
+										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
 								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * pathGuidingCache->Pdf(
 										bsdf.hitPoint.p, bsdf.hitPoint.shadeN, shadowRay.d,
 										bsdf.IsVolume());
+							}
+
+							// Portal bounce technique (M5): the
+							// bounce-side mixture gains
+							// wP*pPortal(d) + (1-wP)*rest wherever the
+							// aperture proposal can fire. Mirrored
+							// predicate: off under RIS (pHat replaces
+							// the rest-mixture), off on the GI-eligible
+							// first vertex, and off on a portal plane.
+							if (!portals.empty() && !bsdf.IsDelta() &&
+									!bsdf.IsVolume() && !(risZhat > 0.f) &&
+									!(restirGIEnable &&
+										pathInfo.depth.depth == 0) &&
+									PortalUsableAt(bsdf.hitPoint.p) &&
+									PortalSideOK(bsdf.hitPoint.p) &&
+									PortalFacingOK(bsdf.hitPoint.p,
+											Vector(bsdf.hitPoint.shadeN))) {
+								const float wP = PortalShareAt(bsdf.hitPoint.p);
+								bouncePdfW = wP *
+										PortalPdfW(bsdf.hitPoint.p, shadowRay.d) +
+										(1.f - wP) * bouncePdfW;
 							}
 
 							if (directLightDepthInfo.GetRRDepth() >= rrDepth) {
@@ -369,6 +484,11 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							const Spectrum incomingRadiance = bsdfEval * (weight * factor) * connectionThroughput * lightRadiance;
 
 							sampleResult->AddDirectLight(light->GetID(), event, pathThroughput, incomingRadiance, 1.f);
+							if (kContribDump) {
+								g_dbgDL.fetch_add(Spectrum(pathThroughput * incomingRadiance).Filter(),
+										std::memory_order_relaxed);
+								g_dbgDLN++;
+							}
 
 							// The first path vertex is not handled by AddDirectLight(). This is valid
 							// for irradiance AOV only if it is not a SPECULAR material.
@@ -563,10 +683,25 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 
 			// MIS between BSDF sampling and direct light sampling
 			weight = PowerHeuristic(pathInfo.lastBSDFPdfW * lightSource->GetAvgPassThroughTransparency(), directPdfW * lightPickProb);
+			static const bool kHitDump = (getenv("LUX_PG_HITDUMP") != nullptr);
+			if (kHitDump)
+				fprintf(stderr, "HIT px=%d py=%d lastPdf=%.4g dlPdf=%.4g "
+						"pick=%.4g w=%.4g emit=%.4g thr=%.4g contrib=%.4g\n",
+						sampleResult->pixelX, sampleResult->pixelY,
+						pathInfo.lastBSDFPdfW, directPdfW, lightPickProb,
+						weight, emittedRadiance.Filter(),
+						pathThroughput.Filter());
 			}
 		} else
 			weight = 1.f;
 
+		if (kContribDump) {
+			g_dbgEmit.fetch_add(Spectrum(pathThroughput * (weight * emittedRadiance)).Filter(),
+					std::memory_order_relaxed);
+			g_dbgEmitN++;
+			if (!portals.empty() && PortalPdfW(ray.o, ray.d) > 0.f)
+				g_dbgPortalHitN++;
+		}
 		sampleResult->AddEmission(bsdf.GetLightID(), pathThroughput, weight * emittedRadiance);
 	}
 }
@@ -652,8 +787,21 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	bool photonGIShowIndirectPathMixUsed = false;
 	bool photonGICausticCacheUsed = false;
 	bool photonGICacheEnabledOnLastHit = false;
-	float radianceVertStart = 0.f;
-	float directVertStart = 0.f;
+	// Path-guiding vertex history (M4c): the incident-radiance estimate
+	// the field at vertex k must learn is everything the continuation
+	// path finds AFTER leaving k - which only exists once the path has
+	// run. Each bounce pushes a pending record; all are flushed with the
+	// final radiance at loop exit. (Recording only the locally-added
+	// radiance - emission+DL at the next vertex - left the field blind
+	// to indirect transport, which is the guide's entire headroom.)
+	struct GuidePending {
+		Point p;            // vertex position the ray left from
+		Vector d;           // outgoing direction taken
+		float invArrival;   // 1 / arrival throughput (incl. bsdf weight)
+		float radianceBase; // radiance.Sum() at departure
+	};
+	GuidePending guidePending[64];
+	u_int guidePendingCount = 0;
 	bool albedoToDo = true;
 	sampleResult.albedo = Spectrum(); // Just in case albedoToDo is never true
 	sampleResult.shadingNormal = Normal();
@@ -661,17 +809,6 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	BSDF bsdf;
 	for (;;) {
 		sampleResult.firstPathVertex = (pathInfo.depth.depth == 0);
-		// Path guiding (P1-3 M1): snapshot the accumulated radiance so the
-		// arrival record below can credit this vertex with its local value
-		// (direct light + emission added during this vertex), normalized by
-		// the arrival throughput into an incident-radiance estimate. (Plain
-		// throughput recording would learn path density, not radiance.)
-		radianceVertStart = sampleResult.radiance.Sum().Filter();
-		directVertStart = sampleResult.directDiffuseReflect.Filter() +
-				sampleResult.directDiffuseTransmit.Filter() +
-				sampleResult.directGlossyReflect.Filter() +
-				sampleResult.directGlossyTransmit.Filter() +
-				sampleResult.emission.Filter();
 		const u_int sampleOffset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
 
 		RayHit eyeRayHit;
@@ -783,6 +920,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					eyeRay, eyeRayHit.t, bsdf, &sampleResult);
 		}
 
+		// Path guiding: the pending record's target is radiance arriving
+		// at the previous vertex BEYOND what NEE there can sample - i.e.
+		// excluding this hit's own emission (a direct hit along the
+		// recorded direction is covered by next-event estimation at the
+		// vertex). Keeping NEE at THIS vertex is correct: that light
+		// needed a bounce to arrive here, unreachable by the previous
+		// vertex's NEE. Direct-dominated leaves then train flat and the
+		// guide simply stays out of NEE's way instead of duplicating it.
+		const float radianceAfterEmission =
+				sampleResult.radiance.Sum().Filter();
+
 		//----------------------------------------------------------------------
 		// Check if I can use the photon cache
 		//----------------------------------------------------------------------
@@ -861,6 +1009,205 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		if (sampleResult.lastPathVertex && !sampleResult.firstPathVertex)
 			break;
 
+		// RIS product guiding (M4b): at a guidable vertex, draw K
+		// candidates from the usual (1-w)*BSDF + w*guide mixture and
+		// resample one proportional to w_i = t(w_i)/p_mix(w_i) with the
+		// product target t(w) = f(w)|cos| * Lhat(w) (Talbot 2005 / GRIS).
+		// The continuation weight is f|cos|*zHat/t(w*) and the bounce
+		// technique density both MIS partners see is pHat(w) = t(w)/zHat
+		// with the path's own zHat = W/K (generalized-MIS convention;
+		// path-local zHat is what keeps the estimator unbiased). K=1
+		// degenerates exactly to the plain mixture draw. Candidates run
+		// BEFORE direct light: DL's MIS weight needs zHat.
+		// Depth 0 stays on ReSTIR-GI/BSDF (firstPathVertex is reserved
+		// there and camera-visible bounces gain nothing from guiding).
+		struct RisState {
+			float zHat = 0.f;        // >0 = active; selection-pool W/K
+			float zHatMis = 0.f;     // independent normalization for MIS
+			Vector dir;
+			Spectrum wt;             // continuation weight f|cos|*zHat/t
+			float pHat = 0.f;        // t(dir)/zHatMis - effective bounce pdf
+			BSDFEvent event = (BSDFEvent)0;
+			float uD0 = 0.f, uD1 = 0.f;
+			bool sideBsdf = false;   // winner came from the BSDF side
+		} ris;
+		if (GuidingRisK() >= 1 && guidingEnable && pathGuidingCache &&
+				!bsdf.IsDelta() && GuidableBsdf(bsdf, true) &&
+				!sampleResult.firstPathVertex &&
+				((int)pathInfo.depth.depth >= Max(1, GuidingMinDepth())) &&
+				pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
+			const int K = Min(GuidingRisK(), 8);
+			const float wG = PathGuidingCache::MixWeight(
+					pathGuidingCache->ReadCount(bsdf.hitPoint.p),
+					pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
+			const u_int salt = (sampleOffset * 2971215073u) ^
+					(sampleResult.pixelX * 73856093u) ^
+					(sampleResult.pixelY * 19349663u) ^
+					(sampler.GetPass() * 83492791u);
+			const bool isVol = bsdf.IsVolume();
+			// Candidate book-keeping (K <= 8): direction, raw eval for t,
+			// own-side event, and the draw uniforms for the shadow-draw
+			// event trick if the winner is field-side.
+			Vector cDir[8];
+			Spectrum cEval[8];
+			BSDFEvent cEvent[8];
+			float cUD0[8], cUD1[8];
+			float cT[8], cW[8], cPMix[8];
+			bool cBsdf[8];
+			// Draw one candidate from the (1-wG)*BSDF + wG*guide mixture
+			// and return its target/proposal weight w = t/pMix (0 = dead
+			// candidate). The candidate state is stored in slot ci only
+			// when ci >= 0 (the normalization pool below discards it).
+			auto candWeight = [&](const u_int cs, const int ci) -> float {
+				const float uSide = GuidingHash(cs ^ 0xa3b19535u) * (1.f / 4294967296.f);
+				const float uD0 = GuidingHash(cs ^ 0x85ebca6bu) * (1.f / 4294967296.f);
+				const float uD1 = GuidingHash(cs ^ 0xc2b2ae35u) * (1.f / 4294967296.f);
+				Vector d;
+				float gPdf, bPdf;
+				BSDFEvent ev;
+				Spectrum eval;
+				bool sideBsdf;
+				if (uSide < wG) {
+					// Guide-side candidate: sample the fitted mixture
+					// (incl. floor) then evaluate the BSDF there.
+					const float uBin = GuidingHash(cs ^ 0x27d4eb2fu) *
+							(1.f / 4294967296.f);
+					if (!pathGuidingCache->Sample(bsdf.hitPoint.p,
+							bsdf.hitPoint.shadeN, uBin, uD0, uD1,
+							&d, &gPdf, isVol) || !(gPdf > 0.f))
+						return 0.f;
+					float revPdf;
+					eval = bsdf.Evaluate(d, &ev, &bPdf, &revPdf);
+					// Normalize to the single-cos convention here so t
+					// is the same function for candidates of both sides
+					// and for the DL-side pHat evaluation (Disney's
+					// Evaluate double-counts the cosine).
+					if (bsdf.GetMaterialType() == DISNEY) {
+						const float cosLocal = fabsf(
+								bsdf.GetFrame().ToLocal(d).z);
+						eval = (cosLocal > 1e-3f) ?
+								eval / cosLocal : Spectrum();
+					}
+					sideBsdf = false;
+				} else {
+					// BSDF-side candidate: Sample returns f*|cos|/p
+					// single-cos for all materials - recover f*|cos|
+					// and keep the draw's own event.
+					float cosd;
+					eval = bsdf.Sample(&d, uD0, uD1, &bPdf, &cosd, &ev) * bPdf;
+					sideBsdf = true;
+					if (eval.Black() || !(bPdf > 0.f))
+						return 0.f;
+					gPdf = pathGuidingCache->Pdf(bsdf.hitPoint.p,
+							bsdf.hitPoint.shadeN, d, isVol);
+				}
+				const float pMix = (1.f - wG) * bPdf + wG * gPdf;
+				if (!(pMix > 0.f))
+					return 0.f;
+				// Target t = f|cos| * Lhat (single-cos convention on
+				// both candidate sides and at the DL evaluation, so
+				// pHat = t/zHat is one consistent density).
+				// Diagnostic LUX_PG_FLATT flattens the target to f|cos|
+				// alone (BSDF-only product resampling) to bisect bias.
+				static const bool kFlatT = (getenv("LUX_PG_FLATT") != nullptr);
+				static const float kCapT = []() {
+					const char *e = getenv("LUX_PG_CAPT");
+					return e ? (float)atof(e) : 0.f;
+				}();
+				float lhat = kFlatT ? 1.f :
+						pathGuidingCache->IncidentEstimate(bsdf.hitPoint.p, d);
+				if (kCapT > 0.f && lhat > kCapT)
+					lhat = kCapT;
+				const float t = eval.Filter() * lhat;
+				if (ci >= 0) {
+					cDir[ci] = d;
+					cEval[ci] = eval;
+					cEvent[ci] = ev;
+					cUD0[ci] = uD0;
+					cUD1[ci] = uD1;
+					cBsdf[ci] = sideBsdf;
+					cT[ci] = t;
+					cPMix[ci] = pMix;
+				}
+				static const bool kRisDump2 =
+						(getenv("LUX_PG_RISDUMP2") != nullptr);
+				if (kRisDump2 && ci >= 0 &&
+						sampleResult.pixelX == 320 && sampleResult.pixelY == 180)
+					fprintf(stderr, "CAND d%d ci%d side%d eval=%.4g "
+							"lhat=%.4g pMix=%.4g w=%.4g\n",
+							(int)pathInfo.depth.depth, ci, (int)sideBsdf,
+							eval.Filter(), t / Max(eval.Filter(), 1e-20f),
+							pMix, t / pMix);
+				return t / pMix;
+			};
+			float wSum = 0.f;
+			for (int ci = 0; ci < K; ++ci)
+				wSum += (cW[ci] = candWeight(salt ^ (u_int)(ci * 0x9e3779b9u), ci));
+			if (wSum > 0.f) {
+				// Resample proportional to the weights.
+				const float uPick = GuidingHash(salt ^ 0x165667b1u) *
+						(1.f / 4294967296.f) * wSum;
+				float acc = 0.f;
+				int sel = -1;
+				for (int ci = 0; ci < K; ++ci) {
+					acc += cW[ci];
+					if (uPick <= acc && cW[ci] > 0.f) {
+						sel = ci;
+						break;
+					}
+				}
+				if (sel >= 0) {
+					ris.zHat = wSum / K;
+					ris.dir = cDir[sel];
+					ris.uD0 = cUD0[sel];
+					ris.uD1 = cUD1[sel];
+					ris.sideBsdf = cBsdf[sel];
+					ris.event = cEvent[sel];
+					// Continuation weight f|cos|*zHat/t uses the SELECTION
+					// pool's own zHat (that is what makes the resampled
+					// estimator unbiased).
+					ris.wt = cEval[sel] * (ris.zHat / cT[sel]);
+					// ...but the MIS density pHat = t/zHatMis must use an
+					// INDEPENDENT normalization: conditioning on
+					// "omega* won the resample" tilts the selection pool's
+					// own W low for exactly the directions that reach a
+					// light (selection prob w/W), which inflated pHat on
+					// emitter-hit paths and showed up as a +14% bright
+					// halo on pg-indirect-slit. A second candidate pool
+					// drawn with a different salt decorrelates it.
+					float wSumM = 0.f;
+					for (int ci = 0; ci < K; ++ci)
+						wSumM += candWeight(
+								salt ^ (0x51ab3d29u + (u_int)ci * 0x85ebca6bu), -1);
+					ris.zHatMis = (wSumM > 0.f) ? (wSumM / K) : ris.zHat;
+					// Diagnostic LUX_PG_RISMIXPDF: use the winner's mixture
+					// pdf as the MIS density instead of pHat=t/zHatMis -
+					// bisects whether bias enters via the pHat MIS pair.
+					static const bool kRisMixPdf =
+							(getenv("LUX_PG_RISMIXPDF") != nullptr);
+					ris.pHat = kRisMixPdf ? cPMix[sel] : (cT[sel] / ris.zHatMis);
+					static const bool kRisDumpW = (getenv("LUX_PG_RISWT") != nullptr);
+					if (kRisDumpW && ris.wt.Filter() > 4.f)
+						fprintf(stderr, "BIGWT px%d py%d d%d wt=%.4g "
+								"zHat=%.4g t=%.4g eval=%.4g\n",
+								sampleResult.pixelX, sampleResult.pixelY,
+								(int)pathInfo.depth.depth, ris.wt.Filter(),
+								ris.zHat, cT[sel], cEval[sel].Filter());
+					static const bool kRisDump = (getenv("LUX_PG_RISDUMP") != nullptr);
+					if (kRisDump && (sampleResult.pixelX == 320) &&
+							(sampleResult.pixelY == 180))
+						fprintf(stderr, "RIS d%d side%d sel%d zHat=%.4g "
+								"zHatMis=%.4g pHat=%.4g eval=%.4g t=%.4g "
+								"pMix=%.4g wt=%.4g dir=(%.3f,%.3f,%.3f)\n",
+								(int)pathInfo.depth.depth, (int)ris.sideBsdf, sel,
+								ris.zHat, ris.zHatMis, ris.pHat,
+								cEval[sel].Filter(), cT[sel], cPMix[sel],
+								ris.wt.Filter(),
+								ris.dir.x, ris.dir.y, ris.dir.z);
+				}
+			}
+		}
+
 		const DirectLightResult directLightResult = DirectLightSampling(
 				device, scene,
 				eyeRay.time,
@@ -870,7 +1217,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				sampler.GetSample(sampleOffset + 4),
 				sampler.GetSample(sampleOffset + 5),
 				pathInfo, 
-				pathThroughput, bsdf, &sampleResult);
+				pathThroughput, bsdf, &sampleResult, true, ris.zHatMis);
 
 		if (sampleResult.lastPathVertex)
 			break;
@@ -929,6 +1276,34 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						giSelected = true;
 					}
 				}
+				// Portal-guided bounce sampling (M5): with probability
+				// portalShare the bounce direction is proposed by aiming
+				// at a uniform point on an artist-placed aperture rect -
+				// a directional technique with analytic solid-angle
+				// density, folded into the same one-sample MIS as the
+				// BSDF/guide mixture. Mutually exclusive with RIS (pHat
+				// already replaces the whole rest-mixture) and with the
+				// ReSTIR-GI-eligible first vertex (giPdfW owns the books
+				// there - mirrored by the DL-side gate on depth==0).
+				const bool portalOK = !portals.empty() && !bsdf.IsDelta() &&
+						!bsdf.IsVolume() && (ris.zHat <= 0.f) &&
+						!(restirGIEnable && sampleResult.firstPathVertex) &&
+						PortalUsableAt(bsdf.hitPoint.p) &&
+						PortalSideOK(bsdf.hitPoint.p) &&
+						PortalFacingOK(bsdf.hitPoint.p,
+								Vector(bsdf.hitPoint.shadeN));
+				// Adaptive portal share (M5): the technique earns the
+				// fraction of the leaf's incident field arriving through
+				// the aperture - Sum_i Omega_i * Lhat(d_i) / leaf total.
+				// A slit-dominated leaf gets the full share; a leaf lit
+				// mostly by interreflection keeps its bounce budget.
+				const float wPortal = portalOK ? PortalShareAt(bsdf.hitPoint.p) : 0.f;
+				const u_int portalSalt = (sampleResult.pixelX * 2654435761u) ^
+						(sampleResult.pixelY * 2246822519u) ^
+						(sampler.GetPass() * 3266489917u) ^
+						(sampleOffset * 668265263u);
+				const float uPortal = GuidingHash(portalSalt) * (1.f / 4294967296.f);
+				const bool takePortal = (wPortal > 0.f) && (uPortal < wPortal);
 				// Path guiding (P1-3 M1, CPU only): train on every
 				// non-delta arrival, but guide glossy bounces only.
 				// Rationale: diffuse cosine-BSDF sampling is already
@@ -952,12 +1327,19 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 
 				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
 				// M2c adaptive mixture: selection probability from the
-				// read-side (frozen-in-round) cell total, so bounce-time
-				// and DL-time weights agree. Any w in (0,1) is exact.
+				// read-side (frozen-in-round) leaf record count, so
+				// bounce-time and DL-time weights agree. Any w in (0,1)
+				// is exact.
 				const float wGuide = (guidingEnable && tryGuide) ?
 						PathGuidingCache::MixWeight(
-							pathGuidingCache->ReadTotal(bsdf.hitPoint.p)) : .5f;
-				const bool takeGuideSide = (uSelRaw < wGuide);
+							pathGuidingCache->ReadCount(bsdf.hitPoint.p),
+							pathGuidingCache->ReadPeak(bsdf.hitPoint.p)) : .5f;
+				// Diagnostic: LUX_PG_NOBOUNCE keeps the DL-side mixture
+				// pdf but never takes the guide side at the bounce -
+				// isolates regression caused by the DL MIS weight vs
+				// the bounce proposal itself.
+				static const bool kNoBounce = (getenv("LUX_PG_NOBOUNCE") != nullptr);
+				const bool takeGuideSide = !kNoBounce && (uSelRaw < wGuide);
 				// Both mixture sides must rescale the selector to a full
 				// [0,1) conditional uniform. Reusing the raw draw on the
 				// BSDF side would restrict it to [0,.5) (!takeGuideSide
@@ -966,36 +1348,33 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				const float uSelRescaled = takeGuideSide ?
 						uSelRaw / Max(wGuide, 1e-6f) :
 						(uSelRaw - wGuide) / Max(1.f - wGuide, 1e-6f);
-				if (pathGuidingCache && !bsdf.IsDelta()) {
-					// Incident-radiance training target: local value added
-					// at this vertex (direct light + emission since vertex
-					// start), divided by the arrival throughput. Unbiased
-					// incident estimate; Record clamps fireflies.
-					// M2c (env LUX_PG_INDIRECT=1): train on indirect only
-					// (total minus direct light added this vertex). DL
-					// covers direct better than any guide; the guide's
-					// headroom is indirect transport, and a direct-peak
-					// field only duplicates DL's job at 50% cost.
+				// Records train the field at the vertex the ray LEFT.
+				// depth.depth==0 pushes a record at the camera origin -
+				// nothing ever queries there (camera rays are not BSDF-
+				// sampled), so skip it and spend the budget on surfaces.
+				if (pathGuidingCache && !bsdf.IsDelta() &&
+						pathInfo.depth.depth >= 1) {
+					// Incident-radiance training target (Muller et al.
+					// 2017): the field at the vertex the ray LEFT
+					// (eyeRay.o) learns the radiance arriving along
+					// eyeRay.d - everything the continuation path finds
+					// from this vertex onward, known only at path end.
+					// Push a pending record; flushed at loop exit.
+					// (The direct/emission accumulators only fill at the
+					// first path vertex, so a per-vertex "indirect-only"
+					// subtraction is not recoverable here; the full Li
+					// target is the paper's estimator anyway - MIS keeps
+					// NEE-covered directions unbiased.)
 					const float arrival = Max(pathThroughput.Filter(), 1e-3f);
-					float localValue = sampleResult.radiance.Sum().Filter() - radianceVertStart;
-					if (GuidingIndirect()) {
-						const float dlAdded = sampleResult.directDiffuseReflect.Filter() +
-								sampleResult.directDiffuseTransmit.Filter() +
-								sampleResult.directGlossyReflect.Filter() +
-								sampleResult.directGlossyTransmit.Filter() +
-								sampleResult.emission.Filter() - directVertStart;
-						localValue -= dlAdded;
+					if (guidePendingCount < 64u) {
+						GuidePending &r = guidePending[guidePendingCount++];
+						r.p = eyeRay.o;
+						r.d = eyeRay.d;
+						r.invArrival = 1.f / arrival;
+						r.radianceBase = radianceAfterEmission;
 					}
-					// Incident-radiance convention (Muller et al. 2017):
-					// the field at x_{k-1} stores "direction eyeRay.d found
-					// localValue at x_k" - the outgoing direction of the
-					// vertex that sampled it, not the incoming direction
-					// of this vertex (which would learn the transport
-					// direction reversed, guiding paths back along the
-					// camera chain instead of toward the radiance).
-					pathGuidingCache->Record(eyeRay.o, eyeRay.d,
-							localValue / arrival);
-					if (guidingEnable && tryGuide && takeGuideSide && !giSelected) {
+					if (guidingEnable && tryGuide && takeGuideSide &&
+							!giSelected && !takePortal && ris.zHat <= 0.f) {
 						float guidePdfW;
 						Vector guideDir;
 						// Sample() is total under tryGuide (table miss falls
@@ -1049,15 +1428,25 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 							// which is single-cos like the other materials'
 							// Evaluate). Reduce to the single-cos numerator the
 							// mixture needs (upstream DL quirk, out of scope).
-							const float cosLocal = fabsf(bsdf.GetFrame().ToLocal(guideDir).z);
+							// The division must apply to DISNEY ONLY: every other
+							// Evaluate already returns single-cos f*|cos| and
+							// dividing by cosLocal would strip the cosine,
+							// over-brightening guided bounces by ~1/cos.
 							// Volume BSDFs carry no cosine factor at all:
 							// Evaluate already returns phase*albedo.
-							const Spectrum guideEval = bsdf.IsVolume() ? guideEvalDouble :
-									Spectrum((cosLocal > 1e-3f) ? guideEvalDouble / cosLocal : Spectrum());
+							const float cosLocal = fabsf(bsdf.GetFrame().ToLocal(guideDir).z);
+							const Spectrum guideEval = (bsdf.GetMaterialType() == DISNEY) ?
+									Spectrum((cosLocal > 1e-3f) ? guideEvalDouble / cosLocal : Spectrum()) :
+									guideEvalDouble;
 							if (!guideEval.Black()) {
 								// bsdfEval already holds f * cos (like the
 								// BSDF branch factor); divide by the mixture.
-								const float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
+								// The portal share wraps the rest-mixture
+								// symmetric to the BSDF side below.
+								const float mixPdfW = wPortal * PortalPdfW(
+										bsdf.hitPoint.p, guideDir) +
+										(1.f - wPortal) *
+										((1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW);
 								if (mixPdfW > 0.f) {
 									sampledDir = guideDir;
 									bsdfSample = guideEval / mixPdfW;
@@ -1089,32 +1478,126 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						}
 					}
 				}
+				if (ris.zHat > 0.f && !giSelected) {
+					// RIS product-guiding winner (drawn pre-DL): the
+					// continuation weight is f|cos|*zHat/t(w*) - the BSDF
+					// factor that the field-only mixture was missing.
+					// pHat uses the INDEPENDENT normalization zHatMis and
+					// is the density the DL and emitter-hit MIS partners
+					// already see (the weights stay a consistent pair).
+					sampledDir = ris.dir;
+					bsdfPdfW = ris.pHat;
+					bsdfSample = ris.wt;
+					cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN, ris.dir));
+					if (ris.sideBsdf)
+						bsdfEvent = ris.event;
+					else {
+						// Field-side winner: shadow BSDF draw with the
+						// candidate's own uniforms for single-lobe event
+						// bookkeeping (same trick as the mixture path).
+						Vector discardDir;
+						float discardPdfW, discardCos;
+						BSDFEvent shadowEvent = (BSDFEvent)0;
+						const Spectrum discardEval = bsdf.Sample(&discardDir,
+								ris.uD0, ris.uD1,
+								&discardPdfW, &discardCos, &shadowEvent);
+						bsdfEvent = discardEval.Black() ? ris.event : shadowEvent;
+					}
+					guided = true;
+				}
+				if (takePortal) {
+					// Portal proposal (M5): aim at a uniform point on a
+					// chosen aperture rect. The direction's marginal
+					// density is wP*PortalPdfW + (1-wP)*restPdfW - the
+					// rest term evaluated exactly as the BSDF/guide
+					// sides below (single-cos f|cos| convention).
+					const float uIdx = GuidingHash(portalSalt ^ 0x9e3779b9u)
+							* (1.f / 4294967296.f);
+					const float uPU = GuidingHash(portalSalt ^ 0x85ebca6bu)
+							* (1.f / 4294967296.f);
+					const float uPV = GuidingHash(portalSalt ^ 0xc2b2ae35u)
+							* (1.f / 4294967296.f);
+					const PortalRect &pr = portals[Min<u_int>(
+							(u_int)(uIdx * portals.size()), portals.size() - 1)];
+					sampledDir = Normalize(
+							pr.SamplePoint(uPU, uPV) - bsdf.hitPoint.p);
+					if (kContribDump)
+						g_dbgPortalN++;
+					BSDFEvent pEvent;
+					float pBsdfPdfW, pRevPdfW;
+					Spectrum pEval = bsdf.Evaluate(sampledDir,
+							&pEvent, &pBsdfPdfW, &pRevPdfW);
+					// Disney double-cos correction, same as the guide
+					// and RIS candidate evaluations.
+					if (bsdf.GetMaterialType() == DISNEY) {
+						const float cosLocal = fabsf(
+								bsdf.GetFrame().ToLocal(sampledDir).z);
+						pEval = (cosLocal > 1e-3f) ? pEval / cosLocal : Spectrum();
+					}
+					float restPdfW = pBsdfPdfW;
+					if (guidingEnable && tryGuide && !kNoBounce)
+						restPdfW = (1.f - wGuide) * pBsdfPdfW +
+								wGuide * pathGuidingCache->Pdf(bsdf.hitPoint.p,
+										bsdf.hitPoint.shadeN, sampledDir,
+										bsdf.IsVolume());
+					const float mixPdfW = wPortal *
+							PortalPdfW(bsdf.hitPoint.p, sampledDir) +
+							(1.f - wPortal) * restPdfW;
+					if (!pEval.Black() && (mixPdfW > 0.f)) {
+						bsdfSample = pEval / mixPdfW;
+						bsdfPdfW = mixPdfW;
+						cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN,
+								sampledDir));
+						// Single-lobe event bookkeeping via a shadow BSDF
+						// draw (same convention as the guide side).
+						Vector discardDir;
+						float discardPdfW, discardCos;
+						BSDFEvent shadowEvent = (BSDFEvent)0;
+						const Spectrum discardEval = bsdf.Sample(&discardDir,
+								GuidingHash(portalSalt ^ 0x27d4eb2fu) * (1.f / 4294967296.f),
+								GuidingHash(portalSalt ^ 0x165667b1u) * (1.f / 4294967296.f),
+								&discardPdfW, &discardCos, &shadowEvent);
+						bsdfEvent = discardEval.Black() ? pEvent : shadowEvent;
+					} else {
+						// Valid portal draw, zero BSDF contribution (e.g.
+						// below the shading hemisphere): kill the path
+						// rather than resample under mixture weights.
+						bsdfSample = Spectrum();
+					}
+					guided = true;
+				}
 				if (!guided && !giSelected) {
 					// Inside the mixture (tryGuide) either side uses the
 					// rescaled conditional uniform (a full [0,1) uniform
 					// given the selector outcome); elsewhere the raw draw
 					// keeps stock sampler behavior bit-for-bit.
-					const float uBsdf = (guidingEnable && tryGuide) ?
+					const float uBsdf = (guidingEnable && tryGuide && !kNoBounce) ?
 							uSelRescaled : sampler.GetSample(sampleOffset + 6);
 					bsdfSample = bsdf.Sample(&sampledDir,
 							uBsdf,
 							sampler.GetSample(sampleOffset + 7),
 							&bsdfPdfW, &cosSampledDir, &bsdfEvent);
-					if (guidingEnable && tryGuide) {
+					if ((guidingEnable && tryGuide && !kNoBounce) || portalOK) {
 						// Every BSDF-side sample under tryGuide (whichever
 						// way the selector fell) must be reweighted to the
 						// mixture: one-sample MIS divides by the marginal
 						// sampling density on both sides. Gating this on
 						// takeGuideSide instead leaves the !take side at
 						// full BSDF weight (bias).
-						const float guidePdfW = pathGuidingCache->Pdf(
-								bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir,
-								bsdf.IsVolume());
-						// The mixture denominator must use the actual
-						// selection probabilities (wGuide), not a fixed
-						// 50/50 split - the two differ whenever MixWeight
-						// adapts to the cell total (bias).
-						const float mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
+						float mixPdfW = bsdfPdfW;
+						if (guidingEnable && tryGuide && !kNoBounce) {
+							const float guidePdfW = pathGuidingCache->Pdf(
+									bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir,
+									bsdf.IsVolume());
+							// The mixture denominator must use the actual
+							// selection probabilities (wGuide), not a fixed
+							// 50/50 split - the two differ whenever MixWeight
+							// adapts to the cell total (bias).
+							mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
+						}
+						if (portalOK)
+							mixPdfW = wPortal * PortalPdfW(bsdf.hitPoint.p,
+									sampledDir) + (1.f - wPortal) * mixPdfW;
 						if (mixPdfW > 0.f) {
 							// bsdfSample here holds f * cos / bsdfPdfW
 							// (material convention); reweight to the mixture.
@@ -1161,6 +1644,20 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			sampleResult.irradiancePathThroughput *= bsdfSample;
 
 		eyeRay.Update(bsdf.GetRayOrigin(sampledDir), sampledDir);
+	}
+
+	// Flush deferred path-guiding records: each stored vertex is credited
+	// with the radiance the continuation actually found along its outgoing
+	// direction (the Muller incident-radiance estimate). Records only
+	// shape the guide - never the estimator weights - so an imperfect
+	// target costs variance, never correctness.
+	if (pathGuidingCache && guidePendingCount > 0u) {
+		const float finalRadiance = sampleResult.radiance.Sum().Filter();
+		for (u_int i = 0; i < guidePendingCount; ++i) {
+			const GuidePending &r = guidePending[i];
+			pathGuidingCache->Record(r.p, r.d,
+					(finalRadiance - r.radianceBase) * r.invArrival);
+		}
 	}
 
 	sampleResult.rayCount += static_cast<float>(device.GetTotalRaysCount() - deviceRayCount);
@@ -2093,6 +2590,50 @@ void PathTracer::ParseOptions(
 		SLG_LOG("WARNING: path.spectral.upsampling=jh2019 has no effect "
 			"without path.spectral.enable=1");
 
+	// Portal-guided bounce sampling (M5): path.portal.<i> = 12 floats
+	// (4 corners, CCW) define a planar rect marking a light-carrying
+	// aperture; path.portal.weight is its one-sample MIS share.
+	portalShare = Clamp(cfg.Get(defaultProps.Get("path.portal.weight")).Get<double>(), 0.0, 1.0);
+	portals.clear();
+	{
+		static const float envW = []() {
+			const char *e = getenv("LUX_PG_PORTALW");
+			return e ? (float)atof(e) : -1.f;
+		}();
+		if (envW >= 0.f)
+			portalShare = envW;
+		portalSideGate = getenv("LUX_PG_PORTALSIDE") ?
+				(float)atof(getenv("LUX_PG_PORTALSIDE")) : 0.f;
+		portalAdapt = getenv("LUX_PG_PORTALADAPT") ?
+				(atoi(getenv("LUX_PG_PORTALADAPT")) != 0) : true;
+		const int portalCount = Max(0, cfg.Get(defaultProps.Get("path.portal.count")).Get<int>());
+		for (int i = 0; i < portalCount; ++i) {
+			const Property pp = cfg.Get(Property(
+					std::string("path.portal.") + ToString(i))(0.f));
+			if (pp.GetSize() < 12u)
+				throw runtime_error("path.portal." + ToString(i) +
+						" needs 12 floats (4 CCW corners)");
+			const Point c0(pp.Get<float>(0), pp.Get<float>(1), pp.Get<float>(2));
+			const Point c1(pp.Get<float>(3), pp.Get<float>(4), pp.Get<float>(5));
+			const Point c3(pp.Get<float>(9), pp.Get<float>(10), pp.Get<float>(11));
+			PortalRect pr;
+			pr.v0 = c0;
+			pr.e1 = c1 - c0;
+			pr.e2 = c3 - c0;
+			const Vector cr = Cross(pr.e1, pr.e2);
+			const float area = cr.Length();
+			if (!(area > 0.f))
+				throw runtime_error("path.portal." + ToString(i) + " has zero area");
+			pr.invArea = 1.f / area;
+			pr.n = cr / area;
+			pr.g11 = Dot(pr.e1, pr.e1);
+			pr.g12 = Dot(pr.e1, pr.e2);
+			pr.g22 = Dot(pr.e2, pr.e2);
+			pr.invDet = 1.f / (pr.g11 * pr.g22 - pr.g12 * pr.g12);
+			portals.push_back(pr);
+		}
+	}
+
 	// ReSTIR GI (G1, CPU): per-pixel first-bounce reservoir. The store
 	// itself is engine-owned; only the toggles live here.
 	restirGIEnable = cfg.Get(defaultProps.Get("path.restir.gi.enable")).Get<bool>();
@@ -2162,6 +2703,8 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
+			cfg.Get(GetDefaultProps()->Get("path.portal.count")) <<
+			cfg.Get(GetDefaultProps()->Get("path.portal.weight")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.candidates")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.temporal.enable")) <<
@@ -2180,6 +2723,15 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.type")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.glossinessthreshold")) <<
 			*Sampler::ToProperties(cfg);
+
+	// Dynamic per-portal rect keys (path.portal.<i>)
+	const int portalCount = Max(0,
+			cfg.Get(GetDefaultProps()->Get("path.portal.count")).Get<int>());
+	for (int i = 0; i < portalCount; ++i) {
+		const std::string key = "path.portal." + ToString(i);
+		if (cfg.IsDefined(key))
+			props << cfg.Get(key);
+	}
 
 	return props_ptr;
 }
@@ -2213,6 +2765,8 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.mnee.seedcache")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
+			Property("path.portal.count")(0) <<
+			Property("path.portal.weight")(.3f) <<
 			Property("path.restir.gi.enable")(false) <<
 			Property("path.restir.gi.candidates")(4) <<
 			Property("path.restir.gi.temporal.enable")(true) <<

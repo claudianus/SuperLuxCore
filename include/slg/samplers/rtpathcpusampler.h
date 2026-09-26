@@ -43,7 +43,7 @@ public:
 		u_int x, y;
 	};
 
-	RTPathCPUSamplerSharedData(FilmPtr flm);
+	RTPathCPUSamplerSharedData(FilmPtr flm, const u_int zoomFactor);
 	virtual ~RTPathCPUSamplerSharedData() { }
 
 	virtual void Reset();
@@ -58,6 +58,11 @@ public:
 	std::atomic<u_int> step;
 	u_int filmSubRegion[4], filmSubRegionWidth, filmSubRegionHeight;
 	std::vector<PixelCoord> pixelRenderSequence;
+	// Coarse first-frame pixels (zoomFactor-spaced, subregion-local coords)
+	// in shuffled order: the preview pass covers the whole image at once
+	// instead of filling rows bottom-to-top.
+	u_int zoomFactor;
+	std::vector<PixelCoord> firstFrameSequence;
 };
 
 //------------------------------------------------------------------------------
