@@ -127,9 +127,13 @@ public:
 	// bitcode module, then prunes + compiles each __kernel to its own
 	// SPIR-V in parallel (internalize+globaldce via opt, clspv -x ir).
 	// cacheKey locates <key>-<kernel>.spv / .map in the vkcache dir.
+	// kernelBasePaths overrides that with each kernel's resolved module
+	// path base (per-kernel pruned-module hash — an edit to kernel A no
+	// longer invalidates kernel B's .spv).
 	std::string cacheDir;
 	std::string cacheKey;
 	std::vector<std::string> kernelNames;
+	std::map<std::string, std::string> kernelBasePaths;
 
 	// Per-kernel argument layout parsed from clspv's descriptor map:
 	// for kernel arg index i -> role + descriptor binding or POD offset.

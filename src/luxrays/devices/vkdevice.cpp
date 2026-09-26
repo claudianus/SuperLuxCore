@@ -711,11 +711,40 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 	if (prog->kernelNames.empty())
 		throw runtime_error(programName + ": no __kernel entry points in bitcode");
 
+	// Per-kernel cache keys hash the PRUNED module, not the whole program:
+	// editing kernel A (or a helper it does not call) leaves the pruned
+	// modules of the other kernels bit-identical, so a source edit only
+	// recompiles the kernels whose call graph actually changed instead
+	// of all of them.
 	vector<string> todo;
+	map<string, string> prunedBCs;
 	for (const string &k : prog->kernelNames) {
-		const string spvPath = cacheDir + "/" + hash + "-" + k + ".spv";
-		const string mapPath = cacheDir + "/" + hash + "-" + k + ".map";
-		if (stat(spvPath.c_str(), &st) != 0 || stat(mapPath.c_str(), &st) != 0)
+		const string prunedBC = cacheDir + "/" + hash + "-" + k + ".pruned.bc";
+		struct stat s3;
+		if (stat(prunedBC.c_str(), &s3) != 0) {
+			ostringstream cmd;
+			// internalize keeps only this kernel external; on the
+			// annotations-stripped input globaldce drops all other
+			// kernels and their call graphs.
+			cmd << "\"" << GetOptPath() << "\" \"" << prunedLL << "\""
+				<< " -passes='internalize,globaldce'"
+				<< " -internalize-public-api-list=" << k
+				<< " -o \"" << prunedBC << "\"";
+			if (system(cmd.str().c_str()) != 0 ||
+					stat(prunedBC.c_str(), &s3) != 0)
+				throw runtime_error(programName +
+						": opt internalize/globaldce failed for " + k);
+		}
+		prunedBCs[k] = prunedBC;
+
+		ifstream in(prunedBC, ios::binary);
+		const string khash = oclKernelPersistentCache::HashString(
+				string(istreambuf_iterator<char>(in),
+						istreambuf_iterator<char>()));
+		const string kbase = cacheDir + "/vkk2-" + k + "-" + khash;
+		prog->kernelBasePaths[k] = kbase;
+		if (stat((kbase + ".spv").c_str(), &st) != 0 ||
+				stat((kbase + ".map").c_str(), &st) != 0)
 			todo.push_back(k);
 	}
 	LR_LOG(deviceContext, "[" << programName << "] " << prog->kernelNames.size()
@@ -757,25 +786,18 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 			pool.emplace_back([&, this]() {
 				for (u_int i = next++; i < todo.size(); i = next++) {
 					const string &k = todo[i];
-					const string kbase = cacheDir + "/" + hash + "-" + k;
+					const string kbase = prog->kernelBasePaths[k];
 					ostringstream cmd;
-					// internalize keeps only this kernel external; on the
-					// annotations-stripped input globaldce can finally drop
-					// all other kernels and their call graphs, so each .spv
-					// has exactly one entry point and clspv only compiles
-					// this kernel's reachable code.
-					cmd << "\"" << GetOptPath() << "\" \"" << prunedLL << "\""
-						<< " -passes='internalize,globaldce'"
-						<< " -internalize-public-api-list=" << k
-						<< " -o \"" << kbase << ".bc\" && "
-						<< "\"" << GetClspvPath() << "\" -x ir" << flags
-						<< " \"" << kbase << ".bc\" -o \"" << kbase << ".spv\" && "
+					// The pruned single-entry module was already produced
+					// above; clspv only compiles this kernel's reachable
+					// code, so each .spv has exactly one entry point.
+					cmd << "\"" << GetClspvPath() << "\" -x ir" << flags
+						<< " \"" << prunedBCs[k] << "\" -o \"" << kbase << ".spv\" && "
 						// -d: the tool's built-in validator only knows up to
 						// Vulkan 1.2; our SPIR-V 1.6 modules still parse fine.
 						<< "\"" << GetClspvReflectionPath() << "\" -d \"" << kbase << ".spv\""
 						<< " -o \"" << kbase << ".map\"";
 					const int rc = system(cmd.str().c_str());
-					remove((kbase + ".bc").c_str());
 					struct stat s2;
 					if (rc != 0 || stat((kbase + ".spv").c_str(), &s2) != 0 ||
 							stat((kbase + ".map").c_str(), &s2) != 0) {
@@ -883,7 +905,10 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 		dynamic_cast<const VulkanDeviceProgram &>(programRef);
 
 	// Per-kernel SPIR-V module + descriptor map produced by CompileProgram.
-	const string kbase = prog.cacheDir + "/" + prog.cacheKey + "-" + kernelName;
+	// kernelBasePaths carries the pruned-module-hash base when present.
+	const auto kbp = prog.kernelBasePaths.find(kernelName);
+	const string kbase = (kbp != prog.kernelBasePaths.end()) ? kbp->second
+		: prog.cacheDir + "/" + prog.cacheKey + "-" + kernelName;
 	vector<char> spv;
 	{
 		ifstream f(kbase + ".spv", ios::binary);
@@ -1005,16 +1030,38 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 		vector<char> blob(n);
 		for (size_t i = 0; i < n; i++)
 			blob[i] = (char)strtoul(constHex.substr(i * 2, 2).c_str(), nullptr, 16);
-		HardwareDeviceBuffer *buf = nullptr;
-		AllocBuffer(&buf, BUFFER_TYPE_READ_ONLY, blob.data(), n,
-				kernelName + " module constants");
-		VulkanDeviceBuffer *vb = static_cast<VulkanDeviceBuffer *>(buf);
-		kern->moduleConstBuff = vb->buff;
-		kern->moduleConstMem = vb->mem;
+		// Direct VkBuffer creation (not AllocBuffer): the kernel owns the
+		// handles and frees them in ~VulkanDeviceKernel, outside the
+		// usedMemory accounting FreeBuffer balances.
+		VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+		bi.size = n;
+		bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+				VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+		bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		VK_CHECK(vkCreateBuffer((VkDevice)device, &bi, nullptr,
+				(VkBuffer *)&kern->moduleConstBuff));
+		VkMemoryRequirements mr;
+		vkGetBufferMemoryRequirements((VkDevice)device,
+				(VkBuffer)kern->moduleConstBuff, &mr);
+		const uint32_t mt = FindMemType(
+				(VkPhysicalDevice)deviceDesc.GetVulkanPhysicalDevice(),
+				mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+		ai.allocationSize = mr.size;
+		ai.memoryTypeIndex = mt;
+		VK_CHECK(vkAllocateMemory((VkDevice)device, &ai, nullptr,
+				(VkDeviceMemory *)&kern->moduleConstMem));
+		vkBindBufferMemory((VkDevice)device, (VkBuffer)kern->moduleConstBuff,
+				(VkDeviceMemory)kern->moduleConstMem, 0);
+		void *m;
+		VK_CHECK(vkMapMemory((VkDevice)device,
+				(VkDeviceMemory)kern->moduleConstMem, 0, n, 0, &m));
+		memcpy(m, blob.data(), n);
+		vkUnmapMemory((VkDevice)device, (VkDeviceMemory)kern->moduleConstMem);
 		kern->moduleConstBinding = constBinding;
-		// The VulkanDeviceBuffer wrapper leaks with the buffer allocator
-		// path (freed at device Stop); the VkBuffer/VkDeviceMemory are
-		// owned and released by this kernel.
 	}
 
 	// Clustered POD backing buffer (storage buffer, raw-byte layout)
