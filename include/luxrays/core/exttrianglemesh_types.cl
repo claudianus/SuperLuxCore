@@ -52,6 +52,14 @@ typedef struct {
 	// Triangle information
 	unsigned int trisOffset;
 
+	// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md):
+	// offset of this mesh's segments inside the global curveSegIndices
+	// buffer (NULL_INDEX when the mesh carries no curve data) and the
+	// segment count. curveSegIndices[] entries are global control-point
+	// indices into the curveCps/curveCpAttrs buffers.
+	unsigned int curveSegsOffset;
+	unsigned int curveSegsCount;
+
 	// Object space transformation
 	union {
 		TriangleMeshParam triangle;
@@ -61,6 +69,12 @@ typedef struct {
 } ExtMesh;
 
 #if defined(SLG_OPENCL_KERNEL)
+
+// High bit of RayHit.triangleIndex: marks a native curve-primitive hit
+// (Metal HWRT path only). The low 31 bits are the mesh-local segment index
+// and RayHit.b1 carries the curve parameter u. Software accelerators never
+// set the flag.
+#define RAYHIT_CURVE_FLAG 0x80000000u
 
 #define EXTMESH_PARAM_DECL , \
 		__global const ExtMesh* restrict meshDescs, \
@@ -73,7 +87,10 @@ typedef struct {
 		__global const float* restrict vertexAOVs, \
 		__global const float* restrict triAOVs, \
 		__global const Triangle* restrict triangles, \
-		__global const InterpolatedTransform* restrict interpolatedTransforms
+		__global const InterpolatedTransform* restrict interpolatedTransforms, \
+		__global const float4* restrict curveCps, \
+		__global const uint* restrict curveSegIndices, \
+		__global const float4* restrict curveCpAttrs
 #define EXTMESH_PARAM , \
 		meshDescs, \
 		vertices, \
@@ -85,7 +102,10 @@ typedef struct {
 		vertexAOVs, \
 		triAOVs, \
 		triangles, \
-		interpolatedTransforms
+		interpolatedTransforms, \
+		curveCps, \
+		curveSegIndices, \
+		curveCpAttrs
 
 #endif
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

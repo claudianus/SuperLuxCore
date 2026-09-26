@@ -27,6 +27,7 @@ ask for.
 | Blackbody + Whitenoise | [textures.md](textures.md) | `5d38878b6` | cornell/bb-test, whitenoise-* | CPU/OCL/Metal |
 | Hair + Disney | [hair.md](hair.md) + [disney.md](disney.md) | `a8785faa2` | strands, hairmat-test, cornell-disney | CPU/OCL/Metal |
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
+| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=CPU here |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
@@ -95,8 +96,11 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
   term (~2x spatial-reuse inefficiency) — opt-in, roadmap E2.
 - **OIDN** falls back to CPU on Apple (vendored build lacks `device_metal`)
   — roadmap E1.
-- **Metal curves** for hair not yet implemented (hair uses triangle
-  tessellation) — roadmap E7.
+- **Metal curves**: native Catmull-Rom primitives now replace the hair
+  tessellation on the Metal HWRT path (commit `d32bfe3cd`, gated on
+  macOS 14+ + `LUXCORE_METAL_CURVES`). Known v1 limits: curve meshes as
+  triangle lights mis-map in the hit→light reverse lookup; strand AOV
+  parity vs the tessellated baseline is approximate by design.
 - **~6% systematic PATHCPU-vs-PATHOCL brightness difference** on bright
   emissives was measured during blackbody validation (reproduces with a plain
   `constfloat3`, i.e. pre-existing engine gap, not a feature bug) — under

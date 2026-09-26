@@ -57,6 +57,9 @@ void CompiledScene::CompileGeometry() {
 	tris.resize(0);
 	interpolatedTransforms.resize(0);
 	meshDescs.resize(0);
+	curveCps.resize(0);
+	curveSegIndices.resize(0);
+	curveCpAttrs.resize(0);
 
 	//--------------------------------------------------------------------------
 	// Translate geometry
@@ -74,8 +77,10 @@ void CompiledScene::CompileGeometry() {
 	u_int alphasOffset = 0;
 	u_int vertexAOVOffset = 0;
 	u_int triAOVOffset = 0;
+	u_int curveSegsOffset = 0;
 
-	auto InitMeshDesc = [&](slg::ocl::ExtMesh &dstMeshDesc, const ExtMesh &srcMesh) { 
+	auto InitMeshDesc = [&](slg::ocl::ExtMesh &dstMeshDesc, const ExtMesh &srcMesh,
+			const ExtTriangleMesh &srcBaseMesh) { 
         dstMeshDesc.vertsOffset = vertsOffset;
 		vertsOffset += srcMesh.GetTotalVertexCount();
 
@@ -122,6 +127,18 @@ void CompiledScene::CompileGeometry() {
 			} else
 				dstMeshDesc.triAOVOffset[dataIndex] = NULL_INDEX;
 		}
+
+		// Native curve primitives (Metal HWRT): the curve data lives on the
+		// base triangle mesh; curveSegIndices[] entries are globalized below
+		// by adding the mesh's control-point base.
+		if (srcBaseMesh.HasCurveData()) {
+			dstMeshDesc.curveSegsOffset = curveSegsOffset;
+			dstMeshDesc.curveSegsCount = srcBaseMesh.GetCurveSegCount();
+			curveSegsOffset += dstMeshDesc.curveSegsCount;
+		} else {
+			dstMeshDesc.curveSegsOffset = NULL_INDEX;
+			dstMeshDesc.curveSegsCount = 0;
+		}
     };
 
 	slg::ocl::ExtMesh currentMeshDesc;
@@ -143,7 +160,7 @@ void CompiledScene::CompileGeometry() {
 				// auto it = definedMeshs.find(&imesh.GetExtTriangleMesh());
 				if (it == definedMeshs.end()) {
 					// It is a new one
-					InitMeshDesc(currentMeshDesc, imesh);
+					InitMeshDesc(currentMeshDesc, imesh, baseMesh.get());
 
 					isExistingInstance = false;
 
@@ -170,7 +187,7 @@ void CompiledScene::CompileGeometry() {
 				auto it = definedMeshs.find(&mmesh.GetExtTriangleMesh());
 				if (it == definedMeshs.end()) {
 					// It is a new one
-					InitMeshDesc(currentMeshDesc, mmesh);
+					InitMeshDesc(currentMeshDesc, mmesh, baseMesh.get());
 
 					isExistingInstance = false;
 
@@ -211,7 +228,7 @@ void CompiledScene::CompileGeometry() {
 				baseMesh = static_cast<const ExtTriangleMesh &>(mesh);
 
 				// It is a not instanced mesh
-				InitMeshDesc(currentMeshDesc, baseMesh);
+				InitMeshDesc(currentMeshDesc, baseMesh, baseMesh.get());
 
 				currentMeshDesc.type = slg::ocl::TYPE_EXT_TRIANGLE;
 
@@ -314,6 +331,25 @@ void CompiledScene::CompileGeometry() {
 
 			const auto t = baseMesh.get().GetTriangles();
 			tris.insert(tris.end(), t.begin(), t.begin() + baseMesh.get().GetTotalTriangleCount());
+
+			//------------------------------------------------------------------
+			// Compile native curve primitives (Metal HWRT). Segment indices
+			// are globalized by adding the mesh's control-point base.
+			//------------------------------------------------------------------
+
+			if (baseMesh.get().HasCurveData()) {
+				const u_int cpBase = (u_int)curveCps.size();
+
+				const auto &cps = baseMesh.get().GetCurveCps();
+				curveCps.insert(curveCps.end(), cps.begin(), cps.end());
+
+				const auto &attrs = baseMesh.get().GetCurveCpAttrs();
+				curveCpAttrs.insert(curveCpAttrs.end(), attrs.begin(), attrs.end());
+
+				const auto &segs = baseMesh.get().GetCurveSegIndices();
+				for (const u_int s : segs)
+					curveSegIndices.push_back(s + cpBase);
+			}
 		}
 
 		meshDescs.push_back(currentMeshDesc);

@@ -2856,7 +2856,14 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		, __global float4* restrict guideRec12 \
 		, __global float4* restrict guideRec13 \
 		, __global float4* restrict guideRec14 \
-		, __global float4* restrict guideRec15
+		, __global float4* restrict guideRec15 \
+		/* Native curve primitives (Metal HWRT): control points (float4
+		 * xyz+radius), global per-segment start indices, per-cp attrs
+		 * (2 float4/cp). Null when no mesh carries curve data; only
+		 * dereferenced under RAYHIT_CURVE_FLAG hits. */ \
+		, __global const float4* restrict curveCps \
+		, __global const uint* restrict curveSegIndices \
+		, __global const float4* restrict curveCpAttrs
 
 
 //------------------------------------------------------------------------------

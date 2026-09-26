@@ -22,6 +22,7 @@
 #include "slg/scene/scene.h"
 #include "slg/cameras/perspective.h"
 #include <memory>
+#include <cstring>
 
 using namespace std;
 using namespace luxrays;
@@ -334,6 +335,15 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 		vector<float> meshStrandUs;
 		vector<float> meshStrandRands;
 		vector<float> meshTransps;
+
+		// Native curve primitive data (Metal HWRT; see
+		// dev-tools/metal_curve_design.md): object-space Catmull-Rom control
+		// points (xyz + radius), mesh-local per-segment start indices and
+		// per-control-point shading attributes. Emitted alongside the
+		// tessellation; software paths keep using the triangles.
+		vector<CurveControlPoint> curveCps;
+		vector<u_int> curveSegIndices;
+		vector<CurveCpAttr> curveCpAttrs;
 		for (u_int i = 0; i < header.hair_count; ++i) {
 			// segmentSize must be signed
 			const auto segmentSize = not segments.empty() ? segments[i] : header.d_segments;
@@ -407,6 +417,36 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 					SLG_LOG("Unknown tessellation  type in an Strands Shape: " + ToString(tesselType));
 			}
 
+			// Emit this strand as uniform Catmull-Rom curve primitives for
+			// the Metal HWRT path. Padded endpoints ([p0,p0,...,p_{n-1},
+			// p_{n-1}]) give every segment its 4 control points contiguously;
+			// this is the same spline model TessellateAdaptive() evaluates.
+			const u_int strandPointCount = (u_int)hairPoints.size();
+			if (strandPointCount >= 2) {
+				const u_int cpBase = (u_int)curveCps.size();
+				const float strandUSpan = 1.f / (float)(strandPointCount - 1);
+				float strandIndexBits;
+				memcpy(&strandIndexBits, &i, sizeof(float));
+				for (u_int k = 0; k < strandPointCount + 2; ++k) {
+					const u_int p = Min(Max((int)k - 1, 0), (int)strandPointCount - 1);
+					curveCps.push_back({ hairPoints[p].x, hairPoints[p].y,
+							hairPoints[p].z, hairSizes[p] });
+
+					CurveCpAttr attr;
+					attr.colR = hairCols[p].c[0];
+					attr.colG = hairCols[p].c[1];
+					attr.colB = hairCols[p].c[2];
+					attr.alpha = hairTransps[p];
+					attr.u = hairUVs[p].u;
+					attr.v = hairUVs[p].v;
+					attr.strandU = p * strandUSpan;
+					attr.strandIndexBits = strandIndexBits;
+					curveCpAttrs.push_back(attr);
+				}
+				for (u_int j = 0; j + 1 < strandPointCount; ++j)
+					curveSegIndices.push_back(cpBase + j);
+			}
+
 			// Stamp the per-strand random onto every vertex this strand emitted.
 			for (u_int v = vertsBefore; v < meshVerts.size(); ++v)
 				meshStrandRands.push_back(strandRand);
@@ -471,6 +511,12 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 			newMeshCols,
 			newMeshTransps
 		);
+
+		if (!curveSegIndices.empty())
+			mesh->SetCurveData(std::move(curveCps), std::move(curveSegIndices),
+					std::move(curveCpAttrs));
+		SLG_LOG("Strands curve data: " << mesh->GetCurveSegCount() << " segments, "
+				<< mesh->GetCurveCpCount() << " control points");
 
 		// Store the per-vertex strand tangent (object space) in the reserved
 		// vertex AOV layers for the hair material

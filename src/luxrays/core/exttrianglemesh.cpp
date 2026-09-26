@@ -307,6 +307,25 @@ void ExtTriangleMesh::ApplyTransform(const Transform &trans) {
 		}
 	}
 
+	if (!curveCps.empty()) {
+		// Curve control points are object-space like the vertices: transform
+		// positions by the same matrix. Radii are scaled by the mean axis
+		// scale (native curve primitives support a single radius per control
+		// point; non-uniform scale on a tube is not representable).
+		const Matrix4x4 &m = trans.m;
+		const float sx = Vector(m.m[0][0], m.m[1][0], m.m[2][0]).Length();
+		const float sy = Vector(m.m[0][1], m.m[1][1], m.m[2][1]).Length();
+		const float sz = Vector(m.m[0][2], m.m[1][2], m.m[2][2]).Length();
+		const float rScale = (sx + sy + sz) / 3.f;
+		for (auto &cp : curveCps) {
+			const Point p = trans * Point(cp.x, cp.y, cp.z);
+			cp.x = p.x;
+			cp.y = p.y;
+			cp.z = p.z;
+			cp.radius *= rScale;
+		}
+	}
+
 	Preprocess();
 }
 
@@ -381,6 +400,15 @@ ExtTriangleMeshUPtr ExtTriangleMesh::CopyExt(
 		std::move(vs), std::move(ts), std::move(ns), us, cs, as, bRadius);
 
 	m->SetLocal2World(appliedTrans);
+
+	// Curve data stays valid only when the vertex set is unchanged; callers
+	// overriding vertices (subdiv, displacement, ...) produce geometry the
+	// original curves no longer match, so they fall back to triangles.
+	if (!meshVertices.has_value())
+		m->SetCurveData(
+			std::vector<CurveControlPoint>(curveCps),
+			std::vector<u_int>(curveSegIndices),
+			std::vector<CurveCpAttr>(curveCpAttrs));
 
 	// Copy AOV too
 	CopyAOV(*m);
@@ -467,6 +495,18 @@ ExtTriangleMeshUPtr ExtTriangleMesh::Merge(
 			meshTriAOV.AllocateLayer(i, totalTriangleCount);
 	}
 
+	// Merge native curve data (Metal HWRT): propagated only when EVERY
+	// input mesh carries curve data. A curve acceleration structure
+	// replaces the merged mesh's triangle set at intersection time, so a
+	// partially-covered merge would lose the non-curve meshes' geometry.
+	bool allCurves = true;
+	for (ExtTriangleMeshConstRef m : meshes)
+		allCurves &= m.HasCurveData();
+
+	std::vector<CurveControlPoint> curveCps;
+	std::vector<u_int> curveSegIndices;
+	std::vector<CurveCpAttr> curveCpAttrs;
+
 	u_int vIndex = 0;
 	u_int iIndex = 0;
 	for (u_int meshIndex = 0; meshIndex < meshes.size(); ++meshIndex) {
@@ -483,6 +523,45 @@ ExtTriangleMeshUPtr ExtTriangleMesh::Merge(
 		} else {
 			for (u_int i = 0; i < mesh.GetTotalVertexCount(); ++i)
 				meshVertices[i + vIndex] = mesh.GetVertex(Transform::TRANS_IDENTITY, i);			
+		}
+
+		// Merge curve primitives: control points get the same transform as
+		// vertices (position + uniform radius scale), segment indices are
+		// globalized by the accumulated control-point base, per-cp
+		// attributes are space-independent and pass through unchanged.
+		if (allCurves) {
+			const u_int cpBase = (u_int)curveCps.size();
+			const auto &cps = mesh.GetCurveCps();
+			const auto &segs = mesh.GetCurveSegIndices();
+			const auto &attrs = mesh.GetCurveCpAttrs();
+
+			// Same mean-axis radius scale as ApplyTransform (a single radius
+			// per control point can't represent non-uniform scale).
+			float rScale = 1.f;
+			if (transformation) {
+				const Matrix4x4 &m = transformation->m;
+				const float sx = Vector(m.m[0][0], m.m[1][0], m.m[2][0]).Length();
+				const float sy = Vector(m.m[0][1], m.m[1][1], m.m[2][1]).Length();
+				const float sz = Vector(m.m[0][2], m.m[1][2], m.m[2][2]).Length();
+				rScale = (sx + sy + sz) / 3.f;
+			}
+
+			for (const CurveControlPoint &cp : cps) {
+				CurveControlPoint t;
+				if (transformation) {
+					const Point p = (*transformation) * Point(cp.x, cp.y, cp.z);
+					t.x = p.x;
+					t.y = p.y;
+					t.z = p.z;
+					t.radius = cp.radius * rScale;
+				} else {
+					t = cp;
+				}
+				curveCps.push_back(t);
+			}
+			for (const u_int s : segs)
+				curveSegIndices.push_back(s + cpBase);
+			curveCpAttrs.insert(curveCpAttrs.end(), attrs.begin(), attrs.end());
 		}
 
 		// Copy the mesh normals
@@ -567,6 +646,10 @@ ExtTriangleMeshUPtr ExtTriangleMesh::Merge(
 		newMesh->SetVertexAOV(dataIndex, meshVertAOV.GetLayer(dataIndex), meshVertAOV.GetLayerSize());
 		newMesh->SetTriAOV(dataIndex, meshTriAOV.GetLayer(dataIndex), meshTriAOV.GetLayerSize());
 	}
+
+	if (allCurves && !curveSegIndices.empty())
+		newMesh->SetCurveData(std::move(curveCps), std::move(curveSegIndices),
+				std::move(curveCpAttrs));
 
 	return newMesh;
 }

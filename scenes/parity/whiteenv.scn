@@ -1,0 +1,21 @@
+scene.camera.type = perspective
+scene.camera.lookat.orig = 0.0 0.0 -2.5
+scene.camera.lookat.target = 0.0 0.0 0.0
+scene.camera.up = 0.0 1.0 0.0
+scene.camera.fieldofview = 50
+
+scene.textures.emitv.type = constfloat3
+scene.textures.emitv.value = 4.0 4.0 4.0
+scene.textures.emitscaled.type = scale
+scene.textures.emitscaled.texture1 = emitv
+scene.textures.emitscaled.texture2 = 1.0
+
+scene.materials.emit.type = matte
+scene.materials.emit.kd = 0.0 0.0 0.0
+scene.materials.emit.emission = 0.0 0.0 0.0
+
+scene.objects.quad.ply = scenes/parity/quad.ply
+scene.objects.quad.material = emit
+
+scene.lights.env.type = constantinfinite
+scene.lights.env.gain = 1.0 1.0 1.0

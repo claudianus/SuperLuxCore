@@ -69,9 +69,13 @@ OPENCL_FORCE_INLINE void BSDF_Init(
 
 	//--------------------------------------------------------------------------
 
-	// Check if it is a light source
+	// Check if it is a light source. The RAYHIT_CURVE_FLAG bit is masked
+	// out so the index stays in bounds; for a curve-carrying mesh the
+	// segment index does not map back to a tessellated light triangle
+	// (emissive curve meshes are a documented v1 limitation — see
+	// dev-tools/metal_curve_design.md).
 	const uint offset = lightIndexOffsetByMeshIndex[meshIndex];
-	bsdf->triangleLightSourceIndex = (offset == NULL_INDEX) ? NULL_INDEX : lightIndexByTriIndex[offset + triangleIndex];
+	bsdf->triangleLightSourceIndex = (offset == NULL_INDEX) ? NULL_INDEX : lightIndexByTriIndex[offset + (triangleIndex & ~RAYHIT_CURVE_FLAG)];
 
 	//--------------------------------------------------------------------------
 	// Apply bump or normal mapping

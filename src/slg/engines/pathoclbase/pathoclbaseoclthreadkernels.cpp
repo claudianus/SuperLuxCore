@@ -521,6 +521,12 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each)
 	for (u_int i = 0u; i < 16u; ++i)
 		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideRecBuff[i]);
+
+	// Native curve primitives (Metal HWRT): null when no mesh carries curve
+	// data; only dereferenced under RAYHIT_CURVE_FLAG hits.
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, curveCpsBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, curveSegIndicesBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, curveCpAttrsBuff);
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {

@@ -91,6 +91,9 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	triAOVBuff = nullptr;
 	trianglesBuff = nullptr;
 	interpolatedTransformsBuff = nullptr;
+	curveCpsBuff = nullptr;
+	curveSegIndicesBuff = nullptr;
+	curveCpAttrsBuff = nullptr;
 	cameraBuff = nullptr;
 	cameraBokehDistributionBuff = nullptr;
 	lightIndexOffsetByMeshIndexBuff = nullptr;
@@ -229,6 +232,9 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&triAOVBuff);
 	intersectionDevice.FreeBuffer(&trianglesBuff);
 	intersectionDevice.FreeBuffer(&interpolatedTransformsBuff);
+	intersectionDevice.FreeBuffer(&curveCpsBuff);
+	intersectionDevice.FreeBuffer(&curveSegIndicesBuff);
+	intersectionDevice.FreeBuffer(&curveCpAttrsBuff);
 	intersectionDevice.FreeBuffer(&meshDescsBuff);
 	intersectionDevice.FreeBuffer(&meshIDBuff);
 	intersectionDevice.FreeBuffer(&scnObjsBuff);

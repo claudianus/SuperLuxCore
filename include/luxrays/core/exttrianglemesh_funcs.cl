@@ -18,10 +18,185 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+//------------------------------------------------------------------------------
+// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md)
+//
+// A hit with (triangleIndex & RAYHIT_CURVE_FLAG) is a curve-primitive hit:
+// low 31 bits = mesh-local segment index, b1 = curve parameter u. The segment
+// indexes curveSegIndices[meshDesc->curveSegsOffset + seg] -> global start
+// control point; 4 consecutive control points form a uniform Catmull-Rom
+// segment (same spline as strands.cpp's CatmullRomSpline and Metal's
+// MTLCurveBasisCatmullRom). Per-cp attributes live in curveCpAttrs (2 float4
+// per cp): [2i] = {col.rgb, alpha}, [2i+1] = {uv.u, uv.v, strandU,
+// strandIndexBits}.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float3 Curve_EvalPoint(const float3 p0, const float3 p1,
+		const float3 p2, const float3 p3, const float u) {
+	const float u2 = u * u;
+	const float u3 = u2 * u;
+	return 0.5f * ((2.f * p1) + (-p0 + p2) * u +
+			(2.f * p0 - 5.f * p1 + 4.f * p2 - p3) * u2 +
+			(-p0 + 3.f * p1 - 3.f * p2 + p3) * u3);
+}
+
+OPENCL_FORCE_INLINE float3 Curve_EvalTangent(const float3 p0, const float3 p1,
+		const float3 p2, const float3 p3, const float u) {
+	const float u2 = u * u;
+	return 0.5f * ((-p0 + p2) +
+			2.f * (2.f * p0 - 5.f * p1 + 4.f * p2 - p3) * u +
+			3.f * (-p0 + 3.f * p1 - 3.f * p2 + p3) * u2);
+}
+
+// flagged triangleIndex -> global index of the first control point of the
+// segment (the 4 consecutive cps forming it)
+OPENCL_FORCE_INLINE uint Curve_GetCpStart(const uint meshIndex,
+		const uint triangleIndex EXTMESH_PARAM_DECL) {
+	const uint segIndex = triangleIndex & ~RAYHIT_CURVE_FLAG;
+	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
+	return curveSegIndices[meshDesc->curveSegsOffset + segIndex];
+}
+
+// Round-tube shading normal: hit point minus curve centerline point,
+// evaluated in object space and transformed like the mesh normals.
+OPENCL_FORCE_INLINE float3 Curve_GetNormal(
+		__global const Transform* restrict localToWorld,
+		const uint meshIndex, const uint triangleIndex,
+		const float3 hitP, const float u
+		EXTMESH_PARAM_DECL) {
+	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	// OpenCL forbids &float4.x: load the whole float4 and swizzle .xyz.
+	const float3 centerObj = Curve_EvalPoint(
+			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
+			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+
+	float3 n;
+	switch (meshDesc->type) {
+		case TYPE_EXT_TRIANGLE:
+			// Control points are in world coordinates for TYPE_EXT_TRIANGLE
+			n = (meshDesc->triangle.appliedTransSwapsHandedness ? -1.f : 1.f) * (hitP - centerObj);
+			break;
+		case TYPE_EXT_TRIANGLE_INSTANCE: {
+			const float3 nObj = Transform_InvApplyPoint(localToWorld, hitP) - centerObj;
+			n = (meshDesc->instance.transSwapsHandedness ? -1.f : 1.f) *
+					Transform_ApplyNormal(localToWorld, nObj);
+			break;
+		}
+		case TYPE_EXT_TRIANGLE_MOTION: {
+			const float3 nObj = Transform_InvApplyPoint(localToWorld, hitP) - centerObj;
+			const bool swapsHandedness = Transform_SwapsHandedness(localToWorld);
+			n = (swapsHandedness ? -1.f : 1.f) *
+					Transform_ApplyNormal(localToWorld, nObj);
+			break;
+		}
+		default:
+			n = MAKE_FLOAT3(0.f, 0.f, 1.f);
+			break;
+	}
+
+	const float l2 = dot(n, n);
+	if (l2 > 0.f)
+		return n / sqrt(l2);
+
+	// Degenerate (hit on the centerline): fall back to a direction
+	// perpendicular to the segment tangent.
+	const float3 t = Curve_EvalTangent(
+			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
+			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+	float3 v1, v2;
+	CoordinateSystem(t, &v1, &v2);
+	return v1;
+}
+
+// Strand tangent in object space (analytic Catmull-Rom derivative) — same
+// space as the HAIR_TANGENT_* vertex AOV layers on the tessellation.
+OPENCL_FORCE_INLINE float3 Curve_GetTangentObj(const uint meshIndex,
+		const uint triangleIndex, const float u EXTMESH_PARAM_DECL) {
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	return Curve_EvalTangent(
+			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
+			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+}
+
+// Per-strand random: recomputed from the strand index with the same hash
+// used by StrendsShape (strands.cpp).
+OPENCL_FORCE_INLINE float Curve_StrandRandom(const uint strandIndex) {
+	uint h = strandIndex * 2654435761u;
+	h ^= h >> 16;
+	h *= 2246822519u;
+	h ^= h >> 13;
+	return (h & 0x00FFFFFFu) / (float)0x01000000u;
+}
+
+OPENCL_FORCE_INLINE float2 Curve_GetInterpolateUV(const uint meshIndex,
+		const uint triangleIndex, const float u, const uint dataIndex
+		EXTMESH_PARAM_DECL) {
+	// Curve primitives carry a single UV layer (dataIndex 0)
+	if (dataIndex != 0)
+		return MAKE_FLOAT2(0.f, 0.f);
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	const float2 uv1 = curveCpAttrs[2 * (cpStart + 1) + 1].xy;
+	const float2 uv2 = curveCpAttrs[2 * (cpStart + 2) + 1].xy;
+	return mix(uv1, uv2, u);
+}
+
+OPENCL_FORCE_INLINE float3 Curve_GetInterpolateColor(const uint meshIndex,
+		const uint triangleIndex, const float u EXTMESH_PARAM_DECL) {
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	const float3 c1 = curveCpAttrs[2 * (cpStart + 1)].xyz;
+	const float3 c2 = curveCpAttrs[2 * (cpStart + 2)].xyz;
+	return mix(c1, c2, u);
+}
+
+OPENCL_FORCE_INLINE float Curve_GetInterpolateAlpha(const uint meshIndex,
+		const uint triangleIndex, const float u EXTMESH_PARAM_DECL) {
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	const float a1 = curveCpAttrs[2 * (cpStart + 1)].w;
+	const float a2 = curveCpAttrs[2 * (cpStart + 2)].w;
+	return mix(a1, a2, u);
+}
+
+// Hair AOV channels (indices must match HAIR_*_DATA_INDEX in strands.h and
+// materialdefs_funcs_hair.cl): 4/5/6 = object-space tangent, 7 = strandU,
+// 0 = per-strand random.
+OPENCL_FORCE_INLINE float Curve_GetVertexAOV(const uint meshIndex,
+		const uint triangleIndex, const float u, const uint dataIndex
+		EXTMESH_PARAM_DECL) {
+	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
+	switch (dataIndex) {
+		case 4: case 5: case 6: {
+			const float3 t = Curve_EvalTangent(
+					curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
+					curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+			return (dataIndex == 4) ? t.x : ((dataIndex == 5) ? t.y : t.z);
+		}
+		case 7: {
+			const float u1 = curveCpAttrs[2 * (cpStart + 1) + 1].z;
+			const float u2 = curveCpAttrs[2 * (cpStart + 2) + 1].z;
+			return mix(u1, u2, u);
+		}
+		case 0: {
+			const uint strandIndex = as_uint(curveCpAttrs[2 * (cpStart + 1) + 1].w);
+			return Curve_StrandRandom(strandIndex);
+		}
+		default:
+			return 0.f;
+	}
+}
+
+//------------------------------------------------------------------------------
+
 OPENCL_FORCE_INLINE float3 ExtMesh_GetGeometryNormal(
 		__global const Transform* restrict localToWorld,
 		const uint meshIndex, const uint triangleIndex
 		EXTMESH_PARAM_DECL) {
+	// Curve hits are handled in HitPoint_Init (the tube normal needs the
+	// hit point, which this signature does not carry); never index with a
+	// flagged index.
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return MAKE_FLOAT3(0.f, 0.f, 1.f);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	__global const Normal* restrict tn = &triNormals[meshDesc->triNormalsOffset];
 
@@ -55,6 +230,10 @@ OPENCL_FORCE_INLINE float3 ExtMesh_GetInterpolateNormal(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2
 		EXTMESH_PARAM_DECL) {
+	// Curve hits are handled in HitPoint_Init; never index with a flagged index.
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return MAKE_FLOAT3(0.f, 0.f, 1.f);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 
 	float3 interpolatedN;
@@ -97,6 +276,9 @@ OPENCL_FORCE_INLINE float2 ExtMesh_GetInterpolateUV(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2, const uint dataIndex
 		EXTMESH_PARAM_DECL) {
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return Curve_GetInterpolateUV(meshIndex, triangleIndex, b1, dataIndex EXTMESH_PARAM);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	
 	float2 uv = MAKE_FLOAT2(0.f, 0.f);
@@ -119,6 +301,9 @@ OPENCL_FORCE_INLINE float3 ExtMesh_GetInterpolateColor(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2, const uint dataIndex
 		EXTMESH_PARAM_DECL) {
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return Curve_GetInterpolateColor(meshIndex, triangleIndex, b1 EXTMESH_PARAM);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 
 	float3 c = WHITE;
@@ -140,6 +325,9 @@ OPENCL_FORCE_INLINE float ExtMesh_GetInterpolateAlpha(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2, const uint dataIndex
 		EXTMESH_PARAM_DECL) {
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return Curve_GetInterpolateAlpha(meshIndex, triangleIndex, b1 EXTMESH_PARAM);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	
 	float a = 1.f;
@@ -161,6 +349,9 @@ OPENCL_FORCE_INLINE float ExtMesh_GetInterpolateVertexAOV(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2, const uint dataIndex
 		EXTMESH_PARAM_DECL) {
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return Curve_GetVertexAOV(meshIndex, triangleIndex, b1, dataIndex EXTMESH_PARAM);
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	
 	float v = 0.f;
@@ -182,6 +373,10 @@ OPENCL_FORCE_INLINE float ExtMesh_GetTriAOV(
 		const uint meshIndex, const uint triangleIndex,
 		const uint dataIndex
 		EXTMESH_PARAM_DECL) {
+	// Curve primitives have no triangle AOVs
+	if (triangleIndex & RAYHIT_CURVE_FLAG)
+		return 0.f;
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	
 	float t = 0.f;
@@ -203,6 +398,16 @@ OPENCL_FORCE_INLINE void ExtMesh_GetDifferentials(
 		float3 *dpdu, float3 *dpdv,
         float3 *dndu, float3 *dndv
 		EXTMESH_PARAM_DECL) {
+	// Curve hits get their differentials in HitPoint_Init; never index with
+	// a flagged index.
+	if (triangleIndex & RAYHIT_CURVE_FLAG) {
+		*dpdu = MAKE_FLOAT3(0.f, 0.f, 0.f);
+		*dpdv = MAKE_FLOAT3(0.f, 0.f, 0.f);
+		*dndu = MAKE_FLOAT3(0.f, 0.f, 0.f);
+		*dndv = MAKE_FLOAT3(0.f, 0.f, 0.f);
+		return;
+	}
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	__global const Point* restrict iVertices = &vertices[meshDesc->vertsOffset];
 	__global const Triangle* restrict iTriangles = &triangles[meshDesc->trisOffset];

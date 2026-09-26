@@ -27,10 +27,12 @@
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/core/geometry/matrix4x4.h"
 #include "luxrays/core/trianglemesh.h"
+#include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/usings.h"
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdlib>
 #include <vector>
 
@@ -73,6 +75,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 		device LuxRayHit *rayHits [[buffer(1)]],
 		constant uint &rayCount [[buffer(2)]],
 		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
+		constant uint &useMotionTime [[buffer(4)]],
 		uint gid [[thread_position_in_grid]]) {
 	if (gid >= rayCount)
 		return;
@@ -90,9 +93,11 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 
 	raytracing::intersector<raytracing::instancing, raytracing::triangle_data> itr;
 	// r.time drives Metal's motion instance interpolation when the instance
-	// acceleration structure was built with motion descriptors; it is ignored
-	// for static (non-motion) descriptors.
-	const auto hit = itr.intersect(ray, sceneAS, r.time);
+	// acceleration structure was built with motion descriptors. On a static
+	// (non-motion) instance AS the timed overload returns no intersection
+	// for every ray, so useMotionTime must gate it.
+	const auto hit = useMotionTime ?
+		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
 
 	if (hit.type == raytracing::intersection_type::none) {
 		// Match the software kernel's miss record exactly:
@@ -110,6 +115,85 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 	// reference index = the meshIndex the software kernel produces.
 	rayHits[gid].meshIndex = hit.instance_id;
 	rayHits[gid].triangleIndex = hit.primitive_id;
+}
+)MSL";
+
+// Curve-capable variant of the same kernel (Metal 3.1 / macOS 14+):
+// identical triangle handling, plus curve-primitive hits encoded for the
+// shading side as
+//   hit.triangleIndex = RAYHIT_CURVE_FLAG | mesh-local segment index
+//   hit.b1            = curve parameter u along the segment
+//   hit.b2            = 0
+// (dev-tools/metal_curve_design.md). The flag constant is inlined because
+// this source never passes through the cl2msl path.
+static const char *HWRT_MSL_SOURCE_CURVES = R"MSL(
+#include <metal_stdlib>
+#include <metal_raytracing>
+using namespace metal;
+
+struct LuxRay {
+	float ox, oy, oz;
+	float dx, dy, dz;
+	float mint, maxt, time;
+	uint flags;
+	float pad0, pad1;
+};
+
+struct LuxRayHit {
+	float t, b1, b2;
+	uint meshIndex, triangleIndex;
+};
+
+kernel void Accelerator_Intersect_RayBuffer_HWRT(
+		device const LuxRay *rays [[buffer(0)]],
+		device LuxRayHit *rayHits [[buffer(1)]],
+		constant uint &rayCount [[buffer(2)]],
+		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
+		constant uint &useMotionTime [[buffer(4)]],
+		uint gid [[thread_position_in_grid]]) {
+	if (gid >= rayCount)
+		return;
+
+	const LuxRay r = rays[gid];
+	// RAY_FLAGS_MASKED
+	if (r.flags & 0x1u)
+		return;
+
+	raytracing::ray ray;
+	ray.origin = float3(r.ox, r.oy, r.oz);
+	ray.direction = float3(r.dx, r.dy, r.dz);
+	ray.min_distance = r.mint;
+	ray.max_distance = r.maxt;
+
+	raytracing::intersector<raytracing::instancing, raytracing::triangle_data,
+			raytracing::curve_data> itr;
+	// On a static (non-motion) instance AS the timed overload returns no
+	// intersection for every ray, so useMotionTime must gate it.
+	const auto hit = useMotionTime ?
+		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
+
+	if (hit.type == raytracing::intersection_type::none) {
+		rayHits[gid].t = r.maxt;
+		rayHits[gid].meshIndex = 0xffffffffu;
+		rayHits[gid].triangleIndex = 0xffffffffu;
+		return;
+	}
+
+	rayHits[gid].t = hit.distance;
+	// instance_id is the userID of the instance descriptor = MBVH leaf
+	// reference index = the meshIndex the software kernel produces.
+	rayHits[gid].meshIndex = hit.instance_id;
+
+	if (hit.type == raytracing::intersection_type::curve) {
+		// Curve segment hit: segment-local u in b1, flagged segment index.
+		rayHits[gid].b1 = hit.curve_parameter;
+		rayHits[gid].b2 = 0.f;
+		rayHits[gid].triangleIndex = 0x80000000u | hit.primitive_id;
+	} else {
+		rayHits[gid].b1 = hit.triangle_barycentric_coord.x;
+		rayHits[gid].b2 = hit.triangle_barycentric_coord.y;
+		rayHits[gid].triangleIndex = hit.primitive_id;
+	}
 }
 )MSL";
 
@@ -140,6 +224,18 @@ private:
 
 	MetalIntersectionDevice &mdev;
 	const MBVHAccel &mbvh;
+
+	// Native curve primitives: enabled only when the OS/API supports curve
+	// acceleration structures (macOS 14+) and LUXRAYS_METAL_CURVES != 0.
+	// Meshes without curve data always use the triangle path regardless.
+	bool useCurveData;
+
+	// True when the instance acceleration structure was built with motion
+	// instance descriptors (any leaf carries a motion system). The MSL
+	// kernel must only pass the ray time to intersect() when this is set:
+	// on a static (non-motion) instance AS the timed overload returns no
+	// intersection for every ray.
+	bool instanceASIsMotion;
 
 	id<MTLDevice> mtlDev;
 	id<MTLCommandQueue> queue;
@@ -216,19 +312,51 @@ bool MetalRTKernel::IsSupported(HardwareIntersectionDevice &dev, const MBVHAccel
 
 MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &acc) :
 		HardwareIntersectionKernel(dev), mdev(dynamic_cast<MetalIntersectionDevice &>(dev)),
-		mbvh(acc), pso(nil), workGroupSize(64), instanceAS(nil) {
+		mbvh(acc), pso(nil), workGroupSize(64), instanceAS(nil),
+		instanceASIsMotion(false) {
 	@autoreleasepool {
 		mtlDev = (__bridge id<MTLDevice>)mdev.GetMTLDevice();
 		queue = (__bridge id<MTLCommandQueue>)mdev.GetMTLCommandQueue();
 
+		// Native curve primitives (dev-tools/metal_curve_design.md) require
+		// MTLAccelerationStructureCurveGeometryDescriptor (macOS 14+) and the
+		// curve_data intersector tag (Metal 3.1). LUXRAYS_METAL_CURVES=0
+		// forces the triangle-tessellation path (previous behavior, also the
+		// reference for CPU/GPU parity testing).
+		const char *curveEnv = getenv("LUXRAYS_METAL_CURVES");
+		useCurveData = !(curveEnv && string(curveEnv) == "0");
+		if (useCurveData) {
+			if (@available(macOS 14.0, *))
+				; // supported below by the API availability check
+			else
+				useCurveData = false;
+		}
+
 		// Compile the native MSL kernel (never goes through cl2msl)
 		MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
-		opts.languageVersion = MTLLanguageVersion2_3;
-
 		NSError *err = nil;
-		id<MTLLibrary> lib = [mtlDev newLibraryWithSource:
-				[NSString stringWithUTF8String:HWRT_MSL_SOURCE]
-				options:opts error:&err];
+		id<MTLLibrary> lib = nil;
+		if (useCurveData) {
+			opts.languageVersion = MTLLanguageVersion3_1;
+			lib = [mtlDev newLibraryWithSource:
+					[NSString stringWithUTF8String:HWRT_MSL_SOURCE_CURVES]
+					options:opts error:&err];
+			if (!lib) {
+				// Older Metal toolchains reject the curve kernel: fall back
+				// to the triangle-only kernel rather than losing HWRT.
+				LR_LOG(dev.GetContext(), "Metal HWRT curve kernel unavailable ("
+						<< (err ? err.localizedDescription.UTF8String : "?")
+						<< "): falling back to triangle-only kernel");
+				useCurveData = false;
+				err = nil;
+			}
+		}
+		if (!useCurveData) {
+			opts.languageVersion = MTLLanguageVersion2_3;
+			lib = [mtlDev newLibraryWithSource:
+					[NSString stringWithUTF8String:HWRT_MSL_SOURCE]
+					options:opts error:&err];
+		}
 		[opts release];
 		if (!lib)
 			throw runtime_error(string("Metal HWRT kernel compile error: ") +
@@ -303,32 +431,98 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 
 		for (size_t k = 0; k < mbvh.uniqueLeafs.size(); ++k) {
 			const Mesh *mesh = mbvh.uniqueLeafs[k]->GetMeshes()[0];
-			const std::span<Point> verts = mesh->GetVertices();
-			const std::span<Triangle> tris = mesh->GetTriangles();
 
-			id<MTLBuffer> vbuf = [mtlDev newBufferWithBytes:verts.data()
-					length:verts.size() * sizeof(Point)
-					options:MTLResourceStorageModeShared];
-			id<MTLBuffer> ibuf = [mtlDev newBufferWithBytes:tris.data()
-					length:tris.size() * sizeof(Triangle)
-					options:MTLResourceStorageModeShared];
-			ownedPrimBuffers.push_back(vbuf);
-			ownedPrimBuffers.push_back(ibuf);
+			// Native curve primitives (dev-tools/metal_curve_design.md):
+			// strands meshes carry Catmull-Rom curve data next to their
+			// triangle tessellation. Plain and instanced ExtTriangleMesh
+			// leaves can use it (the instance transform is applied at the
+			// instance AS level, same as for triangles); motion leaves keep
+			// the triangle path (curve data has no deformation keyframes).
+			// Mesh is a virtual base, so resolving needs dynamic_cast.
+			const ExtTriangleMesh *curveMesh = nullptr;
+			if (useCurveData) {
+				if (const ExtInstanceTriangleMesh *imesh =
+						dynamic_cast<const ExtInstanceTriangleMesh *>(mesh)) {
+					curveMesh = &imesh->GetExtTriangleMesh();
+				} else {
+					curveMesh = dynamic_cast<const ExtTriangleMesh *>(mesh);
+				}
+				if (curveMesh && !curveMesh->HasCurveData())
+					curveMesh = nullptr;
+			}
 
-			MTLAccelerationStructureTriangleGeometryDescriptor *geo =
-					[MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
-			geo.vertexBuffer = vbuf;
-			geo.vertexBufferOffset = 0;
-			geo.vertexStride = sizeof(Point);
-			geo.vertexFormat = MTLAttributeFormatFloat3;
-			geo.indexBuffer = ibuf;
-			geo.indexBufferOffset = 0;
-			geo.indexType = MTLIndexTypeUInt32;
-			geo.triangleCount = tris.size();
-			// All triangles are opaque: alpha/cutout is resolved by the
-			// shading code (HITPOINTALPHA), never at intersection time.
-			geo.opaque = YES;
-			geo.allowDuplicateIntersectionFunctionInvocation = NO;
+			MTLAccelerationStructureGeometryDescriptor *geo = nil;
+
+			if (curveMesh) {
+				const auto &cps = curveMesh->GetCurveCps();
+				const auto &segs = curveMesh->GetCurveSegIndices();
+
+				// One float4 (xyz + radius) per control point: the radius
+				// view aliases the same buffer at offset .w.
+				id<MTLBuffer> cpBuf = [mtlDev newBufferWithBytes:cps.data()
+						length:cps.size() * sizeof(CurveControlPoint)
+						options:MTLResourceStorageModeShared];
+				id<MTLBuffer> idxBuf = [mtlDev newBufferWithBytes:segs.data()
+						length:segs.size() * sizeof(u_int)
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(cpBuf);
+				ownedPrimBuffers.push_back(idxBuf);
+
+				if (@available(macOS 14.0, *)) {
+					MTLAccelerationStructureCurveGeometryDescriptor *cgeo =
+							[MTLAccelerationStructureCurveGeometryDescriptor descriptor];
+					cgeo.controlPointBuffer = cpBuf;
+					cgeo.controlPointBufferOffset = 0;
+					cgeo.controlPointCount = cps.size();
+					cgeo.controlPointFormat = MTLAttributeFormatFloat3;
+					cgeo.controlPointStride = sizeof(CurveControlPoint);
+					cgeo.radiusBuffer = cpBuf;
+					cgeo.radiusBufferOffset = offsetof(CurveControlPoint, radius);
+					cgeo.radiusFormat = MTLAttributeFormatFloat;
+					cgeo.radiusStride = sizeof(CurveControlPoint);
+					cgeo.indexBuffer = idxBuf;
+					cgeo.indexBufferOffset = 0;
+					cgeo.indexType = MTLIndexTypeUInt32;
+					cgeo.segmentCount = segs.size();
+					cgeo.segmentControlPointCount = 4;
+					cgeo.curveType = MTLCurveTypeRound;
+					cgeo.curveBasis = MTLCurveBasisCatmullRom;
+					cgeo.curveEndCaps = MTLCurveEndCapsNone;
+					cgeo.opaque = YES;
+					cgeo.allowDuplicateIntersectionFunctionInvocation = NO;
+					geo = cgeo;
+				}
+			}
+
+			if (!geo) {
+				const std::span<Point> verts = mesh->GetVertices();
+				const std::span<Triangle> tris = mesh->GetTriangles();
+
+				id<MTLBuffer> vbuf = [mtlDev newBufferWithBytes:verts.data()
+						length:verts.size() * sizeof(Point)
+						options:MTLResourceStorageModeShared];
+				id<MTLBuffer> ibuf = [mtlDev newBufferWithBytes:tris.data()
+						length:tris.size() * sizeof(Triangle)
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(vbuf);
+				ownedPrimBuffers.push_back(ibuf);
+
+				MTLAccelerationStructureTriangleGeometryDescriptor *tgeo =
+						[MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+				tgeo.vertexBuffer = vbuf;
+				tgeo.vertexBufferOffset = 0;
+				tgeo.vertexStride = sizeof(Point);
+				tgeo.vertexFormat = MTLAttributeFormatFloat3;
+				tgeo.indexBuffer = ibuf;
+				tgeo.indexBufferOffset = 0;
+				tgeo.indexType = MTLIndexTypeUInt32;
+				tgeo.triangleCount = tris.size();
+				// All triangles are opaque: alpha/cutout is resolved by the
+				// shading code (HITPOINTALPHA), never at intersection time.
+				tgeo.opaque = YES;
+				tgeo.allowDuplicateIntersectionFunctionInvocation = NO;
+				geo = tgeo;
+			}
 			[primRetainBag addObject:geo];
 
 			MTLPrimitiveAccelerationStructureDescriptor *primDesc =
@@ -410,6 +604,7 @@ void MetalRTKernel::BuildInstanceStructure() {
 				hasMotion = true;
 				break;
 			}
+		instanceASIsMotion = hasMotion;
 
 		MTLInstanceAccelerationStructureDescriptor *instDesc =
 				[MTLInstanceAccelerationStructureDescriptor descriptor];
@@ -566,6 +761,8 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 		u_int rc = rayCount;
 		[enc setBytes:&rc length:sizeof(rc) atIndex:2];
 		[enc setAccelerationStructure:instanceAS atBufferIndex:3];
+		u_int motionTime = instanceASIsMotion ? 1u : 0u;
+		[enc setBytes:&motionTime length:sizeof(motionTime) atIndex:4];
 
 		const MTLSize grid = MTLSizeMake(rayCount, 1, 1);
 		const MTLSize tg = MTLSizeMake(workGroupSize, 1, 1);

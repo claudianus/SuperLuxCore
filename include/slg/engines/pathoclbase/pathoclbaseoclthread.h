@@ -243,6 +243,10 @@ protected:
 	luxrays::HardwareDeviceBuffer *triAOVBuff;
 	luxrays::HardwareDeviceBuffer *trianglesBuff;
 	luxrays::HardwareDeviceBuffer *interpolatedTransformsBuff;
+	// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md)
+	luxrays::HardwareDeviceBuffer *curveCpsBuff;
+	luxrays::HardwareDeviceBuffer *curveSegIndicesBuff;
+	luxrays::HardwareDeviceBuffer *curveCpAttrsBuff;
 	luxrays::HardwareDeviceBuffer *cameraBuff;
 	luxrays::HardwareDeviceBuffer *cameraBokehDistributionBuff;
 	luxrays::HardwareDeviceBuffer *lightIndexOffsetByMeshIndexBuff;

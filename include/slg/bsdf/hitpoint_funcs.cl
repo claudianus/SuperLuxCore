@@ -33,17 +33,26 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 
 	hitPoint->objectID = sceneObjs[meshIndex].objectID;
 
-	// Interpolate face normal
-	const float3 geometryN = ExtMesh_GetGeometryNormal(&hitPoint->localToWorld, meshIndex, triIndex EXTMESH_PARAM);
+	const bool isCurveHit = (triIndex & RAYHIT_CURVE_FLAG) != 0u;
+
+	// Interpolate face normal (curve hits: round-tube normal from the hit
+	// point and the Catmull-Rom centerline)
+	float3 geometryN, interpolatedN;
+	if (isCurveHit) {
+		geometryN = Curve_GetNormal(&hitPoint->localToWorld, meshIndex, triIndex, pnt, b1 EXTMESH_PARAM);
+		interpolatedN = geometryN;
+	} else {
+		geometryN = ExtMesh_GetGeometryNormal(&hitPoint->localToWorld, meshIndex, triIndex EXTMESH_PARAM);
+		interpolatedN = ExtMesh_GetInterpolateNormal(&hitPoint->localToWorld, meshIndex, triIndex, b1, b2 EXTMESH_PARAM);
+	}
 	VSTORE3F(geometryN,  &hitPoint->geometryN.x);
-	const float3 interpolatedN = ExtMesh_GetInterpolateNormal(&hitPoint->localToWorld, meshIndex, triIndex, b1, b2 EXTMESH_PARAM);
 	VSTORE3F(interpolatedN,  &hitPoint->interpolatedN.x);
 	const float3 shadeN = interpolatedN;
 	VSTORE3F(shadeN,  &hitPoint->shadeN.x);
 
 	hitPoint->intoObject = (dot(-fixedDir, geometryN) < 0.f);
 
-	// Interpolate UV coordinates
+	// Interpolate UV coordinates (curve branch handled inside)
 	const float2 defaultUV = ExtMesh_GetInterpolateUV(meshIndex, triIndex, b1, b2, 0 EXTMESH_PARAM);
 	VSTORE2F(defaultUV, &hitPoint->defaultUV.u);
 
@@ -54,14 +63,26 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 
 	// Compute geometry differentials
 	float3 dndu, dndv, dpdu, dpdv;
-	ExtMesh_GetDifferentials(
-			&hitPoint->localToWorld,
-			meshIndex,
-			triIndex,
-			shadeN, 0,
-			&dpdu, &dpdv,
-			&dndu, &dndv
-			EXTMESH_PARAM);
+	if (isCurveHit) {
+		// For a round tube: dpdu ~ world-space strand tangent, dpdv ~
+		// shading normal, normal curvature ignored (sufficient for hair).
+		const float3 tObj = Curve_GetTangentObj(meshIndex, triIndex, b1 EXTMESH_PARAM);
+		const float3 tWorld = (meshDescs[meshIndex].type == TYPE_EXT_TRIANGLE) ?
+				tObj : Transform_ApplyVector(&hitPoint->localToWorld, tObj);
+		dpdu = tWorld;
+		dpdv = cross(shadeN, dpdu);
+		dndu = ZERO;
+		dndv = ZERO;
+	} else {
+		ExtMesh_GetDifferentials(
+				&hitPoint->localToWorld,
+				meshIndex,
+				triIndex,
+				shadeN, 0,
+				&dpdu, &dpdv,
+				&dndu, &dndv
+				EXTMESH_PARAM);
+	}
 	VSTORE3F(dpdu, &hitPoint->dpdu.x);
 	VSTORE3F(dpdv, &hitPoint->dpdv.x);
 	VSTORE3F(dndu, &hitPoint->dndu.x);

@@ -24,6 +24,7 @@
 #include <array>
 #include <memory>
 #include <span>
+#include <vector>
 #include <execution>
 
 #include <boost/lexical_cast.hpp>
@@ -275,6 +276,22 @@ private:
 	}
 };
 
+// Native curve primitive data (Metal HWRT path; see
+// dev-tools/metal_curve_design.md). Object-space uniform Catmull-Rom control
+// points (xyz + radius), per-segment mesh-local start indices and
+// per-control-point shading attributes. Meshes carrying this can be built as
+// curve acceleration structures instead of intersecting their triangle
+// tessellation (the tessellation is still present and used by software BVHs
+// and light sampling).
+struct CurveControlPoint {
+	float x, y, z, radius;
+};
+
+struct CurveCpAttr {
+	float colR, colG, colB, alpha;
+	float u, v, strandU, strandIndexBits; // strand index as float bit pattern
+};
+
 class ExtTriangleMesh : public TriangleMesh, public ExtMesh {
 public:
 	ExtTriangleMesh(
@@ -376,6 +393,25 @@ public:
 	virtual bool HasAlphas(const u_int layerIndex) const { return alphas.LayerHasValues(layerIndex); }
 	const auto& GetAllAlphas() const { return alphas; }
 
+	// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md).
+	// SetCurveData() takes object-space Catmull-Rom control points
+	// (xyz + radius), mesh-local per-segment start indices and per-cp shading
+	// attributes (2 float4s worth per cp).
+	void SetCurveData(
+		std::vector<CurveControlPoint> &&cps,
+		std::vector<u_int> &&segIndices,
+		std::vector<CurveCpAttr> &&cpAttrs
+	) {
+		curveCps = std::move(cps);
+		curveSegIndices = std::move(segIndices);
+		curveCpAttrs = std::move(cpAttrs);
+	}
+	bool HasCurveData() const { return !curveSegIndices.empty(); }
+	u_int GetCurveCpCount() const { return (u_int)curveCps.size(); }
+	u_int GetCurveSegCount() const { return (u_int)curveSegIndices.size(); }
+	const std::vector<CurveControlPoint> &GetCurveCps() const { return curveCps; }
+	const std::vector<u_int> &GetCurveSegIndices() const { return curveSegIndices; }
+	const std::vector<CurveCpAttr> &GetCurveCpAttrs() const { return curveCpAttrs; }
 
 	NormalBuffer ComputeNormals();
 
@@ -599,6 +635,9 @@ public:
 			vertAOV.Serialize(i, ar, vertCount);
 			triAOV.Serialize(i, ar, triCount);
 		}
+		// Note: curve data (curveCps/curveSegIndices/curveCpAttrs) is
+		// intentionally not serialized — serialized meshes simply fall back
+		// to triangle rendering, preserving binary scene compatibility.
 	}
 
 	template<class Archive>	void load(Archive &ar, const unsigned int version) {
@@ -625,6 +664,10 @@ public:
 			triAOV.Deserialize(i, ar, triCount);
 		}
 
+		curveCps.clear();
+		curveSegIndices.clear();
+		curveCpAttrs.clear();
+
 		bevelCylinders = nullptr;
 		bevelBoundingCylinders = nullptr;
 		bevelBVHArrayNodes = nullptr;
@@ -642,6 +685,14 @@ public:
 
 	ExtMeshProp<float> vertAOV; // Vertex AOV
 	ExtMeshProp<float> triAOV; // Triangle AOV
+
+	// Native curve primitive data (Metal HWRT). curveCps are object-space
+	// Catmull-Rom control points (xyz + radius); curveSegIndices are
+	// mesh-local per-segment start indices (the Metal index-buffer layout);
+	// curveCpAttrs has one entry per control point.
+	std::vector<CurveControlPoint> curveCps;
+	std::vector<u_int> curveSegIndices;
+	std::vector<CurveCpAttr> curveCpAttrs;
 
 	BevelCylinder *bevelCylinders;
 	BevelBoundingCylinder *bevelBoundingCylinders;

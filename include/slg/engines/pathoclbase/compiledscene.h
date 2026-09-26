@@ -75,6 +75,13 @@ public:
 	std::vector<luxrays::Triangle> tris;
 	std::vector<luxrays::ocl::InterpolatedTransform> interpolatedTransforms;
 	std::vector<luxrays::ocl::ExtMesh> meshDescs;
+
+	// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md):
+	// global control-point buffer (xyz + radius float4), global per-segment
+	// start-cp indices, per-cp shading attributes (2 float4 per cp).
+	std::vector<luxrays::CurveControlPoint> curveCps;
+	std::vector<u_int> curveSegIndices;
+	std::vector<luxrays::CurveCpAttr> curveCpAttrs;
 	luxrays::BSphere worldBSphere;
 
 	// Compiled Scene Objects

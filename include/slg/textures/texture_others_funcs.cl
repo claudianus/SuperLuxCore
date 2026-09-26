@@ -546,12 +546,17 @@ OPENCL_FORCE_INLINE bool WireFrameTexture_Evaluate(__global const HitPoint *hitP
 	const uint meshIndex = hitPoint->meshIndex;
 	if (meshIndex == NULL_INDEX)
 		return false;
-	
+
+	const uint triIndex = hitPoint->triangleIndex;
+	// Curve-primitive hits (RAYHIT_CURVE_FLAG) carry a segment index, not a
+	// triangle index: the triangle arrays below would be read out of bounds.
+	if (triIndex & RAYHIT_CURVE_FLAG)
+		return false;
+
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	__global const Point* restrict iVertices = &vertices[meshDesc->vertsOffset];
 	__global const Triangle* restrict iTriangles = &triangles[meshDesc->trisOffset];
 
-	const uint triIndex = hitPoint->triangleIndex;
 	__global const Triangle* restrict tri = &iTriangles[triIndex];
 	const uint vi0 = tri->v[0];
 	const uint vi1 = tri->v[1];

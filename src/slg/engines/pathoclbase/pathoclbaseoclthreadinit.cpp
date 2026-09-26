@@ -146,6 +146,28 @@ void PathOCLBaseOCLRenderThread::InitGeometry() {
 	} else
 		intersectionDevice.FreeBuffer(&interpolatedTransformsBuff);
 
+	// Native curve primitives (Metal HWRT): the three buffers are only
+	// allocated when at least one mesh carries curve data; kernels must not
+	// dereference them otherwise (no mesh then has curveSegsOffset set).
+	if (!cscene->curveSegIndices.empty()) {
+		intersectionDevice.AllocBuffer(&curveCpsBuff,
+				memTypeFlags,
+				&cscene->curveCps[0],
+				sizeof(CurveControlPoint) * cscene->curveCps.size(), "Curve control points");
+		intersectionDevice.AllocBuffer(&curveSegIndicesBuff,
+				memTypeFlags,
+				&cscene->curveSegIndices[0],
+				sizeof(u_int) * cscene->curveSegIndices.size(), "Curve segment indices");
+		intersectionDevice.AllocBuffer(&curveCpAttrsBuff,
+				memTypeFlags,
+				&cscene->curveCpAttrs[0],
+				sizeof(CurveCpAttr) * cscene->curveCpAttrs.size(), "Curve cp attributes");
+	} else {
+		intersectionDevice.FreeBuffer(&curveCpsBuff);
+		intersectionDevice.FreeBuffer(&curveSegIndicesBuff);
+		intersectionDevice.FreeBuffer(&curveCpAttrsBuff);
+	}
+
 	intersectionDevice.AllocBufferRO(&meshDescsBuff, &cscene->meshDescs[0],
 			sizeof(slg::ocl::ExtMesh) * cscene->meshDescs.size(), "Mesh description");
 }
