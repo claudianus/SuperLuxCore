@@ -315,6 +315,13 @@ typedef struct {
 	unsigned int betaMTexIndex;
 	unsigned int betaNTexIndex;
 	unsigned int alphaTexIndex;
+	// Huang'22 model parameters (model selects Chiang/Huang shading)
+	unsigned int model; // 0 = chiang, 1 = huang
+	unsigned int roughnessTexIndex;
+	unsigned int aspectRatioTexIndex;
+	float scaleR;
+	float scaleTT;
+	float scaleTRT;
 } HairParam;
 
 typedef struct {

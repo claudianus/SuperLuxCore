@@ -860,10 +860,30 @@ MaterialUPtr Scene::CreateMaterial(
 		auto betaN = parseTex("beta_n", {0.3f});
 		auto alpha = parseTex("alpha", {2.f});
 
+		// Scattering model: "chiang" (default) or "huang" (microfacet)
+		const string modelName = parseString("model", "chiang");
+		HairMaterial::HairModel hairModel;
+		if (modelName == "chiang")
+			hairModel = HairMaterial::HairModel::CHIANG;
+		else if (modelName == "huang")
+			hairModel = HairMaterial::HairModel::HUANG;
+		else
+			throw runtime_error("Unknown hairmat model: " + modelName +
+					" (expected 'chiang' or 'huang')");
+
+		// Huang-only parameters (GGX microfacet roughness, elliptical
+		// cross-section minor axis, per-lobe energy scales)
+		auto roughness = parseTex("roughness", {0.3f});
+		auto aspectRatio = parseTex("aspectratio", {1.f});
+		const float scaleR = std::clamp(parseFloat("scale_r", 1.f), 0.f, 1.f);
+		const float scaleTT = std::clamp(parseFloat("scale_tt", 1.f), 0.f, 1.f);
+		const float scaleTRT = std::clamp(parseFloat("scale_trt", 1.f), 0.f, 1.f);
+
 		mat = std::make_unique<HairMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
 			sigmaA, color, eumelanin, pheomelanin,
-			eta, betaM, betaN, alpha
+			eta, betaM, betaN, alpha,
+			roughness, aspectRatio, scaleR, scaleTT, scaleTRT, hairModel
 		);
 	} else if (matType == "twosided") {
 		MaterialConstRef frontMat = matDefs.GetMaterial(parseString("frontmaterial", "front"));

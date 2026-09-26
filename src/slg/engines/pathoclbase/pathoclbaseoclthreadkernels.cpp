@@ -237,6 +237,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_materialdefs_funcs_glossy2 <<
 			slg::ocl::KernelSource_materialdefs_funcs_glossycoating <<
 			slg::ocl::KernelSource_materialdefs_funcs_glossytranslucent <<
+			slg::ocl::KernelSource_hair_huang_lut <<
 			slg::ocl::KernelSource_materialdefs_funcs_hair <<
 			slg::ocl::KernelSource_materialdefs_funcs_heterogeneousvol <<
 			slg::ocl::KernelSource_materialdefs_funcs_homogeneousvol <<

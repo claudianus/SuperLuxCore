@@ -164,6 +164,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossy2.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossycoating.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossytranslucent.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/hair_huang_lut.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_hair.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_heterogeneousvol.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_homogeneousvol.cl
@@ -607,6 +608,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/materialdefs_funcs_glossy2_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossycoating_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossytranslucent_kernel.cpp
+  ${generated_kernels_dir}/hair_huang_lut_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_hair_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_heterogeneousvol_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_homogeneousvol_kernel.cpp

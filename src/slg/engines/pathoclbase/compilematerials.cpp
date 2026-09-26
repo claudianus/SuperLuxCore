@@ -1040,6 +1040,12 @@ void CompiledScene::CompileMaterials() {
 				mat->hair.betaMTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaM());
 				mat->hair.betaNTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaN());
 				mat->hair.alphaTexIndex = scene.GetTextures().GetTextureIndex(hm.GetAlpha());
+				mat->hair.model = hm.GetHairModel() == HairMaterial::HairModel::HUANG ? 1 : 0;
+				mat->hair.roughnessTexIndex = scene.GetTextures().GetTextureIndex(hm.GetRoughness());
+				mat->hair.aspectRatioTexIndex = scene.GetTextures().GetTextureIndex(hm.GetAspectRatio());
+				mat->hair.scaleR = hm.GetScaleR();
+				mat->hair.scaleTT = hm.GetScaleTT();
+				mat->hair.scaleTRT = hm.GetScaleTRT();
 				break;
 			}
 			case OPENPBR: {

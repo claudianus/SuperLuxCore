@@ -65,6 +65,7 @@ extern std::string KernelSource_materialdefs_funcs_glass;
 extern std::string KernelSource_materialdefs_funcs_glossy2;
 extern std::string KernelSource_materialdefs_funcs_glossycoating;
 extern std::string KernelSource_materialdefs_funcs_glossytranslucent;
+extern std::string KernelSource_hair_huang_lut;
 extern std::string KernelSource_materialdefs_funcs_hair;
 extern std::string KernelSource_materialdefs_funcs_heterogeneousvol;
 extern std::string KernelSource_materialdefs_funcs_homogeneousvol;

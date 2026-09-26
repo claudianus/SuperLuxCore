@@ -150,6 +150,15 @@ typedef struct {
 	float s;
 	float sin2kAlpha[3];
 	float cos2kAlpha[3];
+
+	// Huang model state (only filled when material->hair.model == 1)
+	float3 frameX, frameY, frameZ; // Huang local frame (Y = tangent)
+	float3 wi;        // fixed dir in the Huang frame
+	float hDivR;      // hit offset over projected radius [-1,1]
+	float radius;     // projected radius from the view dir
+	float rough;      // GGX alpha (= artist roughness)
+	float tilt;       // cuticle tilt, radians
+	float aspect;     // minor/major axis ratio b
 } HairContext;
 
 // Hair frame basis: e1 = radial (shading normal projected perp. to the
@@ -196,7 +205,7 @@ OPENCL_FORCE_INLINE float3 Hair_EvalSigmaA(__global const Material* restrict mat
 		ce * 1.37f + cp * 1.05f);
 }
 
-OPENCL_FORCE_INLINE void Hair_SetupContext(__global const Material* restrict material,
+OPENCL_FORCE_INLINE bool Hair_SetupContext(__global const Material* restrict material,
 		__global const HitPoint *hitPoint, const float3 localEyeDir,
 		__private HairContext *ctx
 		MATERIALS_PARAM_DECL) {
@@ -224,6 +233,55 @@ OPENCL_FORCE_INLINE void Hair_SetupContext(__global const Material* restrict mat
 			hitPoint TEXTURES_PARAM);
 	ctx->eta = Texture_GetFloatValue(material->hair.etaTexIndex,
 			hitPoint TEXTURES_PARAM);
+	ctx->sigma_a = Hair_EvalSigmaA(material, hitPoint, bn MATERIALS_PARAM);
+
+	if (material->hair.model == 1) {
+		// Huang'22: cuticle tilt in radians (negated, Principled-Hair
+		// convention), GGX alpha = artist roughness, elliptical axis b.
+		ctx->tilt = -a * M_PI_F / 180.f;
+		ctx->rough = clamp(Texture_GetFloatValue(material->hair.roughnessTexIndex,
+				hitPoint TEXTURES_PARAM), 0.001f, 1.f);
+		ctx->aspect = clamp(Texture_GetFloatValue(material->hair.aspectRatioTexIndex,
+				hitPoint TEXTURES_PARAM), 0.1f, 1.f);
+		const float b = ctx->aspect;
+
+		// Azimuthal hit offset: cosine between the shading normal (+Z) and
+		// the direction perpendicular to both tangent and ray.
+		const float3 xRay = cross(ctx->tangent, localEyeDir);
+		const float xRayLen = length(xRay);
+
+		float3 X;
+		if (b == 1.f) {
+			X = (xRayLen >= 1e-8f) ? xRay / xRayLen : MAKE_FLOAT3(1.f, 0.f, 0.f);
+		} else {
+			float3 nPerp = MAKE_FLOAT3(0.f, 0.f, 1.f) - ctx->tangent * ctx->tangent.z;
+			X = (dot(nPerp, nPerp) < 1e-12f) ?
+					MAKE_FLOAT3(1.f, 0.f, 0.f) : normalize(nPerp);
+		}
+
+		if (xRayLen < 1e-8f) {
+			ctx->hDivR = 0.f;
+			ctx->radius = 1.f;
+		} else {
+			const float h = -xRay.z / xRayLen;
+			const float e2 = 1.f - b * b;
+			// Projected radius in the *ellipse* frame (X = major axis)
+			const float wiX = dot(localEyeDir, X);
+			const float wiZ = dot(localEyeDir, cross(X, ctx->tangent));
+			ctx->radius = (e2 == 0.f) ? 1.f :
+					sqrt(1.f - e2 * wiX * wiX / (wiX * wiX + wiZ * wiZ));
+			ctx->hDivR = h / ctx->radius;
+		}
+		if (fabs(ctx->hDivR) >= 1.f)
+			return false;
+
+		ctx->frameX = X;
+		ctx->frameY = ctx->tangent;
+		ctx->frameZ = cross(ctx->frameX, ctx->frameY);
+		ctx->wi = MAKE_FLOAT3(dot(localEyeDir, ctx->frameX),
+				dot(localEyeDir, ctx->frameY), dot(localEyeDir, ctx->frameZ));
+		return true;
+	}
 
 	// Longitudinal variance from beta_m
 	ctx->v[0] = (0.726f * bm + 0.812f * bm * bm + 3.7f * pow(bm, 20.f));
@@ -258,7 +316,7 @@ OPENCL_FORCE_INLINE void Hair_SetupContext(__global const Material* restrict mat
 	const float h = clamp(dot(e1, e2wo), -1.f, 1.f);
 	ctx->gammaO = Hair_SafeASin(h);
 
-	ctx->sigma_a = Hair_EvalSigmaA(material, hitPoint, bn MATERIALS_PARAM);
+	return true;
 }
 
 OPENCL_FORCE_INLINE float3 Hair_f(__global const HitPoint *hitPoint,
@@ -362,12 +420,476 @@ OPENCL_FORCE_INLINE float Hair_EvalPdf(__global const HitPoint *hitPoint,
 	return pdf;
 }
 
+//------------------------------------------------------------------------------
+// Huang'22 helpers — mirror of the huang namespace in hairmat.cpp.
+// Frame convention: y = strand tangent, x/z = azimuthal plane.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float HairH_SinTheta(const float3 w) { return w.y; }
+OPENCL_FORCE_INLINE float HairH_CosTheta(const float3 w) {
+	return sqrt(fmax(0.f, w.x * w.x + w.z * w.z));
+}
+OPENCL_FORCE_INLINE float HairH_DirPhi(const float3 w) { return atan2(w.x, w.z); }
+OPENCL_FORCE_INLINE void HairH_SincosPhi(const float3 w,
+		__private float *s, __private float *c) {
+	const float ct = HairH_CosTheta(w);
+	*s = w.x / ct;
+	*c = w.z / ct;
+}
+OPENCL_FORCE_INLINE bool HairH_IsCircular(const float b) { return b == 1.f; }
+
+OPENCL_FORCE_INLINE float HairH_ToPhi(const float gamma, const float b) {
+	if (HairH_IsCircular(b)) return gamma;
+	return atan2(b * sin(gamma), cos(gamma));
+}
+OPENCL_FORCE_INLINE float HairH_ToGamma(const float phi, const float b) {
+	if (HairH_IsCircular(b)) return phi;
+	return atan2(sin(phi), b * cos(phi));
+}
+OPENCL_FORCE_INLINE float HairH_HToGamma(const float hDivR, const float b,
+		const float3 wi) {
+	return HairH_IsCircular(b) ? -Hair_SafeASin(hDivR) :
+			atan2(wi.z, -b * wi.x) - acos(clamp(-hDivR, -1.f, 1.f));
+}
+OPENCL_FORCE_INLINE float3 HairH_ToPoint(const float gamma, const float b) {
+	return MAKE_FLOAT3(sin(gamma), b * cos(gamma), 0.f);
+}
+OPENCL_FORCE_INLINE float3 HairH_SphgDir(const float theta, const float gamma,
+		const float b) {
+	const float st = sin(theta), ct = cos(theta);
+	const float sg = sin(gamma), cg = cos(gamma);
+	float sp, cp;
+	if (HairH_IsCircular(b) || fabs(cg) < 1e-6f) {
+		sp = sg;
+		cp = cg;
+	} else {
+		const float tanP = b * sg / cg;
+		cp = ((cg > 0.f) ? 1.f : -1.f) / sqrt(tanP * tanP + 1.f);
+		sp = cp * tanP;
+	}
+	return MAKE_FLOAT3(sp * ct, st, cp * ct);
+}
+OPENCL_FORCE_INLINE float HairH_ArcLength(const float e2, const float gamma) {
+	return (e2 == 0.f) ? 1.f : sqrt(1.f - e2 * sin(gamma) * sin(gamma));
+}
+
+OPENCL_FORCE_INLINE float3 HairH_RefractAngle(const float3 i, const float3 n,
+		const float cosThetaT, const float invEta) {
+	return (invEta * dot(n, i) + cosThetaT) * n - invEta * i;
+}
+OPENCL_FORCE_INLINE float3 HairH_ReflectDir(const float3 i, const float3 n) {
+	return 2.f * dot(i, n) * n - i;
+}
+OPENCL_FORCE_INLINE bool HairH_MicrofacetVisible(const float3 v, const float3 m,
+		const float3 h) {
+	return dot(v, h) > 0.f && dot(v, m) > 0.f;
+}
+OPENCL_FORCE_INLINE bool HairH_MicrofacetVisible2(const float3 wi, const float3 wo,
+		const float3 m, const float3 h) {
+	return HairH_MicrofacetVisible(wi, m, h) && HairH_MicrofacetVisible(wo, m, h);
+}
+
+OPENCL_FORCE_INLINE float HairH_Lambda(const float alpha2, const float cosN) {
+	const float c = fabs(cosN);
+	if (c < 1e-7f) return 1e30f;
+	return .5f * (sqrt(1.f + alpha2 * (1.f / (c * c) - 1.f)) - 1.f);
+}
+OPENCL_FORCE_INLINE float HairH_G(const float alpha2, const float cosI,
+		const float cosO) {
+	return 1.f / (1.f + HairH_Lambda(alpha2, cosI) + HairH_Lambda(alpha2, cosO));
+}
+OPENCL_FORCE_INLINE float HairH_Go(const float alpha2, const float cosNI,
+		const float cosNO) {
+	return (1.f + HairH_Lambda(alpha2, cosNI)) /
+			(1.f + HairH_Lambda(alpha2, cosNI) + HairH_Lambda(alpha2, cosNO));
+}
+OPENCL_FORCE_INLINE float HairH_D(const float alpha2, const float cosNH) {
+	const float c2 = fmin(cosNH * cosNH, 1.f);
+	return alpha2 / (M_PI_F * (1.f - c2 + alpha2 * c2) * (1.f - c2 + alpha2 * c2));
+}
+OPENCL_FORCE_INLINE float HairH_FresnelT(const float cosI, const float eta,
+		__private float *cosT) {
+	const float c = fabs(cosI);
+	const float sin2T = (1.f - c * c) / (eta * eta);
+	if (sin2T >= 1.f) {
+		*cosT = 0.f;
+		return 1.f;
+	}
+	const float t = sqrt(1.f - sin2T);
+	*cosT = t;
+	const float rp = (eta * c - t) / (eta * c + t);
+	const float rs = (c - eta * t) / (c + eta * t);
+	return .5f * (rp * rp + rs * rs);
+}
+OPENCL_FORCE_INLINE float HairH_FresnelC(const float cosI, const float eta) {
+	const float c = fabs(cosI);
+	const float g = eta * eta - 1.f + c * c;
+	if (g <= 0.f) return 1.f;
+	const float gs = sqrt(g);
+	return .5f * ((gs - c) / (gs + c)) * ((gs - c) / (gs + c)) *
+			(1.f + (((gs + c) * c - 1.f) / ((gs - c) * c + 1.f)) *
+			(((gs + c) * c - 1.f) / ((gs - c) * c + 1.f)));
+}
+OPENCL_FORCE_INLINE float HairH_EnergyScale(const float mu, const float sqrtAlpha,
+		const float eta) {
+	return 1.f / fmax(HairHuang_GlassE(mu, sqrtAlpha, eta), 1e-4f);
+}
+OPENCL_FORCE_INLINE float3 HairH_SampleWh(const float alpha, const float3 wi,
+		const float3 wm, const float u0, const float u1) {
+	float3 s, t;
+	CoordinateSystem(wm, &s, &t);
+	const float3 wiWm = MAKE_FLOAT3(dot(wi, s), dot(wi, t), dot(wi, wm));
+	const float3 whWm = Microfacet_GgxSampleVNDF(wiWm, alpha, alpha, u0, u1);
+	return whWm.x * s + whWm.y * t + whWm.z * wm;
+}
+OPENCL_FORCE_INLINE float3 HairH_EvalTRRT(const float T, const float R,
+		const float3 A) {
+	const float tAvg = fmax(1.f - R, 1e-5f);
+	const float3 trrt = T * R * R * tAvg * A * A * A;
+	return trrt / (MAKE_FLOAT3(1.f, 1.f, 1.f) - A * (1.f - tAvg));
+}
+
+// Deterministic VNDF quadrature points (Hammersley 8 / 4) replacing the
+// Monte-Carlo quadrature Cycles runs inside eval_residual: Evaluate() must
+// stay a pure function of (wi, wo).
+#define HAIRH_QWH1 8
+#define HAIRH_QWH2 4
+
+OPENCL_FORCE_INLINE float2 HairH_QuadWh1(const int q) {
+	const float2 pts[HAIRH_QWH1] = {
+		(float2)(0.125f, 0.0625f), (float2)(0.625f, 0.1875f),
+		(float2)(0.375f, 0.3125f), (float2)(0.875f, 0.4375f),
+		(float2)(0.250f, 0.5625f), (float2)(0.750f, 0.6875f),
+		(float2)(0.500f, 0.8125f), (float2)(0.0625f, 0.9375f)
+	};
+	return pts[q];
+}
+OPENCL_FORCE_INLINE float2 HairH_QuadWh2(const int q) {
+	const float2 pts[HAIRH_QWH2] = {
+		(float2)(0.19f, 0.41f), (float2)(0.69f, 0.83f),
+		(float2)(0.44f, 0.09f), (float2)(0.94f, 0.61f)
+	};
+	return pts[q];
+}
+
+// Huang'22 eval at the hit azimuth. woLight is the evaluated direction in the
+// Huang frame; returns f * |cos(wo . shadingNormal)| (LuxCore Evaluate value).
+OPENCL_FORCE_INLINE float3 Hair_HuangEval(
+		__global const Material* restrict material,
+		__private const HairContext *ctx, const float3 woLight) {
+	const float b = ctx->aspect;
+	const float e2 = 1.f - b * b;
+	const float alpha = ctx->rough;
+	const float alpha2 = alpha * alpha;
+	const float sqrtAlpha = sqrt(alpha);
+	const float eta = ctx->eta;
+	const float invEta = 1.f / eta;
+	const float3 wi = ctx->wi;
+	const float3 wo = woLight;
+
+	const float gammaMi = HairH_HToGamma(ctx->hDivR, b, wi);
+	const float3 wmi_ = HairH_SphgDir(0.f, gammaMi, b);
+	const float3 wmi = HairH_SphgDir(ctx->tilt, gammaMi, b);
+	const float cosMi = dot(wi, wmi);
+
+	if (cosMi <= 0.f || dot(wo, wmi_) < 0.f || dot(wi, wmi_) < 0.f)
+		return BLACK;
+
+	const float arcI = HairH_ArcLength(e2, gammaMi);
+	const float kSurf = 1.f / fmax(arcI * cosMi, 1e-4f);
+
+	float3 result = BLACK;
+
+	if (material->hair.scaleR > 0.f) {
+		const float3 wh = normalize(wi + wo);
+		if (HairH_MicrofacetVisible2(wi, wo, wmi_, wh)) {
+			const float cosMo = dot(wo, wmi);
+			const float F = HairH_FresnelC(dot(wi, wh), eta);
+			const float D = HairH_D(alpha2, dot(wmi, wh));
+			const float G = HairH_G(alpha2, cosMi, cosMo);
+			const float scale = HairH_EnergyScale(cosMi, sqrtAlpha, eta);
+			result += material->hair.scaleR * 0.25f * F * D * G * scale / cosMi;
+		}
+	}
+
+	if (material->hair.scaleTT > 0.f || material->hair.scaleTRT > 0.f) {
+		const float3 muA = ctx->sigma_a;
+		float3 sTT = BLACK, sTRT = BLACK, sTRRT = BLACK;
+
+		for (int q = 0; q < HAIRH_QWH1; ++q) {
+			const float2 uv1 = HairH_QuadWh1(q);
+			const float3 wh1 = HairH_SampleWh(alpha, wi, wmi, uv1.x, uv1.y);
+			const float cosHi1 = dot(wi, wh1);
+			if (cosHi1 <= 0.f)
+				continue;
+			float cosThetaT1;
+			const float F1 = HairH_FresnelT(cosHi1, eta, &cosThetaT1);
+			const float T1 = 1.f - F1;
+			const float scale1 = HairH_EnergyScale(cosMi, sqrtAlpha, eta);
+			const float3 wt = HairH_RefractAngle(wi, wh1, -cosThetaT1, invEta);
+			const float phiT = HairH_DirPhi(wt);
+			const float gammaMt = 2.f * HairH_ToPhi(phiT, b) - gammaMi;
+			const float3 wmt = HairH_SphgDir(-ctx->tilt, gammaMt, b);
+			const float3 wmt_ = HairH_SphgDir(0.f, gammaMt, b);
+			const float cosMo1 = dot(-wt, wmi);
+			const float cosMi2 = dot(-wt, wmt);
+			const float G1o = HairH_Go(alpha2, cosMi, cosMo1);
+			if (!HairH_MicrofacetVisible2(wi, -wt, wmi, wh1) ||
+					!HairH_MicrofacetVisible2(wi, -wt, wmi_, wh1))
+				continue;
+
+			const float chord = HairH_IsCircular(b) ?
+					2.f * cos(gammaMi - phiT) :
+					-length(HairH_ToPoint(gammaMi, b) - HairH_ToPoint(gammaMt + M_PI_F, b));
+			const float3 At = Spectrum_Exp(muA * (chord / HairH_CosTheta(wt)));
+			const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta);
+
+			if (material->hair.scaleTT > 0.f && dot(wo, wt) >= invEta - 1e-5f) {
+				float3 wh2 = invEta * wo - wt;
+				const float rcpWh2 = 1.f / length(wh2);
+				wh2 *= rcpWh2;
+				const float cosMh2 = dot(wmt, wh2);
+				if (cosMh2 >= 0.f) {
+					const float cosHi2 = dot(-wt, wh2);
+					const float cosHo2 = dot(-wo, wh2);
+					const float cosMo2 = dot(-wo, wmt);
+					const float T2 = (1.f - HairH_FresnelC(cosHi2, invEta)) * scale2;
+					const float D2 = HairH_D(alpha2, cosMh2);
+					const float G2 = HairH_G(alpha2, cosMi2, cosMo2);
+					const float3 r = T1 * scale1 * T2 * D2 * G1o * G2 * At *
+							cosHi2 * cosHo2 * rcpWh2 * rcpWh2 / cosMo1 *
+							(HairH_ArcLength(e2, gammaMt) / arcI);
+					if (!Spectrum_IsBlack(r) && !isnan(Spectrum_Y(r)))
+						sTT += r;
+				}
+			}
+
+			if (material->hair.scaleTRT > 0.f) {
+				for (int q2 = 0; q2 < HAIRH_QWH2; ++q2) {
+					const float2 uv2 = HairH_QuadWh2(q2);
+					const float3 wh2 = HairH_SampleWh(alpha, -wt, wmt, uv2.x, uv2.y);
+					const float cosHi2 = dot(-wt, wh2);
+					if (cosHi2 <= 0.f)
+						continue;
+					const float R2 = HairH_FresnelC(cosHi2, invEta);
+					const float3 wtr = HairH_ReflectDir(wt, wh2);
+
+					if (dot(-wtr, wo) < invEta - 1e-5f) {
+						sTRRT += HairH_EvalTRRT(T1, R2, At);
+						continue;
+					}
+					if (!HairH_MicrofacetVisible2(-wt, -wtr, wmt, wh2) ||
+							!HairH_MicrofacetVisible2(-wt, -wtr, wmt_, wh2))
+						continue;
+
+					const float phiTr = HairH_DirPhi(wtr);
+					const float gammaMtr = gammaMi -
+							2.f * (HairH_ToPhi(phiT, b) - HairH_ToPhi(phiTr, b)) + M_PI_F;
+					const float3 wmtr = HairH_SphgDir(-ctx->tilt, gammaMtr, b);
+					const float3 wmtr_ = HairH_SphgDir(0.f, gammaMtr, b);
+					float3 wh3 = wtr + invEta * wo;
+					const float rcpWh3 = 1.f / length(wh3);
+					wh3 *= rcpWh3;
+					const float cosMh3 = dot(wmtr, wh3);
+					if (cosMh3 < 0.f ||
+							!HairH_MicrofacetVisible2(wtr, -wo, wmtr, wh3) ||
+							!HairH_MicrofacetVisible2(wtr, -wo, wmtr_, wh3)) {
+						sTRRT += HairH_EvalTRRT(T1, R2, At);
+						continue;
+					}
+					const float cosHi3 = dot(wh3, wtr);
+					const float cosHo3 = dot(wh3, -wo);
+					const float cosMi3 = dot(wmtr, wtr);
+					const float T3 = (1.f - HairH_FresnelC(cosHi3, invEta)) *
+							HairH_EnergyScale(cosMi3, sqrtAlpha, invEta);
+					const float D3 = HairH_D(alpha2, cosMh3);
+					const float3 Atr = Spectrum_Exp(muA *
+							(HairH_IsCircular(b) ?
+								-2.f * fabs(cos(phiTr - gammaMt)) :
+								-length(HairH_ToPoint(gammaMtr, b) - HairH_ToPoint(gammaMt, b)))
+							/ HairH_CosTheta(wtr));
+					const float cosMo2 = dot(wmt, -wtr);
+					const float G2o = HairH_Go(alpha2, cosMi2, cosMo2);
+					const float G3 = HairH_G(alpha2, cosMi3, dot(wmtr, -wo));
+					const float3 r = T1 * scale1 * R2 * scale2 * T3 * D3 *
+							G1o * G2o * G3 * At * Atr *
+							cosMi2 * cosHi3 * cosHo3 * rcpWh3 * rcpWh3 /
+							(cosMo1 * cosMo2) *
+							(HairH_ArcLength(e2, gammaMtr) / arcI);
+					if (!Spectrum_IsBlack(r) && !isnan(Spectrum_Y(r)))
+						sTRT += r;
+					sTRRT += HairH_EvalTRRT(T1, R2, At);
+				}
+			}
+		}
+		sTT /= HAIRH_QWH1;
+		sTRT /= (HAIRH_QWH1 * HAIRH_QWH2);
+		sTRRT /= (HAIRH_QWH1 * HAIRH_QWH2);
+
+		const float sinTi = HairH_SinTheta(wi), cosTi = HairH_CosTheta(wi);
+		const float sinTo = HairH_SinTheta(wo), cosTo = HairH_CosTheta(wo);
+		const float M = Hair_Mp(cosTi, cosTo, sinTi, sinTo, 4.f * alpha);
+		const float N = 1.f / (2.f * M_PI_F);
+		result += ((material->hair.scaleTT * sTT + material->hair.scaleTRT * sTRT) *
+				invEta * invEta + sTRRT * M * N * (2.f / M_PI_F)) * kSurf;
+	}
+
+	return result;
+}
+
+// Huang'22 forward sampling: energy-proportional lobe selection, self-
+// normalized eval, unit directional pdf (same convention as Cycles).
+OPENCL_FORCE_INLINE float3 Hair_HuangSample(
+		__global const Material* restrict material,
+		__private const HairContext *ctx, __private float3 *woLight,
+		__private const float *u) {
+	const float b = ctx->aspect;
+	const float alpha = ctx->rough;
+	const float alpha2 = alpha * alpha;
+	const float sqrtAlpha = sqrt(alpha);
+	const float eta = ctx->eta;
+	const float invEta = 1.f / eta;
+	const float3 wi = ctx->wi;
+
+	const float gammaMi = HairH_HToGamma(ctx->hDivR, b, wi);
+	const float3 wmi_ = HairH_SphgDir(0.f, gammaMi, b);
+	const float3 wmi = HairH_SphgDir(ctx->tilt, gammaMi, b);
+	const float cosMi1 = dot(wmi, wi);
+	if (cosMi1 < 0.f || dot(wmi_, wi) < 0.f)
+		return BLACK;
+
+	const float3 wh1 = HairH_SampleWh(alpha, wi, wmi, u[1], u[2]);
+	const float3 wr = HairH_ReflectDir(wi, wh1);
+	if (!HairH_MicrofacetVisible(wi, wmi_, wh1))
+		return BLACK;
+	float cosThetaT1;
+	const float R1 = HairH_FresnelT(dot(wi, wh1), eta, &cosThetaT1);
+	const float scale1 = HairH_EnergyScale(cosMi1, sqrtAlpha, eta);
+	const float R = material->hair.scaleR * R1 * scale1 *
+			(HairH_MicrofacetVisible(wr, wmi_, wh1) ? 1.f : 0.f) *
+			HairH_Go(alpha2, cosMi1, dot(wmi, wr));
+
+	const float3 wt = HairH_RefractAngle(wi, wh1, -cosThetaT1, invEta);
+	const float phiT = HairH_DirPhi(wt);
+	const float gammaMt = 2.f * HairH_ToPhi(phiT, b) - gammaMi;
+	const float3 wmt = HairH_SphgDir(-ctx->tilt, gammaMt, b);
+	const float3 wmt_ = HairH_SphgDir(0.f, gammaMt, b);
+	const float3 wh2 = HairH_SampleWh(alpha, -wt, wmt, u[3], u[4]);
+	const float3 wtr = HairH_ReflectDir(wt, wh2);
+	const float cosMi2 = dot(-wt, wmt);
+
+	float3 TT = BLACK, TRT = BLACK, TRRT = BLACK;
+	float3 wtt = MAKE_FLOAT3(0.f, 0.f, 1.f);
+	float3 wtrt = wtt, wtrrt = wtt;
+	if (cosMi2 > 0.f && HairH_MicrofacetVisible(-wt, wmi_, wh1) &&
+			HairH_MicrofacetVisible(-wt, wmt_, wh2)) {
+		const float3 muA = ctx->sigma_a;
+		const float chord = HairH_IsCircular(b) ?
+				2.f * cos(phiT - gammaMi) :
+				-length(HairH_ToPoint(gammaMi, b) - HairH_ToPoint(gammaMt + M_PI_F, b));
+		const float3 At = Spectrum_Exp(muA * chord / HairH_CosTheta(wt));
+		float cosThetaT2;
+		const float R2 = HairH_FresnelT(dot(-wt, wh2), invEta, &cosThetaT2);
+		const float T1 = (1.f - R1) * scale1 *
+				HairH_Go(alpha2, cosMi1, dot(wmi, -wt));
+		const float T2 = 1.f - R2;
+		const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta);
+		wtt = HairH_RefractAngle(-wt, wh2, -cosThetaT2, eta);
+		if (dot(wmt, -wtt) > 0.f && T2 > 0.f &&
+				HairH_MicrofacetVisible(-wtt, wmt_, wh2)) {
+			TT = material->hair.scaleTT * T1 * At * T2 * scale2 *
+					HairH_Go(alpha2, cosMi2, dot(wmt, -wtt));
+		}
+
+		const float phiTr = HairH_DirPhi(wtr);
+		const float gammaMtr = gammaMi -
+				2.f * (HairH_ToPhi(phiT, b) - HairH_ToPhi(phiTr, b)) + M_PI_F;
+		const float3 wmtr = HairH_SphgDir(-ctx->tilt, gammaMtr, b);
+		const float3 wh3 = HairH_SampleWh(alpha, wtr, wmtr, u[5], u[6]);
+		float cosThetaT3;
+		const float R3 = HairH_FresnelT(dot(wtr, wh3), invEta, &cosThetaT3);
+		wtrt = HairH_RefractAngle(wtr, wh3, -cosThetaT3, eta);
+		const float cosMi3 = dot(wmtr, wtr);
+		if (cosMi3 > 0.f) {
+			const float chord2 = HairH_IsCircular(b) ?
+					-2.f * fabs(cos(phiTr - gammaMt)) :
+					-length(HairH_ToPoint(gammaMt, b) - HairH_ToPoint(gammaMtr, b));
+			const float3 Atr = Spectrum_Exp(muA * chord2 / HairH_CosTheta(wtr));
+			const float3 TR = T1 * R2 * scale2 * At * Atr *
+					HairH_EnergyScale(cosMi3, sqrtAlpha, invEta) *
+					HairH_Go(alpha2, cosMi2, dot(wmt, -wtr));
+			const float T3 = 1.f - R3;
+			const float3 wmtr_ = HairH_SphgDir(0.f, gammaMtr, b);
+			if (T3 > 0.f && HairH_MicrofacetVisible2(wtr, -wtrt, wmtr_, wh3)) {
+				TRT = material->hair.scaleTRT * TR * T3 *
+						HairH_Go(alpha2, cosMi3, dot(wmtr, -wtrt));
+			}
+
+			const float randT = fmax(u[7], 1e-5f);
+			const float fac = 1.f + 4.f * alpha *
+					log(randT + (1.f - randT) * exp(-0.5f / alpha));
+			const float uT = Hair_Fract(u[7] * 7919.f);
+			const float sinTo = -fac * HairH_SinTheta(wi) +
+					Hair_SafeSqrt(1.f - fac * fac) *
+					cos(2.f * M_PI_F * uT) * HairH_CosTheta(wi);
+			const float cosTo = Hair_SafeSqrt(1.f - sinTo * sinTo);
+			const float phiO = 2.f * M_PI_F * Hair_Fract(u[0] * 104729.f + 0.31f);
+			wtrrt = MAKE_FLOAT3(sin(phiO) * cosTo, sinTo, cos(phiO) * cosTo);
+
+			const float3 Aavg = sqrt(At * Atr);
+			const float tAvg = fmax(0.5f * (T2 + T3), 1e-5f);
+			const float3 Ares = Aavg * tAvg /
+					(MAKE_FLOAT3(1.f, 1.f, 1.f) - Aavg * (1.f - tAvg));
+			TRRT = TR * R3 * Ares *
+					HairH_Go(alpha2, cosMi3, dot(wmtr, HairH_ReflectDir(wtr, wh3)));
+		}
+	}
+
+	const float eR = R;
+	const float eTT = Spectrum_Y(TT);
+	const float eTRT = Spectrum_Y(TRT);
+	const float eTRRT = Spectrum_Y(TRRT);
+	const float total = eR + eTT + eTRT + eTRRT;
+	if (total <= 0.f)
+		return BLACK;
+
+	float sel = u[0] * total;
+	float3 localO;
+	float3 eval;
+	if (sel < eR) {
+		localO = wr;
+		eval = MAKE_FLOAT3(total, total, total);
+	} else if (sel < eR + eTT) {
+		localO = wtt;
+		eval = TT * (total / eTT);
+	} else if (sel < eR + eTT + eTRT) {
+		localO = wtrt;
+		eval = TRT * (total / eTRT);
+	} else {
+		localO = wtrrt;
+		eval = TRRT * (total / eTRRT);
+	}
+	*woLight = localO;
+	return eval;
+}
+
 OPENCL_FORCE_INLINE void HairMaterial_Albedo(__global const Material* restrict material,
 		__global const HitPoint *hitPoint,
 		__global float *evalStack, uint *evalStackOffset
 		MATERIALS_PARAM_DECL) {
 	HairContext ctx;
-	Hair_SetupContext(material, hitPoint, MAKE_FLOAT3(0.f, 0.f, 1.f), &ctx MATERIALS_PARAM);
+	if (!Hair_SetupContext(material, hitPoint, MAKE_FLOAT3(0.f, 0.f, 1.f),
+			&ctx MATERIALS_PARAM)) {
+		EvalStack_PushFloat3(BLACK);
+		return;
+	}
+	if (material->hair.model == 1) {
+		const float a = clamp(material->hair.scaleR *
+				HairH_EnergyScale(1.f, sqrt(ctx.rough), ctx.eta) +
+				material->hair.scaleTT + material->hair.scaleTRT, 0.f, 1.f);
+		EvalStack_PushFloat3(MAKE_FLOAT3(a, a, a));
+		return;
+	}
 	float apPdf[HAIR_PMAX + 1];
 	Hair_ComputeApPdf(&ctx, 1.f, apPdf);
 	float sum = 0.f;
@@ -414,15 +936,26 @@ OPENCL_FORCE_INLINE void HairMaterial_Evaluate(__global const Material* restrict
 	EvalStack_PopFloat3(lightDir);
 
 	HairContext ctx;
-	Hair_SetupContext(material, hitPoint, eyeDir, &ctx MATERIALS_PARAM);
+	if (!Hair_SetupContext(material, hitPoint, eyeDir, &ctx MATERIALS_PARAM)) {
+		MATERIAL_EVALUATE_RETURN_BLACK;
+	}
 
-	const float3 result = Hair_f(hitPoint, &ctx, lightDir, eyeDir);
+	float3 result;
+	if (material->hair.model == 1) {
+		const float3 woH = MAKE_FLOAT3(dot(lightDir, ctx.frameX),
+				dot(lightDir, ctx.frameY), dot(lightDir, ctx.frameZ));
+		result = Hair_HuangEval(material, &ctx, woH);
+	} else {
+		result = Hair_f(hitPoint, &ctx, lightDir, eyeDir);
+	}
 	if (Spectrum_IsBlack(result)) {
 		MATERIAL_EVALUATE_RETURN_BLACK;
 	}
 
 	const BSDFEvent event = GLOSSY | REFLECT | TRANSMIT;
-	const float directPdfW = Hair_EvalPdf(hitPoint, &ctx, lightDir, eyeDir);
+	// Huang's sampler is self-normalized: unit directional pdf
+	const float directPdfW = (material->hair.model == 1) ? 1.f :
+			Hair_EvalPdf(hitPoint, &ctx, lightDir, eyeDir);
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -441,7 +974,32 @@ OPENCL_FORCE_INLINE void HairMaterial_Sample(__global const Material* restrict m
 	EvalStack_PopFloat3(fixedDir);
 
 	HairContext ctx;
-	Hair_SetupContext(material, hitPoint, fixedDir, &ctx MATERIALS_PARAM);
+	if (!Hair_SetupContext(material, hitPoint, fixedDir, &ctx MATERIALS_PARAM)) {
+		MATERIAL_SAMPLE_RETURN_BLACK;
+	}
+
+	if (material->hair.model == 1) {
+		float u[8];
+		Hair_DemuxFloat(u0, &u[0], &u[1]);
+		Hair_DemuxFloat(u1, &u[2], &u[3]);
+		Hair_DemuxFloat(passThroughEvent, &u[4], &u[5]);
+		Hair_DemuxFloat(Hair_Fract(u0 * 7919.f + u1 * 104729.f + 0.31f),
+				&u[6], &u[7]);
+
+		float3 woH;
+		const float3 eval = Hair_HuangSample(material, &ctx, &woH, u);
+		if (Spectrum_IsBlack(eval)) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float3 sampledDirH = woH.x * ctx.frameX + woH.y * ctx.frameY +
+				woH.z * ctx.frameZ;
+
+		EvalStack_PushFloat3(eval);
+		EvalStack_PushFloat3(sampledDirH);
+		EvalStack_PushFloat(1.f);
+		EvalStack_PushBSDFEvent(GLOSSY | REFLECT | TRANSMIT);
+		return;
+	}
 
 	const float3 T = ctx.tangent;
 	float3 e1, e2;
