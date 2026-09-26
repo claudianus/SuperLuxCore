@@ -45,12 +45,12 @@ Safety: runs with a small task count and a hard per-render deadline
 instead of an infinite wait; run it under an external shell timeout too.
 """
 import sys, os, time
-sys.path.insert(0, "/Users/modumaru/.zcode/workspace/default/LuxCore/out/build/src/pysuperluxcore/Release")
+sys.path.insert(0, "/Users/modumaru/Desktop/code/superluxcore/LuxCore/out/build/src/pysuperluxcore/Release")
 import pysuperluxcore
 import numpy as np
 
 # PLY refs inside the .scn are cwd-relative: chdir into the scene dir.
-SCENE_DIR = "/Users/modumaru/.zcode/workspace/default/LuxCore/scenes/mnee"
+SCENE_DIR = "/Users/modumaru/Desktop/code/superluxcore/LuxCore/scenes/mnee"
 SCENE = "seedcache.scn"
 TASK_COUNT = 8192       # small: development-time bound, not production size
 RENDER_TIMEOUT_S = 240  # hard deadline; far below the macOS GPU watchdog
