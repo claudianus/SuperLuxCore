@@ -337,12 +337,29 @@ void OpenCLDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	size_t workGroupSizeArray[3];
 	ConvertHardwareRange(workGroupSize, workGroupSizeArray);
 
+	const bool traceEnqueue = getenv("LUXRAYS_OCL_TRACE_ENQUEUE") != nullptr;
+	if (traceEnqueue) {
+		char kname[256] = "?";
+		size_t knameLen = 0;
+		clGetKernelInfo(oclDeviceKernel.oclKernel, CL_KERNEL_FUNCTION_NAME,
+				sizeof(kname), kname, &knameLen);
+		fprintf(stderr, "[OCL-ENQUEUE] %s gs=%zu wg=%zu\n", kname,
+				globalSizeArray[0], workGroupSizeArray[0]);
+		fflush(stderr);
+	}
+
 	CHECK_OCL_ERROR(clEnqueueNDRangeKernel(oclQueue, oclDeviceKernel.oclKernel,
 			globalSize.dimensions,
 			nullptr,
 			globalSizeArray,
 			workGroupSizeArray,
 			0, nullptr, nullptr));
+
+	if (traceEnqueue) {
+		clFinish(oclQueue);
+		fprintf(stderr, "[OCL-ENQUEUE-DONE]\n");
+		fflush(stderr);
+	}
 }
 
 void OpenCLDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,

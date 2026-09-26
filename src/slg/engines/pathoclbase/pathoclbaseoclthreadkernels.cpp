@@ -302,6 +302,15 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 			MachineEpsilon::GetMin(), MachineEpsilon::GetMax(),
 			renderEngine->pathTracer.spectralEnable);
 
+	// Wavefront queue mode is compiled in: with the queues disabled the
+	// taskQueueBuf/taskQueueCount args stay null, and leaving the queue
+	// dereferences inside WAVEFRONT_GUARD in the kernel IR pushes the
+	// heaviest AdvancePaths_MK_* kernels past the buffer-argument limit
+	// of Apple's OpenCL-on-Metal translator (dispatch crash in
+	// AGX::ComputeContext::prepareForEnqueue).
+	if (wavefrontQueues)
+		kernelsParameters.push_back("-D PATHOCL_WAVEFRONT_QUEUES");
+
 	const string kernelSource = GetKernelSources();
 
 	if (renderEngine->writeKernelsToFile) {

@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include <boost/lexical_cast.hpp>
+#include <limits>
 #include <memory>
 
 #include "luxrays/core/color/color.h"
@@ -57,6 +58,13 @@ SobolSamplerSharedData::SobolSamplerSharedData(
 }
 
 void SobolSamplerSharedData::Reset() {
+	if (scrambleTile.empty()) {
+		// The blue-noise rank tile is deterministic and seed-independent:
+		// generate it once
+		scrambleTile.resize(SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE);
+		SobolSequence::GenerateScrambleTile(scrambleTile.data(), SOBOL_OWEN_TILE_SIZE);
+	}
+
 	if (HasEngineFilm()) {
 		const u_int *subRegion = GetEngineFilm().GetSubRegion();
 		const u_int filmRegionPixelCount = (subRegion[1] - subRegion[0] + 1) * (subRegion[3] - subRegion[2] + 1);
@@ -120,6 +128,10 @@ SobolSampler::SobolSampler(
 	superSampling(superSmpl),
 	overlapping(overlap),
 	sobolBlueNoiseEnable(false),
+	sobolOwenEnable(false),
+	sobolOwenTileEnable(false),
+	sobolAdaptiveMomentsEnable(false),
+	sobolAdaptiveRelErrTarget(.02f),
 	bucketIndex(std::make_shared<u_int>(0))
 {}
 SobolSampler::SobolSampler(
@@ -145,6 +157,10 @@ SobolSampler::SobolSampler(
 	superSampling(superSmpl),
 	overlapping(overlap),
 	sobolBlueNoiseEnable(false),
+	sobolOwenEnable(false),
+	sobolOwenTileEnable(false),
+	sobolAdaptiveMomentsEnable(false),
+	sobolAdaptiveRelErrTarget(.02f),
 	bucketIndex(std::make_shared<u_int>(0))
 {}
 
@@ -171,6 +187,12 @@ void SobolSampler::InitNewSample() {
 		bucketCount = 0xffffffffu;
 
 	// Update pixelIndexOffset
+
+	// Bound for the adaptive re-pick loop below: bucketSize * superSampling
+	// iterations visit every pixelOffset of the current bucket once. Without
+	// the cap a fully-converged frame (all pixels below the relErr target)
+	// would spin here forever
+	u_int skipAttempts = 0;
 
 	for (;;) {
 		passOffset++;
@@ -213,9 +235,33 @@ void SobolSampler::InitNewSample() {
 
 			// Check if the current pixel is over or under the convergence threshold
 			auto& film = sharedData->GetEngineFilm();
-			if ((adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
+			if ((adaptiveStrength > 0.f) && (GetFilm().HasChannel(Film::NOISE) || sobolAdaptiveMomentsEnable)) {
 				// Pixels are sampled in accordance with how far from convergence they are
-				const float noise = *(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
+				float noise = std::numeric_limits<float>::infinity();
+				bool noiseValid = false;
+
+				// Second-moment estimate: the relative standard error of
+				// the pixel mean is a per-pixel absolute convergence
+				// measure (unlike the film NOISE channel which is a
+				// min-max normalized image-difference heuristic updated
+				// only every test step)
+				if (sobolAdaptiveMomentsEnable && !GetFilm().pixelLumaMoments.empty()) {
+					const u_int subIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+					const u_int curPass = sharedData->PeekPixelPass(subIdx);
+					if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
+						const float n = (float)(curPass - SOBOL_STARTOFFSET);
+						const float *mom = &GetFilm().pixelLumaMoments[(pixelX + pixelY * GetFilm().GetWidth()) * 2];
+						const float mean = mom[0] / n;
+						const float var = Max(mom[1] / n - mean * mean, 0.f);
+						// std. error of the mean, relative to the mean
+						const float relErr = sqrtf(var / n) / (fabs(mean) + 1e-6f);
+						noise = Min(relErr / sobolAdaptiveRelErrTarget, 1.f);
+						noiseValid = true;
+					}
+				}
+
+				if (!noiseValid && GetFilm().HasChannel(Film::NOISE))
+					noise = *(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
 
 				// Factor user driven importance sampling too
 				float threshold;
@@ -234,14 +280,16 @@ void SobolSampler::InitNewSample() {
 				threshold = Max(threshold, 1.f - adaptiveStrength);
 
 				if (rndGen->floatValue() > threshold) {
+					// Skip this pixel and try the next one; after a full
+					// bucket sweep accept it anyway (bounded loop)
+					if (++skipAttempts < bucketSize * superSampling) {
+						// Workaround for preserving random number distribution behavior
+						rngGenerator.floatValue();
+						rngGenerator.floatValue();
+						rngGenerator.uintValue();
 
-					// Workaround for preserving random number distribution behavior
-					rngGenerator.floatValue();
-					rngGenerator.floatValue();
-					rngGenerator.uintValue();
-
-					// Skip this pixel and try the next one
-					continue;
+						continue;
+					}
 				}
 			}
 
@@ -255,7 +303,23 @@ void SobolSampler::InitNewSample() {
 
 		// Initialize rng0, rng1 and rngPass
 
-		if (sobolBlueNoiseEnable) {
+		if (sobolOwenEnable) {
+			// Owen-scrambled Sobol (Burley 2020): the per-pixel seed is
+			// constant across passes; index shuffling and per-dimension
+			// scrambling are derived inside SobolSequence::GetSample().
+			// When the rank tile is enabled, the pixel also gets a
+			// blue-noise distributed Cranley-Patterson offset
+			float shift = -1.f;
+			if (sobolOwenTileEnable) {
+				const u_int t = sharedData->scrambleTile[
+						(pixelY % SOBOL_OWEN_TILE_SIZE) * SOBOL_OWEN_TILE_SIZE +
+						(pixelX % SOBOL_OWEN_TILE_SIZE)];
+				shift = (t + 0.5f) / (float)(SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE);
+			}
+			sobolSequence.SetOwenSeed(
+					SobolSequence::BlueNoiseHash(pixelX + pixelY * 0x9e3779b9u) ^ *sharedData->seedBase,
+					shift);
+		} else if (sobolBlueNoiseEnable) {
 			// Blue-noise dithered sampling (Heitz et al. 2019): the dither
 			// seed is constant per pixel (across passes); the per-dimension
 			// shifts are derived inside SobolSequence::GetSample()
@@ -349,7 +413,11 @@ PropertiesUPtr SobolSampler::ToProperties() const {
 			Property("sampler.sobol.tilesize")(tileSize) <<
 			Property("sampler.sobol.supersampling")(superSampling) <<
 			Property("sampler.sobol.overlapping")(overlapping) <<
-			Property("sampler.sobol.bluenoise.enable")(sobolBlueNoiseEnable);
+			Property("sampler.sobol.bluenoise.enable")(sobolBlueNoiseEnable) <<
+			Property("sampler.sobol.owen.enable")(sobolOwenEnable) <<
+			Property("sampler.sobol.owen.tile.enable")(sobolOwenTileEnable) <<
+			Property("sampler.sobol.adaptive.moments.enable")(sobolAdaptiveMomentsEnable) <<
+			Property("sampler.sobol.adaptive.relerr")(sobolAdaptiveRelErrTarget);
 	return props_ptr;
 }
 
@@ -368,7 +436,11 @@ PropertiesUPtr SobolSampler::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.tilesize")) <<
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")) <<
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")) <<
-			cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable"));
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.tile.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.moments.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.relerr"));
 	return props;
 }
 
@@ -385,6 +457,10 @@ SamplerUPtr SobolSampler::FromProperties(const Properties &cfg, const RandomGene
 	const float superSampling = cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")).Get<u_int>();
 	const float overlapping = cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")).Get<u_int>();
 	const bool blueNoiseEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable")).Get<bool>();
+	const bool owenEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.enable")).Get<bool>();
+	const bool owenTileEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.tile.enable")).Get<bool>();
+	const bool adaptiveMomentsEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.moments.enable")).Get<bool>();
+	const float adaptiveRelErr = cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.relerr")).Get<float>();
 
 	auto sampler = std::make_unique<SobolSampler>(rndGen, film, flmSplatter, imageSamplesEnable,
 			adaptiveStrength, adaptiveUserImportanceWeight,
@@ -392,6 +468,9 @@ SamplerUPtr SobolSampler::FromProperties(const Properties &cfg, const RandomGene
 			dynamic_pointer_cast<SobolSamplerSharedData>(sharedData)
 	);
 	sampler->SetBlueNoiseEnable(blueNoiseEnable);
+	sampler->SetOwenEnable(owenEnable);
+	sampler->SetOwenTileEnable(owenTileEnable);
+	sampler->SetAdaptiveMoments(adaptiveMomentsEnable, adaptiveRelErr);
 
 	return sampler;
 }
@@ -407,6 +486,10 @@ slg::ocl::Sampler *SobolSampler::FromPropertiesOCL(const Properties &cfg) {
 	oclSampler->sobol.superSampling = cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")).Get<u_int>();
 	oclSampler->sobol.overlapping = cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")).Get<u_int>();
 	oclSampler->sobol.bluenoiseEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable")).Get<bool>() ? 1u : 0u;
+	oclSampler->sobol.owenEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.enable")).Get<bool>() ? 1u : 0u;
+	oclSampler->sobol.owenTileEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.owen.tile.enable")).Get<bool>() ? 1u : 0u;
+	oclSampler->sobol.adaptiveMomentsEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.moments.enable")).Get<bool>() ? 1u : 0u;
+	oclSampler->sobol.adaptiveRelErrTarget = cfg.Get(GetDefaultProps()->Get("sampler.sobol.adaptive.relerr")).Get<float>();
 
 	return oclSampler;
 }
@@ -431,7 +514,11 @@ PropertiesUPtr SobolSampler::GetDefaultProps() {
 			Property("sampler.sobol.tilesize")(16) <<
 			Property("sampler.sobol.supersampling")(1) <<
 			Property("sampler.sobol.overlapping")(1) <<
-			Property("sampler.sobol.bluenoise.enable")(false);
+			Property("sampler.sobol.bluenoise.enable")(false) <<
+			Property("sampler.sobol.owen.enable")(true) <<
+			Property("sampler.sobol.owen.tile.enable")(true) <<
+			Property("sampler.sobol.adaptive.moments.enable")(true) <<
+			Property("sampler.sobol.adaptive.relerr")(.02f);
 
 	return props;
 }

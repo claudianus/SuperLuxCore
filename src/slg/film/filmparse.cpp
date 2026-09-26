@@ -736,8 +736,30 @@ ImagePipeline *Film::CreateImagePipeline(const Properties &props, const string &
 				const int oidnMemLimit = props.Get(Property(prefix + ".oidnmemory")(6000)).Get<int>();
 				const float sharpness = Clamp(props.Get(Property(prefix + ".sharpness")(.1)).Get<double>(), 0.0, 1.0);
 				const bool enablePrefiltering = props.Get(Property(prefix + ".prefilter.enable")(true)).Get<bool>();
+				const string denoiseMode = props.Get(Property(prefix + ".mode")("combined")).Get<string>();
+				const bool demodulate = props.Get(Property(prefix + ".demodulate")(true)).Get<bool>();
+				const bool denoiseEmission = props.Get(Property(prefix + ".emission.denoise")(false)).Get<bool>();
+				const float fireflySigma = Max(props.Get(Property(prefix + ".firefly.sigma")(0.0)).Get<double>(), 0.0);
 
-				imagePipeline->AddPlugin(new IntelOIDN(filterType, oidnMemLimit, sharpness, enablePrefiltering));
+				if ((denoiseMode != "combined") && (denoiseMode != "components"))
+					throw runtime_error("Unknown INTEL_OIDN mode (expected \"combined\" or \"components\"): " + denoiseMode);
+
+				if (denoiseMode == "components") {
+					// The recipe needs the radiance component channels and
+					// the albedo/normal guides: request them here so users
+					// do not have to enable the AOV outputs by hand
+					AddChannel(Film::DIRECT_DIFFUSE);
+					AddChannel(Film::DIRECT_GLOSSY);
+					AddChannel(Film::INDIRECT_DIFFUSE);
+					AddChannel(Film::INDIRECT_GLOSSY);
+					AddChannel(Film::INDIRECT_SPECULAR);
+					AddChannel(Film::EMISSION);
+					AddChannel(Film::ALBEDO);
+					AddChannel(Film::AVG_SHADING_NORMAL);
+				}
+
+				imagePipeline->AddPlugin(new IntelOIDN(filterType, oidnMemLimit, sharpness, enablePrefiltering,
+						denoiseMode, demodulate, denoiseEmission, fireflySigma));
 #endif
 			} else if (type == "WHITE_BALANCE") {
 				const float temperature = Clamp(props.Get(Property(prefix + ".temperature")(6500.0)).Get<double>(), 1000.0, 40000.0);

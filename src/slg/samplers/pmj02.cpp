@@ -117,6 +117,9 @@ void PMJ02Sampler::InitNewSample() {
 
 	// Update pixelIndexOffset
 
+	// Bound for the adaptive re-pick loop below (see sobol.cpp)
+	u_int skipAttempts = 0;
+
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
@@ -179,14 +182,16 @@ void PMJ02Sampler::InitNewSample() {
 				threshold = Max(threshold, 1.f - adaptiveStrength);
 
 				if (rndGen->floatValue() > threshold) {
+					// Skip this pixel and try the next one; after a full
+					// bucket sweep accept it anyway (bounded loop)
+					if (++skipAttempts < bucketSize * superSampling) {
+						// Workaround for preserving random number distribution behavior
+						rngGenerator.floatValue();
+						rngGenerator.floatValue();
+						rngGenerator.uintValue();
 
-					// Workaround for preserving random number distribution behavior
-					rngGenerator.floatValue();
-					rngGenerator.floatValue();
-					rngGenerator.uintValue();
-
-					// Skip this pixel and try the next one
-					continue;
+						continue;
+					}
 				}
 			}
 

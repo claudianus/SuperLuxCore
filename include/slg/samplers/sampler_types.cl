@@ -118,8 +118,15 @@ typedef struct {
 	// of SobolSamplerSharedData
 	unsigned int filmRegionPixelCount;
 
+	// Number of Sobol dimensions uploaded after the pass array; the
+	// Owen blue-noise scramble tile lives right after the directions
+	unsigned int sobolDimensions;
+
 	// Plus the a pass field for each pixel
 	// Plus Sobol directions array
+	// Plus Owen scramble tile (SOBOL_OWEN_TILE_SIZE^2 uints, SOBOL only)
+	// Plus per-pixel luma moments for adaptive sampling
+	// (2 floats per pixel: sum and sum of squares, SOBOL only)
 } SobolSamplerSharedData;
 
 typedef struct {
@@ -157,6 +164,10 @@ typedef struct {
 			float adaptiveStrength, adaptiveUserImportanceWeight;
 			unsigned int bucketSize, tileSize, superSampling, overlapping;
 			unsigned int bluenoiseEnable;
+			unsigned int owenEnable;
+			unsigned int owenTileEnable;
+			unsigned int adaptiveMomentsEnable;
+			float adaptiveRelErrTarget;
 		} sobol;
 		// PMJ02 keeps the bucket cursor fields at the same offsets as
 		// sobol/random (the shared sampler prologue reads them through
@@ -177,6 +188,11 @@ typedef struct {
 #define SOBOL_BITS 32
 #define SOBOL_MAX_DIMENSIONS 21201
 #define SOBOL_STARTOFFSET 32
+#define SOBOL_OWEN_TILE_SIZE 64
+
+// Minimum per-pixel samples before the second-moment adaptive
+// estimate is trusted
+#define SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES 8
 
 #define SAMPLER_PARAM_DECL \
 		, Seed *seed \

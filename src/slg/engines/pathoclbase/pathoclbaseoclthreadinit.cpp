@@ -667,6 +667,13 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 
 		// Plus the Sobol directions array
 		size += sizeof(u_int) * renderEngine->pathTracer.eyeSampleSize * SOBOL_BITS;
+
+		// Plus the Owen blue-noise scramble rank tile
+		size += sizeof(u_int) * SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE;
+
+		// Plus the per-pixel luma moments for adaptive sampling
+		// (2 floats per pixel: luminance sum and sum of squares)
+		size += sizeof(float) * 2 * filmRegionPixelCount;
 	} else if (renderEngine->oclSampler->type == slg::ocl::PMJ02SAMPLER) {
 		// Same header as Sobol (seedBase/bucketIndex/filmRegionPixelCount)
 		size += sizeof(slg::ocl::SobolSamplerSharedData);
@@ -716,6 +723,7 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		sssd->seedBase = renderEngine->seedBase;
 		sssd->bucketIndex = 0;
 		sssd->filmRegionPixelCount = filmRegionPixelCount;
+		sssd->sobolDimensions = renderEngine->pathTracer.eyeSampleSize;
 
 		// Initialize all pass values. The pass buffer is attached at the
 		// end of slg::ocl::SobolSamplerSharedData
@@ -727,6 +735,15 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 
 		u_int *sobolDirections = (u_int *)(buffer + sizeof(slg::ocl::SobolSamplerSharedData) + sizeof(u_int) * filmRegionPixelCount);
 		SobolSequence::GenerateDirectionVectors(sobolDirections, renderEngine->pathTracer.eyeSampleSize);
+
+		// The Owen blue-noise scramble rank tile is appended after the
+		// directions array
+		u_int *scrambleTile = sobolDirections + renderEngine->pathTracer.eyeSampleSize * SOBOL_BITS;
+		SobolSequence::GenerateScrambleTile(scrambleTile, SOBOL_OWEN_TILE_SIZE);
+
+		// The per-pixel luma moments for adaptive sampling start at 0
+		float *lumaMoments = (float *)(scrambleTile + SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE);
+		fill(lumaMoments, lumaMoments + 2 * filmRegionPixelCount, 0.f);
 
 		// Write the data
 		intersectionDevice.EnqueueWriteBuffer(samplerSharedDataBuff, CL_TRUE, size, buffer);
@@ -741,6 +758,7 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		sssd->seedBase = renderEngine->seedBase;
 		sssd->bucketIndex = 0;
 		sssd->filmRegionPixelCount = filmRegionPixelCount;
+		sssd->sobolDimensions = 0;
 
 		// Pass values start at 0 (PMJ02 has no degenerate early points)
 		u_int *passBuffer = (u_int *)(buffer + sizeof(slg::ocl::SobolSamplerSharedData));

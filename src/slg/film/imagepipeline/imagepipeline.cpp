@@ -188,7 +188,9 @@ void ImagePipeline::Apply(Film &film, const u_int index) {
 		bool expected = false;
 		if (warnedOnce.compare_exchange_strong(expected, true))
 			SLG_LOG("ImagePipeline: hardware execution is enabled but the pipeline mixes hardware-accelerated and CPU-only plugins; the output buffer ping-pongs between CPU and device memory for every CPU-only plugin. For maximum throughput, avoid mixing them in the same pipeline.");
+	}
 
+	if (film.hwEnable && film.hardwareDevice && canUseHW) {
 		if (!imageInCPURam)
 			film.ReadHWBuffer_IMAGEPIPELINE(index);
 

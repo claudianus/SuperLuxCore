@@ -606,6 +606,12 @@ void Film::Resize(const u_int w, const u_int h) {
 		hasDataChannel = true;
 	}
 
+	// Per-pixel luminance moments for the samplers' second-moment
+	// adaptive convergence estimate (2 floats per pixel; not cleared by
+	// Clear(), same as the NOISE channel, so the estimate survives film
+	// restarts)
+	pixelLumaMoments.assign(2 * pixelCount, 0.f);
+
 	// Reset BCD statistics accumulator (I need to redo the warmup period)
 	filmDenoiser->Reset();
 

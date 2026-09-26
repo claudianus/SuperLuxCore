@@ -92,6 +92,11 @@ void RandomSampler::InitNewSample() {
 
 	// Update pixelIndexOffset
 
+	// Bound for the adaptive re-pick loop below: bucketSize * superSampling
+	// iterations visit every pixelOffset of the current bucket once. Without
+	// the cap a fully-converged frame would spin here forever
+	u_int skipAttempts = 0;
+
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
@@ -151,8 +156,10 @@ void RandomSampler::InitNewSample() {
 				threshold = Max(threshold, 1.f - adaptiveStrength);
 
 				if (rndGen->floatValue() > threshold) {
-					// Skip this pixel and try the next one
-					continue;
+					// Skip this pixel and try the next one; after a full
+					// bucket sweep accept it anyway (bounded loop)
+					if (++skipAttempts < bucketSize * superSampling)
+						continue;
 				}
 			}
 		} else {

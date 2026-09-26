@@ -44,11 +44,18 @@ class IntelOIDN : public ImagePipelinePlugin {
 public:
 	IntelOIDN(const std::string filterType,
 			const int oidnMemLimit, const float sharpness,
-			bool enablePrefiltering);
+			bool enablePrefiltering,
+			const std::string denoiseMode = "combined",
+			const bool demodulate = true,
+			const bool denoiseEmission = false,
+			const float fireflySigma = 0.f);
 
 	virtual ImagePipelinePlugin *Copy() const;
 
 	virtual void Apply(Film &film, const u_int index);
+
+	// True when the per-component recipe is requested
+	bool UsesComponents() const { return denoiseMode == "components"; }
 
 	friend class boost::serialization::access;
 
@@ -70,7 +77,14 @@ private:
 			const float *albedoBuffer, const float *normalBuffer,
 			const u_int width, const u_int height,
 			const bool cleanAux) const;
-	
+
+	// Component-decomposed path: denoise each radiance component
+	// separately and recombine (energy-exact residual passthrough)
+	void ApplyComponents(Film &film, const u_int index);
+	// Local outlier suppression before denoising (keeps fireflies from
+	// smearing into the neighbourhood inside the network)
+	void FireflyClamp(float *buf, const u_int width, const u_int height) const;
+
 	template<class Archive> void serialize(Archive &ar, const u_int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImagePipelinePlugin);
 		ar & oidnMemLimit;
@@ -78,6 +92,12 @@ private:
 		ar & jTileCount;
 		ar & sharpness;
 		ar & enablePrefiltering;
+		if (version >= 5) {
+			ar & denoiseMode;
+			ar & demodulate;
+			ar & denoiseEmission;
+			ar & fireflySigma;
+		}
 	}
 
 	std::string filterType;
@@ -86,12 +106,22 @@ private:
 	int oidnMemLimit; //needs to be signed int for OIDN call
 	float sharpness;
 	bool enablePrefiltering;
+	// "combined" (classic single-buffer denoise) or "components"
+	// (per-component denoise + exact recombination)
+	std::string denoiseMode;
+	// Albedo demodulation for the indirect diffuse component
+	bool demodulate;
+	// Denoise the emission component (default: passthrough, keeps
+	// emitter silhouettes crisp)
+	bool denoiseEmission;
+	// Per-component firefly pre-clamp in units of local sigma (0 = off)
+	float fireflySigma;
 };
 
 }
 
 
-BOOST_CLASS_VERSION(slg::IntelOIDN, 4)
+BOOST_CLASS_VERSION(slg::IntelOIDN, 5)
 
 BOOST_CLASS_EXPORT_KEY(slg::IntelOIDN)
 

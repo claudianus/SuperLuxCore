@@ -52,16 +52,44 @@ public:
 	}
 	void DisableBlueNoise() { blueNoiseEnable = false; }
 
+	// Hash-based Owen-scrambled Sobol (Burley 2020, JCGT): the seed is
+	// constant per pixel (across passes); each dimension is scrambled with
+	// a nested-uniform hash permutation and the sequence index is shuffled
+	// the same way. Takes precedence over the blue-noise dither path.
+	// shift: optional per-pixel Cranley-Patterson offset in [0,1), coming
+	// from the blue-noise rank tile (negative = disabled).
+	void SetOwenSeed(const u_int seed, const float shift = -1.f) {
+		blueNoiseSeed = seed;
+		pixelShift = shift;
+		owenEnable = true;
+	}
+	void DisableOwen() { owenEnable = false; }
+
 	// murmur3 32-bit finalizer (must match the GPU kernel version)
 	static u_int BlueNoiseHash(u_int x);
 
 	static void GenerateDirectionVectors(u_int *vectors, const u_int dimensions);
+
+	// Fills tile[0 .. size*size) with a blue-noise rank permutation of
+	// 0..size*size-1, built by progressive farthest-point ordering on the
+	// toroidal tile (each prefix of the ranking covers the tile evenly).
+	// Deterministic; used to give Owen-scrambled pixels a blue-noise
+	// distributed Cranley-Patterson offset (Georgiev-Fajardo dithered
+	// sampling / Heitz et al. 2019 screen-space blue noise).
+	static void GenerateScrambleTile(u_int *tile, const u_int size);
 private:
 	u_int SobolDimension(const u_int index, const u_int dimension) const;
+	// Hash-based Owen scrambling helpers (must match the GPU kernel
+	// versions in sampler_sobol_funcs.cl)
+	static u_int ReverseBits(u_int x);
+	static u_int ReversedBitOwen(u_int n, const u_int seed);
+	static u_int NestedUniformScramble(const u_int i, const u_int seed);
 
 	u_int *directions;
 	bool blueNoiseEnable;
+	bool owenEnable;
 	u_int blueNoiseSeed;
+	float pixelShift;
 };
 
 }

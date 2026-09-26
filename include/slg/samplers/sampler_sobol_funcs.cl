@@ -47,14 +47,69 @@ OPENCL_FORCE_INLINE uint SobolSequence_BlueNoiseHash(uint x) {
 	return x;
 }
 
+//------------------------------------------------------------------------------
+// Hash-based Owen scrambling
+//
+// Burley 2020, "Practical Hash-based Owen Scrambling" (JCGT 9(4)), using
+// Cessen's improved Laine-Karras hash
+// (https://psychopath.io/post/2021_01_30_building_a_better_lk_hash) - the
+// same construction used by Blender Cycles' sobol_burley sampler.
+//
+// The scramble is a bijection where output bit j depends only on input
+// bits at positions <= j in the reversed representation, i.e. digit j of
+// the base-2 fraction is permuted by a hash of the digits a1..a_j - this
+// is Owen's nested uniform scrambling, which maximally randomizes the
+// sequence while preserving its (t,s)-sequence stratification.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE uint SobolSequence_ReverseBits(uint x) {
+	x = ((x >> 1) & 0x55555555u) | ((x & 0x55555555u) << 1);
+	x = ((x >> 2) & 0x33333333u) | ((x & 0x33333333u) << 2);
+	x = ((x >> 4) & 0x0f0f0f0fu) | ((x & 0x0f0f0f0fu) << 4);
+	x = ((x >> 8) & 0x00ff00ffu) | ((x & 0x00ff00ffu) << 8);
+	return (x >> 16) | (x << 16);
+}
+
+OPENCL_FORCE_INLINE uint SobolSequence_ReversedBitOwen(uint n, const uint seed) {
+	n ^= n * 0x3d20adeau;
+	n += seed;
+	n *= (seed >> 16) | 1u;
+	n ^= n * 0x05526c56u;
+	n ^= n * 0x53a22864u;
+	return n;
+}
+
+// Nested uniform scramble of a normal-order value: usable both to Owen
+// scramble a direction-number product (MSB = first digit a1) and to
+// shuffle a sequence index while preserving nested prefix structure.
+OPENCL_FORCE_INLINE uint SobolSequence_NestedUniformScramble(const uint i, const uint seed) {
+	return SobolSequence_ReverseBits(SobolSequence_ReversedBitOwen(SobolSequence_ReverseBits(i), seed));
+}
+
 OPENCL_FORCE_INLINE float SobolSequence_GetSample(
 		__global const uint* restrict sobolDirections,
 		const uint pass, const uint rngPass, const float rng0, const float rng1,
-		const uint index, const bool blueNoiseEnable) {
+		const uint index, const bool blueNoiseEnable, const bool owenEnable) {
 	uint iResult;
 	float shift;
 
-	if (blueNoiseEnable) {
+	if (owenEnable) {
+		// Owen-scrambled Sobol: rngPass carries the constant per-pixel
+		// seed. The sequence index is shuffled by a nested-uniform scramble
+		// (decorrelates the sample order across pixels and permits unbiased
+		// progressive sampling), then each dimension is scrambled with a
+		// per-pixel, per-dimension seed - no Cranley-Patterson rotation is
+		// needed because Owen scrambling already provides the randomization.
+		const uint shuffleSeed = SobolSequence_BlueNoiseHash(rngPass ^ 0x70efbc49u);
+		const uint dimSeed = SobolSequence_BlueNoiseHash(rngPass ^ (index * 0x9e3779b9u + 0x85ebca6bu));
+		const uint i = SobolSequence_NestedUniformScramble(pass, shuffleSeed);
+		iResult = SobolSequence_NestedUniformScramble(
+				SobolSequence_SobolDimension(sobolDirections, i, index), dimSeed);
+		// Blue-noise Cranley-Patterson offset from the rank tile (rng0
+		// carries the per-pixel offset, < 0 when the tile is disabled);
+		// staggered per dimension by an irrational stride
+		shift = (rng0 >= 0.f) ? rng0 + index * 0.6180339887f : 0.f;
+	} else if (blueNoiseEnable) {
 		// Blue-noise dithered sampling (Heitz et al. 2019): per-pixel
 		// constant, per-dimension hashed digital shift + Cranley-Patterson
 		// offset (must match the CPU version)
@@ -96,6 +151,19 @@ OPENCL_FORCE_INLINE __global const uint* restrict SobolSampler_GetSobolDirection
 			sizeof(uint) * samplerSharedData->filmRegionPixelCount);
 }
 
+OPENCL_FORCE_INLINE __global const uint* restrict SobolSampler_GetScrambleTilePtr(__global SobolSamplerSharedData *samplerSharedData) {
+	// The Owen scramble rank tile is appended right after the directions
+	return SobolSampler_GetSobolDirectionsPtr(samplerSharedData) +
+			samplerSharedData->sobolDimensions * SOBOL_BITS;
+}
+
+OPENCL_FORCE_INLINE __global float* restrict SobolSampler_GetLumaMomentsPtr(__global SobolSamplerSharedData *samplerSharedData) {
+	// The per-pixel luma moments (2 floats per film region pixel: sum and
+	// sum of squares) are appended right after the Owen scramble tile
+	return (__global float* restrict)(SobolSampler_GetScrambleTilePtr(samplerSharedData) +
+			SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE);
+}
+
 OPENCL_FORCE_INLINE float SobolSampler_GetSample(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const uint index
@@ -121,7 +189,7 @@ OPENCL_FORCE_INLINE float SobolSampler_GetSample(
 			__constant const Sampler *sampler = &taskConfig->sampler;
 
 			return SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, index,
-					sampler->sobol.bluenoiseEnable != 0u);
+					sampler->sobol.bluenoiseEnable != 0u, sampler->sobol.owenEnable != 0u);
 		}
 	}
 }
@@ -137,6 +205,25 @@ OPENCL_FORCE_INLINE void SobolSampler_SplatSample(
 	Film_AddSample(sampleResult->pixelX, sampleResult->pixelY,
 			sampleResult, 1.f
 			FILM_PARAM);
+
+	// Accumulate the sample luminance first and second moments for the
+	// second-moment adaptive sampling estimate (used in InitNewSample)
+	__constant const Sampler *sampler = &taskConfig->sampler;
+	if (sampler->sobol.adaptiveMomentsEnable != 0u) {
+		__global SobolSamplerSharedData *samplerSharedData = (__global SobolSamplerSharedData *)samplerSharedDataBuff;
+		__global float *lumaMoments = SobolSampler_GetLumaMomentsPtr(samplerSharedData);
+
+		const uint subRegionWidth = filmSubRegion1 - filmSubRegion0 + 1;
+		const uint midx = ((sampleResult->pixelX - filmSubRegion0) +
+				(sampleResult->pixelY - filmSubRegion2) * subRegionWidth) * 2;
+
+		const float3 r = VLOAD3F(sampleResult->radiancePerPixelNormalized[0].c);
+		const float luma = 0.2126f * r.x + 0.7152f * r.y + 0.0722f * r.z;
+		if (!isnan(luma) && !isinf(luma)) {
+			AtomicAdd(&lumaMoments[midx], luma);
+			AtomicAdd(&lumaMoments[midx + 1], luma * luma);
+		}
+	}
 }
 
 OPENCL_FORCE_INLINE void SobolSamplerSharedData_GetNewBucket(__global SobolSamplerSharedData *samplerSharedData,
@@ -182,6 +269,13 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 	const uint bucketCycleStart = sample->bucketCycleStart;
 
 	Seed rngGeneratorSeed = sample->rngGeneratorSeed;
+
+	// Bound for the adaptive re-pick loop below: bucketSize * superSampling
+	// iterations visit every pixelOffset of the current bucket once. Without
+	// the cap a fully-converged frame (all pixels below the relErr target)
+	// would spin here forever
+	uint skipAttempts = 0;
+
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
@@ -219,12 +313,40 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 		const uint pixelX = filmSubRegion0 + subRegionPixelX;
 		const uint pixelY = filmSubRegion2 + subRegionPixelY;
 
-		if (filmNoise) {
+		if (filmNoise || (sampler->sobol.adaptiveMomentsEnable != 0u)) {
 			const float adaptiveStrength = sampler->sobol.adaptiveStrength;
 
 			if (adaptiveStrength > 0.f) {
 				// Pixels are sampled in accordance with how far from convergence they are
-				const float noise = filmNoise[pixelX + pixelY * filmWidth];
+				float noise = INFINITY;
+				bool noiseValid = false;
+
+				// Second-moment estimate: the relative standard error of
+				// the pixel mean is a per-pixel absolute convergence
+				// measure (unlike the film NOISE channel which is a
+				// min-max normalized image-difference heuristic updated
+				// only every test step on the host)
+				if (sampler->sobol.adaptiveMomentsEnable != 0u) {
+					const uint subIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+					__global uint *pixelPasses = SobolSampler_GetPassesPtr(samplerSharedData);
+					const uint curPass = pixelPasses[subIdx];
+					if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
+						const float n = (float)(curPass - SOBOL_STARTOFFSET);
+						__global const float *lumaMoments = SobolSampler_GetLumaMomentsPtr(samplerSharedData) + subIdx * 2;
+						const float mean = lumaMoments[0] / n;
+						const float var = fmax(lumaMoments[1] / n - mean * mean, 0.f);
+						// std. error of the mean, relative to the mean
+						const float relErr = native_sqrt(var / n) / (fabs(mean) + 1e-6f);
+						noise = fmin(relErr / sampler->sobol.adaptiveRelErrTarget, 1.f);
+						noiseValid = true;
+					}
+				}
+
+				// Fall back to the host-computed film NOISE channel when
+				// the moments estimate is not yet valid; INFINITY (never
+				// skipped) when neither source is available
+				if (!noiseValid && filmNoise)
+					noise = filmNoise[pixelX + pixelY * filmWidth];
 
 				// Factor user driven importance sampling too
 				float threshold;
@@ -243,14 +365,16 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 				threshold = fmax(threshold, 1.f - adaptiveStrength);
 
 				if (Rnd_FloatValue(seed) > threshold) {
-					// Skip this pixel and try the next one
+					// Skip this pixel and try the next one; after a full
+					// bucket sweep accept it anyway (bounded loop)
+					if (++skipAttempts < bucketSize * superSampling) {
+						// Workaround for preserving random number distribution behavior
+						Rnd_UintValue(&rngGeneratorSeed);
+						Rnd_FloatValue(&rngGeneratorSeed);
+						Rnd_FloatValue(&rngGeneratorSeed);
 
-					// Workaround for preserving random number distribution behavior
-					Rnd_UintValue(&rngGeneratorSeed);
-					Rnd_FloatValue(&rngGeneratorSeed);
-					Rnd_FloatValue(&rngGeneratorSeed);
-
-					continue;
+						continue;
+					}
 				}
 			}
 		}
@@ -280,7 +404,21 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 
 		// Initialize rng0 and rng1
 
-		if (sampler->sobol.bluenoiseEnable != 0u) {
+		if (sampler->sobol.owenEnable != 0u) {
+			// Owen-scrambled Sobol: constant per-pixel scramble seed, plus
+			// an optional blue-noise rank-tile offset for the pixel's
+			// Cranley-Patterson shift (stored in rng0, < 0 = disabled)
+			sample->rngPass = SobolSequence_BlueNoiseHash(pixelX + pixelY * 0x9e3779b9u) ^ samplerSharedData->seedBase;
+			if (sampler->sobol.owenTileEnable != 0u) {
+				__global const uint* restrict scrambleTile = SobolSampler_GetScrambleTilePtr(samplerSharedData);
+				const uint tileIdx = (pixelY % SOBOL_OWEN_TILE_SIZE) * SOBOL_OWEN_TILE_SIZE +
+						(pixelX % SOBOL_OWEN_TILE_SIZE);
+				sample->rng0 = (scrambleTile[tileIdx] + 0.5f) *
+						(1.f / (float)(SOBOL_OWEN_TILE_SIZE * SOBOL_OWEN_TILE_SIZE));
+			} else
+				sample->rng0 = -1.f;
+			sample->rng1 = 0.f;
+		} else if (sampler->sobol.bluenoiseEnable != 0u) {
 			// Blue-noise dithered sampling (Heitz et al. 2019): the dither
 			// seed is constant per pixel (across passes); the per-dimension
 			// shifts are derived inside SobolSequence_GetSample()
@@ -298,8 +436,9 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 
 		__global const uint* restrict sobolDirections = SobolSampler_GetSobolDirectionsPtr(samplerSharedData);
 		const bool blueNoiseEnable = (sampler->sobol.bluenoiseEnable != 0u);
-		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, blueNoiseEnable);
-		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, blueNoiseEnable);
+		const bool owenEnable = (sampler->sobol.owenEnable != 0u);
+		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, blueNoiseEnable, owenEnable);
+		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, blueNoiseEnable, owenEnable);
 		break;
 	}
 	

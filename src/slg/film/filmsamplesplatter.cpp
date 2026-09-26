@@ -16,6 +16,8 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include "luxrays/utils/atomic.h"
+
 #include "slg/film/filters/gaussian.h"
 #include "slg/film/filmsamplesplatter.h"
 #include "slg/film/sampleresult.h"
@@ -45,6 +47,25 @@ FilmSampleSplatter::~FilmSampleSplatter() {
 
 void FilmSampleSplatter::AtomicSplatSample(FilmConstRef film, const SampleResult &sampleResult, const float weight) const {
 	const u_int *subRegion = film.GetSubRegion();
+
+	// Accumulate the sample luminance first and second moments for the
+	// samplers' second-moment adaptive convergence estimate. The sample
+	// is attributed once to its generating pixel, before any pixel
+	// filter redistribution, so the moments stay consistent with the
+	// per-pixel pass counters used to derive the sample count.
+	if (!film.pixelLumaMoments.empty() && sampleResult.HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED)) {
+		const int x = Floor2Int(sampleResult.filmX);
+		const int y = Floor2Int(sampleResult.filmY);
+
+		if ((x >= (int)subRegion[0]) && (x <= (int)subRegion[1]) && (y >= (int)subRegion[2]) && (y <= (int)subRegion[3])) {
+			const float l = sampleResult.radiance[0].Y();
+			if (!isnan(l) && !isinf(l)) {
+				const u_int i = (x + y * film.GetWidth()) * 2;
+				AtomicAdd(&film.pixelLumaMoments[i], l);
+				AtomicAdd(&film.pixelLumaMoments[i + 1], l * l);
+			}
+		}
+	}
 
 	if (!filter || (filter->GetType() == FILTER_NONE)) {
 		const int x = Floor2Int(sampleResult.filmX);

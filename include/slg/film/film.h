@@ -460,6 +460,12 @@ public:
 	std::unique_ptr<GenericFrameBuffer<1, 0, float>> channel_NOISE;
 	std::unique_ptr<GenericFrameBuffer<1, 0, float>> channel_USER_IMPORTANCE;
 
+	// Per-pixel luminance first and second moments (2 floats per pixel,
+	// full film indexing) used by the samplers' second-moment adaptive
+	// convergence estimate. Accumulated on every sample splat; like the
+	// NOISE channel it is not cleared by Clear().
+	mutable std::vector<float> pixelLumaMoments;
+
 	// (Optional) LuxRays HardwareDevice context
 	bool hwEnable;
 	int hwDeviceIndex;

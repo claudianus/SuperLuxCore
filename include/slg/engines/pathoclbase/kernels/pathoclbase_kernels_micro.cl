@@ -1453,7 +1453,9 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			// First bounce per task uses a garbage baseline (clamped by
 			// the host drain guard); duplicates across passes are valid
 			// training data (mixture stays exact for any field).
-			{
+			// NOTE: guideRec*/guideDbgBuff are null buffers when
+			// path.guiding.enable is off - the writes must be gated.
+			if (guidingEnable != 0u) {
 				// NOTE: MAKE_FLOAT3 (raw (float3)(...) splats on Metal,
 				// bare float3(...) rejected by Apple OpenCL).
 				const float3 radNow = MAKE_FLOAT3(

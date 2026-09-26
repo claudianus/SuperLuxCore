@@ -4431,10 +4431,17 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 // gid indexes this kernel's state queue; otherwise the dense mapping
 // (gid == task index) is used. Task data keeps being indexed by the
 // returned value, so downstream code is unchanged.
+//
+// The mapping is selected at kernel-compile time through the
+// PATHOCL_WAVEFRONT_QUEUES define (host: wavefrontQueues). A runtime
+// flag would work too, but keeping the queue dereferences in the IR
+// of the dense-mode kernels pushes the heaviest AdvancePaths_MK_*
+// kernels past the buffer-argument limit of Apple's OpenCL-on-Metal
+// translator (dispatch crashed inside AGX::ComputeContext::
+// prepareForEnqueue on MK_DL_ILLUMINATE / MK_DL_SAMPLE_BSDF).
+#if defined(PATHOCL_WAVEFRONT_QUEUES)
 #define WAVEFRONT_GID \
-	(wavefrontEnable ? \
-		taskQueueBuf[taskQueueState * taskQueueStride + get_global_id(0)] : \
-		get_global_id(0))
+	taskQueueBuf[taskQueueState * taskQueueStride + get_global_id(0)]
 
 // Wavefront lane bounds check + gid mapping. Per-state launches are
 // rounded up to the workgroup size (OpenCL requires global size to be
@@ -4445,13 +4452,16 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 // bucketing keeps the queue layout flat). Must be the first statement
 // of every AdvancePaths_MK_* kernel.
 #define WAVEFRONT_GUARD \
-	if (wavefrontEnable && \
-			get_global_id(0) >= \
-				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS] + \
-				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 1] + \
-				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 2]) \
+	if (get_global_id(0) >= \
+			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS] + \
+			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 1] + \
+			taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 2]) \
 		return; \
 	const size_t gid = WAVEFRONT_GID;
+#else
+#define WAVEFRONT_GUARD \
+	const size_t gid = get_global_id(0);
+#endif
 
 
 //------------------------------------------------------------------------------

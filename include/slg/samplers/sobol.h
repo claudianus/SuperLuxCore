@@ -52,6 +52,11 @@ public:
 
 	u_int GetNewPixelPass(const u_int pixelIndex = 0);
 
+	// Current pass count without incrementing (adaptive sampling estimate)
+	u_int PeekPixelPass(const u_int pixelIndex) const {
+		return passPerPixel[pixelIndex];
+	}
+
 	u_int GetPassCount(const u_int bucketCount) const;
 
 	static std::unique_ptr<SamplerSharedData> FromProperties(
@@ -66,6 +71,10 @@ public:
 
 	std::shared_ptr<u_int> seedBase;
 	u_int filmRegionPixelCount;
+
+	// Blue-noise rank tile for Owen-scrambled pixels' Cranley-Patterson
+	// offsets (SOBOL_OWEN_TILE_SIZE^2 entries, generated at construction)
+	std::vector<u_int> scrambleTile;
 
 protected:
 	std::shared_ptr<u_int> bucketIndex;  // This can potentially be accessed by
@@ -132,6 +141,22 @@ public:
 	// Blue-noise dithered sampling (Heitz et al. 2019), opt-in
 	void SetBlueNoiseEnable(const bool enable) { sobolBlueNoiseEnable = enable; }
 
+	// Hash-based Owen-scrambled Sobol (Burley 2020), takes precedence
+	// over the blue-noise dither when both are enabled
+	void SetOwenEnable(const bool enable) { sobolOwenEnable = enable; }
+
+	// Blue-noise rank tile for the pixels' CP offset (default on when
+	// Owen scrambling is enabled)
+	void SetOwenTileEnable(const bool enable) { sobolOwenTileEnable = enable; }
+
+	// Second-moment adaptive sampling: drives the convergence test with
+	// the per-pixel relative standard error computed from accumulated
+	// luminance moments instead of (or ahead of) the film NOISE channel
+	void SetAdaptiveMoments(const bool enable, const float relErrTarget) {
+		sobolAdaptiveMomentsEnable = enable;
+		sobolAdaptiveRelErrTarget = relErrTarget;
+	}
+
 	//--------------------------------------------------------------------------
 	// Static methods used by SamplerRegistry
 	//--------------------------------------------------------------------------
@@ -159,6 +184,10 @@ private:
 	float adaptiveStrength, adaptiveUserImportanceWeight;
 	u_int bucketSize, tileSize, superSampling, overlapping;
 	bool sobolBlueNoiseEnable;
+	bool sobolOwenEnable;
+	bool sobolOwenTileEnable;
+	bool sobolAdaptiveMomentsEnable;
+	float sobolAdaptiveRelErrTarget;
 
 	std::shared_ptr<u_int> bucketIndex;
 	u_int pixelOffset, passOffset, pass;

@@ -25,8 +25,11 @@
 #include "luxrays/devices/metalintersectiondevice.h"
 #include "luxrays/devices/metalrtaccel.h"
 #include "luxrays/accelerators/mbvhaccel.h"
+#include "luxrays/core/geometry/ray.h"
 
+#include <atomic>
 #include <cstdlib>
+#include <cstdio>
 
 using namespace std;
 
@@ -113,6 +116,40 @@ void MetalIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuf
 	// Enqueue the intersection kernel
 	kernel->EnqueueTraceRayBuffer(rayBuff, rayHitBuff, rayCount);
 	statsTotalDataParallelRayCount += rayCount;
+
+	// Debug: LUXRAYS_METAL_DUMP=<n> dumps the ray+hit buffers of trace
+	// calls n..n+7 to /tmp/metal_(rays|hits)_<n>.bin. Synchronous - debug
+	// builds only. Works for both the HWRT and software kernels.
+	static const int dumpIter = []() {
+		const char *e = getenv("LUXRAYS_METAL_DUMP");
+		return e ? atoi(e) : -1;
+	}();
+	static std::atomic<int> callCount{0};
+	const int callIdx = callCount.fetch_add(1);
+	if (dumpIter >= 0 && callIdx >= dumpIter && callIdx < dumpIter + 8) {
+		FinishQueue();
+		const MetalDeviceBuffer *mRay =
+				dynamic_cast<const MetalDeviceBuffer *>(rayBuff);
+		const MetalDeviceBuffer *mHit =
+				dynamic_cast<const MetalDeviceBuffer *>(rayHitBuff);
+		char path[256];
+		snprintf(path, sizeof(path), "/tmp/metal_rays_%d.bin", callIdx);
+		FILE *fr = fopen(path, "wb");
+		snprintf(path, sizeof(path), "/tmp/metal_hits_%d.bin", callIdx);
+		FILE *fh = fopen(path, "wb");
+		if (fr) {
+			fwrite([(__bridge id<MTLBuffer>)mRay->GetMetalBuffer() contents],
+					sizeof(Ray), rayCount, fr);
+			fclose(fr);
+		}
+		if (fh) {
+			fwrite([(__bridge id<MTLBuffer>)mHit->GetMetalBuffer() contents],
+					sizeof(RayHit), rayCount, fh);
+			fclose(fh);
+		}
+		fprintf(stderr, "[MetalDev] dumped %u rays/hits (call %d)\n",
+				rayCount, callIdx);
+	}
 }
 
 }

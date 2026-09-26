@@ -152,6 +152,9 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 	uint passOffset = sample->passOffset;
 	const uint bucketCycleStart = sample->bucketCycleStart;
 
+	// Bound for the adaptive re-pick loop below (see sobol sampler)
+	uint skipAttempts = 0;
+
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
@@ -210,8 +213,10 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 				threshold = fmax(threshold, 1.f - adaptiveStrength);
 
 				if (Rnd_FloatValue(seed) > threshold) {
-					// Skip this pixel and try the next one
-					continue;
+					// Skip this pixel and try the next one; after a full
+					// bucket sweep accept it anyway (bounded loop)
+					if (++skipAttempts < bucketSize * superSampling)
+						continue;
 				}
 			}
 		}
