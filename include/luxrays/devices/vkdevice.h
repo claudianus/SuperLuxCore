@@ -51,6 +51,7 @@ typedef void *VkDescriptorSetLayoutHandle;
 typedef void *VkDescriptorPoolHandle;
 typedef void *VkDescriptorSetHandle;
 typedef void *VkFenceHandle;
+typedef void *VkPipelineCacheHandle;
 
 //------------------------------------------------------------------------------
 // VulkanDeviceDescription
@@ -81,6 +82,7 @@ public:
 	bool hasAccelStruct;
 	bool hasUnifiedMemory;
 	bool hasScalarBlockLayout;
+	std::string pipelineCacheUUID; // hex, for the on-disk pipeline cache key
 
 	friend class Context;
 protected:
@@ -251,6 +253,8 @@ public:
 	VkDeviceHandle GetVulkanDevice() const { return device; }
 	VkQueueHandle GetVulkanQueue() const { return queue; }
 	VkCommandPoolHandle GetVulkanCommandPool() const { return cmdPool; }
+	// Persisted VkPipelineCache (may be null before Start/after Stop).
+	VkPipelineCacheHandle GetVulkanPipelineCache() const { return pipeCache; }
 
 	// True when the device was created with ray query + AS support.
 	bool HasRayTracingSupport() const { return hasRayTracing; }
@@ -272,6 +276,8 @@ protected:
 	uint32_t queueFamily;
 	VkCommandPoolHandle cmdPool;
 	VkCommandBufferHandle openCmd;
+	VkPipelineCacheHandle pipeCache;
+	std::string pipeCachePath;
 	bool hasRayTracing;
 };
 

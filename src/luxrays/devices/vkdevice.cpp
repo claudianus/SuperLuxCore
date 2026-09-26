@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <sstream>
@@ -318,6 +319,14 @@ VulkanDeviceDescription::VulkanDeviceDescription(VkPhysicalDeviceHandle physDev,
 	}
 
 	// Unified memory heuristic (Apple / integrated)
+	{
+		ostringstream u;
+		for (int i = 0; i < VK_UUID_SIZE; i++)
+			u << std::hex << std::setw(2) << std::setfill('0')
+					<< (u_int)props.pipelineCacheUUID[i];
+		pipelineCacheUUID = u.str();
+	}
+
 	VkPhysicalDeviceMemoryProperties mp;
 	vkGetPhysicalDeviceMemoryProperties((VkPhysicalDevice)physDev, &mp);
 	for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
@@ -423,7 +432,8 @@ VulkanDevice::VulkanDevice(const Context &context,
 		Device(context, devIndex), HardwareDevice(),
 		deviceDesc(desc), instance(desc.GetVulkanInstance()),
 		device(nullptr), queue(nullptr), queueFamily(0),
-		cmdPool(nullptr), openCmd(nullptr), hasRayTracing(false) {
+		cmdPool(nullptr), openCmd(nullptr), pipeCache(nullptr),
+		hasRayTracing(false) {
 	deviceName = desc.GetName() + " Vulkan";
 }
 
@@ -560,11 +570,62 @@ void VulkanDevice::Start() {
 	pci.queueFamilyIndex = queueFamily;
 	pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	VK_CHECK(vkCreateCommandPool((VkDevice)device, &pci, nullptr, (VkCommandPool *)&cmdPool));
+
+	// Persistent pipeline cache: MoltenVK runs SPIR-V -> MSL -> Metal
+	// compilation inside vkCreateComputePipelines, and its MSL codegen is
+	// occasionally nondeterministic (an undeclared-identifier MSL error was
+	// observed on a rerun of an identical kernel). Seeding a VkPipelineCache
+	// from disk makes each kernel's pipeline creation a one-time event;
+	// cache hits skip shader compilation entirely on warm runs.
+	{
+		const string dir = string(getenv("HOME") ? getenv("HOME") : "/tmp") +
+				"/.luxcore/vkcache";
+		mkdir((string(getenv("HOME") ? getenv("HOME") : "/tmp") +
+				"/.luxcore").c_str(), 0755);
+		mkdir(dir.c_str(), 0755);
+		pipeCachePath = dir + "/vkpipe-" + deviceDesc.pipelineCacheUUID + ".bin";
+
+		vector<char> seed;
+		{
+			ifstream f(pipeCachePath, ios::binary);
+			seed.assign(istreambuf_iterator<char>(f), istreambuf_iterator<char>());
+		}
+		VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+		ci.initialDataSize = seed.size();
+		ci.pInitialData = seed.empty() ? nullptr : seed.data();
+		// Invalid/stale blobs are rejected by the driver per spec.
+		VkResult rc = vkCreatePipelineCache((VkDevice)device, &ci, nullptr,
+				(VkPipelineCache *)&pipeCache);
+		if (rc != VK_SUCCESS) {
+			pipeCache = nullptr;
+			LR_LOG(deviceContext, "[Device " << GetName() <<
+					"] vkCreatePipelineCache failed rc=" << rc << " (cold pipelines)");
+		}
+	}
 }
 
 void VulkanDevice::Interrupt() { }
 void VulkanDevice::Stop() {
 	FinishQueue();
+
+	if (pipeCache) {
+		// Persist the pipeline cache for the next run (see Start()).
+		size_t n = 0;
+		if (vkGetPipelineCacheData((VkDevice)device, (VkPipelineCache)pipeCache,
+				&n, nullptr) == VK_SUCCESS && n) {
+			vector<char> blob(n);
+			if (vkGetPipelineCacheData((VkDevice)device, (VkPipelineCache)pipeCache,
+					&n, blob.data()) == VK_SUCCESS) {
+				const string tmp = pipeCachePath + ".tmp";
+				ofstream f(tmp, ios::binary);
+				f.write(blob.data(), n);
+				f.close();
+				rename(tmp.c_str(), pipeCachePath.c_str());
+			}
+		}
+		vkDestroyPipelineCache((VkDevice)device, (VkPipelineCache)pipeCache, nullptr);
+		pipeCache = nullptr;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -1182,8 +1243,19 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 	cpi.stage.pName = kernelName.c_str();
 	cpi.stage.pSpecializationInfo = &specInfo;
 	cpi.layout = (VkPipelineLayout)kern->pipelineLayout;
-	VK_CHECK(vkCreateComputePipelines((VkDevice)device, VK_NULL_HANDLE, 1, &cpi,
-			nullptr, (VkPipeline *)&kern->pipeline));
+	// MoltenVK's SPIR-V -> MSL codegen is occasionally nondeterministic
+	// (observed: a rerun of an identical module emitted an undeclared
+	// identifier). Retry a few times before giving up; the pipeline cache
+	// above makes the successful result permanent across runs.
+	VkResult prc = VK_ERROR_INITIALIZATION_FAILED;
+	for (int attempt = 0; attempt < 4; attempt++) {
+		prc = vkCreateComputePipelines((VkDevice)device,
+				(VkPipelineCache)pipeCache, 1, &cpi, nullptr,
+				(VkPipeline *)&kern->pipeline);
+		if (prc == VK_SUCCESS)
+			break;
+	}
+	VK_CHECK(prc);
 
 	// Per-kernel module-scope __constant blob (each split module carries
 	// only the constants its own call graph reached after globaldce).

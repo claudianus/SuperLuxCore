@@ -520,7 +520,8 @@ VulkanIntersectionDevice::VulkanRTAccel *VulkanIntersectionDevice::BuildRTAccel(
 	cpci.stage.module = module;
 	cpci.stage.pName = "main";
 	cpci.layout = rt->pipeLayout;
-	VK_CHECK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpci,
+	VK_CHECK(vkCreateComputePipelines(dev,
+			(VkPipelineCache)GetVulkanPipelineCache(), 1, &cpci,
 			nullptr, &rt->pipeline));
 	vkDestroyShaderModule(dev, module, nullptr);
 
