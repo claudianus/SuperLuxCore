@@ -106,7 +106,8 @@ PropertiesUPtr LightStrategy::GetDefaultProps() {
 
 LightSourcePtr LightStrategy::SampleLightsBSDF(
 		SceneConstRef scene, const BSDF &bsdf, const float time,
-		const float u, float *pdf, float *risScale) const {
+		const float u, float *pdf, float *risScale,
+		float *lightSurfaceUs) const {
 	// Default: strategies without BSDF-aware sampling fall back to the
 	// plain position/normal-based interface
 	if (risScale)

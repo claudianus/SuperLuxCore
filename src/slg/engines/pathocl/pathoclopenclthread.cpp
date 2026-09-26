@@ -181,9 +181,14 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			SetAllAdvancePathsKernelArgs(0);
 		}
 
+		const u_int raySlotCount = taskCount * (1u +
+				((engine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
+				(engine->taskConfig.pathTracer.restir.visCandCount +
+				RESTIR_PIXEL_MERGES_MAX) : 0u));
 		for (u_int i = 0; i < iterations; ++i) {
-			// Trace rays
-			intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff, taskCount);
+			// Trace rays (tail slots hold the ReSTIR visibility
+			// candidate shadow rays)
+			intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff, raySlotCount);
 
 			// Advance to next path state
 			if (wavefrontQueues)

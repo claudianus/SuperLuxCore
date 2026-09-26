@@ -445,6 +445,68 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// Allocate tasksConfigBuff
 	//--------------------------------------------------------------------------
 
+	// The per-pixel ReSTIR reservoir count (one slot per film pixel);
+	// the spatial merge is screen-space (E2b), so no separate grid
+	// region follows them.
+	{
+		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
+		renderEngine->taskConfig.pathTracer.restir.reservoirCount =
+				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth();
+	}
+
+	// ReSTIR visibility-weighted target (E2a): the K candidate shadow
+	// rays per task share the tail of raysBuff/hitsBuff starting at
+	// taskCount, so a single EnqueueTraceRayBuffer pass over
+	// taskCount * (1 + K) rays resolves them. The per-candidate records
+	// (RestirReservoir aliasing) are appended to restirReservoirsBuff
+	// after the per-pixel reservoirs.
+	// K is capped at 8: candidate shadow rays are the dominant memory
+	// cost (taskCount * K * (sizeof(Ray) + sizeof(RayHit))).
+	if (renderEngine->taskConfig.pathTracer.restir.enabled &&
+			renderEngine->taskConfig.pathTracer.restir.visibilityEnable) {
+		auto &restir = renderEngine->taskConfig.pathTracer.restir;
+		restir.visCandCount = Min(8u, restir.candidateCount);
+
+		// Low-resource guard: the candidate tail costs
+		// taskCount * (K + RESTIR_PIXEL_MERGES_MAX) *
+		// (sizeof(Ray) + sizeof(RayHit)) of extra device memory plus the
+		// same count of RestirVisCandidate records (the 2 merge slots
+		// carry the visibility-aware spatial-shift rays, E2d). Cap K so
+		// the tail stays under a fixed byte budget; on huge task counts
+		// this trades visibility candidates for render stability.
+		// All arithmetic in 64-bit: u_int products can overflow.
+		const u_int candBytesPerTask =
+				(u_int)(sizeof(Ray) + sizeof(RayHit) +
+				sizeof(slg::ocl::pathoclbase::RestirVisCandidate));
+		const size_t candByteBudget = (size_t)256 * 1024 * 1024;
+		const u_int maxKByMem = (candBytesPerTask > 0 && taskCount > 0) ?
+				(u_int)Max<long long>(0ll, (long long)Min<size_t>(8u +
+				RESTIR_PIXEL_MERGES_MAX, candByteBudget /
+				((size_t)taskCount * candBytesPerTask)) -
+				RESTIR_PIXEL_MERGES_MAX) : 0u;
+		if (restir.visCandCount > maxKByMem) {
+			SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+					"] ReSTIR visibility candidates clamped from " <<
+					restir.visCandCount << " to " << maxKByMem <<
+					" (taskCount=" << taskCount << ", budget=" <<
+					candByteBudget / 1024 / 1024 << "MB)");
+			restir.visCandCount = maxKByMem;
+		}
+		if (restir.visCandCount == 0u)
+			restir.visibilityEnable = false;
+
+		restir.visCandRayBase = taskCount;
+		// Candidate records are appended right after the per-pixel
+		// reservoirs (the world-space spatial grid was removed in E2b:
+		// screen-space neighbour-pixel merge replaces it).
+		restir.visCandDataOffset = restir.reservoirCount;
+	} else {
+		renderEngine->taskConfig.pathTracer.restir.visibilityEnable = false;
+		renderEngine->taskConfig.pathTracer.restir.visCandCount = 0;
+		renderEngine->taskConfig.pathTracer.restir.visCandRayBase = taskCount;
+		renderEngine->taskConfig.pathTracer.restir.visCandDataOffset = 0;
+	}
+
 	intersectionDevice.AllocBufferRO(&taskConfigBuff, &renderEngine->taskConfig, sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration), "GPUTaskConfiguration");
 
 	//--------------------------------------------------------------------------
@@ -773,17 +835,32 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 		gpuTaskStats[i].sampleCount = 0;
 
 	//--------------------------------------------------------------------------
-	// Allocate Ray/RayHit buffers
-	//--------------------------------------------------------------------------
-
-	intersectionDevice.AllocBufferRW(&raysBuff, nullptr, sizeof(Ray) * taskCount, "Ray");
-	intersectionDevice.AllocBufferRW(&hitsBuff, nullptr, sizeof(RayHit) * taskCount, "RayHit");
-
-	//--------------------------------------------------------------------------
 	// Allocate GPU task buffers
 	//--------------------------------------------------------------------------
 
+	// NOTE: must run before the Ray/RayHit allocation below: it fills
+	// taskConfig.pathTracer.restir.visCandCount, which determines the
+	// candidate tail size of the ray/hit buffers. Reading visCandCount
+	// before this call yields the compile-time 0 and the buffers would
+	// be allocated without the tail while the kernels still index
+	// taskCount * (1 + K) slots - a device-side out-of-bounds access
+	// that wedges the GPU (observed as WindowServer watchdog panics).
 	InitGPUTaskBuffer();
+
+	//--------------------------------------------------------------------------
+	// Allocate Ray/RayHit buffers
+	//--------------------------------------------------------------------------
+
+	// ReSTIR visibility (E2a/E2d): rays/hits hold taskCount regular rays
+	// plus, when the visibility target is on, taskCount *
+	// (visCandCount + RESTIR_PIXEL_MERGES_MAX) candidate and merge
+	// shadow rays.
+	const u_int raySlotCount = taskCount * (1u +
+			((renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
+			(renderEngine->taskConfig.pathTracer.restir.visCandCount +
+			RESTIR_PIXEL_MERGES_MAX) : 0u));
+	intersectionDevice.AllocBufferRW(&raysBuff, nullptr, sizeof(Ray) * raySlotCount, "Ray");
+	intersectionDevice.AllocBufferRW(&hitsBuff, nullptr, sizeof(RayHit) * raySlotCount, "RayHit");
 
 	//--------------------------------------------------------------------------
 	// Allocate GPU task statistic buffers
@@ -827,12 +904,38 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
 
 	{
-		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
-		const u_int filmWidth = renderEngine->GetFilm().GetWidth();
-		const u_int reservoirCount = (subRegion[3] + 1) * filmWidth;
-		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(reservoirCount);
+		const u_int reservoirCount =
+				renderEngine->taskConfig.pathTracer.restir.reservoirCount;
+		// The visibility-candidate records are appended after the
+		// per-pixel reservoirs: taskCount * (K + RESTIR_PIXEL_MERGES_MAX)
+		// RestirVisCandidate records, sized in bytes and rounded up to
+		// whole reservoir slots so the layout stays correct if the two
+		// structs' sizes diverge again (both are 56B today).
+		const u_int candTailCount =
+				(renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
+				taskCount * (renderEngine->taskConfig.pathTracer.restir.visCandCount +
+				RESTIR_PIXEL_MERGES_MAX) : 0u;
+		const u_int totalCount = reservoirCount + (u_int)(
+				((size_t)candTailCount *
+				sizeof(slg::ocl::pathoclbase::RestirVisCandidate) +
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) - 1) /
+				sizeof(slg::ocl::pathoclbase::RestirReservoir));
+		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(totalCount);
 		intersectionDevice.AllocBufferRW(&restirReservoirsBuff, zeroReservoirs.data(),
-				sizeof(slg::ocl::pathoclbase::RestirReservoir) * reservoirCount, "RestirReservoirs");
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) * totalCount, "RestirReservoirs");
+	}
+
+	//--------------------------------------------------------------------------
+	// Allocate the MNEE manifold seed cache (zeroed: an all-zero entry
+	// means "no cached seed"); only used when path.mnee.enable is set.
+	//--------------------------------------------------------------------------
+
+	{
+		std::vector<slg::ocl::pathoclbase::MneeSeedEntry> zeroSeeds(
+				MNEE_SEED_CACHE_SIZE);
+		intersectionDevice.AllocBufferRW(&mneeSeedsBuff, zeroSeeds.data(),
+				sizeof(slg::ocl::pathoclbase::MneeSeedEntry) *
+				MNEE_SEED_CACHE_SIZE, "MneeSeeds");
 	}
 
 	//--------------------------------------------------------------------------

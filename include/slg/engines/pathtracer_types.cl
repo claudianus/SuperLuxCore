@@ -40,6 +40,30 @@ typedef struct {
 		// Temporal reuse: merge each pixel's stored previous-pass
 		// reservoir (lightIndex/wSum/M/target) as extra proposal draws.
 		int temporalEnable;
+		// Spatial reuse (E2b): GRIS merge of screen-space neighbour-
+		// pixel reservoirs, gated by hit-point distance and landing
+		// normal (same-surface gate).
+		int spatialEnable;
+		// Number of per-pixel reservoirs in the restirReservoirs buffer
+		// (one slot per film pixel; doubles as temporal state and the
+		// shareable state for the pixel-space spatial merge).
+		unsigned int reservoirCount;
+		// Visibility-weighted RIS target (E2a): each candidate's target
+		// includes the binary visibility term V evaluated by tracing its
+		// shadow ray. Candidates share the tail of the rays/hits buffers
+		// (slots [visCandRayBase + gid*K ..]) so the regular per-iteration
+		// EnqueueTraceRayBuffer pass traces them together with the normal
+		// eye/shadow rays; a dedicated MK_RT_RESTIR state resolves the
+		// reservoir on the next iteration. Costs (1+K)x the rays buffer
+		// and one extra iteration of latency per path vertex.
+		int visibilityEnable;
+		// K: candidates traced per task (<= candidateCount, memory bound)
+		unsigned int visCandCount;
+		// First candidate slot index inside rays[]/rayHits[] (== taskCount)
+		unsigned int visCandRayBase;
+		// First candidate record index inside restirReservoirs[] (after
+		// the per-pixel reservoirs)
+		unsigned int visCandDataOffset;
 	} restir;
 
 	// MNEE (Manifold Next Event Estimation): direct light sampling through
@@ -53,6 +77,11 @@ typedef struct {
 		int enabled;
 		unsigned int maxIterations;
 		unsigned int maxSpecular;
+		// Manifold seed cache: converged single-vertex solutions are
+		// stored in a hashed world-space grid on the occluder and reused
+		// as Newton seeds by nearby attempts (warm start; skips the
+		// mirror seed trace). path.mnee.seedcache, default on.
+		int seedCacheEnable;
 	} mnee;
 
 	// Hybrid backward/forward path tracing settings

@@ -12,7 +12,7 @@ claims backed by measured evidence.
 | Track | Scope | State |
 |---|---|---|
 | Metal backend | Device + HWRT, cl2msl kernel translation, pipeline, HW film + OIDN, native curves | shipped (Apple-only; CPU/OCL fallbacks intact) |
-| ReSTIR DI / MNEE / path guiding / spectral / samplers | see `features/README.md` index | shipped, CPU/OCL/Metal |
+| ReSTIR DI / MNEE / path guiding / spectral / samplers | see `features/README.md` index | shipped, CPU/OCL/Metal; GPU ReSTIR visibility-weighted target + MNEE manifold seed cache landed (e16 8/8, e17 8/8) |
 | Wavefront queues (M1+M2) | per-state task queues + λ-bucketed queues, opt-in `LUXRAYS_WAVEFRONT_QUEUES=1` | validated; A/B done — stays opt-in (see below) |
 | DEP-1/DEP-2 | deps refresh (openvdb 13, robin-hood removal), v2.3.0/v2.4.0 dep releases | done, CI green |
 | A6-II/A6-III | persistent-scene incremental export, transform/material/geometry deltas, dupli-set refresh | done; `a6_persistent_scene_test.py` all PASS |
@@ -25,10 +25,10 @@ claims backed by measured evidence.
 | Track | Item | Notes |
 |---|---|---|
 | E9 leftovers | OptiX/CUDA motion geometry refresh | `OptixMotionGeometryDesc` vertex buffers; out of scope until the CUDA path is revived |
-| E2 | ReSTIR PT/GI/PG + RIS visibility term | current DI-only, ~2× spatial-reuse inefficiency |
-| E1 | OIDN Metal into dep bundle | validated locally; needs LuxCoreDeps `with_device_metal=True` recipe + dep release |
+| E2 | ReSTIR PT/GI/PG + RIS visibility term | E2a: visibility-weighted target on GPU + CPU (GPU candidate shadow-ray tail + MK_RT_RESTIR resolve, exact-sample reuse; CPU: inline accelerator trace + winner-sample return through `SampleLightsBSDF`, own-cell merge only under vis; `restir.visibility.enable`; e16 8/8 Metal, e18 8/8 CPU, no wedge at 512K tasks). E2b: GPU spatial reuse moved to screen-space neighbour-pixel merge with same-surface gate — replaced the world-space hash grid that merged unrelated surfaces (e14 6/6; spots RMSE ~1.0x vs ~1.3x before); pre-spatial store + representative-winner gate fixed the merge-feedback explosion. E2c: reconnection shift — reservoirs store the winning sample's light-surface draws (`lsU/lsV/lsP`) and neighbour merges replay that same emitter point, so pi_new/pi_old tracks only the shading change (e14 6/6, e16 8/8). E2d: visibility-aware spatial merge — under the visibility target the 2 merge-candidate rays ride the same candidate tail trace, folding real V into pi_new (replaces the V-free approximation; e16 8/8, no wedge at 512K tasks). Still DI-only — ReSTIR GI G1 (first-bounce resampling, Jacobian-corrected shift) is designed in `dev-tools/restir-gi-design.md`; ReSTIR PT/PG remain the larger follow-ups |
+| E1 | OIDN Metal into dep bundle | done: `with_device_metal=True` + `metal_embed_source` in LuxCoreDeps `conan-profile-macOS-ARM64`, `oidn-2.5.1-metal-runtime-compile.patch`, `device_metal` dylib used by `intel_oidn.cpp` (Metal device preferred, CPU fallback). Published: `claudianus/LuxCoreDeps` release `v2.4.0` (pinned by `build-settings.json`) ships `libLuxOpenImageDenoise_device_metal.2.5.1.dylib` in the macOS-ARM64 bundle — verified in the public asset |
 | Wavefront M3 | material bucketing | decided: not pursued — wavefront loses on every tested workload (dense-vs-wavefront −7~−17%, re-verified 2026-09 cornell 512²/30s: 13.4M vs 12.2M spp/s ≈ −9%); see `dev-tools/wavefront-design.md` M2 status |
-| Blender UX | V-Ray/Corona-level polish | persistent-scene cache + deltas landed; remaining: render stats UX, low-resource fallback profiles |
+| Blender UX | V-Ray/Corona-level polish | persistent-scene cache + deltas, auto light strategy/clamp/device, low-VRAM profile (`opencl.task.count` cap), quality presets, ReSTIR visibility toggle, convergence stat row (incl. PATHOCL via `batch.haltthreshold`) all landed; remaining: incremental polish |
 | Compatibility | Cycles shader-node / Geometry Nodes coverage | audited vs Blender 5.2.1 (97 node branches); Math/VectorMath nearly complete via `mathfunc` (trig/exp/log/hyperbolic/invsqrt/floormod + smooth-min/max); BsdfHair/RayPortal/PointInfo/VectorRotate/VectorTransform/EeveeSpecular/Squeeze/Gabor mapped (native `gabornoise` texture); IES light nodes map to mappoint/mapsphere iesblob (parity-tested vs native IES path); residual gaps are scene-query nodes (Raycast/CameraData/LightFalloff/Script) — warn+neutral fallback, see BlendLuxCore `doc/cycles_node_coverage.md` |
 
 ## Standing gaps (honest list)

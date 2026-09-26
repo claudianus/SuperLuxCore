@@ -40,8 +40,30 @@ vertex. This converts "invisible" caustics into an estimable connection.
 - Instrumentation (default-off): `LUX_MNEE_ITER`, `LUX_MNEE_REJX` dump chain
   iterations / rejection reasons for debugging.
 
+### Manifold seed cache (GPU, E4)
+
+Converged single-vertex solutions are stored in a fixed-size hashed grid
+(`mneeSeeds`, 16384 x 32B) keyed by (light, occluder mesh, quantized
+shadow-ray occluder hit position). A later attempt blocked by the same
+occluder region warm-starts Newton from the cached vertex: for mirrors this
+skips the mirrored-light seed trace entirely; for glass it replaces the
+line seed. The seed only selects the Newton basin - the solver still
+verifies the half-vector constraint on re-projected surface vertices, so a
+stale or colliding entry costs iterations but never biases the result.
+Opt-out with `path.mnee.seedcache = 0` (default on; GPU only, CPU path
+unchanged).
+
+Validated (`dev-tools/e17_mnee_seedcache_gpu_test.py`, glass + mirror
+occluders, 8/8): unbiased vs uncached, caustic-region mean preserved
+(ratio 0.999-1.001), on/off pixel differences confined to caustic pixels
+(legitimate solution-basin changes, not noise).
+
 ### Properties
 
+- `path.mnee.enable` (default off) — specular-chain direct light sampling.
+- `path.mnee.maxiterations` (default 12) — Newton/line-search bound.
+- `path.mnee.maxspecular` (default 1) — 2..4 enable multi-specular chains.
+- `path.mnee.seedcache` (default on, GPU only) — manifold seed cache.
 - Exposed to Blender via `MNEE specular caustics` option (`P1-2: expose MNEE
   specular caustics option`).
 
@@ -49,6 +71,8 @@ vertex. This converts "invisible" caustics into an estimable connection.
 
 - `scenes/causticcube/`, glass slab / glass ball caustics — rendered at CPU
   parity on Metal GPU.
+- `scenes/juice/test.scn` + `test-mirror.scn` — point-light + glass/mirror
+  occluder seed-cache coverage (`e17_mnee_seedcache_gpu_test.py`).
 - `dev-tools/mnee_design.md` — internal design notes.
 
 ## Platforms

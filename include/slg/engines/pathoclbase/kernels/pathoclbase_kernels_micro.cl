@@ -558,7 +558,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 		const int mneeStartResult =
 				((taskDirectLight->directLightResult == SHADOWED) ?
 				Mnee_Start(taskConfig, task, taskDirectLight, taskState,
-					&rayHits[gid], &rays[gid]
+					&rayHits[gid], &rays[gid], mneeSeeds, worldRadius
 					LIGHTS_PARAM) : 0);
 		if ((mneeStartResult == 1) ||
 				((mneeStartResult == 2) &&
@@ -578,6 +578,124 @@ __kernel void AdvancePaths_MK_RT_DL(
 			taskState->state = pathState;
 		}
 	}
+}
+
+//------------------------------------------------------------------------------
+// Evaluation of the Path finite state machine.
+//
+// From: MK_DL_ILLUMINATE (ReSTIR visibility phase 1 queued candidate
+//       shadow rays into the rays[] tail; the trace pass filled
+//       rayHits[] for them)
+// To:   MK_DL_SAMPLE_BSDF (winner emitted its real shadow ray) or
+//       MK_GENERATE_NEXT_VERTEX_RAY / MK_SPLAT_SAMPLE (no valid light)
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_RT_RESTIR(
+		KERNEL_ARGS
+		) {
+	WAVEFRONT_GUARD
+
+	// Read the path state
+	__global GPUTask *task = &tasks[gid];
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_RT_RESTIR(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_RT_RESTIR)
+		return;
+
+ 	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	__global EyePathInfo *pathInfo = &eyePathInfos[gid];
+	__global BSDF *bsdf = &taskState->bsdf;
+
+	// Read the seed
+	Seed seedValue = task->seed;
+	// This trick is required by SAMPLER_PARAM macro
+	Seed *seed = &seedValue;
+
+	__global GPUTaskDirectLight *taskDirectLight = &tasksDirectLight[gid];
+	__constant const Scene* restrict scene = &taskConfig->scene;
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+	const uint sampleOffset = taskConfig->pathTracer.eyeSampleBootSize + pathInfo->depth.depth * taskConfig->pathTracer.eyeSampleStepSize;
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	const uint restirVisCandCount = taskConfig->pathTracer.restir.visCandCount;
+	// Per-task tail stride: K fresh + RESTIR_PIXEL_MERGES_MAX merge
+	// candidates (E2d)
+	const uint tailStride = restirVisCandCount + RESTIR_PIXEL_MERGES_MAX;
+	__global Ray *candRays =
+			&rays[taskConfig->pathTracer.restir.visCandRayBase +
+					gid * tailStride];
+	__global const RayHit *candHits =
+			&rayHits[taskConfig->pathTracer.restir.visCandRayBase +
+					gid * tailStride];
+	// The candidate records are appended after the per-pixel
+	// reservoirs (2 RestirReservoir slots each)
+	__global const RestirVisCandidate *candData =
+			(__global const RestirVisCandidate *)(restirReservoirs +
+			taskConfig->pathTracer.restir.visCandDataOffset) +
+			gid * tailStride;
+
+	const bool resolved = DirectLight_RestirResolveVisibility(
+			bsdf,
+			&rays[gid],
+			candRays, candHits, candData, restirVisCandCount,
+			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+			&task->tmpHitPoint,
+			rays[gid].time,
+			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_X SAMPLER_PARAM),
+			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Y SAMPLER_PARAM),
+			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Z SAMPLER_PARAM),
+			Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_W SAMPLER_PARAM),
+			taskConfig->pathTracer.restir.temporalEnable,
+			// Store: only depth-0 vertices refresh the per-pixel
+			// reservoir (same rule as DirectLight_Illuminate()); the
+			// store also feeds the screen-space spatial merge, so it
+			// runs when either reuse mode is on.
+			(taskConfig->pathTracer.restir.temporalEnable ||
+					taskConfig->pathTracer.restir.spatialEnable) &&
+					(pathInfo->depth.depth == 0),
+			sampleResult->pixelY * filmWidth + sampleResult->pixelX,
+			restirReservoirs,
+			&taskDirectLight->illumInfo
+			LIGHTS_PARAM);
+
+	// Re-mask the candidate tail slots. Without this, slots written
+	// by a previous MK_DL_ILLUMINATE stay valid-and-unmasked forever
+	// and every subsequent trace pass would re-trace them: at
+	// taskCount * K scale that saturates the GPU for the whole render
+	// (measured: display starvation -> userspace watchdog panic on
+	// macOS). Masked rays are skipped by both the MetalRT intersector
+	// and the software kernels; a task re-entering MK_DL_ILLUMINATE
+	// rewrites its slots anyway.
+	for (uint i = 0; i < tailStride; ++i)
+		candRays[i].flags = RAY_FLAGS_MASKED;
+
+	if (resolved) {
+		// The winner's shadow ray is queued in rays[gid]: evaluate the
+		// BSDF and trace it through the normal direct-light path
+		taskState->state = MK_DL_SAMPLE_BSDF;
+	} else {
+		// No visible candidate: move to the next vertex ray, or splat
+		// if this was the last path vertex
+		taskState->state = (sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
+	}
+
+	// Save the seed
+	task->seed = seedValue;
 }
 
 //------------------------------------------------------------------------------
@@ -633,6 +751,49 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 	// It will set eventually to true if the light is visible
 	taskDirectLight->directLightResult = NOT_VISIBLE;
 
+	//----------------------------------------------------------------------
+	// ReSTIR visibility-weighted target (E2a): phase 1 enqueues the
+	// candidate shadow rays into the shared rays[] tail and defers the
+	// reservoir merge to the MK_RT_RESTIR state (next iteration, after
+	// the trace pass).
+	//----------------------------------------------------------------------
+	const uint restirVisCandCount = taskConfig->pathTracer.restir.visCandCount;
+	if (taskConfig->pathTracer.restir.enabled &&
+			taskConfig->pathTracer.restir.visibilityEnable &&
+			(restirVisCandCount > 0u) &&
+			!BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+		// Per-task tail stride: K fresh + RESTIR_PIXEL_MERGES_MAX merge
+		// candidates (E2d)
+		const uint tailStride = restirVisCandCount + RESTIR_PIXEL_MERGES_MAX;
+		__global Ray *candRays =
+				&rays[taskConfig->pathTracer.restir.visCandRayBase +
+						gid * tailStride];
+		__global RestirVisCandidate *candData =
+				(__global RestirVisCandidate *)(restirReservoirs +
+				taskConfig->pathTracer.restir.visCandDataOffset) +
+				gid * tailStride;
+
+		const bool anyCandidate = DirectLight_RestirEnqueueVisibility(
+				bsdf,
+				candRays, candData, restirVisCandCount,
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				&task->tmpHitPoint,
+				rays[gid].time,
+				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_X SAMPLER_PARAM),
+				taskConfig->pathTracer.restir.spatialEnable,
+				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
+				filmWidth, taskConfig->pathTracer.restir.reservoirCount,
+				restirReservoirs
+				LIGHTS_PARAM);
+
+		taskState->state = anyCandidate ? MK_RT_RESTIR :
+				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
+
+		// Save the seed
+		task->seed = seedValue;
+		return;
+	}
+
 	if (!BSDF_IsDelta(bsdf
 			MATERIALS_PARAM) &&
 			DirectLight_Illuminate(
@@ -649,11 +810,17 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				taskConfig->pathTracer.restir.candidateCount,
 				taskConfig->pathTracer.restir.temporalEnable,
 				// Store: only depth-0 vertices refresh the per-pixel
-				// reservoir (see DirectLight_Illuminate()).
-				taskConfig->pathTracer.restir.temporalEnable &&
+				// reservoir (see DirectLight_Illuminate()); the store
+				// also feeds the screen-space spatial merge, so it runs
+				// when either reuse mode is on.
+				(taskConfig->pathTracer.restir.temporalEnable ||
+						taskConfig->pathTracer.restir.spatialEnable) &&
 						(pathInfo->depth.depth == 0),
 				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
 				restirReservoirs,
+				taskConfig->pathTracer.restir.spatialEnable,
+				filmWidth,
+				taskConfig->pathTracer.restir.reservoirCount,
 				&taskDirectLight->illumInfo
 				LIGHTS_PARAM)) {
 		// I have now to evaluate the BSDF
@@ -808,7 +975,8 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 			task, &tasksDirectLight[gid], taskState, pathInfo,
 			&rays[gid], &rayHits[gid], &directLightVolInfos[gid],
 			sampleResult, (uint)gid,
-			worldCenterX, worldCenterY, worldCenterZ, worldRadius
+			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+			mneeSeeds
 			LIGHTS_PARAM);
 }
 

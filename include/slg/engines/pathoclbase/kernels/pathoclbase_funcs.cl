@@ -293,6 +293,741 @@ OPENCL_FORCE_INLINE float RussianRouletteProb(const float importanceCap, const f
 	return clamp(Spectrum_Filter(color), importanceCap, 1.f);
 }
 
+//----------------------------------------------------------------------
+// ReSTIR DI shared tail: merge the stored temporal reservoir into the
+// fresh reservoir, cap the reuse count, and store the merged state back
+// into the per-pixel reservoir slot. Extracted so the unshadowed path
+// (DirectLight_Illuminate) and the visibility-weighted path
+// (DirectLight_RestirResolveVisibility) share identical merge semantics.
+//
+// IMPORTANT: the stored reservoir holds the PRE-spatial-merge state.
+// Storing post-spatial totals lets a pixel's inflated wSum feed back
+// into its neighbours' merges on the next pass, which compounds and
+// explodes (the same feedback pathology the CPU world-grid port showed
+// - see e18 and the 1e9 wSum traps). Screen-space neighbours therefore
+// always read each other's post-temporal reservoirs, never a merged
+// one; the caller runs Restir_SpatialMergePixels() afterwards on the
+// accumulators and computes risScale = wSum / (M * target) itself.
+//
+// In/out parameters carry the current selection accumulators:
+//   ioLightIndex/ioPickPdf/ioTarget - winning sample
+//   ioWSum/ioMTotal                 - weight sum / draw count (updated
+//                                   in place by the temporal merge)
+//   ioLSU/ioLSV/ioLSP               - winning sample's light-surface
+//                                   draws (stored + replayed for the
+//                                   reconnection shift, E2c)
+//----------------------------------------------------------------------
+OPENCL_FORCE_INLINE void Restir_MergeStore(
+		uint *ioLightIndex, float *ioPickPdf, float *ioTarget,
+		float *ioWSum, uint *ioMTotal,
+		float *ioLSU, float *ioLSV, float *ioLSP,
+		__global const float* restrict lightDist,
+		const float hitPointX, const float hitPointY, const float hitPointZ,
+		const float geomNX, const float geomNY, const float geomNZ,
+		const uint M, const float u0,
+		const int restirTemporalEnable, const int restirStoreEnable,
+		const uint restirPixelIndex, __global RestirReservoir *restirReservoirs,
+		bool *outSampleIsFresh
+		LIGHTS_PARAM_DECL) {
+	uint curLightIndex = *ioLightIndex;
+	float curPickPdf = *ioPickPdf;
+	float curTarget = *ioTarget;
+	float curLSU = *ioLSU;
+	float curLSV = *ioLSV;
+	float curLSP = *ioLSP;
+	float wSumTotal = *ioWSum;
+	uint MTotal = *ioMTotal;
+	// *outSampleIsFresh is in/out: the caller initializes it to whether
+	// the current winner is a fresh candidate whose exact light-surface
+	// sample is still available; a swapped-in stored winner clears it.
+	// The visibility-weighted path uses this to decide between exact-ray
+	// reuse and re-evaluation.
+
+	//----------------------------------------------------------------------
+	// Temporal reuse: the pixel's stored previous-pass reservoir is
+	// merged as its own block of proposal draws from the same
+	// distribution q. The merge uses the stored wSum/M (the REAL
+	// accumulated state), not "M * target": the stored sample is a
+	// random output of a whole set of draws, so weighting it with a
+	// function of itself correlates the merge weight with the sample
+	// and biases the estimator. With the stored wSum/M the combined
+	// reservoir is the RIS of M + M_prev proposal draws - unbiased.
+	// The stored target was evaluated at the previous position: on
+	// static scenes it matches the current one exactly; on dynamic
+	// scenes the mismatch introduces the usual small, bounded
+	// temporal bias of ReSTIR.
+	//----------------------------------------------------------------------
+	if (restirTemporalEnable) {
+		__global RestirReservoir *reservoir = &restirReservoirs[restirPixelIndex];
+		if ((reservoir->lightIndex != NULL_INDEX) && (reservoir->wSum > 0.f)) {
+			wSumTotal += reservoir->wSum;
+			MTotal += reservoir->M;
+
+			const float prevPickPdf =
+					Distribution1D_PdfDiscrete(lightDist, reservoir->lightIndex);
+			if (prevPickPdf > 0.f) {
+				const float r = SobolSequence_BlueNoiseHash(
+						SobolSequence_BlueNoiseHash(as_uint(u0) ^ 0xc2b2ae35u) ^
+						(0x9E3779B9u + M)) * (1.f / 4294967296.f);
+				if (r < reservoir->wSum / wSumTotal) {
+					curLightIndex = reservoir->lightIndex;
+					curPickPdf = prevPickPdf;
+					curTarget = reservoir->target;
+					curLSU = reservoir->lsU;
+					curLSV = reservoir->lsV;
+					curLSP = reservoir->lsP;
+					*outSampleIsFresh = false;
+				}
+			}
+		}
+	}
+
+	// Cap the reuse count at 2x the candidate count (CPU port): a
+	// runaway M would let stale winners dominate the merge. The wSum
+	// rescale keeps W = wSum/M exact.
+	const uint mCap = 2u * M;
+	if (MTotal > mCap) {
+		wSumTotal *= (float)mCap / (float)MTotal;
+		MTotal = mCap;
+	}
+
+	//------------------------------------------------------------------
+	// Store the post-temporal reservoir for future passes and for this
+	// pass's screen-space neighbour merges. Depth-0 vertices refresh
+	// the slot (it always represents a primary-hit reservoir; deeper
+	// vertices still merge with it, they just do not overwrite it).
+	// The hit point / geometric normal go along for the spatial merge's
+	// same-surface gate (E2b). The store runs when EITHER temporal or
+	// spatial reuse is on (the caller ORs the two).
+	//------------------------------------------------------------------
+	if (restirStoreEnable) {
+		__global RestirReservoir *reservoir = &restirReservoirs[restirPixelIndex];
+		reservoir->lightIndex = curLightIndex;
+		reservoir->wSum = wSumTotal;
+		reservoir->M = MTotal;
+		reservoir->target = curTarget;
+		reservoir->hitP[0] = hitPointX;
+		reservoir->hitP[1] = hitPointY;
+		reservoir->hitP[2] = hitPointZ;
+		reservoir->geomN[0] = geomNX;
+		reservoir->geomN[1] = geomNY;
+		reservoir->geomN[2] = geomNZ;
+		reservoir->lsU = curLSU;
+		reservoir->lsV = curLSV;
+		reservoir->lsP = curLSP;
+	}
+
+	*ioLightIndex = curLightIndex;
+	*ioPickPdf = curPickPdf;
+	*ioTarget = curTarget;
+	*ioLSU = curLSU;
+	*ioLSV = curLSV;
+	*ioLSP = curLSP;
+	*ioWSum = wSumTotal;
+	*ioMTotal = MTotal;
+}
+
+//----------------------------------------------------------------------
+// ReSTIR DI spatial reuse (E2b): screen-space neighbour-pixel merge.
+//
+// Draws up to RESTIR_PIXEL_MERGES_MAX pseudo-random neighbour pixels in a
+// 5x5 window (centre excluded) and merges their stored reservoirs with
+// the same GRIS combine as the CPU spatial merge:
+//   b_nbr = wSum_nbr * (pi_new / pi_old)
+// where pi_new is the stored winner's target re-evaluated at THIS
+// shade point and pi_old is its stored target. Neighbouring pixels
+// mostly shade the same surface, so the ratio stays near 1 and reuse
+// actually pays - the previous world-space hash grid merged unrelated
+// surfaces and measured ~1.1-1.3x WORSE RMSE on manylights (e14).
+//
+// A same-surface geometric gate (hit-point distance < 2% of the world
+// radius AND landing-normal within ~25 degrees) rejects silhouette
+// neighbours whose targets do not transfer; it also keeps the ratio
+// bounded, which is load-bearing: without it a stale tiny pi_old entry
+// can amplify wSum through repeated merges (the CPU merge-explosion
+// pathology). Reservoirs are advisory data shared between tasks: a
+// torn read yields a bounded wrong-weight merge, never a crash or NaN.
+//
+// In/out accumulators mirror Restir_MergeStore; *ioWinnerIsFresh is
+// cleared when a merged neighbour displaces the current winner (the
+// stored sample's light-surface sample no longer exists, so the
+// visibility path must re-evaluate it with the caller's own sample).
+//----------------------------------------------------------------------
+OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
+		uint *ioLightIndex, float *ioPickPdf, float *ioTarget,
+		float *ioWSum, uint *ioMTotal,
+		float *ioLSU, float *ioLSV, float *ioLSP,
+		__global const float* restrict lightDist,
+		__global const BSDF *bsdf,
+		__global Ray *shadowRay,
+		const float time, const float u0,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float worldRadius,
+		__global HitPoint *tmpHitPoint,
+		const uint pixelIndex, const uint filmWidth,
+		__global RestirReservoir *restirReservoirs,
+		const uint reservoirCount,
+		uint *mergeCount, bool *ioWinnerIsFresh
+		LIGHTS_PARAM_DECL) {
+	const uint gridLightCount = as_uint(lightDist[0]);
+	const float3 curGeomN = BSDF_GetLandingGeometryN(bsdf);
+	const float maxDist2 = RESTIR_PIXEL_MERGE_DIST2 * worldRadius * worldRadius;
+
+	const uint px = pixelIndex % filmWidth;
+	const uint py = pixelIndex / filmWidth;
+
+	for (uint k = 0; k < RESTIR_PIXEL_MERGES_MAX; ++k) {
+		// Pseudo-random neighbour offset in a 5x5 window, hashed off
+		// (u0, pixelIndex, k) so different tasks and passes see
+		// different neighbours
+		const uint h = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (pixelIndex * 0x9E3779B9u + k * 0x85EBCA6Bu));
+		uint off = h % 25u;
+		if (off == 12u)
+			off = 24u; // skip the centre cell (self)
+		const int nx = (int)px + (int)(off % 5u) - 2;
+		const int ny = (int)py + (int)(off / 5u) - 2;
+		if ((nx < 0) || (ny < 0) || ((uint)nx >= filmWidth))
+			continue;
+		const uint nIdx = (uint)ny * filmWidth + (uint)nx;
+		if (nIdx >= reservoirCount)
+			continue;
+
+		__global RestirReservoir *entry = &restirReservoirs[nIdx];
+		const uint eLightIndex = entry->lightIndex;
+		const float eWSum = entry->wSum;
+		const uint eM = entry->M;
+		const float eTarget = entry->target;
+		if ((eLightIndex == NULL_INDEX) || (eLightIndex >= gridLightCount) ||
+				(eWSum <= 0.f) || (eM == 0u) || (eTarget <= 0.f))
+			continue;
+
+		// Representative-winner gate (the old world-grid applied this at
+		// store time): a stored winner whose target is a tiny fraction of
+		// its reservoir's mean mass is a fluke - re-evaluating it here
+		// yields a large pi_new/pi_old ratio that explodes bNbr and the
+		// resulting risScale (observed as ~20x RMSE hot pixels on e14's
+		// spots scene). Filtering on the merge side keeps the temporal
+		// reservoir's store unconditional.
+		if (eTarget < 0.05f * eWSum / (float)eM)
+			continue;
+
+		// Same-surface geometric gate: positions within 2% of the world
+		// radius and landing normals within ~25 degrees.
+		const float ddx = entry->hitP[0] - bsdf->hitPoint.p.x;
+		const float ddy = entry->hitP[1] - bsdf->hitPoint.p.y;
+		const float ddz = entry->hitP[2] - bsdf->hitPoint.p.z;
+		if (ddx * ddx + ddy * ddy + ddz * ddz > maxDist2)
+			continue;
+		const float dn = entry->geomN[0] * curGeomN.x +
+				entry->geomN[1] * curGeomN.y +
+				entry->geomN[2] * curGeomN.z;
+		if (dn < RESTIR_PIXEL_MERGE_NORM)
+			continue;
+
+		const float nbPickPdf = LightStrategy_SampleLightPdf(
+				lightDist,
+				dlscAllEntries,
+				dlscDistributions, dlscBVHNodes,
+				dlscRadius2, dlscNormalCosAngle,
+				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+				bsdf->isVolume,
+				eLightIndex);
+		if (nbPickPdf <= 0.f)
+			continue;
+
+		// NOTE: the merge Illuminate() writes into the global
+		// shadowRay scratch buffer; the final Illuminate() in the
+		// caller overwrites it with the winning candidate's ray.
+		// The neighbour's stored light-surface sample is replayed here
+		// (reconnection shift): pi_new is evaluated at the same light
+		// point that produced pi_old, so the ratio tracks the shading
+		// difference only.
+		float nbPdfW;
+		const float3 nbRadiance = Light_Illuminate(
+				&lights[eLightIndex],
+				bsdf,
+				time, entry->lsU, entry->lsV, entry->lsP,
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				tmpHitPoint,
+				shadowRay, &nbPdfW
+				LIGHTS_PARAM);
+		if (Spectrum_IsBlack(nbRadiance) || (nbPdfW <= 0.f))
+			continue;
+
+		// Target re-evaluated HERE (pi_new); the entry's stored target
+		// is pi_old at the storing point.
+		const float nbTarget = Spectrum_Y(nbRadiance) /
+				(nbPickPdf * nbPdfW);
+		if (nbTarget <= 0.f)
+			continue;
+
+		// Bound the GRIS ratio: even gated, a steep emission gradient
+		// (cone edge) can produce a pi_new/pi_old outlier that inflates
+		// wSum - and the paid contribution scales with wSum, so one
+		// outlier merge becomes a hot pixel. Clamping bounds the bias
+		// to the outlier tail (see RESTIR_MERGE_MAX_TARGET_RATIO).
+		const float bNbr = eWSum * fmin(nbTarget / eTarget,
+				RESTIR_MERGE_MAX_TARGET_RATIO);
+		*ioWSum += bNbr;
+		*ioMTotal += eM;
+		++(*mergeCount);
+
+		const uint acceptSeed = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (0x45d9f3bu + k));
+		const float r = SobolSequence_BlueNoiseHash(
+				acceptSeed ^ (k * 0x85EBCA6Bu)) * (1.f / 4294967296.f);
+		if ((*ioLightIndex == NULL_INDEX) || (r < bNbr / *ioWSum)) {
+			*ioLightIndex = eLightIndex;
+			*ioPickPdf = nbPickPdf;
+			*ioTarget = nbTarget;
+			*ioLSU = entry->lsU;
+			*ioLSV = entry->lsV;
+			*ioLSP = entry->lsP;
+			*ioWinnerIsFresh = false;
+		}
+	}
+}
+
+//----------------------------------------------------------------------
+// ReSTIR DI visibility-weighted target (E2a), phase 1.
+//
+// Draws visCandCount proposals from q, evaluates each candidate's
+// unshadowed contribution with Light_Illuminate() and writes the
+// candidate's shadow ray into candRays[i] plus a full
+// RestirVisCandidate record into candData[i] (light index, proposal
+// pdf, direct pdf, unshadowed target and the radiance itself).
+// Returns true when at least one candidate produced a non-black
+// contribution; the MK_RT_RESTIR state then resolves the reservoir on
+// the next iteration, once the queued rays have been traced.
+//
+// The candidate's own light-surface sample IS the contribution
+// sample: if it wins the merge, its stored radiance/pdf/ray are
+// reused verbatim. Re-sampling the winner would make the binary V
+// test cover a different light point than the payoff - a real bias
+// on area/emissive-mesh lights (measured as a systematic darkening
+// in the e16 regression test).
+//----------------------------------------------------------------------
+OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
+		__global const BSDF *bsdf,
+		__global Ray *candRays,
+		__global RestirVisCandidate *candData,
+		const uint visCandCount,
+		const float worldCenterX,
+		const float worldCenterY,
+		const float worldCenterZ,
+		const float worldRadius,
+		__global HitPoint *tmpHitPoint,
+		const float time, const float u0,
+		const int restirSpatialEnable,
+		const uint restirPixelIndex,
+		const uint filmWidth, const uint reservoirCount,
+		__global RestirReservoir *restirReservoirs
+		LIGHTS_PARAM_DECL) {
+	__global const float* restrict lightDist = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM) ?
+			infiniteLightSourcesDistribution : lightsDistribution;
+
+	bool anyValid = false;
+	for (uint i = 0; i < visCandCount; ++i) {
+		const float u_i = fmod(u0 + i * (1.f / visCandCount), 1.f);
+
+		// The candidate's light-surface sample doubles as the eventual
+		// contribution sample (no winner re-sampling - that would break
+		// the consistency between the binary visibility of the queued
+		// ray and the evaluated radiance). So each candidate needs a
+		// proper independent 3D sample, hashed off (u0, i), instead of
+		// the (u_i, 0, 0) shorthand used by the unshadowed path - the
+		// latter would degenerate to a fixed point on area lights.
+		const uint h = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (i * 0x9E3779B9u + 0x27D4EB2Fu));
+		const float su = SobolSequence_BlueNoiseHash(h ^ 0x165667B1u) *
+				(1.f / 4294967296.f);
+		const float sv = SobolSequence_BlueNoiseHash(h ^ 0x9E3779B9u) *
+				(1.f / 4294967296.f);
+		const float sp = SobolSequence_BlueNoiseHash(h ^ 0x85EBCA6Bu) *
+				(1.f / 4294967296.f);
+
+		float candPickPdf = 0.f;
+		const uint candIndex = LightStrategy_SampleLights(lightDist,
+				dlscAllEntries,
+				dlscDistributions, dlscBVHNodes,
+				dlscRadius2, dlscNormalCosAngle,
+				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+				bsdf->isVolume,
+				u_i, &candPickPdf);
+
+		candData[i].lightIndex = NULL_INDEX;
+		candData[i].pickPdf = candPickPdf;
+		candData[i].directPdfW = 0.f;
+		candData[i].target = 0.f;
+		candData[i].radianceR = 0.f;
+		candData[i].radianceG = 0.f;
+		candData[i].radianceB = 0.f;
+
+		if ((candIndex == NULL_INDEX) || (candPickPdf <= 0.f)) {
+			// Masked: both the MetalRT intersector and the software
+			// kernels skip masked rays entirely. All fields are still
+			// initialized - a garbage ray could produce NaNs if the
+			// flag handling ever changed.
+			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
+					(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+			candRays[i].flags = RAY_FLAGS_MASKED;
+			continue;
+		}
+
+		float candPdfW;
+		const float3 candRadiance = Light_Illuminate(
+				&lights[candIndex],
+				bsdf,
+				time, su, sv, sp,
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				tmpHitPoint,
+				&candRays[i], &candPdfW
+				LIGHTS_PARAM);
+		if (Spectrum_IsBlack(candRadiance) || (candPdfW <= 0.f)) {
+			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
+					(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+			candRays[i].flags = RAY_FLAGS_MASKED;
+			continue;
+		}
+
+		candData[i].lightIndex = candIndex;
+		candData[i].directPdfW = candPdfW;
+		candData[i].target = Spectrum_Y(candRadiance) /
+				(candPickPdf * candPdfW);
+		candData[i].radianceR = candRadiance.x;
+		candData[i].radianceG = candRadiance.y;
+		candData[i].radianceB = candRadiance.z;
+		candData[i].lsU = su;
+		candData[i].lsV = sv;
+		candData[i].lsP = sp;
+		anyValid = true;
+	}
+
+	//------------------------------------------------------------------
+	// Merge candidates (E2d visibility-aware spatial shift): slots
+	// [visCandCount, visCandCount + RESTIR_PIXEL_MERGES_MAX) replay the
+	// same gated neighbour reservoirs the unshadowed path merges - the
+	// same-surface + representative-winner gates are identical - but the
+	// ray rides the tail with the fresh candidates, so the resolve step
+	// folds REAL visibility into pi_new instead of the V-free
+	// approximation. The neighbour state is read here (pre-store), i.e.
+	// it is the previous pass's stored reservoir; cross-task races are
+	// the same ones the unshadowed merge already tolerates.
+	//------------------------------------------------------------------
+	for (uint j = 0; j < RESTIR_PIXEL_MERGES_MAX; ++j) {
+		const uint slot = visCandCount + j;
+		// Default: masked ray + empty record (merge simply does not
+		// happen - consistent with the gate-fail continues below)
+		candData[slot].lightIndex = NULL_INDEX;
+		Ray_Init4(&candRays[slot], VLOAD3F(&bsdf->hitPoint.p.x),
+				(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+		candRays[slot].flags = RAY_FLAGS_MASKED;
+
+		if (!restirSpatialEnable)
+			continue;
+
+		const uint gridLightCount = as_uint(lightDist[0]);
+		const uint h2 = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (restirPixelIndex * 0x9E3779B9u + j * 0x85EBCA6Bu));
+		uint off = h2 % 25u;
+		if (off == 12u)
+			off = 24u; // skip the centre cell (self)
+		const uint px = restirPixelIndex % filmWidth;
+		const uint py = restirPixelIndex / filmWidth;
+		const int nx = (int)px + (int)(off % 5u) - 2;
+		const int ny = (int)py + (int)(off / 5u) - 2;
+		if ((nx < 0) || (ny < 0) || ((uint)nx >= filmWidth))
+			continue;
+		const uint nIdx = (uint)ny * filmWidth + (uint)nx;
+		if (nIdx >= reservoirCount)
+			continue;
+
+		__global RestirReservoir *entry = &restirReservoirs[nIdx];
+		const uint eLightIndex = entry->lightIndex;
+		const float eWSum = entry->wSum;
+		const uint eM = entry->M;
+		const float eTarget = entry->target;
+		if ((eLightIndex == NULL_INDEX) || (eLightIndex >= gridLightCount) ||
+				(eWSum <= 0.f) || (eM == 0u) || (eTarget <= 0.f))
+			continue;
+		// Representative-winner gate (same as the unshadowed merge)
+		if (eTarget < 0.05f * eWSum / (float)eM)
+			continue;
+		// Same-surface geometric gate
+		const float ddx = entry->hitP[0] - bsdf->hitPoint.p.x;
+		const float ddy = entry->hitP[1] - bsdf->hitPoint.p.y;
+		const float ddz = entry->hitP[2] - bsdf->hitPoint.p.z;
+		if (ddx * ddx + ddy * ddy + ddz * ddz >
+				RESTIR_PIXEL_MERGE_DIST2 * worldRadius * worldRadius)
+			continue;
+		const float3 curGeomN = BSDF_GetLandingGeometryN(bsdf);
+		const float dn = entry->geomN[0] * curGeomN.x +
+				entry->geomN[1] * curGeomN.y +
+				entry->geomN[2] * curGeomN.z;
+		if (dn < RESTIR_PIXEL_MERGE_NORM)
+			continue;
+
+		// Same distribution the fresh stream draws from (shadow-catcher
+		// aware), so pi_new is measured under the current reservoir's q.
+		const float nbPickPdf = LightStrategy_SampleLightPdf(
+				lightDist,
+				dlscAllEntries,
+				dlscDistributions, dlscBVHNodes,
+				dlscRadius2, dlscNormalCosAngle,
+				VLOAD3F(&bsdf->hitPoint.p.x), curGeomN,
+				bsdf->isVolume,
+				eLightIndex);
+		if (nbPickPdf <= 0.f)
+			continue;
+
+		// Replay the neighbour's stored light-surface sample
+		// (reconnection shift): the queued ray covers the exact light
+		// point the stored target measured, so the traced V folds into
+		// pi_new consistently.
+		float nbPdfW;
+		const float3 nbRadiance = Light_Illuminate(
+				&lights[eLightIndex],
+				bsdf,
+				time, entry->lsU, entry->lsV, entry->lsP,
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				tmpHitPoint,
+				&candRays[slot], &nbPdfW
+				LIGHTS_PARAM);
+		if (Spectrum_IsBlack(nbRadiance) || (nbPdfW <= 0.f))
+			continue;
+
+		candData[slot].lightIndex = eLightIndex;
+		candData[slot].pickPdf = nbPickPdf;
+		candData[slot].directPdfW = nbPdfW;
+		candData[slot].target = Spectrum_Y(nbRadiance) /
+				(nbPickPdf * nbPdfW);
+		candData[slot].radianceR = nbRadiance.x;
+		candData[slot].radianceG = nbRadiance.y;
+		candData[slot].radianceB = nbRadiance.z;
+		candData[slot].lsU = entry->lsU;
+		candData[slot].lsV = entry->lsV;
+		candData[slot].lsP = entry->lsP;
+		candData[slot].nbrWSum = eWSum;
+		candData[slot].nbrTarget = eTarget;
+		candData[slot].nbrM = eM;
+		// A valid merge candidate alone justifies the resolve pass: it
+		// can supply the winner when every fresh candidate was culled
+		anyValid = true;
+	}
+
+	return anyValid;
+}
+
+//----------------------------------------------------------------------
+// ReSTIR DI visibility-weighted target (E2a), phase 2.
+//
+// Called from the MK_RT_RESTIR state after the candidate shadow rays
+// written by DirectLight_RestirEnqueueVisibility() have been traced.
+// The binary visibility term V_i = (candHits[i] missed everything) is
+// folded into each target; the RIS merge, temporal merge and spatial
+// store then run exactly like the unshadowed path. The winning
+// candidate's *real* shadow ray is still emitted into rays[gid] and
+// traced through the normal MK_RT_DL path, so transparent shadows and
+// shadow-catcher handling stay unchanged - V only steers the
+// reservoir's target weights.
+//----------------------------------------------------------------------
+OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirResolveVisibility(
+		__global const BSDF *bsdf,
+		__global Ray *shadowRay,
+		__global const Ray *candRays,
+		__global const RayHit *candHits,
+		__global const RestirVisCandidate *candData,
+		const uint visCandCount,
+		const float worldCenterX,
+		const float worldCenterY,
+		const float worldCenterZ,
+		const float worldRadius,
+		__global HitPoint *tmpHitPoint,
+		// u1/u2/lightPassThroughEvent stay consumed at the call site to
+		// keep the sampler stream aligned with the unshadowed path; the
+		// winner's real sample comes from its candidate record (fresh)
+		// or the stored reservoir (merged) instead.
+		const float time, const float u0, const float u1, const float u2,
+		const float lightPassThroughEvent,
+		const int restirTemporalEnable, const int restirStoreEnable,
+		const uint restirPixelIndex, __global RestirReservoir *restirReservoirs,
+		__global DirectLightIlluminateInfo *info
+		LIGHTS_PARAM_DECL) {
+	__global const float* restrict lightDist = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM) ?
+			infiniteLightSourcesDistribution : lightsDistribution;
+
+	uint resSlot = NULL_INDEX;
+	uint resLightIndex = NULL_INDEX;
+	float resPickPdf = 0.f;
+	float resTarget = 0.f;
+	float wSum = 0.f;
+	uint mTotal = 0u;
+	uint mergeCount = 0u;
+	// Tracks whether the winner is a fresh candidate whose exact
+	// light-surface sample (and shadow ray) is still in candData/
+	// candRays; a merged winner has no record and is re-evaluated.
+	bool winnerIsFresh = false;
+	// Winning sample's light-surface draws, propagated through the
+	// merges for the reservoir store (reconnection shift, E2c)
+	float resLSU = 0.f, resLSV = 0.f, resLSP = 0.f;
+
+	for (uint i = 0; i < visCandCount; ++i) {
+		// Every proposal draw counts toward M, culled ones included
+		++mTotal;
+		if (candData[i].lightIndex == NULL_INDEX)
+			continue;
+
+		// Binary visibility: occluded candidates contribute a zero
+		// target but still count in M. The hit covers the exact ray
+		// the contribution would use (the stored record pairs each
+		// candidate's light-surface sample with its shadow ray), so
+		// V and the payoff are consistent by construction.
+		if (candHits[i].meshIndex != NULL_INDEX)
+			continue;
+
+		const float target = candData[i].target;
+		if (target <= 0.f)
+			continue;
+
+		wSum += target;
+
+		const uint acceptSeed = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (i * 0x9E3779B9u + 0x85EBCA6Bu));
+		const float r = SobolSequence_BlueNoiseHash(
+				acceptSeed ^ (i * 0x85EBCA6Bu)) * (1.f / 4294967296.f);
+		const float accept = target / wSum;
+		if ((resLightIndex == NULL_INDEX) || (r < accept)) {
+			resSlot = i;
+			resLightIndex = candData[i].lightIndex;
+			resPickPdf = candData[i].pickPdf;
+			resTarget = target;
+			winnerIsFresh = true;
+		}
+	}
+
+	// The fresh winner's light-surface sample rides in its candidate
+	// record (written at enqueue, E2d) so the reservoir can store and
+	// later replay it (reconnection shift, E2c).
+	if (winnerIsFresh) {
+		resLSU = candData[resSlot].lsU;
+		resLSV = candData[resSlot].lsV;
+		resLSP = candData[resSlot].lsP;
+	}
+
+	// Temporal merge + cap + per-pixel store: the stored slot holds the
+	// PRE-spatial-merge reservoir so a spatially-merged (inflated) wSum
+	// never feeds back into the neighbours' merges on the next pass -
+	// the e18 CPU merge-explosion pathology. The temporal merge can
+	// also supply a winner when every fresh candidate was occluded, so
+	// the empty-reservoir return only happens after all merges.
+	bool sampleIsFresh = winnerIsFresh;
+	const float3 mergeGeomN = BSDF_GetLandingGeometryN(bsdf);
+	Restir_MergeStore(&resLightIndex, &resPickPdf, &resTarget,
+			&wSum, &mTotal, &resLSU, &resLSV, &resLSP,
+			lightDist,
+			bsdf->hitPoint.p.x, bsdf->hitPoint.p.y, bsdf->hitPoint.p.z,
+			mergeGeomN.x, mergeGeomN.y, mergeGeomN.z,
+			visCandCount, u0,
+			restirTemporalEnable, restirStoreEnable, restirPixelIndex,
+			restirReservoirs,
+			&sampleIsFresh
+			LIGHTS_PARAM);
+
+	//------------------------------------------------------------------
+	// Spatial reuse with real visibility (E2d): the merge candidates
+	// queued at enqueue now have traced hits, so pi_new carries the
+	// actual V - the neighbour's stored target (pi_old, itself
+	// V-weighted at the storing point) divides out, and an occluded-at-
+	// this-point transfer contributes zero instead of the V-free
+	// approximation of the unshadowed merge. An occluded or zero-target
+	// merge is skipped entirely (matching the unshadowed gate: the
+	// neighbour's draws only count in mTotal when the merge runs).
+	//------------------------------------------------------------------
+	for (uint j = 0; j < RESTIR_PIXEL_MERGES_MAX; ++j) {
+		const uint slot = visCandCount + j;
+		if (candData[slot].lightIndex == NULL_INDEX)
+			continue;
+		// Occluded at THIS point: the V-folded target is zero
+		if (candHits[slot].meshIndex != NULL_INDEX)
+			continue;
+
+		const float nbTarget = candData[slot].target;
+		if (nbTarget <= 0.f)
+			continue;
+
+		const float bNbr = candData[slot].nbrWSum *
+				fmin(nbTarget / candData[slot].nbrTarget,
+				RESTIR_MERGE_MAX_TARGET_RATIO);
+		wSum += bNbr;
+		mTotal += candData[slot].nbrM;
+		++mergeCount;
+
+		const uint acceptSeed = SobolSequence_BlueNoiseHash(
+				as_uint(u0) ^ (0x45d9f3bu + j));
+		const float r = SobolSequence_BlueNoiseHash(
+				acceptSeed ^ (j * 0x85EBCA6Bu)) * (1.f / 4294967296.f);
+		if ((resLightIndex == NULL_INDEX) || (r < bNbr / wSum)) {
+			resSlot = slot;
+			resLightIndex = candData[slot].lightIndex;
+			resPickPdf = candData[slot].pickPdf;
+			resTarget = nbTarget;
+			resLSU = candData[slot].lsU;
+			resLSV = candData[slot].lsV;
+			resLSP = candData[slot].lsP;
+			sampleIsFresh = false;
+		}
+	}
+
+	if (resLightIndex == NULL_INDEX)
+		return false;
+
+	const float risScale = wSum / (mTotal * resTarget);
+
+	__global const LightSource* restrict light = &lights[resLightIndex];
+	info->lightIndex = resLightIndex;
+	info->lightID = light->lightID;
+	info->pickPdf = resPickPdf;
+	info->risScale = risScale;
+
+	float3 lightRadiance;
+	if (sampleIsFresh) {
+		// Winner survived the merge: reuse the candidate's stored
+		// evaluation and its exact shadow ray - the visibility test
+		// already covered precisely this ray, so the binary V and the
+		// contribution are paired bit-exactly. The ray is re-emitted
+		// through MK_RT_DL so transparent-shadow and shadow-catcher
+		// handling stay identical to the unshadowed path.
+		lightRadiance = MAKE_FLOAT3(candData[resSlot].radianceR,
+				candData[resSlot].radianceG, candData[resSlot].radianceB);
+		info->directPdfW = candData[resSlot].directPdfW;
+		*shadowRay = candRays[resSlot];
+	} else {
+		// A merged winner carries its stored light-surface sample
+		// (resLSU/lsV/lsP): replay it so the contribution is evaluated
+		// at the same light point the stored target measured - the
+		// reconnection shift. The emitted ray is traced through
+		// MK_RT_DL, keeping V/contribution consistent.
+		float directPdfW;
+		lightRadiance = Light_Illuminate(
+				light,
+				bsdf,
+				time, resLSU, resLSV, resLSP,
+				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+				tmpHitPoint,
+				shadowRay, &directPdfW
+				LIGHTS_PARAM);
+		info->directPdfW = directPdfW;
+	}
+
+	if (Spectrum_IsBlack(lightRadiance))
+		return false;
+
+	VSTORE3F(lightRadiance, info->lightRadiance.c);
+	VSTORE3F(lightRadiance, info->lightIrradiance.c);
+	return true;
+}
+
 OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		__global const BSDF *bsdf,
 		__global Ray *shadowRay,
@@ -306,6 +1041,8 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		const int restirEnabled, const uint restirCandidateCount,
 		const int restirTemporalEnable, const int restirStoreEnable,
 		const uint restirPixelIndex, __global RestirReservoir *restirReservoirs,
+		const int restirSpatialEnable,
+		const uint filmWidth, const uint reservoirCount,
 		__global DirectLightIlluminateInfo *info
 		LIGHTS_PARAM_DECL) {
 	// Select the light strategy to use
@@ -350,9 +1087,26 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		float resPickPdf = 0.f;
 		float wSum = 0.f;
 		float resTarget = 0.f;
+		// Total proposal draws (fresh draws including culled ones plus
+		// the sample counts of merged neighbor reservoirs). This is the
+		// M of W = wSum/M, NOT just the loop trip count - mirroring
+		// mTotal in the CPU implementation.
+		uint mTotal = 0;
+		uint mergeCount = 0;
+		// Winning sample's light-surface draws, propagated through the
+		// merges for the reservoir store (reconnection shift, E2c). The
+		// fresh stream uses the degenerate (u_i, 0, 0) sample, so only
+		// the first coordinate varies.
+		float resLSU = 0.f, resLSV = 0.f, resLSP = 0.f;
 
-		for (uint i = 0; i < M; ++i) {
-			const float u_i = fmod(u0 + i * (1.f / M), 1.f);
+		// The fresh stream draws all M candidates; the (bounded)
+		// neighbour merges run after the temporal merge + store below.
+		const uint candCount = M;
+		for (uint i = 0; i < candCount; ++i) {
+			// Every proposal draw counts toward mTotal, including the
+			// culled ones below (they add 0 to wSum but still count in M).
+			++mTotal;
+			const float u_i = fmod(u0 + i * (1.f / candCount), 1.f);
 
 			float candPickPdf;
 			const uint candIndex = LightStrategy_SampleLights(lightDist,
@@ -402,68 +1156,64 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 				resLightIndex = candIndex;
 				resPickPdf = candPickPdf;
 				resTarget = target;
+				resLSU = u_i;
+				resLSV = 0.f;
+				resLSP = 0.f;
 			}
 		}
 
-		// Empty reservoir (no contributing candidate)
+		// Temporal merge + cap + per-pixel store: shared with the
+		// visibility-weighted path (see Restir_MergeStore()). The stored
+		// slot holds the PRE-spatial-merge reservoir - storing a merged
+		// reservoir would feed its inflated wSum back into the
+		// neighbours' merges next pass and compound (the e18 CPU
+		// merge-explosion pathology). The temporal merge can also
+		// supply a winner when every fresh candidate was culled, so the
+		// empty-reservoir return only happens after all merges.
+		bool sampleIsFresh = true;
+		const float3 mergeGeomN = BSDF_GetLandingGeometryN(bsdf);
+		Restir_MergeStore(&resLightIndex, &resPickPdf, &resTarget,
+				&wSum, &mTotal, &resLSU, &resLSV, &resLSP,
+				lightDist,
+				bsdf->hitPoint.p.x, bsdf->hitPoint.p.y, bsdf->hitPoint.p.z,
+				mergeGeomN.x, mergeGeomN.y, mergeGeomN.z,
+				M, u0,
+				restirTemporalEnable, restirStoreEnable, restirPixelIndex,
+				restirReservoirs,
+				&sampleIsFresh
+				LIGHTS_PARAM);
+
+		//------------------------------------------------------------------
+		// Spatial reuse (E2b): screen-space neighbour-pixel merge on the
+		// accumulators, AFTER the store. The shared helper re-evaluates
+		// each stored neighbour winner at THIS point (pi_new) and merges
+		// it with weight bNbr = wSum_nbr * (pi_new / pi_old); the
+		// same-surface geometric gate keeps the ratio near 1 so reuse
+		// actually pays (the old world-space hash grid merged unrelated
+		// surfaces and measured ~1.1-1.3x WORSE RMSE on manylights -
+		// e14). The neighbour's stored light-surface sample is replayed
+		// for the re-evaluation (reconnection shift, E2c) and propagates
+		// to the winner; the contribution below still draws a fresh
+		// surface sample (u1,u2), unchanged.
+		//------------------------------------------------------------------
+		if (restirSpatialEnable) {
+			Restir_SpatialMergePixels(&resLightIndex, &resPickPdf, &resTarget,
+					&wSum, &mTotal, &resLSU, &resLSV, &resLSP,
+					lightDist, bsdf, shadowRay, time, u0,
+					worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+					tmpHitPoint, restirPixelIndex, filmWidth,
+					restirReservoirs, reservoirCount,
+					&mergeCount, &sampleIsFresh
+					LIGHTS_PARAM);
+		}
+
+		// Empty reservoir (no contributing candidate in any stream)
 		if (resLightIndex == NULL_INDEX)
 			return false;
+		risScale = wSum / (mTotal * resTarget);
 
-		//----------------------------------------------------------------------
-		// Temporal reuse: the pixel's stored previous-pass reservoir is
-		// merged as its own block of proposal draws from the same
-		// distribution q. The merge uses the stored wSum/M (the REAL
-		// accumulated state), not "M * target": the stored sample is a
-		// random output of a whole set of draws, so weighting it with a
-		// function of itself correlates the merge weight with the sample
-		// and biases the estimator. With the stored wSum/M the combined
-		// reservoir is the RIS of M + M_prev proposal draws - unbiased.
-		// The stored target was evaluated at the previous position: on
-		// static scenes it matches the current one exactly; on dynamic
-		// scenes the mismatch introduces the usual small, bounded
-		// temporal bias of ReSTIR.
-		//----------------------------------------------------------------------
-		float wSumTotal = wSum;
-		uint MTotal = M;
-		float curTarget = resTarget;
-		uint curLightIndex = resLightIndex;
-		float curPickPdf = resPickPdf;
-
-		if (restirTemporalEnable) {
-			__global RestirReservoir *reservoir = &restirReservoirs[restirPixelIndex];
-			if ((reservoir->lightIndex != NULL_INDEX) && (reservoir->wSum > 0.f)) {
-				wSumTotal += reservoir->wSum;
-				MTotal += reservoir->M;
-
-				const float prevPickPdf =
-						Distribution1D_PdfDiscrete(lightDist, reservoir->lightIndex);
-				if (prevPickPdf > 0.f) {
-					const float r = SobolSequence_BlueNoiseHash(
-							SobolSequence_BlueNoiseHash(as_uint(u0) ^ 0xc2b2ae35u) ^
-							(0x9E3779B9u + M)) * (1.f / 4294967296.f);
-					if (r < reservoir->wSum / wSumTotal) {
-						curLightIndex = reservoir->lightIndex;
-						curPickPdf = prevPickPdf;
-						curTarget = reservoir->target;
-					}
-				}
-			}
-
-			if (restirStoreEnable) {
-				// Store the merged reservoir for the next pass (only
-				// depth-0 vertices refresh the cell, so it always
-				// represents a primary-hit reservoir; deeper vertices
-				// still merge with it, they just do not overwrite it).
-				reservoir->lightIndex = curLightIndex;
-				reservoir->wSum = wSumTotal;
-				reservoir->M = MTotal;
-				reservoir->target = curTarget;
-			}
-		}
-
-		lightIndex = curLightIndex;
-		lightPickPdf = curPickPdf;
-		risScale = wSumTotal / (MTotal * curTarget);
+		lightIndex = resLightIndex;
+		lightPickPdf = resPickPdf;
 	} else {
 		lightIndex = LightStrategy_SampleLights(lightDist,
 				dlscAllEntries,
@@ -1213,6 +1963,86 @@ OPENCL_FORCE_NOT_INLINE int Mnee_StepAndWriteProposal(
 	return 1;
 }
 
+//------------------------------------------------------------------------------
+// MNEE manifold seed cache (E4).
+//
+// Every single-vertex solve stores its converged vertex in a fixed-size
+// world-space hash grid keyed by (light, occluder mesh, quantized shadow-ray
+// occluder hit position). A later attempt whose shadow ray was blocked by
+// the same occluder region can then warm-start Newton from the cached vertex
+// instead of the line seed (glass) or the mirrored-light seed trace
+// (mirror), saving the extra trace and most iterations.
+//
+// The seed only selects the Newton basin: the solver still verifies the
+// half-vector constraint on re-projected surface vertices, so a stale,
+// colliding or torn entry can cost iterations but never biases the
+// estimator. Cells are last-writer-wins; no atomics are needed.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE uint Mnee_SeedKey(
+		const uint lightIndex, const uint meshIndex, const float3 p,
+		const float cellSize) {
+	const int cx = Floor2Int(p.x / cellSize);
+	const int cy = Floor2Int(p.y / cellSize);
+	const int cz = Floor2Int(p.z / cellSize);
+	uint h = (uint)cx * 73856093u ^ (uint)cy * 19349663u ^
+			(uint)cz * 83492791u;
+	h ^= lightIndex * 2654435761u;
+	h ^= meshIndex * 40503u;
+	h ^= h >> 16;
+	h *= 2246822519u;
+	h ^= h >> 13;
+	return h & (MNEE_SEED_CACHE_SIZE - 1u);
+}
+
+OPENCL_FORCE_INLINE void Mnee_SeedCacheStore(
+		__global MneeSeedEntry *mneeSeeds,
+		const uint key, const float3 p, const float3 n,
+		const uint lightIndex, const uint meshIndex, const int mirrorMode) {
+	__global MneeSeedEntry *e = &mneeSeeds[key];
+	e->vx = p.x; e->vy = p.y; e->vz = p.z;
+	e->nx = n.x; e->ny = n.y; e->nz = n.z;
+	e->lightIndex = lightIndex;
+	e->meshIndex = meshIndex;
+	e->mirrorMode = (unsigned int)(mirrorMode ? 1 : 0);
+	e->valid = 1u;
+}
+
+// Returns true when a usable seed was found and stored into mnee->vtx.
+// The cached vertex carries a flat tangent frame (the degenerate-
+// differentials fallback of Mnee_InitVtxFromBsdf): the first Newton
+// proposal re-projects onto the real surface anyway.
+OPENCL_FORCE_INLINE bool Mnee_SeedCacheLookup(
+		__global MneeSeedEntry *mneeSeeds,
+		const uint key, const uint lightIndex, const uint meshIndex,
+		const int mirrorMode, const float eta,
+		__global MneeState *mnee) {
+	__global const MneeSeedEntry *e = &mneeSeeds[key];
+	if (!e->valid || (e->lightIndex != lightIndex) ||
+			(e->meshIndex != meshIndex) ||
+			(e->mirrorMode != (unsigned int)(mirrorMode ? 1 : 0)))
+		return false;
+
+	const float3 p = MAKE_FLOAT3(e->vx, e->vy, e->vz);
+	const float3 n = MAKE_FLOAT3(e->nx, e->ny, e->nz);
+	if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z) ||
+			!isfinite(n.x) || !isfinite(n.y) || !isfinite(n.z) ||
+			(dot(n, n) < 1e-12f))
+		return false;
+
+	MneeVtx v;
+	v.p = p;
+	v.n = n;
+	v.gn = n;
+	Mnee_CoordinateSystem(n, &v.dpdu, &v.dpdv);
+	v.dndu = MAKE_FLOAT3(0.f, 0.f, 0.f);
+	v.dndv = MAKE_FLOAT3(0.f, 0.f, 0.f);
+	v.eta = eta;
+	Mnee_Orthonormalize(&v);
+	Mnee_StoreVtx(mnee, &v);
+	return true;
+}
+
 // Start of the MNEE sub-state machine, called from MK_RT_DL when the direct
 // light shadow ray was blocked. Returns 1 when the single vertex solve was
 // started, 2 when the single vertex solver does not apply but the
@@ -1224,7 +2054,9 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 		__global GPUTask *task,
 		__global GPUTaskDirectLight *taskDirectLight,
 		__global GPUTaskState *taskState,
-		__global const RayHit *rayHit, __global Ray *ray
+		__global const RayHit *rayHit, __global Ray *ray,
+		__global MneeSeedEntry *mneeSeeds,
+		const float worldRadius
 		LIGHTS_PARAM_DECL
 		) {
 	if (!taskConfig->pathTracer.mnee.enabled)
@@ -1297,6 +2129,12 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	mnee->lightPosY = lightPos.y;
 	mnee->lightPosZ = lightPos.z;
 	mnee->shadowMeshIndex = rayHit->meshIndex;
+	// Occluder hit position: seed-cache key component, reused by the
+	// store on solve success (SolveEnd).
+	const float3 occlP = VLOAD3F(&occlBsdf->hitPoint.p.x);
+	mnee->occlX = occlP.x;
+	mnee->occlY = occlP.y;
+	mnee->occlZ = occlP.z;
 	mnee->beta = 1.f;
 	mnee->iteration = 0;
 	mnee->needsTrace = false;
@@ -1306,6 +2144,22 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	Mnee_StoreVtx(mnee, &v);
 	// The current chain vertex BSDF starts as the shadow-ray occluder
 	taskDirectLight->mneeBsdfFinal = task->tmpBsdf;
+
+	// E4: warm-start from a cached manifold solution near this occluder
+	// hit when one exists (skips the mirror seed trace; the Newton solve
+	// re-verifies the constraint, so a bad seed is only wasted work).
+	if (taskConfig->pathTracer.mnee.seedCacheEnable) {
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint key = Mnee_SeedKey(info->lightIndex,
+				rayHit->meshIndex, occlP, cellSize);
+		if (Mnee_SeedCacheLookup(mneeSeeds, key, info->lightIndex,
+				rayHit->meshIndex, mnee->mirrorMode, etaVertex, mnee)) {
+			Mnee_ApplySeedShift(mnee, x0p);
+			mnee->phase = MNEE_PHASE_STEP;
+			taskState->state = MK_MNEE_NEXT_VERTEX;
+			return 1;
+		}
+	}
 
 	if (mnee->mirrorMode && (etaVertex == 1.f)) {
 		// The shadow-ray seed lies exactly on the x0->y line, where the
@@ -2335,7 +3189,8 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 		const float worldCenterX, const float worldCenterY,
 		const float worldCenterZ, const float worldRadius,
 		__global Ray *ray, __global PathVolumeInfo *dlVolInfo,
-		__global SampleResult *sampleResult
+		__global SampleResult *sampleResult,
+		__global MneeSeedEntry *mneeSeeds
 		LIGHTS_PARAM_DECL
 		) {
 	// Post-solve validity check (Zeltner newton_solver tail): the
@@ -2387,6 +3242,18 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 	mnee->geometricTerm = g;
 	mnee->specEvent = specEvent;
 	mnee->plainHalfVector = (v.eta == 1.f);
+
+	// E4: publish the converged vertex as a warm-start seed for nearby
+	// attempts on the same occluder/light (key identical to the lookup).
+	if (taskConfig->pathTracer.mnee.seedCacheEnable) {
+		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		Mnee_SeedCacheStore(mneeSeeds,
+				Mnee_SeedKey(taskDirectLight->illumInfo.lightIndex,
+					mnee->shadowMeshIndex, occlP, cellSize),
+				v.p, v.n, taskDirectLight->illumInfo.lightIndex,
+				mnee->shadowMeshIndex, mnee->mirrorMode);
+	}
 
 	// Volume state after the specular event at x1 (CPU volSeg2)
 	*dlVolInfo = pathInfo->volume;
@@ -2440,7 +3307,8 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		__global PathVolumeInfo *dlVolInfo,
 		__global SampleResult *sampleResult, const uint taskGid,
 		const float worldCenterX, const float worldCenterY,
-		const float worldCenterZ, const float worldRadius
+		const float worldCenterZ, const float worldRadius,
+		__global MneeSeedEntry *mneeSeeds
 		LIGHTS_PARAM_DECL
 		) {
 	__global MneeState *mnee = &taskDirectLight->mnee;
@@ -2489,7 +3357,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		Mnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, pathInfo,
 				mnee, x0p, g, taskGid,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-				ray, dlVolInfo, sampleResult
+				ray, dlVolInfo, sampleResult, mneeSeeds
 				LIGHTS_PARAM);
 		return;
 	}
@@ -2541,7 +3409,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		Mnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, pathInfo,
 				mnee, x0p, g, taskGid,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-				ray, dlVolInfo, sampleResult
+				ray, dlVolInfo, sampleResult, mneeSeeds
 				LIGHTS_PARAM);
 		return;
 	}
@@ -2601,7 +3469,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 			Mnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, pathInfo,
 					mnee, x0p, gConverged, taskGid,
 					worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-					ray, dlVolInfo, sampleResult
+					ray, dlVolInfo, sampleResult, mneeSeeds
 					LIGHTS_PARAM);
 			return;
 		}
@@ -2634,7 +3502,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		Mnee_SolveEnd(taskConfig, task, taskDirectLight, taskState, pathInfo,
 				mnee, x0p, g, taskGid,
 				worldCenterX, worldCenterY, worldCenterZ, worldRadius,
-				ray, dlVolInfo, sampleResult
+				ray, dlVolInfo, sampleResult, mneeSeeds
 				LIGHTS_PARAM);
 		return;
 	}
@@ -2761,6 +3629,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		, __global SampleResult *sampleResultsBuff \
 		, __global EyePathInfo *eyePathInfos \
 		, __global RestirReservoir *restirReservoirs \
+		, __global MneeSeedEntry *mneeSeeds \
 		KERNEL_ARGS_VOLUMES \
 		, __global Ray *rays \
 		, __global RayHit *rayHits \
@@ -2957,6 +3826,15 @@ __kernel void Init(
 		KERNEL_ARGS_FILM
 		) {
 	const size_t gid = get_global_id(0);
+
+	// ReSTIR visibility (E2a): mark the candidate shadow-ray slots in
+	// the rays[] tail as masked so the first trace pass skips them
+	// (they are written by MK_DL_ILLUMINATE before they are ever
+	// consumed, but the buffer starts uninitialized).
+	const uint visCandCount = taskConfig->pathTracer.restir.visCandCount;
+	for (uint i = 0; i < visCandCount; ++i)
+		rays[taskConfig->pathTracer.restir.visCandRayBase +
+				gid * visCandCount + i].flags = RAY_FLAGS_MASKED;
 
 	__global GPUTaskState *taskState = &tasksState[gid];
 

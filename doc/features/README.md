@@ -19,7 +19,7 @@ ask for.
 | Feature | Doc | Key commits | Test scene(s) | Platforms |
 |---|---|---|---|---|
 | Metal backend + HWRT | [metal-backend.md](metal-backend.md) + [../metal_backend_design.md](../metal_backend_design.md) | `562a3bf5f` device+HWRT, `9ffadfb12` cl2msl, `ca83e8ceb` pipeline, `30dc89ab3` film | luxball, cornell | **Apple only** |
-| ReSTIR DI | [restir-di.md](restir-di.md) | `db4600a18` | manylights | CPU/OCL/Metal |
+| ReSTIR DI | [restir-di.md](restir-di.md) | `db4600a18`; visibility target `df93221fe`/`c4068c653`; screen-space merge `79a5f3b8f`; shift `b7b9c56ed`/`a77a32c5e`; clamp `2b2ee77bf`; vis-aware merge `b7b8a66ea` | manylights | CPU/OCL/Metal |
 | MNEE | [mnee.md](mnee.md) | `8363ad339` | causticcube | CPU/OCL/Metal |
 | Path guiding | [path-guiding.md](path-guiding.md) | `8687ffc37` | interior | CPU/OCL/Metal |
 | Spectral transport | [spectral.md](spectral.md) | `7d8896fc9` | cornell-spectral | CPU/OCL/Metal |

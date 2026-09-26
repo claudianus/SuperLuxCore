@@ -202,6 +202,10 @@ public:
 	// more also enable the multi-specular chain that closed glass slabs and
 	// glass balls need.
 	u_int mneeMaxSpecular;
+	// Manifold seed cache (GPU only, path.mnee.seedcache): converged
+	// single-vertex solutions are cached in a hashed world-space grid and
+	// reused as Newton warm-start seeds for nearby attempts.
+	bool mneeSeedCacheEnable;
 
 private:
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,

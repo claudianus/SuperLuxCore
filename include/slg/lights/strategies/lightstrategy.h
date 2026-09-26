@@ -70,13 +70,24 @@ public:
 	// weight through *risScale (defaults to 1) instead of folding it
 	// into the pdf.
 	// (BSDF is forward-declared to avoid a heavy include here.)
+	// lightSurfaceUs (optional out, 3 floats): strategies that resample
+	// candidates with visibility weighting (RESTIR_DI +
+	// lightstrategy.restir.visibility.enable) return the WINNING
+	// candidate's light-surface sample here. The caller must Illuminate()
+	// the returned light with exactly these values so the binary
+	// visibility term folded into the candidate's target and the final
+	// payoff share the same surface point - re-sampling the winner at a
+	// different point would decouple them and bias the estimator.
+	// Strategies leave it untouched when unused (the caller's own
+	// sample applies, e.g. for merged reservoir winners).
 	virtual LightSourcePtr SampleLightsBSDF(
 			SceneConstRef scene,
 			const BSDF &bsdf,
 			const float time,
 			const float u,
 			float *pdf,
-			float *risScale = nullptr) const;
+			float *risScale = nullptr,
+			float *lightSurfaceUs = nullptr) const;
 
 	virtual float SampleLightPdf(
 			LightSourceConstRef light,

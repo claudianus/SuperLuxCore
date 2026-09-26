@@ -118,11 +118,25 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 	intersectionDevice.EnqueueKernel(initKernel,
 			HardwareDeviceRange(engine->taskCount), HardwareDeviceRange(initWorkGroupSize));
 
-	// There are 2 rays to trace for each path vertex (the last vertex traces only one ray)
-	const u_int worstCaseIterationCount = (engine->pathTracer.maxPathDepth.depth == 1) ? 2 : (engine->pathTracer.maxPathDepth.depth * 2 - 1);
+	// There are 2 rays to trace for each path vertex (the last vertex
+	// traces only one ray). The ReSTIR visibility path adds one more
+	// trace per vertex that samples direct light: MK_DL_ILLUMINATE
+	// queues the K candidate shadow rays and the MK_RT_RESTIR resolve
+	// can only run after the next trace pass, so a non-last vertex
+	// traces eye + candidates + winner shadow ray (3 passes).
+	const u_int maxDepth = engine->pathTracer.maxPathDepth.depth;
+	const bool visCands =
+			(engine->taskConfig.pathTracer.restir.visCandCount > 0u);
+	const u_int worstCaseIterationCount =
+			(maxDepth == 1) ? (visCands ? 3 : 2) :
+			(maxDepth * (visCands ? 3u : 2u) - (visCands ? 2u : 1u));
 	for (u_int i = 0; i < worstCaseIterationCount; ++i) {
-		// Trace rays
-		intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff, engine->taskCount);
+		// Trace rays (tail slots hold the ReSTIR visibility
+		// candidate shadow rays)
+		intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff,
+				engine->taskCount *
+				(1u + engine->taskConfig.pathTracer.restir.visCandCount +
+				(visCands ? RESTIR_PIXEL_MERGES_MAX : 0u)));
 
 		// Advance to next path state
 		EnqueueAdvancePathsKernel();

@@ -107,7 +107,8 @@ public:
 			const float time,
 			const float u,
 			float *pdf,
-			float *risScale = nullptr) const;
+			float *risScale = nullptr,
+			float *lightSurfaceUs = nullptr) const;
 
 	virtual LightStrategyType GetType() const { return GetObjectType(); }
 	virtual std::string GetTag() const { return GetObjectTag(); }
@@ -129,6 +130,14 @@ public:
 	// reservoir buffer of the PATHOCL kernels). The CPU strategy exposes
 	// the flag so the GPU config mirrors the scene configuration.
 	bool IsTemporalReuseEnabled() const { return temporalReuseEnable; }
+	// Stage 4 spatial merge flag, consumed by the GPU kernels
+	// (lightstrategy.restir.spatialreuse.enable, default false)
+	bool IsSpatialReuseEnabled() const { return spatialReuseEnable; }
+	// E2a: visibility-weighted RIS target (traces K candidate shadow
+	// rays; GPU: through the shared rays buffer resolved by the
+	// MK_RT_RESTIR micro-kernel; CPU: traced inline on the scene
+	// accelerator). (lightstrategy.restir.visibility.enable, default false)
+	bool IsVisibilityEnabled() const { return visibilityEnable; }
 
 	// Stage 4 stats (accessed by tests/benchmarks)
 	u_int GetSpatialReuseHits() const { return spatialReuseHits.load(); }
@@ -149,6 +158,12 @@ protected:
 		// Winner's target at the storing point (GRIS spatial merge
 		// normalizes the reused sum by old->new target ratio)
 		float targetAtStore;
+		// Winner's light-surface sample (E2c reconnection shift, GPU
+		// parity): the merge replays the SAME emitter point at the
+		// current shade point, so pi_new/pi_old tracks the shading
+		// change only. Zero-filled entries replay (0,0,0) - the old
+		// fixed-point behaviour.
+		float lsU, lsV, lsP;
 	};
 	static constexpr u_int NULL_CELL_LIGHT = 0xffffffffu;
 
@@ -175,6 +190,10 @@ protected:
 	// P1-1: temporal reuse flag, consumed by the GPU kernels
 	// (lightstrategy.restir.temporal.enable, default false)
 	bool temporalReuseEnable;
+
+	// E2a: visibility-weighted target flag, consumed by the GPU kernels
+	// (lightstrategy.restir.visibility.enable, default false)
+	bool visibilityEnable;
 
 	u_int GetThreadGridIndex() const;
 	ReservoirGrid *GetThreadGrid() const;

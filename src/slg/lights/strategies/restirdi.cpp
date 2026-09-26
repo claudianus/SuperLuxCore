@@ -19,6 +19,7 @@
 #include "slg/lights/strategies/restirdi.h"
 #include "slg/samplers/sobolsequence.h"
 #include "luxrays/utils/properties.h"
+#include "luxrays/core/dataset.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
 
@@ -40,6 +41,7 @@ LightStrategyRestirDI::ReservoirGrid::ReservoirGrid() {
 		e.wSum = 0.f;
 		e.sampleCount = 0;
 		e.targetAtStore = 0.f;
+		e.lsU = e.lsV = e.lsP = 0.f;
 	}
 }
 
@@ -75,7 +77,8 @@ LightStrategyRestirDI::LightStrategyRestirDI(const u_int candidates) :
 		LightStrategyLogPower(), candidateCount(candidates),
 		effectiveCandidateCount(Max(1u, candidates)),
 		spatialReuseHits(0), spatialReuseQueries(0),
-		spatialReuseEnable(false), temporalReuseEnable(false) {
+		spatialReuseEnable(false), temporalReuseEnable(false),
+		visibilityEnable(false) {
 	// Stage 4: allocate one grid per potential render thread. Threads
 	// pick a grid by hashing their thread id, so two threads may share
 	// a grid only when there are more threads than grids; sharing is
@@ -103,6 +106,7 @@ void LightStrategyRestirDI::Preprocess(SceneConstRef scene,
 			e.lightIndex = NULL_CELL_LIGHT;
 			e.wSum = 0.f;
 			e.sampleCount = 0;
+			e.lsU = e.lsV = e.lsP = 0.f;
 		}
 	}
 	spatialReuseHits.store(0);
@@ -226,7 +230,8 @@ LightSourcePtr LightStrategyRestirDI::SampleLights(
 
 LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		SceneConstRef scene, const BSDF &bsdf, const float time,
-		const float u, float *pdf, float *risScale) const {
+		const float u, float *pdf, float *risScale,
+		float *lightSurfaceUs) const {
 	// Stage 3: contribution-aware reservoir. Each candidate's target
 	// weight is its estimated direct contribution at this shade point:
 	// Illuminate() evaluates radiance x geometry (it builds the shadow
@@ -258,6 +263,16 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 	float reservoirPdf = 0.f;
 	float reservoirTarget = 0.f;
 	u_int reservoirM = 0;
+	// Winning FRESH candidate's light-surface sample (visibility path):
+	// the candidate's own sample doubles as the contribution sample, so
+	// it is returned through lightSurfaceUs and the caller's payoff
+	// Illuminate() reuses it verbatim - the binary V term folded into
+	// its target and the payoff then cover exactly the same surface
+	// point. Merged winners carry no stored sample: they are
+	// re-evaluated with the caller's own sample (same semantics as the
+	// GPU resolve path), so the out-parameter stays untouched.
+	float winU1 = 0.f, winU2 = 0.f, winU3 = 0.f;
+	bool winnerIsFresh = false;
 
 	static thread_local u_int acceptCounter = 0;
 	const u_int acceptSeed = AcceptSeed(u, acceptCounter++);
@@ -305,7 +320,15 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		// entry in THIS cell (temporal history, same target distribution),
 		// skip neighbor buckets (spatial reuse needs shifts to pay).
 		static const bool kTemporalOnly = (getenv("LUX_RIS_TEMPORAL_ONLY") != nullptr);
-		const int oMax = kTemporalOnly ? 1 : 7;
+		// With visibility-weighted targets the GPU kernels merge only the
+		// temporal reservoir and skip cross-cell neighbor merges entirely:
+		// the candidates' exact-sample V terms do not transfer across
+		// shading points, and the neighbors' V-free target re-evaluation
+		// would mix two different target measures into one reservoir (it
+		// also amplified stale wSum feedback into runaway output weights).
+		// Mirror that here: under visibility the own-cell merge (the CPU
+		// temporal equivalent - same bucket across passes) still runs.
+		const int oMax = (kTemporalOnly || visibilityEnable) ? 1 : 7;
 		for (int o = 0; o < oMax && merges < MAX_NEIGHBOR_MERGES; ++o) {
 			const int dx = OFFS[o][0], dy = OFFS[o][1], dz = OFFS[o][2];
 			{
@@ -339,10 +362,17 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 					if (nbLight->IsAlwaysInShadow(scene, p, landingNormal))
 						continue;
 
+					// Reconnection shift (E2c, GPU parity): replay the
+					// stored winner's light-surface sample so pi_new is
+					// measured at the same emitter point that produced
+					// pi_old - the ratio tracks the shading change only.
+					// Entries predating the store of ls* carry (0,0,0),
+					// the old fixed-point behaviour.
 					Ray nbShadowRay;
 					float nbDirectPdfW;
 					const Spectrum nbRadiance = nbLight->Illuminate(
-							scene, bsdf, time, u, 0.f, 0.f,
+							scene, bsdf, time,
+							entry.lsU, entry.lsV, entry.lsP,
 							nbShadowRay, nbDirectPdfW);
 					if (nbRadiance.Black() || nbDirectPdfW <= 0.f)
 						continue;
@@ -377,6 +407,13 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 						reservoirLight = nbLight;
 						reservoirPdf = nbSourcePdf;
 						reservoirTarget = nbTargetNew;
+						// Propagate the replayed sample so the payoff
+						// Illuminate() and a later store stay attached
+						// to the point the merge evaluated
+						winU1 = entry.lsU;
+						winU2 = entry.lsV;
+						winU3 = entry.lsP;
+						winnerIsFresh = false;
 						spatialReuseHits.fetch_add(1, std::memory_order_relaxed);
 					}
 				}
@@ -418,10 +455,36 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		// Contribution target: the light's radiance x geometry at this
 		// point. Black means the light cannot reach the surface here at
 		// all -> zero weight.
+		//
+		// Visibility-weighted variant (E2a, GPU parity): the candidate's
+		// OWN light-surface sample doubles as the eventual contribution
+		// sample - if it wins, its sample is returned to the caller and
+		// reused verbatim for the payoff Illuminate(), so the binary V
+		// tested below covers exactly the point the payoff evaluates
+		// (re-sampling the winner would decouple them: a real bias on
+		// area/mesh lights). Each candidate needs a proper independent
+		// 3D sample hashed off (u, i) - the same SobolSequence blue-noise
+		// hash scheme as the GPU kernel - instead of the (u_i,0,0)
+		// shorthand (a fixed corner on area lights) or one shared sample
+		// (correlated targets, worse variance).
+		float su = u_i, sv = 0.f, sp = 0.f;
+		if (visibilityEnable) {
+			u_int uBits;
+			std::memcpy(&uBits, &u, sizeof(uBits));
+			const u_int h = SobolSequence::BlueNoiseHash(
+					uBits ^ (i * 0x9E3779B9u + 0x27D4EB2Fu));
+			su = SobolSequence::BlueNoiseHash(h ^ 0x165667B1u) *
+					(1.f / 4294967296.f);
+			sv = SobolSequence::BlueNoiseHash(h ^ 0x9E3779B9u) *
+					(1.f / 4294967296.f);
+			sp = SobolSequence::BlueNoiseHash(h ^ 0x85EBCA6Bu) *
+					(1.f / 4294967296.f);
+		}
+
 		Ray shadowRay;
 		float directPdfW;
 		const Spectrum lightRadiance = candidate->Illuminate(
-				scene, bsdf, time, u_i, 0.f, 0.f, shadowRay, directPdfW);
+				scene, bsdf, time, su, sv, sp, shadowRay, directPdfW);
 
 		if (lightRadiance.Black())
 			continue;
@@ -437,6 +500,22 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		const float lum = lightRadiance.Y();
 		if (directPdfW <= 0.f)
 			continue;
+
+		// Binary visibility at the candidate's own surface point. The
+		// ray Illuminate() built already ends at the sampled light
+		// point (maxt), so a hit means occluded -> V = 0 -> culled
+		// candidate (still counted in mTotal above, like the other
+		// culls). Traced on the scene's Embree accelerator - a plain
+		// any-hit test; the winner's contribution still goes through
+		// the full transparent-shadow path, so alpha/shadow-catcher
+		// behavior is unchanged.
+		if (visibilityEnable) {
+			RayHit shadowRayHit;
+			if (scene.GetDataSet().GetAccelerator(ACCEL_EMBREE)->
+					Intersect(&shadowRay, &shadowRayHit))
+				continue;
+		}
+
 		const float targetWeight = lum / (candidatePdf * directPdfW);
 
 		wSum += targetWeight;
@@ -451,6 +530,10 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 			reservoirLight = candidate;
 			reservoirPdf = candidatePdf;
 			reservoirTarget = targetWeight;
+			winU1 = su;
+			winU2 = sv;
+			winU3 = sp;
+			winnerIsFresh = true;
 		}
 	}
 
@@ -487,6 +570,11 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 		entry.wSum = wSum;
 		entry.sampleCount = mTotal;
 		entry.targetAtStore = reservoirTarget;
+		// E2c: keep the winning sample's light-surface draws so a future
+		// merge replays the same emitter point (reconnection shift)
+		entry.lsU = winU1;
+		entry.lsV = winU2;
+		entry.lsP = winU3;
 	}
 
 	if (reservoirLight) {
@@ -509,6 +597,17 @@ LightSourcePtr LightStrategyRestirDI::SampleLightsBSDF(
 			*pdf = reservoirPdf;
 		if (risScale)
 			*risScale = wSum / ((float)Max(mTotal, 1u) * reservoirTarget);
+		// Visibility path: hand the caller the winning sample's
+		// light-surface draws so the payoff Illuminate() reuses the
+		// exact point the V term covered. Fresh winners carry their
+		// candidate sample; merged winners the stored reservoir sample
+		// replayed by the merge (E2c) - either way V and the payoff
+		// stay attached to the same emitter point.
+		if (lightSurfaceUs && visibilityEnable) {
+			lightSurfaceUs[0] = winU1;
+			lightSurfaceUs[1] = winU2;
+			lightSurfaceUs[2] = winU3;
+		}
 		// DIAG GRIS explosion (revert): trap absurd output weights
 		{
 			static const bool kTrap = (getenv("LUX_RIS_TRAP") != nullptr);
@@ -536,7 +635,8 @@ PropertiesUPtr LightStrategyRestirDI::ToProperties(const Properties &cfg) {
 				cfg.Get(GetDefaultProps()->Get("lightstrategy.type")) <<
 				cfg.Get(GetDefaultProps()->Get("lightstrategy.restir.candidates")) <<
 				cfg.Get(GetDefaultProps()->Get("lightstrategy.restir.spatialreuse.enable")) <<
-				cfg.Get(GetDefaultProps()->Get("lightstrategy.restir.temporal.enable"));
+				cfg.Get(GetDefaultProps()->Get("lightstrategy.restir.temporal.enable")) <<
+				cfg.Get(GetDefaultProps()->Get("lightstrategy.restir.visibility.enable"));
 
 	return props;
 }
@@ -554,10 +654,16 @@ LightStrategyUPtr LightStrategyRestirDI::FromProperties(const Properties &cfg) {
 	const bool temporalReuse = cfg.Get(
 		Property("lightstrategy.restir.temporal.enable")(false)
 	).Get<bool>();
+	// E2a visibility-weighted target (GPU: MK_RT_RESTIR ray batch;
+	// CPU: inline trace on the scene accelerator in this strategy)
+	const bool visibility = cfg.Get(
+		Property("lightstrategy.restir.visibility.enable")(false)
+	).Get<bool>();
 
 	auto strategy = std::make_unique<LightStrategyRestirDI>(candidates);
 	strategy->spatialReuseEnable = spatialReuse;
 	strategy->temporalReuseEnable = temporalReuse;
+	strategy->visibilityEnable = visibility;
 	return strategy;
 }
 
@@ -568,7 +674,8 @@ PropertiesUPtr LightStrategyRestirDI::GetDefaultProps() {
 				Property("lightstrategy.type")(GetObjectTag()) <<
 				Property("lightstrategy.restir.candidates")(0) <<
 				Property("lightstrategy.restir.spatialreuse.enable")(false) <<
-				Property("lightstrategy.restir.temporal.enable")(false);
+				Property("lightstrategy.restir.temporal.enable")(false) <<
+				Property("lightstrategy.restir.visibility.enable")(false);
 
 	return props;
 }

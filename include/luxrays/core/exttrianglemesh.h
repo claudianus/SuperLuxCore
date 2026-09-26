@@ -522,7 +522,7 @@ public:
 		return alphas[layerIndex][vertIndex];
 	}
 	virtual float GetVertexAOV(const u_int vertIndex, const u_int layerIndex) const {
-		if (HasTriAOV(layerIndex))
+		if (HasVertexAOV(layerIndex))
 			return vertAOV[layerIndex][vertIndex];
 		else
 			return 0.f;

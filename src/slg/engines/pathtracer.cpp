@@ -214,20 +214,27 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 		// the MIS pick pdf so both MIS sides stay consistent.
 		float lightPickPdf;
 		float risScale = 1.f;
+		// The strategy may override the light-surface sample with the
+		// winning candidate's own (ReSTIR visibility-weighted targets):
+		// the binary V folded into the candidate's target and the payoff
+		// below must cover the same surface point.
+		float lightSurfaceUs[3] = {u1, u2, u3};
 		auto light = lightStrategy.SampleLightsBSDF(
 			scene,
 			bsdf,
 			time,
 			u0,
 			&lightPickPdf,
-			&risScale
+			&risScale,
+			lightSurfaceUs
 		);
 
 		if (light) {
 			Ray shadowRay;
 			float directPdfW;
 			Spectrum lightRadiance = light->Illuminate(
-				scene, bsdf, time, u1, u2, u3, shadowRay, directPdfW
+				scene, bsdf, time, lightSurfaceUs[0], lightSurfaceUs[1],
+				lightSurfaceUs[2], shadowRay, directPdfW
 			);
 			verify (!lightRadiance.IsNaN() && !lightRadiance.IsInf());
 
@@ -1451,6 +1458,9 @@ void PathTracer::ParseOptions(
 	mneeEnable = cfg.Get(defaultProps.Get("path.mnee.enable")).Get<bool>();
 	mneeMaxIterations = Max(1, cfg.Get(defaultProps.Get("path.mnee.maxiterations")).Get<int>());
 	mneeMaxSpecular = Clamp(cfg.Get(defaultProps.Get("path.mnee.maxspecular")).Get<int>(), 1, 4);
+	// Manifold seed cache (GPU only): warm-start Newton from cached
+	// converged solutions nearby on the same occluder/light.
+	mneeSeedCacheEnable = cfg.Get(defaultProps.Get("path.mnee.seedcache")).Get<bool>();
 
 	// Path guiding (P1-3 M1 CPU; M2b GPU samples a frozen table file)
 	// (path.guiding.tablefile, empty = train inline (CPU) / unguided (GPU))
@@ -1511,6 +1521,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxiterations")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxspecular")) <<
+			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
 			cfg.Get(GetDefaultProps()->Get("path.spectral.enable")) <<
@@ -1534,6 +1545,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.mnee.enable")(false) <<
 			Property("path.mnee.maxiterations")(12) <<
 			Property("path.mnee.maxspecular")(1) <<
+			Property("path.mnee.seedcache")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
 			Property("path.spectral.enable")(false) <<

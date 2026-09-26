@@ -355,6 +355,7 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{advancePathsKernel_MK_HIT_NOTHING, "AdvancePaths_MK_HIT_NOTHING"},
 		{advancePathsKernel_MK_HIT_OBJECT, "AdvancePaths_MK_HIT_OBJECT"},
 		{advancePathsKernel_MK_RT_DL, "AdvancePaths_MK_RT_DL"},
+		{advancePathsKernel_MK_RT_RESTIR, "AdvancePaths_MK_RT_RESTIR"},
 		{advancePathsKernel_MK_DL_ILLUMINATE, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{advancePathsKernel_MK_DL_SAMPLE_BSDF, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
 		{advancePathsKernel_MK_MNEE_NEXT_VERTEX, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
@@ -438,6 +439,7 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, sampleResultsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, eyePathInfosBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, restirReservoirsBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, mneeSeedsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, directLightVolInfosBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, raysBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, hitsBuff);
@@ -561,6 +563,7 @@ constexpr u_int MK_NEXT_SAMPLE = 8;
 constexpr u_int MK_GENERATE_CAMERA_RAY = 9;
 constexpr u_int MK_DONE = 10;
 constexpr u_int MK_MNEE_NEXT_VERTEX = 11;
+constexpr u_int MK_RT_RESTIR = 12;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
@@ -572,6 +575,8 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_OBJECT, filmIndex, MK_HIT_OBJECT);
 	if (advancePathsKernel_MK_RT_DL)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_DL, filmIndex, MK_RT_DL);
+	if (advancePathsKernel_MK_RT_RESTIR)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_RESTIR, filmIndex, MK_RT_RESTIR);
 	if (advancePathsKernel_MK_DL_ILLUMINATE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_ILLUMINATE, filmIndex, MK_DL_ILLUMINATE);
 	if (advancePathsKernel_MK_DL_SAMPLE_BSDF)
@@ -640,6 +645,11 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_DL,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// ReSTIR visibility (E2a): resolve the queued candidate shadow rays
+	// before the normal illuminate step consumes the winner's ray.
+	if (advancePathsKernel_MK_RT_RESTIR)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_RESTIR,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_DL_ILLUMINATE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_DL_SAMPLE_BSDF,
@@ -772,6 +782,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_HIT_NOTHING, MK_HIT_NOTHING},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_HIT_OBJECT, MK_HIT_OBJECT},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_DL, MK_RT_DL},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_RESTIR, MK_RT_RESTIR},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_DL_ILLUMINATE, MK_DL_ILLUMINATE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_DL_SAMPLE_BSDF, MK_DL_SAMPLE_BSDF},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_MNEE_NEXT_VERTEX, MK_MNEE_NEXT_VERTEX},

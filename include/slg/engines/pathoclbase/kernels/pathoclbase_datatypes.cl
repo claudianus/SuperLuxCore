@@ -57,7 +57,14 @@ typedef enum {
 	// the state kernel writes the next trace ray into rays[] (with
 	// needsTrace = 1), the RT kernel traces it, the state kernel consumes
 	// rayHits[] on the next dispatch (needsTrace is cleared there).
-	MK_MNEE_NEXT_VERTEX = 11
+	MK_MNEE_NEXT_VERTEX = 11,
+	// ReSTIR DI visibility-weighted target (E2a): MK_DL_ILLUMINATE queued
+	// K candidate shadow rays into rays[visCandRayBase + gid*K ..]; the
+	// trace pass resolved them; this state folds the binary visibility
+	// into each candidate's target, runs the reservoir merge, emits the
+	// winner's real shadow ray into rays[gid] and continues to
+	// MK_DL_SAMPLE_BSDF.
+	MK_RT_RESTIR = 12
 } PathState;
 
 typedef struct {
@@ -113,7 +120,85 @@ typedef struct {
 	float wSum;					// sum of the target weights of all draws
 	unsigned int M;				// total number of proposal draws
 	float target;				// target weight of the winning sample
+	// E2b screen-space spatial reuse: the storing vertex's hit point and
+	// landing normal. A neighbour reservoir is merged only when the two
+	// shading points are geometrically similar (same-surface gate): that
+	// keeps the pi_new/pi_old GRIS ratio near 1 - which is what makes
+	// the merge reduce variance instead of adding it - and rejects
+	// silhouette neighbours whose stored targets do not transfer.
+	float hitP[3];
+	float geomN[3];
+	// Winning sample's light-surface draws (the two surface coords plus
+	// the pass-through event). A neighbour merge replays the SAME light
+	// point at the current shade point - the reconnection shift of GRIS
+	// - so pi_new/pi_old reflects only the shading difference, not a
+	// different point on the emitter (tighter ratio, less merge noise).
+	// Zero-filled slots replay the degenerate (0,0,0) sample - same as
+	// the old fixed-point merge.
+	float lsU, lsV, lsP;
+	float pad;
 } RestirReservoir;
+
+// ReSTIR DI visibility-weighted target (E2a): one record per candidate
+// shadow ray queued into the rays[] tail. The candidate's own light
+// sample is reused as the contribution sample (no re-sampling of the
+// winner): the binary V test then covers the exact ray the estimator
+// pays off, keeping V and the contribution consistent.
+// Slots [K, K + RESTIR_PIXEL_MERGES_MAX) of each task's tail are merge
+// candidates (E2d visibility-aware spatial shift): the ray replays a
+// gated neighbour reservoir's stored light-surface sample, so the hit
+// test folds real visibility into pi_new of the GRIS merge weight
+// instead of the V-free approximation. For merge records nbrWSum /
+// nbrTarget / nbrM carry the neighbour reservoir's stored state;
+// lsU/lsV/lsP is the replayed light-surface sample (stored on fresh
+// candidates too so the winner's sample needs no re-derivation).
+typedef struct {
+	unsigned int lightIndex;	// NULL_INDEX for culled draws
+	float pickPdf;				// proposal pdf q of the light pick
+	float directPdfW;			// light sample's pdf (solid angle)
+	float target;				// unshadowed target Y(rad)/(q*pdfW)
+	float radianceR, radianceG, radianceB; // Illuminate() radiance
+	float lsU, lsV, lsP;		// light-surface sample the ray covers
+	// Merge-candidate metadata (unused on fresh candidates)
+	float nbrWSum;				// neighbour reservoir wSum
+	float nbrTarget;			// neighbour stored target (pi_old)
+	unsigned int nbrM;			// neighbour reservoir M
+	float pad;
+} RestirVisCandidate;
+
+// ReSTIR DI spatial reuse (E2b): screen-space neighbour-pixel merge.
+// Two pseudo-random offsets in a 5x5 window (centre excluded) are drawn
+// per shade point; a candidate neighbour reservoir is merged only when
+// it passes the same-surface geometric gate below. Pixel neighbours
+// mostly shade the same surface, so their stored winners transfer with
+// a pi_new/pi_old ratio near 1 - unlike the previous world-space hash
+// grid, which merged unrelated surfaces and measured ~1.1-1.3x WORSE
+// RMSE on the manylights scenes (e14). The CPU strategy keeps its
+// world-space hash grid (it has no pixel context). Under the
+// visibility-weighted target the CPU side restricts merging to the
+// temporal/own-cell reservoir; the GPU side still runs this gated
+// pixel merge as a documented approximation.
+#define RESTIR_PIXEL_MERGES_MAX 2u
+// Position gate: 2% of the world radius (squared value, multiplied by
+// worldRadius^2 at the use site); normal gate: ~25 degrees.
+#define RESTIR_PIXEL_MERGE_DIST2 ((0.02f * 0.02f))
+#define RESTIR_PIXEL_MERGE_NORM 0.9063f
+// Defensive bound on the GRIS reconnection ratio pi_new/pi_old: the
+// same-surface gate keeps legit ratios near 1, but a steep emission
+// gradient (spot/projection cone edge) can still produce a large
+// outlier that inflates wSum - and the paid contribution scales
+// linearly with wSum, so one outlier merge becomes a hot pixel
+// (measured ~9-20x RMSE tail events on e14). Clamping the ratio at
+// 64 bounds the per-merge inflation while leaving real transfers
+// untouched; the bias is bounded and only affects the outlier tail.
+#define RESTIR_MERGE_MAX_TARGET_RATIO 64.f
+
+// MNEE seed cache (E4): fixed-size hash grid of converged single-vertex
+// manifold solutions. 16384 entries * 32B = 512KB.
+#define MNEE_SEED_CACHE_SIZE (1u << 14)
+// Quantization cell of the occluder-hit key, in world units relative to
+// the scene bounding sphere radius (divided by this value).
+#define MNEE_SEED_CELL_FRAC 64.f
 
 // The state used to keep track of the rendered path
 typedef struct {
@@ -212,6 +297,25 @@ typedef struct {
 	float eta;
 } MneeVertex;
 
+// Manifold seed cache entry (E4): a converged single-vertex MNEE solution
+// stored in a fixed-size hashed grid, keyed by (light, occluder mesh,
+// quantized shadow-ray occluder hit position). A nearby attempt can warm-
+// start the Newton solve from the cached vertex instead of the line seed /
+// mirrored-light seed trace. The seed only selects the Newton basin: the
+// solve still verifies the half-vector constraint, so a stale or torn entry
+// can cost iterations but never biases the result.
+// 32 bytes.
+typedef struct {
+	// Solved vertex position and shading normal
+	float vx, vy, vz;
+	float nx, ny, nz;
+	unsigned int lightIndex;
+	unsigned int meshIndex;
+	// 1 = mirror-mode solve, 0 = glass-mode solve
+	unsigned int mirrorMode;
+	unsigned int valid;
+} MneeSeedEntry;
+
 // Persistent MNEE state, one per task (lives in GPUTaskDirectLight). It
 // carries the whole Newton/line-search state across the micro-kernel
 // launches of the MNEE sub-state machine.
@@ -226,6 +330,9 @@ typedef struct {
 	unsigned int shadowMeshIndex;
 	// 1 = mirror occluder (eta = ±1 by the side test), 0 = glass occluder
 	int mirrorMode;
+	// Shadow-ray occluder hit position: the seed-cache key component,
+	// remembered from Mnee_Start for the store on solve success.
+	float occlX, occlY, occlZ;
 
 	MneeVertex vtx;
 

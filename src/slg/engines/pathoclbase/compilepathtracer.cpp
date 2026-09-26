@@ -61,6 +61,7 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.mnee.enabled = pathTracer->mneeEnable;
 	compiledPathTracer.mnee.maxIterations = pathTracer->mneeMaxIterations;
 	compiledPathTracer.mnee.maxSpecular = pathTracer->mneeMaxSpecular;
+	compiledPathTracer.mnee.seedCacheEnable = pathTracer->mneeSeedCacheEnable;
 	if (pathTracer->mneeEnable && (pathTracer->mneeMaxSpecular > 1))
 		SLG_LOG("WARNING: path.mnee.maxspecular = " << pathTracer->mneeMaxSpecular <<
 				" (multi-specular MNEE chains) is supported by the GPU kernels "
@@ -81,11 +82,24 @@ void CompiledScene::CompilePathTracer() {
 			restirStrategy->GetEffectiveCandidateCount();
 		compiledPathTracer.restir.temporalEnable =
 			restirStrategy->IsTemporalReuseEnabled();
+		compiledPathTracer.restir.spatialEnable =
+			restirStrategy->IsSpatialReuseEnabled();
+		compiledPathTracer.restir.visibilityEnable =
+			restirStrategy->IsVisibilityEnabled();
 	} else {
 		compiledPathTracer.restir.enabled = false;
 		compiledPathTracer.restir.candidateCount = 0;
 		compiledPathTracer.restir.temporalEnable = false;
+		compiledPathTracer.restir.spatialEnable = false;
+		compiledPathTracer.restir.visibilityEnable = false;
 	}
+	// Filled at device init once the film sub-region is known
+	compiledPathTracer.restir.reservoirCount = 0;
+	// Filled at device init once the task count is known (the
+	// candidate region of rays[]/rayHits[] starts at taskCount)
+	compiledPathTracer.restir.visCandCount = 0;
+	compiledPathTracer.restir.visCandRayBase = 0;
+	compiledPathTracer.restir.visCandDataOffset = 0;
 
 	CompilePhotonGI();
 
