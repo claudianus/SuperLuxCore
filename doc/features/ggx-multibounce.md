@@ -2,7 +2,7 @@
 
 Status: **shipped on CPU (`PATHCPU`) and GPU (`PATHOCL`, Metal-validated)** —
 opt-in via `scene.materials.X.multibounce = 1` (requires
-`distribution = ggx`), exposed in BlendLuxCore as the Metal node's
+`distribution = ggx`), exposed in SuperBlendLuxCore as the Metal node's
 "Multibounce" checkbox. White-furnace regression in
 `dev-tools/e33_glossy2_ggx_parity.py`; comparison scene in
 `scenes/metal2mb/metal2-mb.scn` (720p renders `metal2-mb-cpu.png` /
@@ -69,7 +69,7 @@ is the provably unbiased alternative (facet-forge reaches exactly ρ=1.000).
   fresnelcolor): `α=0.25` → 0.9217 ss / **0.9989 mb**; `α=1` sphere-only →
   0.34 ss / **0.997 mb**; anisotropic (u=0.15, v=0.8) → 0.858 / **0.999**.
 - CPU/GPU parity on the mb furnace: mean 0.9988 vs 0.9968 (rel. err 1.6%).
-- `BlendLuxCore/dev-tools/e34_distribution_export_test.py` covers the
+- `SuperBlendLuxCore/dev-tools/e34_distribution_export_test.py` covers the
   `multibounce` export.
 
 ## Pitfalls found (documented for future harnesses)
@@ -89,5 +89,5 @@ is the provably unbiased alternative (facet-forge reaches exactly ρ=1.000).
 
 - `scene.materials.X.multibounce = 0|1` (default 0), metal2 only, only
   consulted when `distribution = ggx`.
-- BlendLuxCore: Metal node → "Multibounce" (visible when
+- SuperBlendLuxCore: Metal node → "Multibounce" (visible when
   Distribution = GGX).

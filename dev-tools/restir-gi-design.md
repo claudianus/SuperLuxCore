@@ -139,7 +139,7 @@ CPU (`pathtracer.cpp` / `LightStrategyRestirDI`-adjacent):
 - Synchronous candidate shading: extra BSDF samples + `scene.Intersect`
   calls inline (the CPU visibility path already traces inline).
 
-BlendLuxCore: `restir_gi_enable` checkbox beside the existing ReSTIR
+SuperBlendLuxCore: `restir_gi_enable` checkbox beside the existing ReSTIR
 visibility toggle once validated.
 
 ## Properties (as implemented, PATHCPU)

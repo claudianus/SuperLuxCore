@@ -116,7 +116,7 @@ noise → flicker.
 
 - **D0 — AOV prerequisites:** `MOTION_VECTOR` (fwd+bwd), `VARIANCE`.
   CPU+GPU parity (both `pathtracer.cpp` and the OCL kernels), film channel
-  + output plumbing, BlendLuxCore toggle + EXR.
+  + output plumbing, SuperBlendLuxCore toggle + EXR.
 - **D1 — Sequence temporal prefilter ("luxtd")**: post tool over the
   rendered EXR sequence (noice-style, also usable as an in-addon step):
   reproject history via backward MV → validate with depth/normal/ID
@@ -155,7 +155,7 @@ noise → flicker.
 - `src/slg/film/filmoutputs.cpp` — output type strings.
 - `src/slg/engines/pathtracer.cpp` + `include/slg/engines/pathoclbase/
   kernels/*` — first-hit MV/variance writes (CPU/GPU parity rule).
-- BlendLuxCore: `properties/aovs.py`, `ui/view_layer_aovs.py`,
+- SuperBlendLuxCore: `properties/aovs.py`, `ui/view_layer_aovs.py`,
   `export/aovs.py`.
 - New: `dev-tools/` sequence-denoise tool (or `luxcoreconsole` subcommand)
   + e-test regression (`e3x_temporal_denoise_test.py`): synthetic moving
@@ -242,7 +242,7 @@ per-frame scenes, TA → OIDN components → tonemap):
   artifacts)
 - no ghosting; regression: `tests/temporal_accumulate_test.py`.
 
-BlendLuxCore: `denoiser.temporal_*` properties, Temporal Accumulation
+SuperBlendLuxCore: `denoiser.temporal_*` properties, Temporal Accumulation
 sub-panel under Render > Denoiser; plugin is prepended to the denoiser
 pipeline (and to pipeline 0 when no denoiser) for final renders.
 Animated seed (`use_animated_seed`) already provides per-frame

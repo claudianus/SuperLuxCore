@@ -74,7 +74,7 @@ as eye-hard.
 | `path.hybridbackforward.terminalglossiness` | 0.3 | Glossiness limit for the light-adjacent vertex; rougher terminals stay eye-owned |
 | `path.hybridbackforward.connectprob` | 0.5 | Eye-connection success probability below which the light pass takes over (`omegaLight / omegaLobe`) |
 
-BlendLuxCore exposes all three under *Render Layers > Light Tracing* as
+SuperBlendLuxCore exposes all three under *Render Layers > Light Tracing* as
 "Adaptive Caustics" (toggle), "Terminal Glossiness" and "Connection
 Probability"; disabling the toggle reveals the legacy "Glossiness
 Threshold" control.

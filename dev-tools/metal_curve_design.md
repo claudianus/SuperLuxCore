@@ -172,7 +172,7 @@ Fix: `ExtTriangleMesh::Init` normalizes any installed layer that carries
 a pointer but `_size==0` to the vertex count (per-vertex attribute
 contract). Covers all raw-ctor call sites uniformly.
 
-### Blender adapter integration (2026-09, BlendLuxCore headless)
+### Blender adapter integration (2026-09, SuperBlendLuxCore headless)
 
 Headless Blender 5.2.1 render through the real adapter path:
 `hair_curves` datablock → `convert_hair_curves` →

@@ -1,6 +1,6 @@
-# BlendLuxCore — Blender adapter improvements
+# SuperBlendLuxCore — Blender adapter improvements
 
-Status: implemented. Lives in the BlendLuxCore repository; documented here
+Status: implemented. Lives in the SuperBlendLuxCore repository; documented here
 because the upstream criteria apply to the adapter too.
 
 ## What and why

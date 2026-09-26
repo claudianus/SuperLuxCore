@@ -80,7 +80,7 @@ def build_url(
     url = (
         "https://github.com",
         user,
-        "LuxCoreDeps",
+        "SuperLuxCoreDeps",
         "releases",
         "download",
         f"v{release}",

@@ -33,9 +33,9 @@ ask for.
 | Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd`; float3 packing `b85bfa07a`; gpuAddress residency fix `a728e02bf` | scenes/strands/hair.scn + `dev-tools/e22_metal_curve_test.py` (coverage/parity/indirect gates) | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
-| Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material+geometry deltas (A6-III) `2579a019`, `c28f40f0` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
+| Blender adapter | [blender-adapter.md](blender-adapter.md) | SuperBlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material+geometry deltas (A6-III) `2579a019`, `c28f40f0` | .blend scenes; `SuperBlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
 | Wavefront task queues (M1+M2, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` M1, `f424a8552` M2 λ-bucketed queues (branch `feature/wavefront-queues`) | cornell, cornell-spectral | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
-| Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc; `5b1e23fa1` plumbing; `d4dc25e22` Metal HWRT; `d1eb37198` SW MBVH; `c16e19453` Embree; BlendLuxCore `c9193f0a` export | `vertexmotion_test`; `dev-tools/e9_*_vertex_motion_test.py`; BlendLuxCore `dev-tools/e9_vertex_motion_e2e_test.py` | Metal HWRT + SW MBVH (OCL/cl2msl) + Embree timesteps; mesh export (hair pending) |
+| Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc; `5b1e23fa1` plumbing; `d4dc25e22` Metal HWRT; `d1eb37198` SW MBVH; `c16e19453` Embree; SuperBlendLuxCore `c9193f0a` export | `vertexmotion_test`; `dev-tools/e9_*_vertex_motion_test.py`; SuperBlendLuxCore `dev-tools/e9_vertex_motion_e2e_test.py` | Metal HWRT + SW MBVH (OCL/cl2msl) + Embree timesteps; mesh export (hair pending) |
 | Adaptive caustic partition | [adaptive-caustic.md](adaptive-caustic.md) | pending | `scenes/cornell/caustic-roughglass.scn`; `dev-tools/e25_adaptive_caustic_test.py`, `e25_render_compare.py`, `e25_caustic_channel.py` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
@@ -109,7 +109,7 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
   Metal): first-bounce reservoir, temporal + gated spatial reuse, and
   the seqlock/vSeq concurrency guards the GPU merge needs — e19 10/10
   (CPU+GPU). ReSTIR PT/PG remain open — opt-in, roadmap E2.
-- **OIDN Metal** ships in the public LuxCoreDeps `v2.4.0` bundle
+- **OIDN Metal** ships in the public SuperLuxCoreDeps `v2.4.0` bundle
   (`with_device_metal=True`, `device_metal` dylib verified) and is
   wired into the `INTEL_OIDN` pipeline (~17× over CPU).
   + dep release rebuild. See `dev-tools/oidn-metal/` — roadmap E1.

@@ -37,7 +37,7 @@ Phase-5b surface (implemented):
   keyframe buffers, same `MTLMotionKeyframeData` slicing as mesh
   motion); falls back to the motion-triangle descriptor on macOS < 14
   or when the mesh takes the vertex-motion path anyway.
-- BlendLuxCore: `ExportedObject.strand_recs` records the strand mesh
+- SuperBlendLuxCore: `ExportedObject.strand_recs` records the strand mesh
   name, raw layout signature and storage-space transform per strand
   system (hair curves and particle hair); `motion_blur` collects
   per-step raw control points inside the existing shutter loop and
@@ -47,11 +47,11 @@ Phase-5b surface (implemented):
 - Validation: `dev-tools/e9_strand_motion_test.py` (12 asserts: wrong
   count/non-strand rejection, static vs sweep vs mid-shutter poses,
   raw-layout acceptance + wrong-count rejection, HWRT=CPU parity)
-  and BlendLuxCore `dev-tools/e9_strand_motion_e2e_test.py`
+  and SuperBlendLuxCore `dev-tools/e9_strand_motion_e2e_test.py`
   (shape-keyed hair comb, Metal OCL: smeared band vs sharp comb,
   non-opt-in stays sharp) — all passing.
 
-Phase-5 surface (implemented, BlendLuxCore repo):
+Phase-5 surface (implemented, SuperBlendLuxCore repo):
 
 - `ExportedMesh` records an export-time topology signature
   (`vert_count`, `loop_vertices` map) — only for objects with
@@ -259,7 +259,7 @@ control points get the same treatment — `curveCPs` becomes
 - Serialization: same stance as E7 curve data — v1 does not persist
   vertex series; deserialized scenes render static.
 
-## BlendLuxCore side (adapter, mostly done)
+## SuperBlendLuxCore side (adapter, mostly done)
 
 - The A5 step loop in `export/motion_blur.py` already re-evaluates the
   depsgraph at every shutter step — deformation export adds
@@ -280,7 +280,7 @@ control points get the same treatment — `curveCPs` becomes
    surface list above.
 4. ~~Embree timestep path (CPU parity).~~ **Done** — see the Phase-4
    surface list above.
-5. ~~BlendLuxCore mesh export.~~ **Done** — see the Phase-5 surface list
+5. ~~SuperBlendLuxCore mesh export.~~ **Done** — see the Phase-5 surface list
    above. ~~Hair/strand export~~ **Done** — Phase-5b surface list above:
    `SetStrandsVertexMotion` re-tessellates raw-layout step buffers
    through the recorded recipe; hair curves and particle hair are both

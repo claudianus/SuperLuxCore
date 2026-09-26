@@ -87,7 +87,7 @@ AddDeviceDescs under #if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
 -> mirrors the clew path. CreateIntersectionDevices: handle
 DEVICE_TYPE_METAL_GPU -> new MetalIntersectionDevice.
 
-BlendLuxCore UI: properties/devices.py gains "METAL" entries; the
+SuperBlendLuxCore UI: properties/devices.py gains "METAL" entries; the
 addon's gpu_backend preference already exists for CUDA/OpenCL.
 
 ### 4. CMake
@@ -459,4 +459,4 @@ M4. RT render engine (pathoclbase equivalent): GPU-resident
     wavefront with hardware BVH (MTLAccelerationStructure built from
     CompiledScene geometry) - the architecture the measured batch
     throughput numbers apply to
-M5. BlendLuxCore device UI + nightly wheel build
+M5. SuperBlendLuxCore device UI + nightly wheel build

@@ -48,10 +48,10 @@ device binary. A Metal-enabled build has been produced and validated:
 The deployed bundle (`out/dependencies/.../oidn`) is still the upstream
 package built with `with_device_metal=False`, plus a locally dropped
 `device_metal` for validation. The reproducible path is **proven**: our
-LuxCoreDeps fork's recipe (`with_device_metal=True` +
+SuperLuxCoreDeps fork's recipe (`with_device_metal=True` +
 `metal_embed_source=True`, OIDN **2.5.1**) produces a working Metal package
 via `conan create` **without Xcode** (see `dev-tools/oidn-metal/README.md`,
-LuxCoreDeps commit `736f92b`). Shipping needs: push the fork, CI-build the
+SuperLuxCoreDeps commit `736f92b`). Shipping needs: push the fork, CI-build the
 full dep bundle (with `device_cpu` too), tag a dep release, and point
 `build-settings.json` `Dependencies` at it.
 

@@ -40,7 +40,7 @@ git apply /path/to/oidn-2.5.1-metal-runtime-compile.patch
 cp /path/to/metal_source.py cmake/
 ```
 
-Configure with the same options the LuxCoreDeps recipe uses, plus Metal:
+Configure with the same options the SuperLuxCoreDeps recipe uses, plus Metal:
 
 ```bash
 cmake -S . -B build \
@@ -82,7 +82,7 @@ Important integration notes learned while validating:
 
 ## Conan recipe integration (proven end-to-end)
 
-The LuxCoreDeps recipe carries this patch plus two options:
+The SuperLuxCoreDeps recipe carries this patch plus two options:
 
 - `oidn/*:with_device_metal=True` — builds `device_metal` (set in
   `conan-profiles/conan-profile-macOS-ARM64`)
@@ -92,13 +92,13 @@ The LuxCoreDeps recipe carries this patch plus two options:
 `conan create` on OIDN **2.5.1** was verified on a CLT-only machine: the
 produced `oidn/2.5.1@luxcore/luxcore` package's `device_metal` runs the RT
 filter on Metal (~6.6 ms for 512×512). Recipe changes live in our
-LuxCoreDeps fork (local clone at `../LuxCoreDeps`, commit `736f92b`).
+SuperLuxCoreDeps fork (local clone at `../SuperLuxCoreDeps`, commit `736f92b`).
 
-## Path to upstream / LuxCoreDeps
+## Path to upstream / SuperLuxCoreDeps
 
 Two repos must change to ship this properly:
 
-1. **LuxCoreDeps** (`conan-local-recipes/recipes/oidn/all/conanfile.py`):
+1. **SuperLuxCoreDeps** (`conan-local-recipes/recipes/oidn/all/conanfile.py`):
    `with_device_metal=True` for macOS, and add
    `f"{library_name}_device_metal.{version}"` to `cpp_info.libs` for macOS
    shared builds. Upstream CI builds on `macos-15` runners (full Xcode), so

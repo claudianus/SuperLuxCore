@@ -134,7 +134,7 @@ Default channel: `isshadowray`.
 intersections, texture evals outside the path) have all context fields
 zeroed, so every channel safely returns 0.
 
-**Validation.** `BlendLuxCore/dev-tools/e23_cycles_compat_e2e_test.py`
+**Validation.** `SuperBlendLuxCore/dev-tools/e23_cycles_compat_e2e_test.py`
 renders a LightPath-driven mix (camera-ray red vs indirect green) through
 the Blender adapter. A standalone scene test renders the same
 `rayinfo`-driven mix on PATHCPU and PATHOCL with identical statistics
