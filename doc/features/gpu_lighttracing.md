@@ -244,14 +244,14 @@ skip caustic-path contributions the same way; the config fields are
 What the GPU side ~~is missing today~~ **was missing at design time — all
 landed** (kept as the implementation checklist):
 
-- `LightSource::Emit` — ✅ `09081cc54` ported `*_Emit` for the light
-  types; `61a637029` extended coverage to sphere/map-sphere/projection/
+- `LightSource::Emit` — ✅ `45caf34594bf414508cfbd01d9f90f4df5becd51` ported `*_Emit` for the light
+  types; `a7c3ae282f0eea9ba80c3191e1175da34c28b7b9` extended coverage to sphere/map-sphere/projection/
   map-point + directional-map triangles (`emit` distribution enabled in
   `compilelights.cpp`).
 - The emit-strategy distribution — ✅ `GetEmitLightStrategy()` uploads
   now; every current light type is supported (unsupported future types
   get zero weight + a startup warning).
-- Camera inverse projection — ✅ `41a9e03f5`: `GetSamplePosition`/
+- Camera inverse projection — ✅ `45caf34594bf414508cfbd01d9f90f4df5becd51`: `GetSamplePosition`/
   `ProjectToImage`/pdf + `pixelArea`/`cameraPdf` fields.
 - A screen-normalized film channel on the GPU — stripped at
   `pathoclbaseoclthreadfilm.cpp:120`; the GPU `Filter` struct is only

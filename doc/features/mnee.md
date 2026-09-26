@@ -194,7 +194,7 @@ that a real caustic is produced (proving solves actually ran).
   used by `e17_mnee_seedcache_gpu_test.py` (replaces the old juice
   `test.scn`/`test-mirror.scn`, whose `transparency.shadow = 1` let
   shadow rays through so MNEE never actually ran).
-- `dev-tools/mnee_design.md` — internal design notes.
+- `dev-tools/archive/mnee_design.md` — internal design notes.
 
 ## Platforms
 

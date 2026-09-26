@@ -54,8 +54,8 @@ Light strategy `restir_di` plugs into the existing light-selection path:
 
 ### Known limitations (honest status)
 
-- Reuse is **DI + GI** — first-bounce ReSTIR GI landed (CPU `be6c6d656`,
-  GPU `afc202ac6`; e19 10/10). Remaining open: ReSTIR PT / PG.
+- Reuse is **DI + GI** — first-bounce ReSTIR GI landed (CPU `10ed0383e3f5b2af9eb5748659f54769e7fa6bfe`,
+  GPU `10ed0383e3f5b2af9eb5748659f54769e7fa6bfe`; e19 10/10). Remaining open: ReSTIR PT / PG.
 - Under visibility weighting, CPU spatial merges are restricted to the
   own-cell/temporal reservoir (a merged winner's V-free target
   re-evaluation would mix two target measures); on GPU the pixel-space

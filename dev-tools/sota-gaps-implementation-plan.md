@@ -8,15 +8,15 @@
 대상 갭 (감사 보고서 우선순위 순):
 
 1. **Wavefront M3** — compaction+정렬+기본 활성화 (GPU 대형씬 스루풋)
-   → **M3a 랜딩** (`88f425ffe`, 디바이스 QueuePrefix — cornell ~2.5x)
+   → **M3a 랜딩** (`37cc04b4baa4b492334e8391a2fd2b0a4534e815`, 디바이스 QueuePrefix — cornell ~2.5x)
 2. **Cryptomatte** — 모든 프로덕션 보유, 미구현
-   → **✅ 랜딩** (`eedefb2dc`, `CRYPTOMATTE_OBJECT`/`_MATERIAL`)
+   → **✅ 랜딩** (`aabfdb3e5fbe98e75617309a30920ca27f0b8f7a`, `CRYPTOMATTE_OBJECT`/`_MATERIAL`)
 3. **Light linking** — 라이트↔오브젝트 조명 관계 필터
-   → **✅ 랜딩** (`c5d529195` 64비트 그룹 + `1a811b64e`, BLC UI 완비)
+   → **✅ 랜딩** (`8d05a4ef1793ca9ccc98549dae78af2156bbe078` 64비트 그룹 + `8d05a4ef1793ca9ccc98549dae78af2156bbe078`, BLC UI 완비)
 4. **LPE** (light path expression) — 확장 AOV 분해
-   → **✅ 랜딩** (`283dd3ee0`, bounded NFA `film.lpe.N.*`)
+   → **✅ 랜딩** (`7a1622a86dfefb044b17c7d4f3f332bee69b668f`, bounded NFA `film.lpe.N.*`)
 5. **Path guiding 성숙도** — OpenPGL 검증 아이디어 선별 이식
-   → **✅ P5 랜딩** (`aafe53bfd`, 정식 `path.guiding.*`+BIC-K+폴백+영속성)
+   → **✅ P5 랜딩** (`00804937b0f880ff2421a497591a27a6e2a531ba`, 정식 `path.guiding.*`+BIC-K+폴백+영속성)
 
 공통 원칙: CPU/GPU 기능 parity, unbiased 보존, 어댑터 즉시 노출,
 720p+ 시각 회귀 검증, feature-chunk 단위 리뷰 가능성.
@@ -27,7 +27,7 @@
 
 | 갭 | 현재 상태 | 결정적 사실 |
 |---|---|---|
-| Wavefront | **M3a 랜딩** — 디바이스 QueuePrefix로 host sync 2→1 (`88f425ffe`) | cornell 720²/30s Metal: dense ~9.5M vs wavefront ~24M samples/s (**~2.5x 역전** — 구 −7~−17% 판정은 M3a 이전 측정). totals readback(72B/iter)은 런치 사이징에 필수. dense 디폴트 유지 |
+| Wavefront | **M3a 랜딩** — 디바이스 QueuePrefix로 host sync 2→1 (`37cc04b4baa4b492334e8391a2fd2b0a4534e815`) | cornell 720²/30s Metal: dense ~9.5M vs wavefront ~24M samples/s (**~2.5x 역전** — 구 −7~−17% 판정은 M3a 이전 측정). totals readback(72B/iter)은 런치 사이징에 필수. dense 디폴트 유지 |
 | Cryptomatte | **✅ 랜딩** `film.outputs.N.type=CRYPTOMATTE_OBJECT/_MATERIAL` + MurmurHash3 매니페스트 | e40 회귀 통과. 잔여: asset-level 매트, rank 깊이 튜닝 |
 | Light linking | **✅ 랜딩** 수신자 기반 64비트 링크 그룹 (`scene.{objects,lights}.X.linkgroups`, `.linkmode`) | e41 회귀 8/8. NEE+직접 emitter hit+LT 첫 정점 필터, 간접 바운스는 의도적 미필터 |
 | LPE | **✅ 랜딩** `film.lpe.N.expression` bounded NFA (≤32 상태, ≤8 식) | e42 회귀 통과. 범위: PATHCPU/PATHOCL — BIDIR/LT 경로는 LPE 상태 미보유 |
@@ -63,7 +63,7 @@ dense 경로는 같은 반복에 11개 커널을 `taskCount` 전체에 올리고
 M3는 "재질 버켓 추가"가 아니라 **위 4개 비용을 제거해 dense를 이기는
 스케줄러 재설계**로 정의한다. 재질 버켓은 그 위의 옵션 실험.
 
-### 1.2 M3a: 호스트 동기화 제거 — ✅ 랜딩 (`88f425ffe`, 2026-09-25)
+### 1.2 M3a: 호스트 동기화 제거 — ✅ 랜딩 (`37cc04b4baa4b492334e8391a2fd2b0a4534e815`, 2026-09-25)
 
 핵심 관찰: `WAVEFRONT_GUARD` (`pathoclbase_funcs.cl:6521`)가 이미
 `gid >= count` early-out을 한다. **런치 크기는 상한일 뿐 정확할 필요가 없다.**
@@ -533,11 +533,11 @@ BIC(로그우도 − ½k·log n) 최대 모델 선택. 단일모드 리프의 �
 | Phase | 내용 | 의존성 | 게이트 / 상태 (9/25) |
 |---|---|---|---|
 | P0 | 공통 인프라: murmurhash 유틸, film 채널 추가 절차 문서화 검증(더미 채널 1개 end-to-end) | — | ✅ 완료 |
-| P1 | Cryptomatte (object+material) | P0 | ✅ 랜딩 `eedefb2dc` — e40 PASS |
-| P2 | Light linking (illumination, flat+BVH) | — | ✅ 랜딩 `c5d529195`+`1a811b64e` — e41 8/8 |
-| P3 | Wavefront M3a (sync 제거) | — | ✅ 랜딩 `88f425ffe` — cornell ~2.5x. 단, totals readback은 유지(stale sizing ~6x 회귀 실측 — §1.2의 "정확성 무손실"은 맞으나 진행 지연 비용이 컸음) |
-| P4 | LPE (eye-path 완전) | P0(채널) | ✅ 랜딩 `283dd3ee0` — e42 PASS. 범위: PATHCPU/PATHOCL |
-| P5 | Guiding 5.1+5.2+5.5 (fallback, adaptive K, 프로퍼티화) | — | ✅ 랜딩 `aafe53bfd` — 계층 폴백+BIC-K+`path.guiding.*` 정식화, e43 PASS |
+| P1 | Cryptomatte (object+material) | P0 | ✅ 랜딩 `aabfdb3e5fbe98e75617309a30920ca27f0b8f7a` — e40 PASS |
+| P2 | Light linking (illumination, flat+BVH) | — | ✅ 랜딩 `8d05a4ef1793ca9ccc98549dae78af2156bbe078`+`8d05a4ef1793ca9ccc98549dae78af2156bbe078` — e41 8/8 |
+| P3 | Wavefront M3a (sync 제거) | — | ✅ 랜딩 `37cc04b4baa4b492334e8391a2fd2b0a4534e815` — cornell ~2.5x. 단, totals readback은 유지(stale sizing ~6x 회귀 실측 — §1.2의 "정확성 무손실"은 맞으나 진행 지연 비용이 컸음) |
+| P4 | LPE (eye-path 완전) | P0(채널) | ✅ 랜딩 `7a1622a86dfefb044b17c7d4f3f332bee69b668f` — e42 PASS. 범위: PATHCPU/PATHOCL |
+| P5 | Guiding 5.1+5.2+5.5 (fallback, adaptive K, 프로퍼티화) | — | ✅ 랜딩 `00804937b0f880ff2421a497591a27a6e2a531ba` — 계층 폴백+BIC-K+`path.guiding.*` 정식화, e43 PASS |
 | P6 | Wavefront M3b-e (조건부) | P3 결과 | 조건부 — 추가 workload에서 먼저 측정 |
 | P7 | Guiding 5.3 PAVMM + GPU 포맷 v4 | P5 | 잔여 — CPU A/B 이득 확인 시 |
 | P8 | Shadow linking, crypto asset layer, LPE light-path 정확 평가 | P2,P1,P4 | 잔여 — 미착수 |

@@ -1,7 +1,7 @@
 # Light-strategy audit (E37)
 
 > 갱신(2026-09-25): 이 감사 이후 **`LIGHT_BVH`**가 6번째 전략으로 추가됨
-> (`8beac5718` — E&K'18 binned-SAH light tree; AGENTS.md §Light BVH 참조).
+> (`6c0006bc4ab8fc8a6139873ba6160812290b448d` — E&K'18 binned-SAH light tree; AGENTS.md §Light BVH 참조).
 > 아래 "정확히 5개" 서술은 감사 시점 기록.
 
 Full audit of every registered light strategy — `UNIFORM`, `POWER`,
