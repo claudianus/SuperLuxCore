@@ -180,6 +180,9 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 			eyeVertex.depth = 1;
 			// The camera ray has no generating bounce event
 			eyeVertex.bsdfEvent = NONE;
+			// Light linking: the previous vertex's accept mask - ~0 for
+			// camera rays (no receiver => all lights visible)
+			u_longlong linkAcceptMask = ~0ull;
 			while (eyeVertex.depth <= engine->maxEyePathDepth) {
 				eyeSampleResult.firstPathVertex = (eyeVertex.depth == 1);
 				eyeSampleResult.lastPathVertex = (eyeVertex.depth == engine->maxEyePathDepth);
@@ -214,7 +217,7 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 					eyeVertex.bsdf.hitPoint.fixedDir = -eyeRay.d;
 					eyeVertex.throughput *= connectionThroughput;
 
-					DirectHitLight(false, eyeVertex, eyeSampleResult);
+					DirectHitLight(false, eyeVertex, linkAcceptMask, eyeSampleResult);
 
 					if (eyeSampleResult.firstPathVertex) {
 						eyeSampleResult.alpha = 0.f;
@@ -238,7 +241,7 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 
 				// Check if it is a light source
 				if (eyeVertex.bsdf.IsLightSource())
-					DirectHitLight(true, eyeVertex, eyeSampleResult);
+					DirectHitLight(true, eyeVertex, linkAcceptMask, eyeSampleResult);
 
 				// Note: pass-through check is done inside Scene::Intersect()
 
@@ -272,6 +275,10 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 
 					hashGrid.Process(this, eyeVertex, &eyeSampleResult.radiance[0]);
 				}
+
+				// Light linking: this vertex becomes the receiver for the
+				// next segment's emitter hit
+				linkAcceptMask = eyeVertex.bsdf.GetLinkAcceptMask();
 
 				//--------------------------------------------------------------
 				// Build the next vertex path ray

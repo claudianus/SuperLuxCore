@@ -62,7 +62,9 @@ void LightCPURenderThread::RenderFunc(std::stop_token stop_token) {
 	sampler->SetThreadIndex(threadIndex);
 	sampler->RequestSamples(SCREEN_NORMALIZED_ONLY, pathTracer.lightSampleSize);
 
-	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+			pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+			pathTracer.varianceClampSigma);
 
 	//--------------------------------------------------------------------------
 	// Trace paths

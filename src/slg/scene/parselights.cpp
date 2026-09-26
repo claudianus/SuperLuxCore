@@ -465,6 +465,9 @@ LightSourceUPtr Scene::CreateLightSource(const string &name, const luxrays::Prop
 	lightSource->gain = props.Get(Property(propName + ".gain")(Spectrum(1.f))).Get<Spectrum>();
 	lightSource->SetID(props.Get(Property(propName + ".id")(0)).Get<int>());
 	lightSource->SetImportance(props.Get(Property(propName + ".importance")(1.0)).Get<double>());
+	// Light linking: 0 = global light (default)
+	lightSource->linkMask = ParseLinkGroupMask(
+			props.Get(Property(propName + ".linkgroups")("")).Get<string>());
 
 	if (!lightSource->IsIntersectable()) {
 		auto& nils = static_cast<NotIntersectableLightSource&>(*lightSource);

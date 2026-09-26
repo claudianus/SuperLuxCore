@@ -177,6 +177,84 @@ the device fallback.
   `Init` kernel reports a pre-existing POD-arg layout error on clspv —
   unrelated to light params (it takes none).
 
+## Adaptive Robust Clamping (path.clamping.variance.*)
+
+Firefly suppression in `VarianceClamping` (`src/slg/utils/varianceclamping.cpp`,
+GPU twin `include/slg/utils/varianceclamping_funcs.cl` — keep them in
+sync). Three orthogonal mechanisms on top of the user `maxvalue`:
+
+- `path.clamping.variance.adaptive` (default 1): the margin is estimated
+  from robust statistics of the 3x3 neighborhood of pixel means, read
+  straight from the film channel buffer (no extra buffers). Bound per
+  pixel: `T = max(ownMean, med) + max(sigma*mad, sqrtMax*(0.1+E))`.
+  Spatially coherent bright content (sun glints, caustic patches) has a
+  high neighborhood median/MAD so the bound relaxes; isolated fireflies
+  sit in dark neighborhoods with tiny MAD and get clamped hard. Median/
+  MAD is the online counterpart of DeCoro et al. PG'10 density-outlier
+  rejection (breaks only at >50% contamination). <3 valid neighbors →
+  legacy `[0, sqrtMax]` virgin bound. `adaptive=0` keeps the legacy
+  fixed margin around the own-pixel mean.
+- `path.clamping.variance.scope` = `all|indirect|direct` (default
+  `indirect`, Cycles-style direct/indirect split). Scope enums:
+  `CLAMP_ALL=0, CLAMP_INDIRECT=1, CLAMP_DIRECT=2` — the ints must match
+  the CL kernel params. Under `indirect`, emission + first-vertex direct
+  components are untouched and the beauty loses exactly the removed
+  indirect share (beauty/AOV consistency). `SampleResult::AddEmission`/
+  `AddDirectLight` fill the component fields regardless of AOV channel
+  declaration, so the decomposition is always valid. Light-traced
+  PER_SCREEN splats count as indirect (skipped under `direct` scope).
+- `path.clamping.variance.sigma` (default 6): MAD multiplier; 6*MAD ~ 4σ
+  for Gaussian neighborhoods.
+
+Multi-group caveat: `directish` lives in group 0; `indirectY` is
+computed over all groups, so with >1 radiance groups the threshold is
+slightly permissive for group 0 (bookkeeping stays consistent via the
+proportional `sB` scale on extra groups).
+
+Regression: `dev-tools/e42_adaptive_clamp_test.py` (firefly suppression,
+energy preservation, scope symmetry, legacy mode, CPU/GPU parity).
+720p Blender-path visual: `SuperBlendLuxCore/dev-tools/clamp_visual_test.py`.
+
+References: DeCoro et al., "A Memory Efficient Method for Variance
+Estimation in Path Tracing" (PG 2010); Cycles direct/indirect clamp
+split; Buisine et al. adaptive median-of-means; Zirr & Kaplanyan,
+"Re-Weighting Firefly Samples" (CGF 2018).
+
+Gotcha fixed along the way: upstream AOV clamp fallbacks read the
+`*_REFLECT` channel as the expected value for `*_TRANSMIT` components
+and the `else if` fallback repeated the same (dead) condition — CPU
+now reads the proper TRANSMIT channel + aggregate fallback, matching
+the GPU twin.
+
+## Light linking (scene.{objects,lights}.X.linkgroups)
+
+Receiver-based direct-illumination linking (Cycles semantics):
+`scene.lights.X.linkgroups = "a,b"` puts the light in groups a,b
+(`LightSource::linkMask`, 0 = global); `scene.objects.X.linkgroups` +
+`.linkmode = include|exclude` sets the object's accept mask
+(`SceneObject::linkAcceptMask`). A light contributes to a vertex iff
+`light->IsLinkedTo(bsdf.GetLinkAcceptMask())` (mask intersect, or
+light global). Names map to bits via `Scene::ParseLinkGroupMask` —
+insertion order = bit order, and `Scene::ToProperties` re-emits names
+in the same order so masks round-trip through .bcf.
+
+- Filtered: NEE (`DirectLightSampling`), BSDF-sampled direct emitter
+  hits (`DirectHitFiniteLight`/`DirectHitInfiniteLight` — must stay
+  consistent with NEE or MIS weights leak light), and the FIRST
+  surface vertex of light tracing (`RenderLightSample`,
+  `BiDirCPURenderThread::TraceLightPath`, GPU light kernel).
+- NOT filtered: indirect bounces (depth>=1) — a linked light still
+  propagates through GI; objects receive it indirectly.
+- `EyePathInfo::linkAcceptMask` carries the receiver mask to direct-hit
+  tests; updated in `EyePathInfo::AddVertex` (CPU+GPU twins).
+- Emissive mesh triangle lights inherit the owning object's link
+  groups (`sceneobjectdefs.cpp`); env/infinite lights take
+  `scene.lights.X.linkgroups` too.
+- 64-bit masks use `u_longlong` host-side (NOT `u_int64_t` — POSIX
+  only) and `ulong`/`~0ull` kernel-side (`~0ul` is 32-bit on Windows).
+- Regression: `dev-tools/e41_lightlink_test.py` (8/8: include/exclude,
+  global, mesh emitter, env, multi-group, CPU/GPU parity, roundtrip).
+
 ## Gotchas
 
 - Device uploads must be drained (`FinishQueue()`) before host arrays
@@ -225,6 +303,16 @@ the device fallback.
   tests that read `RGB_IMAGEPIPELINE` see ~0.51 regardless of material
   or light gain. Measure radiance via the raw `RGB` output or set
   `film.imagepipelines.0.0.type = NOP`.
+- Integer film outputs (OBJECT_ID, MATERIAL_ID, CRYPTOMATTE) need
+  `Film.GetOutputUInt` + a `np.uint32` buffer — `GetOutputFloat` throws
+  "Unknown film output type". Outputs must also be declared
+  (`film.outputs.N.type = OBJECT_ID`) or GetOutput fails "not available".
+- PATHOCL device types on Apple Silicon are `METAL_GPU`/`VULKAN_GPU`,
+  not `OPENCL_GPU` — device selection masks must match those names.
+- Per-object luminance tests should compare the MEDIAN of the object's
+  OBJECT_ID pixels, not the mean: the film pixel filter bleeds bright
+  neighbours into silhouette-edge pixels (~0.01 luminance on "unlit"
+  objects).
 - `HardwareDevice::AllocBuffer(&ptr, ...)` overwrites a non-null `ptr`
   WITHOUT freeing — re-allocating an existing member leaks the old
   buffer and its `usedMemory` accounting (the "memory leak in LuxRays

@@ -116,8 +116,15 @@ public:
 
 	static std::string LightSourceType2String(const LightSourceType type);
 
+	// Light linking: 0 = global (lights every object); else the light
+	// only lights objects whose linkAcceptMask shares a group bit.
+	bool IsLinkedTo(const u_longlong acceptMask) const {
+		return (linkMask == 0u) || ((linkMask & acceptMask) != 0u);
+	}
+
 	u_int lightSceneIndex;
 	VolumeConstPtr volume;
+	u_longlong linkMask = 0;
 };
 
 //------------------------------------------------------------------------------

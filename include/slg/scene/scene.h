@@ -307,6 +307,16 @@ public:
 	// named object or material, per the spec's manifest format.
 	std::string GetCryptomatteManifest(const bool useObjectNames) const;
 
+	// Light linking: allocate a stable bit index for a link group name
+	// (max 64 groups). Throws if the table overflows.
+	u_int32_t GetLinkGroupBit(const std::string &name);
+	// Parse a comma-separated group list ("a, b,c") into a bit mask.
+	u_longlong ParseLinkGroupMask(const std::string &csv);
+	// Inverse: mask -> comma-separated group names (ToProperties).
+	std::string LinkGroupMaskToString(const u_longlong mask) const;
+	// Group-name ordered list for ToProperties re-emission.
+	const auto &GetLinkGroupNames() const { return linkGroupNames; }
+
 	// Serialization
 	static SceneUPtr LoadSerialized(const std::string &fileName);
 	static void SaveSerialized(const std::string &fileName, SceneUPtr&& scene);
@@ -331,6 +341,10 @@ protected:
 	MaterialDefinitions matDefs; // Material definitions
 	SceneObjectDefinitions objDefs; // SceneObject definitions
 	LightSourceDefinitions lightDefs; // LightSource definitions
+
+	// Light linking: named group -> bit index (insertion order = bit order)
+	std::unordered_map<std::string, u_int32_t> linkGroupTable;
+	std::vector<std::string> linkGroupNames;
 
 	// World positions of point-ish lights eligible for equiangular
 	// distance sampling (built by Scene::Preprocess, used by

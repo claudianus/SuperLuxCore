@@ -167,7 +167,14 @@ typedef struct {
 	// an OR of DIFFUSE, GLOSSY and SPECULAR.
 	BSDFEvent visibility;
 	int isDirectLightSamplingEnabled;
-	
+
+	// Light linking group mask: 0 = global (lights every object)
+#if defined(SLG_OPENCL_KERNEL)
+	ulong linkMask;
+#else
+	u_longlong linkMask;
+#endif
+
 	union {
 		NotIntersectableLightSource notIntersectable;
 		TriangleLightParam triangle;

@@ -34,6 +34,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->lastFromVolume = false;
 	pathInfo->isTransmittedPath = true;
 	pathInfo->lastOnlyInfiniteLights = false;
+	pathInfo->linkAcceptMask = ~0ull;
 
 	pathInfo->isNearlyCaustic = false;
 	pathInfo->isNearlyS = false;
@@ -131,6 +132,9 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 			(bsdf->materialIndex != NULL_INDEX) &&
 			mats[bsdf->materialIndex].isShadowCatcher &&
 			mats[bsdf->materialIndex].isShadowCatcherOnlyInfiniteLights;
+	// Light linking: the new vertex becomes the receiver for the next
+	// segment's emitter hit (volume bsdf carries ~0 = accepts all)
+	pathInfo->linkAcceptMask = bsdf->hitPoint.linkAcceptMask;
 	
 	pathInfo->isTransmittedPath = pathInfo->isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }

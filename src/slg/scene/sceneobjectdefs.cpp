@@ -75,6 +75,8 @@ void SceneObjectDefinitions::DefineIntersectableLights
 		tl->lightMaterial = &obj.GetMaterial();
 		tl->volume = tl->lightMaterial->GetExteriorVolume();
 		tl->sceneObject = &obj;
+		// Emissive mesh lights inherit the owning object's link groups
+		tl->linkMask = obj.GetLinkGroupMask();
 		// This is initialized in LightSourceDefinitions::Preprocess()
 		tl->meshIndex = NULL_INDEX;
 		tl->triangleIndex = i;

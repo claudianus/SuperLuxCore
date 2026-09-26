@@ -143,7 +143,9 @@ void PathOCLNativeRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		lightSampler->RequestSamples(SCREEN_NORMALIZED_ONLY, pathTracer.lightSampleSize);
 	}
 	
-	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+			pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+			pathTracer.varianceClampSigma);
 
 	// Setup PathTracer thread state
 	PathTracerThreadState pathTracerThreadState(

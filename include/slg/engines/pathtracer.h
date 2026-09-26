@@ -188,6 +188,12 @@ public:
 
 	// Clamping settings
 	float sqrtVarianceClampMaxValue;
+	// Adaptive Robust Clamping (see varianceclamping.h): 0/1 flags and
+	// scope enum match the CL kernel layout (0 = all, 1 = indirect,
+	// 2 = direct)
+	int varianceClampAdaptive;
+	int varianceClampScope;
+	float varianceClampSigma;
 
 	// Hybrid backward/forward path tracing settings
 	float hybridBackForwardPartition, hybridBackForwardGlossinessThreshold;

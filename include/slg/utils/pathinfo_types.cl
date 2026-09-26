@@ -34,6 +34,13 @@ typedef struct {
 	// (shadow catcher): its NEE proposal was the infinite distribution, so
 	// DirectHit MIS must measure the hit against that same distribution
 	bool lastOnlyInfiniteLights;
+	// Light linking: the last vertex's receiver accept mask (~0 before
+	// the first surface vertex / after a volume vertex = accepts all)
+#if defined(SLG_OPENCL_KERNEL)
+	ulong linkAcceptMask;
+#else
+	u_longlong linkAcceptMask;
+#endif
 
 	int isNearlyCaustic;
 	// Specular, Specular+ Diffuse and Specular+ Diffuse Specular+ paths

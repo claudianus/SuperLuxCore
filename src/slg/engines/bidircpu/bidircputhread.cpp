@@ -478,7 +478,9 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 			&lightPickPdf
 		);
 
-		if (light) {
+		// Light linking: an incompatible pick contributes 0 but keeps its
+		// pick pdf, so the estimator stays unbiased
+		if (light && light->IsLinkedTo(eyeVertex.bsdf.GetLinkAcceptMask())) {
 			Ray shadowRay;
 			float directPdfW, emissionPdfW, cosThetaAtLight;
 			const Spectrum lightRadiance = light->Illuminate(scene, eyeVertex.bsdf,
@@ -557,9 +559,12 @@ void BiDirCPURenderThread::DirectHitLight(
 	const float directPdfA,
 	const float emissionPdfW,
 	const PathVertexVM &eyeVertex,
+	const u_longlong linkAcceptMask,
 	Spectrum *radiance
 ) const {
-	if (lightRadiance.Black())
+	// Light linking: the light must be linked to the previous (receiving)
+	// vertex, whose accept mask the caller carries
+	if (lightRadiance.Black() || !light.IsLinkedTo(linkAcceptMask))
 		return;
 
 	if (eyeVertex.depth == 1) {
@@ -590,6 +595,7 @@ void BiDirCPURenderThread::DirectHitLight(
 void BiDirCPURenderThread::DirectHitLight(
 	const bool finiteLightSource,
 	const PathVertexVM &eyeVertex,
+	const u_longlong linkAcceptMask,
 	SampleResult &eyeSampleResult
 ) const {
 	float directPdfA, emissionPdfW;
@@ -603,7 +609,8 @@ void BiDirCPURenderThread::DirectHitLight(
 			lightRadiance,
 			directPdfA,
 			emissionPdfW,
-			eyeVertex, &eyeSampleResult.radiance[eyeVertex.bsdf.GetLightID()]
+			eyeVertex, linkAcceptMask,
+			&eyeSampleResult.radiance[eyeVertex.bsdf.GetLightID()]
 		);
 	} else {
 		BiDirCPURenderEngine *engine = (BiDirCPURenderEngine *)renderEngine;
@@ -615,7 +622,8 @@ void BiDirCPURenderThread::DirectHitLight(
 					eyeVertex.bsdf.hitPoint.fixedDir, &directPdfA, &emissionPdfW);
 
 			DirectHitLight(el, lightRadiance, directPdfA, emissionPdfW,
-					eyeVertex, &eyeSampleResult.radiance[el.GetID()]);
+					eyeVertex, linkAcceptMask,
+					&eyeSampleResult.radiance[el.GetID()]);
 		}
 	}
 }
@@ -710,6 +718,12 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 				// and stop if it has. Direct light sampling will take care of
 				// this kind of paths.
 				if (!lightVertex.bsdf.GetPassThroughShadowTransparency().Black() & !lightVertex.bsdf.GetPassThroughShadowTransparencyOverride())
+					break;
+
+				// Light linking: the first light-path vertex receives
+				// direct emission - an unlinked receiver means the whole
+				// path carries no energy (volumes accept all groups)
+				if ((lightVertex.depth == 1) && !light->IsLinkedTo(lightVertex.bsdf.GetLinkAcceptMask()))
 					break;
 
 				// Update the new light vertex
@@ -883,7 +897,9 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 	sampler->SetThreadIndex(threadIndex);
 	sampler->RequestSamples(PIXEL_NORMALIZED_AND_SCREEN_NORMALIZED, sampleSize);
 
-	VarianceClamping varianceClamping(engine->sqrtVarianceClampMaxValue);
+	VarianceClamping varianceClamping(engine->sqrtVarianceClampMaxValue,
+			engine->varianceClampAdaptive, engine->varianceClampScope,
+			engine->varianceClampSigma);
 
 	// Disable vertex merging
 	misVmWeightFactor = 0.f;
@@ -960,6 +976,9 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 			eyeSampleResult.shadingNormal = Normal();
 			bool photonGICausticCacheUsed = false;
 			bool isTransmittedEyePath = true;
+			// Light linking: the previous vertex's accept mask - ~0 for
+			// camera rays (no receiver => all lights visible)
+			u_longlong linkAcceptMask = ~0ull;
 			while (eyeVertex.depth <= engine->maxEyePathDepth) {
 				eyeSampleResult.firstPathVertex = (eyeVertex.depth == 1);
 				eyeSampleResult.lastPathVertex = (eyeVertex.depth == engine->maxEyePathDepth);
@@ -992,7 +1011,7 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 					eyeVertex.bsdf.hitPoint.fixedDir = -eyeRay.d;
 					eyeVertex.throughput *= connectionThroughput;
 
-					DirectHitLight(false, eyeVertex, eyeSampleResult);
+					DirectHitLight(false, eyeVertex, linkAcceptMask, eyeSampleResult);
 
 					if (eyeSampleResult.firstPathVertex) {
 						eyeSampleResult.alpha = 0.f;
@@ -1057,7 +1076,7 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 					// Avoid to render caustic path if PhotonGI caustic cache
 					// has been used (for SDS paths)
 					!photonGICausticCacheUsed){
-					DirectHitLight(true, eyeVertex, eyeSampleResult);
+					DirectHitLight(true, eyeVertex, linkAcceptMask, eyeSampleResult);
 				}
 
 				// Note: pass-through check is done inside Scene::Intersect()
@@ -1110,6 +1129,10 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 					
 					assert (eyeSampleResult.IsValid());
 				}
+
+				// Light linking: this vertex becomes the receiver for the
+				// next segment's emitter hit
+				linkAcceptMask = eyeVertex.bsdf.GetLinkAcceptMask();
 
 				//--------------------------------------------------------------
 				// Build the next vertex path ray

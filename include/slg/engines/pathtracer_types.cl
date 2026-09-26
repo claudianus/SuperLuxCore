@@ -27,6 +27,13 @@ typedef struct {
 
 	// Clamping settings
 	float sqrtVarianceClampMaxValue;
+	// Adaptive Robust Clamping (see varianceclamping.h): adaptive toggles
+	// the 3x3-neighborhood median/MAD margin, scope selects the clamped
+	// path class (0 = all, 1 = indirect, 2 = direct), sigma is the MAD
+	// multiplier.
+	unsigned int varianceClampAdaptive;
+	unsigned int varianceClampScope;
+	float varianceClampSigma;
 
 	int forceBlackBackground;
 

@@ -120,6 +120,11 @@ PropertiesUPtr Scene::ToProperties(const bool useRealFileName) const {
 				.ToProperties(imgMapCache, useRealFileName));
 		}
 		catch(std::bad_cast&) {}
+
+		// Light linking group membership
+		if (l.linkMask != 0)
+			props->Set(Property("scene.lights." + l.GetName() + ".linkgroups")(
+					LinkGroupMaskToString(l.linkMask)));
 	}
 
 	// Get the sorted list of texture names according their dependencies
@@ -171,7 +176,7 @@ PropertiesUPtr Scene::ToProperties(const bool useRealFileName) const {
 	// Write the object information
 	for (u_int i = 0; i < objDefs.GetSize(); ++i) {
 		auto& obj = objDefs.GetSceneObject(i);
-		props->Set(obj.ToProperties(extMeshCache, useRealFileName));
+		props->Set(obj.ToProperties(extMeshCache, useRealFileName, &linkGroupNames));
 	}
 
 	// Geometry spilling settings (scene.spill.*) ride along in the
@@ -1080,6 +1085,51 @@ string Scene::GetCryptomatteManifest(const bool useObjectNames) const {
 	manifest += "}";
 
 	return manifest;
+}
+
+u_int32_t Scene::GetLinkGroupBit(const std::string &name) {
+	// Insertion order = bit order, so the same name always resolves to the
+	// same bit within a scene definition (also across ToProperties
+	// re-parsing, since group names are re-emitted and re-parsed in the
+	// same order they were first seen).
+	const auto it = linkGroupTable.find(name);
+	if (it != linkGroupTable.end())
+		return it->second;
+
+	if (linkGroupNames.size() >= 64)
+		throw std::runtime_error("Too many light link groups (maximum is 64): \"" + name + "\"");
+
+	const u_int32_t bit = linkGroupNames.size();
+	linkGroupTable[name] = bit;
+	linkGroupNames.push_back(name);
+
+	return bit;
+}
+
+u_longlong Scene::ParseLinkGroupMask(const std::string &csv) {
+	u_longlong mask = 0;
+	std::vector<std::string> names;
+	boost::split(names, csv, boost::is_any_of(","));
+	for (auto &name : names) {
+		boost::algorithm::trim(name);
+		if (!name.empty())
+			mask |= 1ull << GetLinkGroupBit(name);
+	}
+
+	return mask;
+}
+
+std::string Scene::LinkGroupMaskToString(const u_longlong mask) const {
+	std::string csv;
+	for (u_int32_t i = 0; i < linkGroupNames.size(); ++i) {
+		if (mask & (1ull << i)) {
+			if (!csv.empty())
+				csv += ",";
+			csv += linkGroupNames[i];
+		}
+	}
+
+	return csv;
 }
 
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

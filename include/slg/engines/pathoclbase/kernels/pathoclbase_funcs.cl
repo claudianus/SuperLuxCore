@@ -237,8 +237,11 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 	for (uint i = 0; i < envLightCount; ++i) {
 		__global const LightSource* restrict light = &lights[envLightIndices[i]];
 
-		// Check if the light source is visible according the settings
-		if (!CheckDirectHitVisibilityFlags(light, &pathInfo->depth, pathInfo->lastBSDFEvent))
+		// Check if the light source is visible according the settings and
+		// linked to the previous (receiving) vertex - light linking
+		if (!CheckDirectHitVisibilityFlags(light, &pathInfo->depth, pathInfo->lastBSDFEvent) ||
+				((light->linkMask != 0ull) &&
+				((light->linkMask & pathInfo->linkAcceptMask) == 0ull)))
 			continue;
 
 		float directPdfW;
@@ -314,8 +317,11 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 		LIGHTS_PARAM_DECL) {
 	__global const LightSource* restrict light = &lights[bsdf->triangleLightSourceIndex];
 
-	// Check if the light source is visible according the settings
+	// Check if the light source is visible according the settings and
+	// linked to the previous (receiving) vertex - light linking
 	if (!CheckDirectHitVisibilityFlags(light, &pathInfo->depth, pathInfo->lastBSDFEvent) ||
+			((light->linkMask != 0ull) &&
+			((light->linkMask & pathInfo->linkAcceptMask) == 0ull)) ||
 			// If the material is shadow transparent, Direct Light sampling
 			// will take care of transporting all emitted light
 			bsdf->hitPoint.throughShadowTransparency)
@@ -1254,6 +1260,13 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 			if ((candIndex == NULL_INDEX) || (candPickPdf <= 0.f))
 				continue;
 
+			// Light linking: an incompatible candidate contributes 0 to
+			// wSum but still counts in mTotal (unbiasedness requirement)
+			const ulong candLinkMask = lights[candIndex].linkMask;
+			if ((candLinkMask != 0ull) &&
+					((candLinkMask & bsdf->hitPoint.linkAcceptMask) == 0ull))
+				continue;
+
 			// NOTE: the candidate Illuminate() writes into the global
 			// shadowRay scratch buffer; the final Illuminate() below
 			// overwrites it with the winning candidate's shadow ray.
@@ -1363,6 +1376,13 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 	}
 
 	__global const LightSource* restrict light = &lights[lightIndex];
+
+	// Light linking: an incompatible pick contributes 0 but keeps its
+	// proposal pdf, so the estimator stays unbiased. This also rejects
+	// winners merged from reservoirs of other receivers (spatial ReSTIR).
+	if ((light->linkMask != 0ull) &&
+			((light->linkMask & bsdf->hitPoint.linkAcceptMask) == 0ull))
+		return false;
 
 	info->lightIndex = lightIndex;
 	info->lightID = light->lightID;

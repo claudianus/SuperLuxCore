@@ -153,6 +153,8 @@ OPENCL_FORCE_INLINE void BSDF_InitVolume(
 	bsdf->hitPoint.triangleBariCoord2 = 0.f;
 
 	bsdf->hitPoint.objectID = NULL_INDEX;
+	// Light linking: volumes have no scene object - they accept all groups
+	bsdf->hitPoint.linkAcceptMask = ~0ull;
 
 	// Build the local reference system
 	Frame_SetFromZ(&bsdf->frame, geometryN);

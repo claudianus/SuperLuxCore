@@ -55,7 +55,8 @@ bool SceneObject::UpdateMeshReference(luxrays::ExtMeshConstRef oldMesh, luxrays:
 }
 
 PropertiesUPtr SceneObject::ToProperties(const ExtMeshCache &extMeshCache,
-		const bool useRealFileName) const {
+		const bool useRealFileName,
+		const std::vector<std::string> *linkGroupNames) const {
 	auto props = std::make_unique<Properties>();
 
 	const std::string name = GetName();
@@ -65,6 +66,22 @@ PropertiesUPtr SceneObject::ToProperties(const ExtMeshCache &extMeshCache,
 	props->Set(Property("scene.objects." + name + ".ply")(fileName));
 	props->Set(Property("scene.objects." + name + ".camerainvisible")(cameraInvisible));
 	props->Set(Property("scene.objects." + name + ".id")(objID));
+
+	// Light linking
+	if (linkGroupNames) {
+		string csv;
+		for (u_int32_t i = 0; i < linkGroupNames->size(); ++i) {
+			if (linkGroupMask & (1ull << i)) {
+				if (!csv.empty())
+					csv += ",";
+				csv += (*linkGroupNames)[i];
+			}
+		}
+		if (!csv.empty())
+			props->Set(Property("scene.objects." + name + ".linkgroups")(csv));
+		if (linkExclude)
+			props->Set(Property("scene.objects." + name + ".linkmode")("exclude"));
+	}
 
 	switch (GetMesh().GetType()) {
 		case TYPE_EXT_TRIANGLE: {

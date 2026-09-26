@@ -412,6 +412,9 @@ void CompiledScene::CompileLights() {
 				(l.IsVisibleIndirectGlossy() ? GLOSSY : NONE) |
 				(l.IsVisibleIndirectSpecular() ? SPECULAR : NONE);
 		oclLight->isDirectLightSamplingEnabled = l.IsDirectLightSamplingEnabled();
+		// Light linking group mask (TriangleLight already inherited the
+		// owning object's groups in DefineIntersectableLights)
+		oclLight->linkMask = l.linkMask;
 
 		switch (l.GetType()) {
 			case TYPE_TRIANGLE: {

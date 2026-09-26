@@ -100,7 +100,9 @@ void TilePathCPURenderEngine::StartLockLess() {
 		GetFilm().Reset();
 
 		tileRepository = TileRepository::FromProperties(renderConfig.GetConfig());
-		tileRepository->varianceClamping = VarianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+		tileRepository->varianceClamping = VarianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+				pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+				pathTracer.varianceClampSigma);
 		tileRepository->InitTiles(GetFilm());
 	}
 

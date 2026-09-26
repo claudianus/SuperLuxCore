@@ -476,7 +476,9 @@ void BakeCPURenderThread::RenderFunc(std::stop_token stop_token) {
 		}
 
 		// Setup variance clamping
-		VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+		VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+				pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+				pathTracer.varianceClampSigma);
 
 		// Setup PathTracer thread state
 		PathTracerThreadState pathTracerThreadState(device,

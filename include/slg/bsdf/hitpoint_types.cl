@@ -57,6 +57,14 @@ typedef struct {
 	// host-computed into SceneObject::cryptoID)
 	float cryptoObjectID;
 
+	// Light linking: the hit object's receiver accept mask (~0 for
+	// volume hits and contexts without a scene object)
+#if defined(SLG_OPENCL_KERNEL)
+	ulong linkAcceptMask;
+#else
+	u_longlong linkAcceptMask;
+#endif
+
 	int intoObject, throughShadowTransparency;
 
 	// Hero-wavelength spectral state (SLG_SPECTRAL builds), copied from the

@@ -97,10 +97,11 @@ protected:
 		const float u3, const float u4,
 		const PathVertexVM &eyeVertex, SampleResult &eyeSampleResult) const;
 	void DirectHitLight(const bool finiteLightSource, const PathVertexVM &eyeVertex,
-		SampleResult &eyeSampleResult) const;
+		const u_longlong linkAcceptMask, SampleResult &eyeSampleResult) const;
 	void DirectHitLight(LightSourceConstRef light, const luxrays::Spectrum &lightRadiance,
 		const float directPdfA, const float emissionPdfW,
-		const PathVertexVM &eyeVertex, luxrays::Spectrum *radiance) const;
+		const PathVertexVM &eyeVertex, const u_longlong linkAcceptMask,
+		luxrays::Spectrum *radiance) const;
 
 	void ConnectVertices(const float time,
 		const PathVertexVM &eyeVertex, const PathVertexVM &BiDirVertex,
@@ -159,6 +160,9 @@ public:
 	
 	// Clamping settings
 	float sqrtVarianceClampMaxValue;
+	int varianceClampAdaptive;
+	int varianceClampScope;
+	float varianceClampSigma;
 
 	// Albedo AOV settings
 	AlbedoSpecularSetting albedoSpecularSetting;

@@ -175,7 +175,9 @@ void TilePathOCLRenderEngine::InitTileRepository() {
 	tileRepository = TileRepository::FromProperties(*cfgProps);
 	if (GetType() == RTPATHOCL)
 		tileRepository->enableMultipassRendering = false;
-	tileRepository->varianceClamping = VarianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+	tileRepository->varianceClamping = VarianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+			pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+			pathTracer.varianceClampSigma);
 	tileRepository->InitTiles(*film);
 
 	InitTaskCount();

@@ -63,6 +63,7 @@ void CompiledScene::CompileSceneObjects() {
 
 		oclScnObj.cameraInvisible = scnObj.IsCameraInvisible();
 		oclScnObj.cryptoID = scnObj.GetCryptoID();
+		oclScnObj.linkAcceptMask = scnObj.GetLinkAcceptMask();
 	}
 }
 

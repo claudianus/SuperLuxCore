@@ -133,6 +133,11 @@ public:
 	float GetCryptoObjectID() const {
 		return (sceneObject) ? sceneObject->GetCryptoID() : 0.f;
 	}
+	// Light linking: receiver accept mask. Volume/background vertices
+	// have no object and accept all light groups.
+	u_longlong GetLinkAcceptMask() const {
+		return (sceneObject) ? sceneObject->GetLinkAcceptMask() : ~0ull;
+	}
 	float GetCryptoMaterialID() const { return material->GetCryptoID(); }
 
 	VolumeConstPtr GetMaterialInteriorVolume() const {

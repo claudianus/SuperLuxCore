@@ -77,7 +77,9 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 	SampleResult &sampleResult = sampleResults[0];
 	PathTracer::InitEyeSampleResults(engine->GetFilm(), sampleResults);
 
-	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue);
+	VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+			pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+			pathTracer.varianceClampSigma);
 
 	for (u_int steps = 0; !stop_token.stop_requested(); ++steps) {
 		// Check if we are in pause or edit mode

@@ -2126,8 +2126,12 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 
 	const float sqrtVarianceClampMaxValue = taskConfig->pathTracer.sqrtVarianceClampMaxValue;
 	if (sqrtVarianceClampMaxValue > 0.f) {
-		// Radiance clamping
-		VarianceClamping_Clamp(sampleResult, sqrtVarianceClampMaxValue
+		// Radiance clamping (Adaptive Robust Clamping: median/MAD margin +
+		// path-class scope)
+		VarianceClamping_Clamp(sampleResult, sqrtVarianceClampMaxValue,
+				taskConfig->pathTracer.varianceClampAdaptive,
+				taskConfig->pathTracer.varianceClampScope,
+				taskConfig->pathTracer.varianceClampSigma
 				FILM_PARAM);
 	}
 
@@ -3057,7 +3061,17 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 				MATERIALS_PARAM);
 		if (!Spectrum_IsBlack(shadowTransparency) && !shOverride)
 			terminate = true;
-		else {
+		else if (lpi->depth.depth == 0) {
+			// Light linking: the first light-path vertex receives direct
+			// emission - an unlinked receiver carries no energy (volume
+			// hits accept all groups through their ~0 mask)
+			__global const LightSource* restrict linkLight =
+					&lights[lpi->lightIndex];
+			terminate = (linkLight->linkMask != 0ull) &&
+					((linkLight->linkMask & bsdf->hitPoint.linkAcceptMask) == 0ull);
+		}
+
+		if (!terminate) {
 			// Something was hit
 			VSTORE3F(connectionThroughput * VLOAD3F(taskState->throughput.c),
 					taskState->throughput.c);

@@ -34,5 +34,13 @@ typedef struct {
 	int cameraInvisible;
 	// Cryptomatte float id (host-computed murmur3 of the object name)
 	float cryptoID;
+
+	// Light linking: receiver accept mask (a light with mask L lights
+	// this object iff L == 0 || (L & linkAcceptMask) != 0)
+#if defined(SLG_OPENCL_KERNEL)
+	ulong linkAcceptMask;
+#else
+	u_longlong linkAcceptMask;
+#endif
 } SceneObject;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

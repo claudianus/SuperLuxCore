@@ -130,6 +130,9 @@ public:
 	// (shadow catcher): its NEE proposal was the infinite distribution, so
 	// DirectHit MIS must measure the hit against that same distribution
 	bool lastOnlyInfiniteLights;
+	// Light linking: the last vertex's link accept mask (~0 before any
+	// surface vertex / after a volume vertex = accepts every group)
+	u_longlong linkAcceptMask;
 
 	// Adaptive caustic partition (see isAdaptiveCaustic in
 	// pathinfo_types.cl)

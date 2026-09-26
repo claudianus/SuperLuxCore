@@ -68,6 +68,19 @@ public:
 		return cryptoID;
 	}
 
+	// Light linking: linkGroupMask is the raw group membership (used when
+	// the object emits light); linkAcceptMask is the resolved accept set
+	// (linkmode=include -> groups, exclude -> ~groups). A light with
+	// linkMask L lights this object iff (L == 0) || (L & linkAcceptMask).
+	void SetLinkGroups(const u_longlong groups, const bool exclude) {
+		linkGroupMask = groups;
+		linkAcceptMask = exclude ? ~groups : groups;
+		linkExclude = exclude;
+	}
+	u_longlong GetLinkGroupMask() const { return linkGroupMask; }
+	u_longlong GetLinkAcceptMask() const { return linkAcceptMask; }
+	bool GetLinkExclude() const { return linkExclude; }
+
 	void SetMaterial(MaterialRef newMat) {
 		mat = newMat;
 	}
@@ -93,7 +106,8 @@ public:
 	bool UpdateMeshReference(luxrays::ExtMeshConstRef oldMesh, luxrays::ExtMeshRef newMesh);
 
 	luxrays::PropertiesUPtr ToProperties(const ExtMeshCache &extMeshCache,
-			const bool useRealFileName) const;
+			const bool useRealFileName,
+			const std::vector<std::string> *linkGroupNames = nullptr) const;
 
 	luxrays::ExtMeshConstRef GetMesh() const { return mesh; }
 	luxrays::ExtMeshRef GetMesh() { return mesh; }
@@ -108,6 +122,9 @@ private:
 	u_int bakeMapUVIndex;
 
 	bool cameraInvisible;
+
+	u_longlong linkGroupMask = 0, linkAcceptMask = 0;
+	bool linkExclude = false;
 
 	mutable float cryptoID = 0.f;
 };

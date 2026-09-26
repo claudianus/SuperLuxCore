@@ -205,6 +205,16 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 	auto scnObj = std::make_unique<SceneObject>(mesh, mat, objID, cameraInvisible);
 	scnObj->SetName(objName);
 
+	// Light linking: scene.objects.<name>.linkgroups = "a,b" and
+	// .linkmode = include|exclude (include = default)
+	const string linkGroups = props.Get(Property(propName + ".linkgroups")("")).Get<string>();
+	if (!linkGroups.empty() || props.IsDefined(propName + ".linkmode")) {
+		const string linkMode = props.Get(Property(propName + ".linkmode")("include")).Get<string>();
+		if ((linkMode != "include") && (linkMode != "exclude"))
+			throw std::runtime_error("Invalid " + propName + ".linkmode (include|exclude): " + linkMode);
+		scnObj->SetLinkGroups(ParseLinkGroupMask(linkGroups), linkMode == "exclude");
+	}
+
 	if (props.IsDefined(propName + ".bake.combined.file")) {
 		ImageMapUPtr imgMap = ImageMap::FromProperties(props, propName + ".bake.combined");
 
@@ -283,6 +293,9 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 	auto dstObj = std::make_unique<SceneObject>(
 		newMesh, srcObj.GetMaterial(), objID, srcObj.IsCameraInvisible()
 	);
+	// Light linking is a per-object property in Blender - instances of a
+	// linked source share its accept/emitter masks.
+	dstObj->SetLinkGroups(srcObj.GetLinkGroupMask(), srcObj.GetLinkExclude());
 
 	dstObj->SetName(dstObjName);
 	auto [dstObjRef, oldObjPtr] = objDefs.DefineSceneObject(std::move(dstObj));
@@ -350,6 +363,10 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 	auto dstObj = std::make_unique<SceneObject>(
 		newMesh, srcObj.GetMaterial(), objID, srcObj.IsCameraInvisible()
 	);
+	// Light linking is a per-object property in Blender - instances of a
+	// linked source share its accept/emitter masks.
+	dstObj->SetLinkGroups(srcObj.GetLinkGroupMask(), srcObj.GetLinkExclude());
+
 	dstObj->SetName(dstObjName);
 	auto [dstObjRef, oldObjPtr] = objDefs.DefineSceneObject(std::move(dstObj));
 

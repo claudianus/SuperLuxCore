@@ -321,7 +321,10 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 			lightSurfaceUs
 		);
 
-		if (light) {
+		// Light linking: an incompatible pick contributes 0 but keeps its
+		// (flat/BVH) pick pdf, so the estimator stays unbiased at the cost
+		// of some wasted samples.
+		if (light && light->IsLinkedTo(bsdf.GetLinkAcceptMask())) {
 			Ray shadowRay;
 			float directPdfW;
 			Spectrum lightRadiance = light->Illuminate(
@@ -652,8 +655,10 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 
 	auto lightSource = bsdf.GetLightSource();
 
-	// Check if the light source is visible according the settings
+	// Check if the light source is visible according the settings and
+	// linked to the previous (receiving) vertex - light linking
 	if (!CheckDirectHitVisibilityFlags(*lightSource, pathInfo.depth, pathInfo.lastBSDFEvent) ||
+			!lightSource->IsLinkedTo(pathInfo.linkAcceptMask) ||
 			// If the material is shadow transparent, Direct Light sampling
 			// will take care of transporting all emitted light
 			bsdf.hitPoint.throughShadowTransparency)
@@ -737,8 +742,10 @@ void PathTracer::DirectHitInfiniteLight(SceneConstRef scene,
 		return;
 
 	for(EnvLightSource& envLight: scene.GetLightSources().GetEnvLightSources()) {
-		// Check if the light source is visible according the settings
-		if (!CheckDirectHitVisibilityFlags(envLight, pathInfo.depth, pathInfo.lastBSDFEvent))
+		// Check if the light source is visible according the settings and
+		// linked to the previous (receiving) vertex - light linking
+		if (!CheckDirectHitVisibilityFlags(envLight, pathInfo.depth, pathInfo.lastBSDFEvent) ||
+				!envLight.IsLinkedTo(pathInfo.linkAcceptMask))
 			continue;
 
 		float directPdfW;
@@ -2480,6 +2487,12 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 			if (!bsdf.GetPassThroughShadowTransparency().Black() & !bsdf.GetPassThroughShadowTransparencyOverride())
 				break;
 
+			// Light linking: the first light-path vertex (depth 0, before
+			// AddVertex) receives direct emission - an unlinked receiver
+			// means the whole path carries no energy (volumes accept all)
+			if ((pathInfo.depth.depth == 0) && !light->IsLinkedTo(bsdf.GetLinkAcceptMask()))
+				break;
+
 			// Something was hit
 
 			lightPathFlux *= connectionThroughput;
@@ -2696,6 +2709,13 @@ void PathTracer::ParseOptions(
 	if (cfg.IsDefined("path.clamping.variance.maxvalue"))
 		sqrtVarianceClampMaxValue = cfg.Get(defaultProps.Get("path.clamping.variance.maxvalue")).Get<double>();
 	sqrtVarianceClampMaxValue = Max(0.f, sqrtVarianceClampMaxValue);
+	varianceClampAdaptive = cfg.Get(defaultProps.Get("path.clamping.variance.adaptive")).Get<bool>() ? 1 : 0;
+	{
+		const string scope = cfg.Get(defaultProps.Get("path.clamping.variance.scope")).Get<string>();
+		varianceClampScope = ((scope == "direct") || (scope == "DIRECT")) ? VarianceClamping::CLAMP_DIRECT :
+				(((scope == "all") || (scope == "ALL")) ? VarianceClamping::CLAMP_ALL : VarianceClamping::CLAMP_INDIRECT);
+	}
+	varianceClampSigma = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.variance.sigma")).Get<float>());
 
 	forceBlackBackground = cfg.Get(defaultProps.Get("path.forceblackbackground.enable")).Get<bool>();
 	
@@ -3012,6 +3032,9 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.russianroulette.depth")(3) <<
 			Property("path.russianroulette.cap")(.5f) <<
 			Property("path.clamping.variance.maxvalue")(0.f) <<
+			Property("path.clamping.variance.adaptive")(true) <<
+			Property("path.clamping.variance.scope")("indirect") <<
+			Property("path.clamping.variance.sigma")(6.f) <<
 			Property("path.forceblackbackground.enable")(false) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);
