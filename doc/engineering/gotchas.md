@@ -116,4 +116,47 @@
   every `HardwareDeviceBuffer*` member must be nullptr-set in the ctor.
   `InitFilm()` must not loop-Init after `IncThreadFilms()` — that call
   already inits the new film.
+- **PATHOCL white-blowout through layered glass (VC MIS lift)**: the
+  GPU shadow ray walks one SEGMENT per `AdvancePaths_MK_RT_DL`
+  iteration, and `throughShadowTransparency` accumulates across the
+  whole walk — but the VC "lift" (`lightRadiance /= vcMisWeight`, the
+  port of CPU's `misWeight = 1` after the completed walk in
+  `bidircputhread DirectLightSampling`) was applied on EVERY iteration.
+  A shadow ray crossing N archglass panes compounded
+  `(1/vcMisWeight)^N` (~1e4..1e5 per pane on GenmaB's facade) → uniform
+  white field, ~760k anomalous NEE deposits/90 s. Fix: gate the lift on
+  `!continueToTrace` (terminating segment only). Any GPU code that
+  mirrors a CPU "apply once after the walk" adjustment must be gated
+  the same way. Regression: `dev-tools/e44_vc_shadowtransparency_test.py`.
+- **NaN shading frames**: a degenerate `dpdu` (tangent ∥ normal),
+  NaN vertex normals, or opposing normals cancelling in the
+  barycentric sum make `Frame(x,y,z)`/`Frame_Set`/`SetFromZ` emit NaN
+  axes and poison every BSDF evaluation downstream (film drops NaN
+  samples, so the damage is silent). `frame.h`, `frame_funcs.cl`,
+  `hitpoint.cpp`, `hitpoint_funcs.cl` now sanitize: non-finite/zero
+  cross → `CoordinateSystem` on a fallback normal; zero-length
+  `interpolatedN` → `geometryN`; degenerate `geometryN` → `-fixedDir`.
+  On GenmaB this dropped GPU NaN contributions ~81k → 3.
+- **`path.lighttracing.only` native-thread contamination**: GPU-side
+  lt-only correctly zeroes the eye task population, but
+  `PathOCLNativeRenderThread` unconditionally ran the eye sampler —
+  and `opencl.native.threads.count` defaults to the hardware thread
+  count, so every "lt-only" GPU render was secretly a GPU-light +
+  native-eye hybrid (~2x LIGHTCPU brightness on an opaque scene,
+  `eyeSamples > 0`). Native threads now take a LIGHTCPU-style branch
+  (`RenderLightSample`, `SCREEN_NORMALIZED_ONLY`,
+  `sampler.imagesamples.enable=false`). Lesson for hybrid
+  CPU+GPU debug modes: a flag that silences one estimator must be
+  honored by EVERY contributing thread type, not just the device task
+  population — check `stats.renderengine` channel counts
+  (`RADIANCE_PER_PIXEL_NORMALIZED` vs `_SCREEN_NORMALIZED` sample
+  counts) before hunting for formula bugs. Regression:
+  `dev-tools/e45_lighttracing_only_test.py`.
+- Metal kernel compile errors surface only as "Metal program
+  compilation error" from the Python API. The translated source is at
+  `/tmp/luxcore_metal_src.msl`; reproduce the real diagnostics with
+  `cat <(printf '#include <metal_stdlib>\nusing namespace metal;\n')
+  /tmp/luxcore_metal_src.msl > /tmp/m.metal` (copy to `.metal` —
+  `metal` rejects `.msl` as a linker input) and `xcrun -sdk macosx
+  metal -c /tmp/m.metal`.
 

@@ -172,6 +172,16 @@ screen channel (`pathoclbaseoclthreadfilm.cpp:118-120`) — GPU threads
 trace eye paths only. This feature replaces that CPU light population with
 GPU light tasks; the native-thread path remains the fallback.
 
+Under `path.lighttracing.only` the roles flip: the GPU population is
+all-light (`eyeTaskCount = 0`), so native threads must not contribute
+eye samples — they take a LIGHTCPU-style branch (`RenderLightSample`,
+`SCREEN_NORMALIZED_ONLY`, `sampler.imagesamples.enable=false`,
+variance clamping) instead of creating the eye sampler. Before this
+branch existed, natives silently smuggled eye-path contributions into
+every lt-only render (`opencl.native.threads.count` defaults to all
+cores; ~2x LIGHTCPU brightness on validation scenes). Regression:
+`dev-tools/e45_lighttracing_only_test.py`.
+
 ## Baseline: the GPU micro-kernel engine
 
 All GPU path engines share `PathOCLBaseOCLRenderThread`. The renderer is a

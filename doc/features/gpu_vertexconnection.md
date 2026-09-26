@@ -289,6 +289,18 @@ exhausted before the eye path bounces. `WAVEFRONT_NUM_STATES` is 18.
   PATHCPU 0.963 with lower RMSE (VC adds the caustic energy PATHCPU
   misses). Dense vs wavefront dispatch agree within noise
   (ratio 1.009), Metal vs OpenCL agree within noise.
+- `dev-tools/e44_vc_shadowtransparency_test.py` — regression for the
+  layered-glass whiteout: the direct-light kernel re-runs per
+  shadow-ray SEGMENT, and the VC MIS lift
+  (`lightRadiance /= vcMisWeight`, the port of CPU's `misWeight = 1`
+  after the full shadow walk) was applied on every segment. A ray
+  crossing N shadow-transparent panes compounded `(1/vcMisWeight)^N`
+  (~1e4..1e5 per pane — GenmaB's multi-layer facade rendered a uniform
+  white field, ~760k anomalous NEE deposits). Fix `189837864` gates the
+  lift on `!continueToTrace` (terminating segment only, matching CPU).
+  The test stacks 4 archglass panes between an emissive ceiling and a
+  matte receiver: GPU median luminance finite/bounded, within 3x of
+  BIDIRCPU, and 4 panes must not brighten the wall vs 1 pane.
 
 ## Known limits
 

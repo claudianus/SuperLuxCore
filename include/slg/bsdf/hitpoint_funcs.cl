@@ -64,6 +64,18 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 		geometryN = ExtMesh_GetGeometryNormal(&hitPoint->localToWorld, meshIndex, triIndex EXTMESH_PARAM);
 		interpolatedN = ExtMesh_GetInterpolateNormal(&hitPoint->localToWorld, meshIndex, triIndex, b1, b2 EXTMESH_PARAM);
 	}
+	// Non-finite geometry (NaN vertices, degenerate transforms) can also
+	// produce a NaN geometric normal; last resort: face the ray
+	const float gnl2 = dot(geometryN, geometryN);
+	if (!(isfinite(gnl2) && (gnl2 > 1e-20f)))
+		geometryN = -fixedDir;
+	// Degenerate vertex-normal fields (opposing normals cancelling to a
+	// zero barycentric sum, or non-finite data) normalize to NaN and
+	// poison the whole shading frame; fall back to the geometric normal
+	const float inl2 = dot(interpolatedN, interpolatedN);
+	if (!(isfinite(interpolatedN.x + interpolatedN.y + interpolatedN.z) &&
+			(inl2 > 1e-20f)))
+		interpolatedN = geometryN;
 	VSTORE3F(geometryN,  &hitPoint->geometryN.x);
 	VSTORE3F(interpolatedN,  &hitPoint->interpolatedN.x);
 	const float3 shadeN = interpolatedN;

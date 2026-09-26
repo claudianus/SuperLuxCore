@@ -763,8 +763,12 @@ __kernel void AdvancePaths_MK_RT_DL(
 
 	// Vertex connection (M6): CPU DirectLightSampling lifts the MIS
 	// weight to 1 when the shadow ray crossed a shadow-transparent
-	// occluder (throughShadowTransparency of the last shadow hit)
-	if (taskConfig->pathTracer.vertexConnect.enabled &&
+	// occluder (throughShadowTransparency of the last shadow hit).
+	// The flag accumulates over the multi-segment shadow walk, but the
+	// undo must be applied ONCE on the terminating segment - doing it
+	// per iteration compounds 1/vcMisWeight for every transparent hit.
+	if (!continueToTrace &&
+			taskConfig->pathTracer.vertexConnect.enabled &&
 			throughShadowTransparency &&
 			(taskDirectLight->illumInfo.vcMisWeight > 0.f) &&
 			(taskDirectLight->illumInfo.vcMisWeight < 1.f))

@@ -116,6 +116,55 @@ void PathOCLNativeRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 	FilmPtr film = GetThreadFilmPtr();
 	//FilmRef film = ((PathOCLNativeRenderThread *)(engine->renderNativeThreads[0]))->threadFilm;
 	
+	// path.lighttracing.only (debug/validation): the GPU task population
+	// is all-light, so native threads must mirror LIGHTCPU and trace
+	// light paths too - running the eye sampler here would smuggle
+	// eye-path contributions into an lt-only render
+	if (pathTracer.lightTracingOnly) {
+		auto ltSampler = engine->renderConfig.AllocSampler(
+			rndGen, film,
+			engine->GetSampleSplatter(),
+			engine->eyeSamplerSharedData,
+			Properties() << Property("sampler.imagesamples.enable")(false));
+		ltSampler->SetThreadIndex(threadIndex);
+		ltSampler->RequestSamples(SCREEN_NORMALIZED_ONLY, pathTracer.lightSampleSize);
+
+		VarianceClamping varianceClamping(pathTracer.sqrtVarianceClampMaxValue,
+				pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
+				pathTracer.varianceClampSigma);
+
+		vector<SampleResult> sampleResults;
+		for(u_int steps = 0; !stop_token.stop_requested(); ++steps) {
+			if (engine->pauseMode) {
+				while (!stop_token.stop_requested() && engine->pauseMode)
+					std::this_thread::sleep_for(100ms);
+				if (stop_token.stop_requested())
+					break;
+			}
+
+			pathTracer.RenderLightSample(intersectionDevice,
+					engine->renderConfig.GetScene(), *film,
+					*ltSampler, sampleResults);
+
+			if (varianceClamping.hasClamping()) {
+				for(u_int i = 0; i < sampleResults.size(); ++i)
+					varianceClamping.Clamp(*film, sampleResults[i]);
+			}
+
+			ltSampler->NextSample(sampleResults);
+
+#ifdef WIN32
+			// Work around Windows bad scheduling
+			std::this_thread::yield();
+#endif
+
+			if (engine->GetFilm().GetConvergence() == 1.f)
+				break;
+		}
+		threadDone = true;
+		return;
+	}
+
 	// Setup the sampler(s)
 
 	SamplerUPtr lightSampler;

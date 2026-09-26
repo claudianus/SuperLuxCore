@@ -101,7 +101,7 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
 		guidingEnable(false), guidingRisK(0), guidingMinDepth(2),
 		guidingGlossiness(.3f), guidingDiffuse(false),
-		guidingStrength(1.f), spectralEnable(false),
+		guidingStrength(1.f), spectralEnable(false), lightTracingOnly(false),
 		vertexConnectEnable(false),
 		vertexConnectBudget(0), vertexConnectPoolTasks(1),
 		vertexConnectAdaptive(true), vertexConnectMergeRadius(0.f),
@@ -2753,6 +2753,7 @@ void PathTracer::ParseOptions(
 	// (same contract as CPU hybrid).
 	lightTracingEnable = cfg.Get(defaultProps.Get("path.lighttracing.enable")).Get<bool>();
 	lightTracingTaskFraction = Clamp(cfg.Get(defaultProps.Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+	lightTracingOnly = cfg.Get(defaultProps.Get("path.lighttracing.only")).Get<bool>();
 	// Caustic focus cache (GPU): guided emission mixture parameters
 	lightFocusEnable = cfg.Get(defaultProps.Get("path.lighttracing.focus.enable")).Get<bool>();
 	lightFocusRatio = Clamp(cfg.Get(defaultProps.Get("path.lighttracing.focus.ratio")).Get<double>(), 0.0, 0.9);

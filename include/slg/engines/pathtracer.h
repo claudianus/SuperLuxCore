@@ -287,6 +287,10 @@ public:
 	// the eye side (caustic suppression, same contract as CPU hybrid).
 	bool lightTracingEnable;
 	float lightTracingTaskFraction;
+	// path.lighttracing.only (debug/validation): the whole GPU task
+	// population traces light paths; native threads must not contribute
+	// eye-path samples either (LIGHTCPU-style output)
+	bool lightTracingOnly;
 
 	// Vertex connection (M6, path.vertexconnection.enable): GPU port of
 	// the BIDIRCPU eye x light vertex connect against a per-light-task

@@ -40,8 +40,21 @@ public:
 	};
 
 	Frame(const Vector &x, const Vector &y, const Normal &z) : Z(Vector(z)) {
-		Y = Normalize(Cross(Z, x));
-		X = Cross(Y, Z);
+		// A shading frame must never contain NaN/Inf: a degenerate
+		// tangent (x parallel to z, e.g. dpdu collapsing to a zero
+		// vector) or non-finite input normalizes to NaN and poisons
+		// every BSDF evaluation done through the frame. Fall back to
+		// an arbitrary orthonormal basis around a sanitized normal.
+		const Vector y0 = Cross(Z, x);
+		const float yl2 = Dot(y0, y0);
+		if (isfinite(yl2) && (yl2 > 1e-20f)) {
+			Y = Normalize(y0);
+			X = Cross(Y, Z);
+		} else {
+			if (!(isfinite(Dot(Z, Z)) && (Dot(Z, Z) > 1e-20f)))
+				Z = Vector(0.f, 0.f, 1.f);
+			CoordinateSystem(Z, &X, &Y);
+		}
 	}
 
 	Frame(const Vector &z) {
@@ -57,7 +70,10 @@ public:
 	}
 
 	void SetFromZ(const Vector &z) {
-		Z = z;
+		// Same NaN/Inf guard as the (x,y,z) constructor: never let a
+		// non-finite or zero normal reach CoordinateSystem
+		const float zl2 = Dot(z, z);
+		Z = (isfinite(zl2) && (zl2 > 1e-20f)) ? z : Vector(0.f, 0.f, 1.f);
 		CoordinateSystem(Z, &X, &Y);
 	}
 

@@ -56,6 +56,17 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 	// Interpolate face normal
 	geometryN = mesh->GetGeometryNormal(localToWorld, triangleIndex);
 	interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
+	// Non-finite geometry (NaN vertices, degenerate transforms) can also
+	// produce a NaN geometric normal; last resort: face the ray
+	const float gnl2 = Dot(geometryN, geometryN);
+	if (!isfinite(gnl2) || (gnl2 < 1e-20f))
+		geometryN = Normal(-fixedDir.x, -fixedDir.y, -fixedDir.z);
+	// Degenerate vertex-normal fields (opposing normals cancelling to a
+	// zero barycentric sum, or non-finite data) normalize to NaN and
+	// poison the whole shading frame; fall back to the geometric normal
+	const float inl2 = Dot(interpolatedN, interpolatedN);
+	if (!isfinite(inl2) || (inl2 < 1e-20f))
+		interpolatedN = geometryN;
 	shadeN = interpolatedN;
 	intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 
