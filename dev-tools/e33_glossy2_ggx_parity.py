@@ -123,6 +123,7 @@ def check_parity(scene_path):
 def main():
     check_parity("scenes/glossy2ggx/glossy2-ggx.scn")
     check_parity("scenes/ggxoptin/ggx-optin-coating.scn")
+    check_parity("scenes/ggxoptin/ggx-optin-carpaint.scn")
 
     for mb in (0, 1):
         fl = furnace(mb).mean(axis=2)

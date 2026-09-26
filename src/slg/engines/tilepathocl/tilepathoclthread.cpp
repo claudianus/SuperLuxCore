@@ -79,6 +79,13 @@ void TilePathOCLRenderThread::UpdateSamplerData(const TileWork &tileWork,
 	sharedData.tilePass =  tileWork.passToRender;
 	sharedData.aaSamples =  engine->aaSamples;
 	sharedData.multipassIndexToRender = tileWork.multipassIndexToRender;
+	// Splat-acceptance halo = filter footprint radius (+ slack for the
+	// LUT pixel-center discretization). FILTER_NONE keeps it at 0: a box
+	// splat only covers the pixel holding its center.
+	FilterRPtr pixelFilter = engine->GetPixelFilter();
+	const bool hasFilter = pixelFilter && (pixelFilter->GetType() != FILTER_NONE);
+	sharedData.splatMarginX = hasFilter ? (u_int)ceilf(pixelFilter->xWidth * .5f) + 2 : 0;
+	sharedData.splatMarginY = hasFilter ? (u_int)ceilf(pixelFilter->yWidth * .5f) + 2 : 0;
 
 	intersectionDevice.EnqueueWriteBuffer(samplerSharedDataBuff, CL_FALSE,
 			sizeof(slg::ocl::TilePathSamplerSharedData), &sharedData);
@@ -156,16 +163,49 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 
 	// Async. transfer of the Film buffers
 	threadFilms[filmIndex]->RecvFilm(intersectionDevice);
+
+	// GPU light tracing: snapshot this work's taskStats for the light
+	// sample count. The Init kernel resets the counters at the start of
+	// every work, so the in-order readback lands between this work's
+	// kernels and the next work's reset - a per-work measurement, not
+	// an estimate (the number of light paths a task completes per pass
+	// depends on path termination and is not knowable on the host).
+	if (engine->lightTaskCount > 0) {
+		if (gpuTaskStatsPerFilm.size() <= filmIndex) {
+			gpuTaskStatsPerFilm.resize(filmIndex + 1);
+			lightSampleCountPending.resize(filmIndex + 1, 0);
+		}
+		if (!gpuTaskStatsPerFilm[filmIndex])
+			gpuTaskStatsPerFilm[filmIndex] = std::make_unique<
+					slg::ocl::pathoclbase::GPUTaskStats[]>(engine->taskCount);
+		intersectionDevice.EnqueueReadBuffer(taskStatsBuff, CL_FALSE,
+				sizeof(slg::ocl::pathoclbase::GPUTaskStats) * engine->taskCount,
+				gpuTaskStatsPerFilm[filmIndex].get());
+		lightSampleCountPending[filmIndex] = 1;
+	}
+
 	const double eyeCount = tileWork.GetCoord().width * tileWork.GetCoord().height *
 			engine->aaSamples * engine->aaSamples;
-	// GPU light tracing (RTPATHOCL): light tasks feed the screen-normalized
-	// channel; estimate their per-pass sample count proportionally to the
-	// task split (the eye estimate itself is per-tile geometry)
+	// The screen-normalized count is deferred to ConsumeLightSampleCounts()
+	threadFilms[filmIndex]->GetFilm().AddSampleCount(0, eyeCount, 0.0);
+}
+
+void TilePathOCLRenderThread::ConsumeLightSampleCounts() {
+	TilePathOCLRenderEngine *engine = (TilePathOCLRenderEngine *)renderEngine;
 	const u_int eyeTaskCount = engine->taskCount - engine->lightTaskCount;
-	const double lightCount = (engine->lightTaskCount > 0) ?
-			((eyeTaskCount > 0) ? eyeCount * engine->lightTaskCount / eyeTaskCount :
-			(double)engine->lightTaskCount) : 0.0;
-	threadFilms[filmIndex]->GetFilm().AddSampleCount(0, eyeCount, lightCount);
+
+	for (u_int i = 0; i < lightSampleCountPending.size(); ++i) {
+		if (!lightSampleCountPending[i])
+			continue;
+		lightSampleCountPending[i] = 0;
+
+		// Light tasks occupy the tail gids [eyeTaskCount, taskCount)
+		double lightCount = 0.0;
+		const slg::ocl::pathoclbase::GPUTaskStats *stats = gpuTaskStatsPerFilm[i].get();
+		for (u_int t = eyeTaskCount; t < engine->taskCount; ++t)
+			lightCount += stats[t].sampleCount;
+		threadFilms[i]->GetFilm().AddSampleCount(0, 0.0, lightCount);
+	}
 }
 
 static void PGICUpdateCallBack(CompiledScene *compiledScene) {
@@ -233,6 +273,11 @@ void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                         gpuTaskStats.get());
 
                 intersectionDevice.FinishQueue();
+
+                // Fold the measured light-path counts into the thread
+                // films; they are merged into the engine film by the
+                // NextTile() call on the next pass
+                ConsumeLightSampleCounts();
 
                 const double t1 = WallClockTime();
                 const double renderingTime = t1 - t0;

@@ -17,6 +17,8 @@
  ***************************************************************************/
 
 #include <cstdlib>
+#include <chrono>
+#include <filesystem>
 #include <istream>
 #include <stdexcept>
 #include <sstream>
@@ -169,6 +171,16 @@ PropertiesUPtr Scene::ToProperties(const bool useRealFileName) const {
 	for (u_int i = 0; i < objDefs.GetSize(); ++i) {
 		auto& obj = objDefs.GetSceneObject(i);
 		props->Set(obj.ToProperties(extMeshCache, useRealFileName));
+	}
+
+	// Geometry spilling settings (scene.spill.*) ride along in the
+	// scene properties so serialized scenes keep them
+	if (geoSpillEnable) {
+		props->Set(Property("scene.spill.enable")(true));
+		props->Set(Property("scene.spill.dir")(geoSpillDir));
+		props->Set(Property("scene.spill.minbytes")(
+				(u_int)geoSpillMinBytes));
+		props->Set(Property("scene.spill.images")(imgSpillEnable));
 	}
 
 	return props;
@@ -570,6 +582,60 @@ void Scene::Parse(PropertiesRPtr props) {
 
 	SDL_LOG("Parsing lights");
 	ParseLights(*props);
+
+	//--------------------------------------------------------------------------
+	// Out-of-core geometry spilling
+	//--------------------------------------------------------------------------
+
+	geoSpillEnable = props->Get(Property("scene.spill.enable")(false)).Get<bool>();
+	geoSpillDir = props->Get(Property("scene.spill.dir")("")).Get<string>();
+	geoSpillMinBytes = props->Get(Property("scene.spill.minbytes")(
+			4u * 1024u * 1024u)).Get<u_int>();
+	imgSpillEnable = props->Get(Property("scene.spill.images")(true)).Get<bool>();
+	if (geoSpillEnable && geoSpillDir.empty())
+		geoSpillDir = (std::filesystem::temp_directory_path() /
+				"luxcore-geospill").string();
+}
+
+// Spills every large mesh buffer to geoSpillDir and swaps it for a
+// copy-on-write file mapping. Runs before the DataSet is built so
+// accelerators sharing the vertex buffers (Embree) see the mapped
+// addresses. Instance/motion wrappers share their base mesh's buffers,
+// which are spilled through the base mesh entry in the cache.
+size_t Scene::SpillGeometryBuffers() {
+	// Unique subdirectory per scene instance: processes sharing the same
+	// configured spill dir (e.g. a serialized external render) never
+	// collide on file names
+	const std::string dir = geoSpillDir + "/" + std::to_string(
+			std::chrono::steady_clock::now().time_since_epoch().count()) +
+			"-" + std::to_string(reinterpret_cast<uintptr_t>(this));
+	std::filesystem::create_directories(dir);
+
+	size_t spilled = 0;
+	for (u_int i = 0; i < extMeshCache.GetSize(); ++i) {
+		auto &mesh = extMeshCache.GetExtMesh(i);
+		if (mesh.GetType() == TYPE_EXT_TRIANGLE)
+			spilled += static_cast<ExtTriangleMesh &>(mesh).SpillBuffers(
+					dir, "m" + std::to_string(i) + "_", geoSpillMinBytes);
+	}
+	if (spilled)
+		geoSpillLastDir = dir;
+	return spilled;
+}
+
+// Spills every large image map pixel storage to geoSpillDir and swaps it
+// for a copy-on-write file mapping. Runs after imgMapCache.Preprocess so
+// all resize policies and color-space conversions are already applied.
+size_t Scene::SpillImageMaps() {
+	const std::string dir = geoSpillDir + "/" + std::to_string(
+			std::chrono::steady_clock::now().time_since_epoch().count()) +
+			"-" + std::to_string(reinterpret_cast<uintptr_t>(this));
+	std::filesystem::create_directories(dir);
+
+	const size_t spilled = imgMapCache.SpillImageMaps(dir, geoSpillMinBytes);
+	if (spilled)
+		geoSpillLastDir = dir;
+	return spilled;
 }
 
 

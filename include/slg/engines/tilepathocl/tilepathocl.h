@@ -48,10 +48,20 @@ protected:
 
 	virtual void GetThreadFilmSize(u_int *filmWidth, u_int *filmHeight, u_int *filmSubRegion);
 	virtual void RenderThreadImpl(std::stop_token stop_token);
-	
+
 	void RenderTileWork(const TileWork &tileWork,
 			slg::ocl::TilePathSamplerSharedData &samplerData,
 			const u_int filmIndex);
+	// Applies the light-path sample counts snapshotted by
+	// RenderTileWork() to the matching thread films. Call after
+	// FinishQueue() so the async taskStats readbacks have landed.
+	void ConsumeLightSampleCounts();
+
+	// Per in-flight tile work taskStats snapshot: Init resets
+	// taskStats at the start of every work, so a single shared buffer
+	// would only ever hold the last work's counts
+	std::vector<std::unique_ptr<slg::ocl::pathoclbase::GPUTaskStats[]>> gpuTaskStatsPerFilm;
+	std::vector<char> lightSampleCountPending;
 };
 
 //------------------------------------------------------------------------------

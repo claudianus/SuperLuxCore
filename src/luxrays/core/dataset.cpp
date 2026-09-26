@@ -178,6 +178,21 @@ void DataSet::UpdateAccelerators() {
 	}
 }
 
+size_t DataSet::SpillAcceleratorNodes(const std::string &dir,
+		const size_t minBytes, const AcceleratorType keepHot) const {
+	std::unique_lock<std::mutex> lock(accelsMutex);
+
+	size_t spilled = 0;
+	for (auto &it : accels) {
+		if (it.first == keepHot)
+			continue;
+		spilled += it.second->SpillBVHNodes(dir,
+				"accel-" + Accelerator::AcceleratorType2String(it.first),
+				minBytes);
+	}
+	return spilled;
+}
+
 bool DataSet::IsEqual(DataSetConstRPtr dataSet) const {
 	return (dataSet != NULL) && (dataSetID == dataSet->dataSetID);
 }

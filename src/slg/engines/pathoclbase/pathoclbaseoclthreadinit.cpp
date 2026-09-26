@@ -173,6 +173,19 @@ void PathOCLBaseOCLRenderThread::InitGeometry() {
 
 	intersectionDevice.AllocBufferRO(&meshDescsBuff, &cscene->meshDescs[0],
 			sizeof(slg::ocl::ExtMesh) * cscene->meshDescs.size(), "Mesh description");
+
+	// The device now holds the geometry. Some upload paths are
+	// asynchronous (CUDA HtoD, same-size OCL buffer reuse), so sync once
+	// before the host staging arrays may be swapped for file mappings.
+	// scene.spill.enable: spill them instead of freeing — they duplicate
+	// the whole mesh data set on the host for the entire render, but
+	// device restarts and later-started devices still read them through
+	// the mappings for re-uploads.
+	intersectionDevice.FinishQueue();
+	const size_t stagingBytes = cscene->SpillHostStaging();
+	if (stagingBytes)
+		SLG_LOG("Host staging spilled to disk: " <<
+				stagingBytes / (1024 * 1024) << " MB");
 }
 
 void PathOCLBaseOCLRenderThread::InitMaterials() {
@@ -487,6 +500,15 @@ void PathOCLBaseOCLRenderThread::InitImageMaps() {
 					&(cscene->imageMapMemBlocks[i][0]),
 					sizeof(float) * cscene->imageMapMemBlocks[i].size(), "ImageMaps");
 		}
+
+		// The device now holds the pixels. Sync once before the host
+		// staging pages may be swapped for file mappings (see
+		// InitGeometry for the restart/multi-device rationale).
+		intersectionDevice.FinishQueue();
+		const size_t stagingBytes = cscene->SpillHostStaging();
+		if (stagingBytes)
+			SLG_LOG("Host staging spilled to disk: " <<
+					stagingBytes / (1024 * 1024) << " MB");
 	} else {
 		intersectionDevice.FreeBuffer(&imageMapDescsBuff);
 		for (u_int i = 0; i < imageMapsBuff.size(); ++i)

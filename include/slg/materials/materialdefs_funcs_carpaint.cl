@@ -77,6 +77,8 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 		H = -H;
 
 	float pdf = 0.f;
+	float pdfDirect = 0.f;
+	const bool useGgx = material->carpaint.useGgx;
 	int n = 1; // already counts the diffuse layer
 
 	// Absorption
@@ -99,8 +101,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 	{
 		const float rough1 = m1 * m1;
 		const float r1 = Texture_GetFloatValue(material->carpaint.R1TexIndex, hitPoint TEXTURES_PARAM);
-		result += (SchlickDistribution_D(rough1, H, 0.f) * SchlickDistribution_G(rough1, lightDir, eyeDir) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
-		pdf += SchlickDistribution_Pdf(rough1, H, 0.f);
+		if (useGgx) {
+			const float a1 = fmax(rough1, 1e-4f);
+			result += (Microfacet_GgxD(H, a1, a1) * Microfacet_GgxG2(lightDir, eyeDir, a1, a1) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
+			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a1, a1);
+		} else {
+			result += (SchlickDistribution_D(rough1, H, 0.f) * SchlickDistribution_G(rough1, lightDir, eyeDir) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
+			pdf += SchlickDistribution_Pdf(rough1, H, 0.f);
+		}
 		++n;
 	}
 	const float3 ks2Val = Texture_GetSpectrumValue(material->carpaint.Ks2TexIndex, hitPoint TEXTURES_PARAM);
@@ -110,8 +118,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 	{
 		const float rough2 = m2 * m2;
 		const float r2 = Texture_GetFloatValue(material->carpaint.R2TexIndex, hitPoint TEXTURES_PARAM);
-		result += (SchlickDistribution_D(rough2, H, 0.f) * SchlickDistribution_G(rough2, lightDir, eyeDir) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
-		pdf += SchlickDistribution_Pdf(rough2, H, 0.f);
+		if (useGgx) {
+			const float a2 = fmax(rough2, 1e-4f);
+			result += (Microfacet_GgxD(H, a2, a2) * Microfacet_GgxG2(lightDir, eyeDir, a2, a2) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
+			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a2, a2);
+		} else {
+			result += (SchlickDistribution_D(rough2, H, 0.f) * SchlickDistribution_G(rough2, lightDir, eyeDir) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
+			pdf += SchlickDistribution_Pdf(rough2, H, 0.f);
+		}
 		++n;
 	}
 	const float3 ks3Val = Texture_GetSpectrumValue(material->carpaint.Ks3TexIndex, hitPoint TEXTURES_PARAM);
@@ -121,8 +135,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 	{
 		const float rough3 = m3 * m3;
 		const float r3 = Texture_GetFloatValue(material->carpaint.R3TexIndex, hitPoint TEXTURES_PARAM);
-		result += (SchlickDistribution_D(rough3, H, 0.f) * SchlickDistribution_G(rough3, lightDir, eyeDir) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
-		pdf += SchlickDistribution_Pdf(rough3, H, 0.f);
+		if (useGgx) {
+			const float a3 = fmax(rough3, 1e-4f);
+			result += (Microfacet_GgxD(H, a3, a3) * Microfacet_GgxG2(lightDir, eyeDir, a3, a3) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
+			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a3, a3);
+		} else {
+			result += (SchlickDistribution_D(rough3, H, 0.f) * SchlickDistribution_G(rough3, lightDir, eyeDir) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
+			pdf += SchlickDistribution_Pdf(rough3, H, 0.f);
+		}
 		++n;
 	}
 
@@ -131,7 +151,7 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 
 	// Finish pdf computation
 	pdf /= 4.f * fabs(dot(lightDir, H));
-	const float directPdfW = (pdf + fabs(lightDir.z) * M_1_PI_F) / n;
+	const float directPdfW = ((useGgx ? pdfDirect : pdf) + fabs(lightDir.z) * M_1_PI_F) / n;
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -166,6 +186,7 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	const float r3 = Texture_GetFloatValue(material->carpaint.R3TexIndex, hitPoint TEXTURES_PARAM);
 
 	// Test presence of components
+	const bool useGgx = material->carpaint.useGgx;
 	int n = 1; // already count the diffuse layer
 	int sampled = 0; // sampled layer
 	float3 result = BLACK;
@@ -223,75 +244,141 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 		// Sample 1st glossy layer
 		sampled = 1;
 		const float rough1 = m1 * m1;
-		float d;
-		SchlickDistribution_SampleH(rough1, 0.f, u0, u1, &wh, &d, &pdf);
-		cosWH = dot(fixedDir, wh);
-		sampledDir = 2.f * cosWH * wh - fixedDir;
-		cosWH = fabs(cosWH);
+		if (useGgx) {
+			const float a1 = fmax(rough1, 1e-4f);
+			wh = Microfacet_GgxSampleVNDF(fixedDir, a1, a1, u0, u1);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
 
-		if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
-			(fixedDir.z * sampledDir.z < 0.f)) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf = Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a1, a1);
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
+			result *= Microfacet_GgxD(wh, a1, a1) * Microfacet_GgxG2(fixedDir, sampledDir, a1, a1) /
+				(4.f * fabs(fixedDir.z));
+		} else {
+			float d;
+			SchlickDistribution_SampleH(rough1, 0.f, u0, u1, &wh, &d, &pdf);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
+
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf /= 4.f * cosWH;
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
+
+			const float G = SchlickDistribution_G(rough1, fixedDir, sampledDir);
+			result *= d * G / (4.f * fabs(fixedDir.z));
 		}
-
-		pdf /= 4.f * cosWH;
-		if (pdf <= 0.f) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
-		}
-
-		result = ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
-
-		const float G = SchlickDistribution_G(rough1, fixedDir, sampledDir);
-		result *= d * G / (4.f * fabs(fixedDir.z));
 	} else if ((passThroughEvent < 2.f / n  ||
 		(!l1 && passThroughEvent < 3.f / n)) && l2) {
 		// Sample 2nd glossy layer
 		sampled = 2;
 		const float rough2 = m2 * m2;
-		float d;
-		SchlickDistribution_SampleH(rough2, 0.f, u0, u1, &wh, &d, &pdf);
-		cosWH = dot(fixedDir, wh);
-		sampledDir = 2.f * cosWH * wh - fixedDir;
-		cosWH = fabs(cosWH);
+		if (useGgx) {
+			const float a2 = fmax(rough2, 1e-4f);
+			wh = Microfacet_GgxSampleVNDF(fixedDir, a2, a2, u0, u1);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
 
-		if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
-			(fixedDir.z * sampledDir.z < 0.f)) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf = Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a2, a2);
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
+			result *= Microfacet_GgxD(wh, a2, a2) * Microfacet_GgxG2(fixedDir, sampledDir, a2, a2) /
+				(4.f * fabs(fixedDir.z));
+		} else {
+			float d;
+			SchlickDistribution_SampleH(rough2, 0.f, u0, u1, &wh, &d, &pdf);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
+
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf /= 4.f * cosWH;
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
+
+			const float G = SchlickDistribution_G(rough2, fixedDir, sampledDir);
+			result *= d * G / (4.f * fabs(fixedDir.z));
 		}
-
-		pdf /= 4.f * cosWH;
-		if (pdf <= 0.f) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
-		}
-
-		result = ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
-
-		const float G = SchlickDistribution_G(rough2, fixedDir, sampledDir);
-		result *= d * G / (4.f * fabs(fixedDir.z));
 	} else if (l3) {
 		// Sample 3rd glossy layer
 		sampled = 3;
 		const float rough3 = m3 * m3;
-		float d;
-		SchlickDistribution_SampleH(rough3, 0.f, u0, u1, &wh, &d, &pdf);
-		cosWH = dot(fixedDir, wh);
-		sampledDir = 2.f * cosWH * wh - fixedDir;
-		cosWH = fabs(cosWH);
+		if (useGgx) {
+			const float a3 = fmax(rough3, 1e-4f);
+			wh = Microfacet_GgxSampleVNDF(fixedDir, a3, a3, u0, u1);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
 
-		if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
-			(fixedDir.z * sampledDir.z < 0.f)) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf = Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a3, a3);
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
+			result *= Microfacet_GgxD(wh, a3, a3) * Microfacet_GgxG2(fixedDir, sampledDir, a3, a3) /
+				(4.f * fabs(fixedDir.z));
+		} else {
+			float d;
+			SchlickDistribution_SampleH(rough3, 0.f, u0, u1, &wh, &d, &pdf);
+			cosWH = dot(fixedDir, wh);
+			sampledDir = 2.f * cosWH * wh - fixedDir;
+			cosWH = fabs(cosWH);
+
+			if ((sampledDir.z < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			pdf /= 4.f * cosWH;
+			if (pdf <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			result = ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
+
+			const float G = SchlickDistribution_G(rough3, fixedDir, sampledDir);
+			result *= d * G / (4.f * fabs(fixedDir.z));
 		}
-
-		pdf /= 4.f * cosWH;
-		if (pdf <= 0.f) {
-			MATERIAL_SAMPLE_RETURN_BLACK;
-		}
-
-		result = ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
-
-		const float G = SchlickDistribution_G(rough3, fixedDir, sampledDir);
-		result *= d * G / (4.f * fabs(fixedDir.z));
 	} else {
 		// Sampling issue
  		MATERIAL_SAMPLE_RETURN_BLACK;
@@ -315,11 +402,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	// 1st glossy
 	if (l1 && sampled != 1) {
 		const float rough1 = m1 * m1;
-		const float d1 = SchlickDistribution_D(rough1, wh, 0.f);
-		const float pdf1 = SchlickDistribution_Pdf(rough1, wh, 0.f) / (4.f * cosWH);
+		const float a1 = fmax(rough1, 1e-4f);
+		const float d1 = useGgx ? Microfacet_GgxD(wh, a1, a1) : SchlickDistribution_D(rough1, wh, 0.f);
+		const float pdf1 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a1, a1) :
+			SchlickDistribution_Pdf(rough1, wh, 0.f) / (4.f * cosWH);
 		if (pdf1 > 0.f) {
 			result += ks1 * (d1 *
-				SchlickDistribution_G(rough1, fixedDir, sampledDir) /
+				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a1, a1) :
+					SchlickDistribution_G(rough1, fixedDir, sampledDir)) /
 				(4.f * fabs(fixedDir.z))) *
 				FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
 			pdf += pdf1;
@@ -328,11 +418,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	// 2nd glossy
 	if (l2 && sampled != 2) {
 		const float rough2 = m2 * m2;
-		const float d2 = SchlickDistribution_D(rough2, wh, 0.f);
-		const float pdf2 = SchlickDistribution_Pdf(rough2, wh, 0.f) / (4.f * cosWH);
+		const float a2 = fmax(rough2, 1e-4f);
+		const float d2 = useGgx ? Microfacet_GgxD(wh, a2, a2) : SchlickDistribution_D(rough2, wh, 0.f);
+		const float pdf2 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a2, a2) :
+			SchlickDistribution_Pdf(rough2, wh, 0.f) / (4.f * cosWH);
 		if (pdf2 > 0.f) {
 			result += ks2 * (d2 *
-				SchlickDistribution_G(rough2, fixedDir, sampledDir) /
+				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a2, a2) :
+					SchlickDistribution_G(rough2, fixedDir, sampledDir)) /
 				(4.f * fabs(fixedDir.z))) *
 				FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
 			pdf += pdf2;
@@ -341,11 +434,14 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	// 3rd glossy
 	if (l3 && sampled != 3) {
 		const float rough3 = m3 * m3;
-		const float d3 = SchlickDistribution_D(rough3, wh, 0.f);
-		const float pdf3 = SchlickDistribution_Pdf(rough3, wh, 0.f) / (4.f * cosWH);
+		const float a3 = fmax(rough3, 1e-4f);
+		const float d3 = useGgx ? Microfacet_GgxD(wh, a3, a3) : SchlickDistribution_D(rough3, wh, 0.f);
+		const float pdf3 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a3, a3) :
+			SchlickDistribution_Pdf(rough3, wh, 0.f) / (4.f * cosWH);
 		if (pdf3 > 0.f) {
 			result += ks3 * (d3 *
-				SchlickDistribution_G(rough3, fixedDir, sampledDir) /
+				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a3, a3) :
+					SchlickDistribution_G(rough3, fixedDir, sampledDir)) /
 				(4.f * fabs(fixedDir.z))) *
 				FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
 			pdf += pdf3;

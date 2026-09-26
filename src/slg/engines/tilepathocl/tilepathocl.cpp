@@ -82,9 +82,11 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 	taskCount = RoundUp<u_int>(taskCount, 8192);
 	//SLG_LOG("[TilePathOCLRenderEngine] OpenCL task count: " << taskCount);
 
-	// GPU light tracing: supported on RTPATHOCL (the tile is the whole
-	// film so splats are never clipped). TILEPATHOCL tiles would clip
-	// most splats - disable with a warning there (v1).
+	// GPU light tracing: supported on both tile engines. RTPATHOCL's
+	// tile is the whole film; TILEPATHOCL projects splats against the
+	// full film rect, clips to the tile's region and shifts back to
+	// tile-local coordinates (LightPath_ProjectToFilm), so each tile
+	// only keeps splats generated while it is resident - still unbiased.
 	eyeTaskCount = taskCount;
 	lightTaskCount = 0;
 	auto& cfg = renderConfig.GetConfig();
@@ -92,9 +94,8 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 			Get("path.lighttracing.enable")).Get<bool>();
 	// Same promotion as PathOCLRenderEngine::UpdateTaskCount: hybrid
 	// without native threads has no compensating light pass, so serve it
-	// from the GPU light population (RTPATHOCL only; TILEPATHOCL cannot
-	// light-trace and drops the suppression in StartLockLess instead).
-	if (!lightTracingEnable && (GetType() == RTPATHOCL) &&
+	// from the GPU light population.
+	if (!lightTracingEnable &&
 			(nativeRenderThreadCount == 0) &&
 			cfg.Get(PathTracer::GetDefaultProps()->
 			Get("path.hybridbackforward.enable")).Get<bool>()) {
@@ -102,19 +103,15 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 		SLG_LOG("WARNING: path.hybridbackforward without native threads has "
 				"no light pass; enabling GPU light tracing");
 	}
-	if (lightTracingEnable && (GetType() == RTPATHOCL)) {
+	if (lightTracingEnable) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
-		const std::string samplerType = cfg.Get(Property("sampler.type")("SOBOL")).Get<std::string>();
 		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
 			SLG_LOG("WARNING: path.lighttracing supports only perspective and "
 					"orthographic cameras, light tasks disabled");
-		} else if (samplerType == "METROPOLIS") {
-			SLG_LOG("WARNING: path.lighttracing does not support the METROPOLIS "
-					"sampler, light tasks disabled");
 		} else {
 			const bool lightOnly = cfg.Get(PathTracer::GetDefaultProps()->
 					Get("path.lighttracing.only")).Get<bool>();
-			if (lightOnly) {
+			if (lightOnly && (GetType() == RTPATHOCL)) {
 				lightTaskCount = taskCount;
 				eyeTaskCount = 0;
 			} else {
@@ -128,9 +125,7 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 				eyeTaskCount = taskCount - lightTaskCount;
 			}
 		}
-	} else if (lightTracingEnable)
-		SLG_LOG("WARNING: path.lighttracing is not supported by TILEPATHOCL "
-				"(tile-clipped splats); use PATHOCL or RTPATHOCL");
+	}
 }
 
 void TilePathOCLRenderEngine::InitTileRepository() {
@@ -209,24 +204,15 @@ void TilePathOCLRenderEngine::StartLockLess() {
 	pathTracer.ParseOptions(cfg, *defaultProps);
 
 	// Mirror of the InitTaskCount() handling for hybrid-without-light-
-	// pass (no native threads to run the CPU light pass):
-	//  - RTPATHOCL: promoted to GPU light tracing in InitTaskCount, so
-	//    mark the parsed configuration the same way.
-	//  - TILEPATHOCL: cannot light-trace at all, so drop the eye-side
-	//    caustic suppression instead - noisy caustics, but unbiased.
+	// pass (no native threads to run the CPU light pass): promoted to
+	// GPU light tracing in InitTaskCount, so mark the parsed
+	// configuration the same way.
 	if (pathTracer.hybridBackForwardEnable && !pathTracer.lightTracingEnable &&
 			(nativeRenderThreadCount == 0)) {
-		if (GetType() == RTPATHOCL) {
-			pathTracer.lightTracingEnable = true;
-			if (!cfg.IsDefined("path.lighttracing.taskfraction"))
-				pathTracer.lightTracingTaskFraction = Clamp(
-						1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
-		} else {
-			pathTracer.hybridBackForwardEnable = false;
-			SLG_LOG("WARNING: path.hybridbackforward without native threads "
-					"has no light pass on TILEPATHOCL; disabling caustic "
-					"suppression");
-		}
+		pathTracer.lightTracingEnable = true;
+		if (!cfg.IsDefined("path.lighttracing.taskfraction"))
+			pathTracer.lightTracingTaskFraction = Clamp(
+					1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
 	}
 
 	//--------------------------------------------------------------------------

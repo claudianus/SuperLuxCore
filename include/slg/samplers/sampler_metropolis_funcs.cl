@@ -33,7 +33,10 @@ OPENCL_FORCE_INLINE float MetropolisSampler_GetSample(
 	__global MetropolisSample *samples = (__global MetropolisSample *)samplesBuff;
 	__global MetropolisSample *sample = &samples[gid];
 
-	__global float *samplesData = &samplesDataBuff[gid * METROPOLISSAMPLER_TOTAL_U_SIZE] +
+	// The per-task buffer holds two independent sample vectors
+	// (current/proposed): stride is 2 * TOTAL_U_SIZE so adjacent tasks
+	// do not overlap each other's slots
+	__global float *samplesData = &samplesDataBuff[gid * 2 * METROPOLISSAMPLER_TOTAL_U_SIZE] +
 			sample->proposed * METROPOLISSAMPLER_TOTAL_U_SIZE;
 
 	return samplesData[index];
@@ -247,13 +250,13 @@ OPENCL_FORCE_INLINE void MetropolisSampler_NextSample(
 	// Mutate the sample
 	//--------------------------------------------------------------------------
 
-	__global float *proposedU = &samplesDataBuff[gid * METROPOLISSAMPLER_TOTAL_U_SIZE] +
+	__global float *proposedU = &samplesDataBuff[gid * 2 * METROPOLISSAMPLER_TOTAL_U_SIZE] +
 			sample->proposed * METROPOLISSAMPLER_TOTAL_U_SIZE;
 	if (Rnd_FloatValue(seed) < taskConfig->sampler.metropolis.largeMutationProbability) {
 		LargeStep(taskConfig, seed, proposedU);
 		sample->smallMutationCount = 0;
 	} else {
-		__global float *currentU = &samplesDataBuff[gid * METROPOLISSAMPLER_TOTAL_U_SIZE] +
+		__global float *currentU = &samplesDataBuff[gid * 2 * METROPOLISSAMPLER_TOTAL_U_SIZE] +
 			sample->current * METROPOLISSAMPLER_TOTAL_U_SIZE;
 
 		SmallStep(taskConfig, seed, currentU, proposedU);
@@ -284,7 +287,7 @@ OPENCL_FORCE_INLINE bool MetropolisSampler_Init(
 
 	sample->weight = 0.f;
 
-	__global float *samplesData = &samplesDataBuff[gid * METROPOLISSAMPLER_TOTAL_U_SIZE] +
+	__global float *samplesData = &samplesDataBuff[gid * 2 * METROPOLISSAMPLER_TOTAL_U_SIZE] +
 			sample->proposed * METROPOLISSAMPLER_TOTAL_U_SIZE;
 	LargeStep(taskConfig, seed, samplesData);
 

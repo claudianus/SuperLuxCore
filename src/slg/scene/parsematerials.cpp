@@ -559,6 +559,7 @@ MaterialUPtr Scene::CreateMaterial(
 	} else if (matType == "carpaint") {
 		auto ka = parseTex("ka", {0.f, 0.f, 0.f});
 		auto d = parseTex("d", {0.f});
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		string preset = parseString("preset", "");
 		if (preset != "") {
@@ -606,7 +607,8 @@ MaterialUPtr Scene::CreateMaterial(
 					TextureConstPtr(&r2),
 					TextureConstPtr(&r3),
 					ka,
-					d
+					d,
+					useGgx
 				);
 			}
 		}
@@ -626,7 +628,7 @@ MaterialUPtr Scene::CreateMaterial(
 			auto m3 = parseTex("m3", {cpData.m3});
 			mat = std::make_unique<CarPaintMaterial>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				kd, ks1, ks2, ks3, m1, m2, m3, r1, r2, r3, ka, d
+				kd, ks1, ks2, ks3, m1, m2, m3, r1, r2, r3, ka, d, useGgx
 			);
 		}
 	} else if (matType == "glossytranslucent") {

@@ -24,6 +24,8 @@
 #include "slg/slg.h"
 #include "slg/editaction.h"
 
+#include "luxrays/utils/spillablearray.h"
+
 #include "slg/core/indexbvh.h"
 #include "slg/film/film.h"
 #include "slg/scene/scene.h"
@@ -47,6 +49,13 @@ public:
 	void Recompile(const EditActionList &editActions);
 	void RecompilePhotonGI() { CompilePhotonGI(); }
 
+	// Swaps the host staging arrays (geometry + image map pages) for
+	// file-backed mappings once the scene spill feature is enabled.
+	// Call only after the device upload queue has been synchronized.
+	// Re-uploads (device restarts, additional devices) read through the
+	// mappings transparently. Returns the spilled byte count.
+	size_t SpillHostStaging();
+
 	static void CompileFilm(const Film &film, slg::ocl::Film &oclFilm);
 
 	static std::tuple<std::vector<float>, size_t>
@@ -60,75 +69,79 @@ public:
 
 	// Compiled Camera
 	slg::ocl::Camera camera;
-	std::vector<float> cameraBokehDistribution;
+	luxrays::SpillableArray<float> cameraBokehDistribution;
 	u_int cameraBokehDistributionSize;
 
-	// Compiled Scene Meshes
-	std::vector<luxrays::Point> verts;
-	std::vector<luxrays::Normal> normals;
-	std::vector<luxrays::Normal> triNormals;
-	std::vector<luxrays::UV> uvs;
-	std::vector<luxrays::Spectrum> cols;
-	std::vector<float> alphas;
-	std::vector<float> vertexAOVs;
-	std::vector<float> triAOVs;
-	std::vector<luxrays::Triangle> tris;
-	std::vector<luxrays::ocl::InterpolatedTransform> interpolatedTransforms;
-	std::vector<luxrays::ocl::ExtMesh> meshDescs;
+	// Compiled Scene Meshes. These are host staging arrays for the device
+	// uploads: they are SpillableArray so a render thread can swap them
+	// for file-backed mappings once the upload is done, without breaking
+	// re-uploads on device restarts or additional devices.
+	luxrays::SpillableArray<luxrays::Point> verts;
+	luxrays::SpillableArray<luxrays::Normal> normals;
+	luxrays::SpillableArray<luxrays::Normal> triNormals;
+	luxrays::SpillableArray<luxrays::UV> uvs;
+	luxrays::SpillableArray<luxrays::Spectrum> cols;
+	luxrays::SpillableArray<float> alphas;
+	luxrays::SpillableArray<float> vertexAOVs;
+	luxrays::SpillableArray<float> triAOVs;
+	luxrays::SpillableArray<luxrays::Triangle> tris;
+	luxrays::SpillableArray<luxrays::ocl::InterpolatedTransform> interpolatedTransforms;
+	luxrays::SpillableArray<luxrays::ocl::ExtMesh> meshDescs;
 
 	// Native curve primitives (Metal HWRT; dev-tools/metal_curve_design.md):
 	// global control-point buffer (xyz + radius float4), global per-segment
 	// start-cp indices, per-cp shading attributes (2 float4 per cp).
-	std::vector<luxrays::CurveControlPoint> curveCps;
-	std::vector<u_int> curveSegIndices;
-	std::vector<luxrays::CurveCpAttr> curveCpAttrs;
+	luxrays::SpillableArray<luxrays::CurveControlPoint> curveCps;
+	luxrays::SpillableArray<u_int> curveSegIndices;
+	luxrays::SpillableArray<luxrays::CurveCpAttr> curveCpAttrs;
 	luxrays::BSphere worldBSphere;
 
 	// Compiled Scene Objects
-	std::vector<slg::ocl::SceneObject> sceneObjs;
+	luxrays::SpillableArray<slg::ocl::SceneObject> sceneObjs;
 
 	// Compiled Lights
-	std::vector<slg::ocl::LightSource> lightDefs;
+	luxrays::SpillableArray<slg::ocl::LightSource> lightDefs;
 	// Additional light related information
-	std::vector<u_int> envLightIndices;
-	std::vector<u_int> lightIndexOffsetByMeshIndex, lightIndexByTriIndex;
+	luxrays::SpillableArray<u_int> envLightIndices;
+	luxrays::SpillableArray<u_int> lightIndexOffsetByMeshIndex, lightIndexByTriIndex;
 	// Env. light Distribution2Ds. The device buffer is
 	// [emissionFuncDistributions | envLightDistributions]: material
 	// emission distributions come first so their absolute offsets stay
 	// valid when lights are recompiled without materials
-	std::vector<float> envLightDistributions;
+	luxrays::SpillableArray<float> envLightDistributions;
 	// Material directional emission map (SampleableSphericalFunction)
 	// Distribution2Ds, indexed by Material::emissionFuncDistOffset
-	std::vector<float> emissionFuncDistributions;
+	luxrays::SpillableArray<float> emissionFuncDistributions;
 	// Compiled light sampling strategy
-	std::vector<float> lightsDistribution;
+	luxrays::SpillableArray<float> lightsDistribution;
 	u_int lightsDistributionSize;
-	std::vector<float> infiniteLightSourcesDistribution;
+	luxrays::SpillableArray<float> infiniteLightSourcesDistribution;
 	u_int infiniteLightSourcesDistributionSize;
 	// GPU light tracing: Distribution1D over the emit light strategy
 	// (same light-index order as lights[]); lights unsupported by the
 	// device Emit ports carry zero weight
-	std::vector<float> emitLightsDistribution;
+	luxrays::SpillableArray<float> emitLightsDistribution;
 	u_int emitLightsDistributionSize;
 	// Distant-light caustic focusing: delta-specular caster bounding
 	// spheres (4 floats per caster: center.xyz + radius), appended to
 	// the lightFocus device buffer after the per-light hotspot rings
-	std::vector<float> lightFocusCasters;
+	luxrays::SpillableArray<float> lightFocusCasters;
 	// DLSC related data
-	std::vector<slg::ocl::DLSCacheEntry> dlscAllEntries;
-	std::vector<float> dlscDistributions; 
-	std::vector<luxrays::ocl::IndexBVHArrayNode> dlscBVHArrayNode;
+	luxrays::SpillableArray<slg::ocl::DLSCacheEntry> dlscAllEntries;
+	luxrays::SpillableArray<float> dlscDistributions;
+	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> dlscBVHArrayNode;
 	float dlscRadius2, dlscNormalCosAngle;
 	// EnvLightVisibilityCache related data
-	std::vector<slg::ocl::ELVCacheEntry> elvcAllEntries;
-	std::vector<float> elvcDistributions;
-	std::vector<u_int> elvcTileDistributionOffsets; 
-	std::vector<luxrays::ocl::IndexBVHArrayNode> elvcBVHArrayNode;
+	luxrays::SpillableArray<slg::ocl::ELVCacheEntry> elvcAllEntries;
+	luxrays::SpillableArray<float> elvcDistributions;
+	luxrays::SpillableArray<u_int> elvcTileDistributionOffsets;
+	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> elvcBVHArrayNode;
 	float elvcRadius2, elvcNormalCosAngle;
 	u_int elvcTilesXCount, elvcTilesYCount;
-	
+
 	// Compiled Materials (and Volumes)
-	std::vector<slg::ocl::Material> mats;
+	luxrays::SpillableArray<slg::ocl::Material> mats;
+	// (plain vector: CompileMaterialOps() helpers take vector&)
 	std::vector<slg::ocl::MaterialEvalOp> matEvalOps;
 	// Expressed in float
 	u_int maxMaterialEvalStackSize;
@@ -136,31 +149,31 @@ public:
 	// Null-collision majorant cells of all heterogeneous volumes
 	// (concatenated, indexed by HeterogenousVolumeParam::majorantOffset).
 	// Each cell is a float pair (minorant, majorant).
-	std::vector<float> volMajorants;
+	luxrays::SpillableArray<float> volMajorants;
 	// World positions of point-ish lights eligible for equiangular
 	// distance sampling, 4 floats (xyz + pad) per light
-	std::vector<float> eqLightPoints;
+	luxrays::SpillableArray<float> eqLightPoints;
 
 	// Compiled Textures
-	std::vector<slg::ocl::Texture> texs;
-	std::vector<slg::ocl::TextureEvalOp> texEvalOps;
+	luxrays::SpillableArray<slg::ocl::Texture> texs;
+	luxrays::SpillableArray<slg::ocl::TextureEvalOp> texEvalOps;
 	// Expressed in float
 	u_int maxTextureEvalStackSize;
 
 	// Compiled ImageMaps
-	std::vector<slg::ocl::ImageMap> imageMapDescs;
-	std::vector<std::vector<float> > imageMapMemBlocks;
-	
+	luxrays::SpillableArray<slg::ocl::ImageMap> imageMapDescs;
+	std::vector<luxrays::SpillableArray<float> > imageMapMemBlocks;
+
 	// Compiled PhotonGI cache
 
 	// PhotonGI indirect cache
-	std::vector<slg::ocl::RadiancePhoton> pgicRadiancePhotons;
+	luxrays::SpillableArray<slg::ocl::RadiancePhoton> pgicRadiancePhotons;
 	u_int pgicLightGroupCounts;
-	std::vector<slg::ocl::Spectrum> pgicRadiancePhotonsValues;
-	std::vector<luxrays::ocl::IndexBVHArrayNode> pgicRadiancePhotonsBVHArrayNode;
+	luxrays::SpillableArray<slg::ocl::Spectrum> pgicRadiancePhotonsValues;
+	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> pgicRadiancePhotonsBVHArrayNode;
 	// PhotonGI caustic cache
-	std::vector<slg::ocl::Photon> pgicCausticPhotons;
-	std::vector<luxrays::ocl::IndexBVHArrayNode> pgicCausticPhotonsBVHArrayNode;
+	luxrays::SpillableArray<slg::ocl::Photon> pgicCausticPhotons;
+	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> pgicCausticPhotonsBVHArrayNode;
 
 	// All global settings
 	slg::ocl::PathTracer compiledPathTracer;
@@ -215,6 +228,8 @@ private:
 
 	SceneConstRef scene;
 	const PathTracer *pathTracer;
+
+	friend class PathOCLBaseOCLRenderThread;
 
 	size_t maxMemPageSize;
 	std::unordered_set<std::string> enabledCode;

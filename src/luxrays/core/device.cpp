@@ -92,6 +92,8 @@ std::string DeviceDescription::GetDeviceType(const DeviceType type) {
 			return "CUDA_GPU";
 		case DEVICE_TYPE_METAL_GPU:
 			return "METAL_GPU";
+		case DEVICE_TYPE_VULKAN_GPU:
+			return "VULKAN_GPU";
 		case DEVICE_TYPE_ALL_HARDWARE:
 			return "ALL_HARDWARE";
 		default:

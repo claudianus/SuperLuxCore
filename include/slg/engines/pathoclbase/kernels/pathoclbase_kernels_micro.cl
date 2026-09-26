@@ -2429,6 +2429,9 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 				filmSubRegion2, filmSubRegion3,
 				worldRadius, mneeSeeds,
 				camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+				, samplerSharedDataBuff
+#endif
 				MATERIALS_PARAM);
 		task->seed = seedValue;
 		return;
@@ -2685,10 +2688,14 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 							(camera->type == ORTHOGRAPHIC) ? hitP : lensPoint,
 							eyeDir, eyeDistance, time);
 					float filmX, filmY;
-					if (Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+					if (LightPath_ProjectToFilm(camera, visRay, &filmX, &filmY,
 							filmWidth, filmHeight,
 							filmSubRegion0, filmSubRegion1,
-							filmSubRegion2, filmSubRegion3)) {
+							filmSubRegion2, filmSubRegion3
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+							, samplerSharedDataBuff
+#endif
+							)) {
 						BSDFEvent event;
 						float directPdfW;
 						const float3 bsdfEval = BSDF_Evaluate(bsdf,

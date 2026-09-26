@@ -54,6 +54,11 @@ public:
 
 	virtual bool Intersect(const Ray *ray, RayHit *hit) const;
 
+	// Spills the root tree and all unique leaf trees to file-backed
+	// mappings (see BVHAccel::SpillBVHNodes)
+	virtual size_t SpillBVHNodes(const std::string &dir,
+			const std::string &prefix, size_t minBytes) const override;
+
 	friend class MBVHKernel;
 	// Native Metal HWRT kernel (metalrtaccel.mm): reads the leaf metadata
 	// (bvhLeafs/uniqueLeafs/transforms) to build MTLAccelerationStructures.
@@ -71,7 +76,7 @@ private:
 
 	// The root BVH tree
 	unsigned int nRootNodes;
-	std::unique_ptr<luxrays::ocl::BVHArrayNode[]> bvhRootTree;
+	mutable std::shared_ptr<luxrays::ocl::BVHArrayNode[]> bvhRootTree;
 
 	std::vector<const BVHAccel *> uniqueLeafs;
 	std::vector<const Transform *> uniqueLeafsTransform;

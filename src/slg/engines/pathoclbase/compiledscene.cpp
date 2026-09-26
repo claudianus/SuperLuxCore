@@ -18,6 +18,8 @@
 
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
+#include <chrono>
+#include <filesystem>
 #include <iosfwd>
 #include <limits>
 
@@ -107,6 +109,78 @@ void CompiledScene::Recompile(const EditActionList &editActions) {
 
 string CompiledScene::ToOCLString(const slg::ocl::Spectrum &v) {
 	return "(float3)(" + ToString(v.c[0]) + ", " + ToString(v.c[1]) + ", " + ToString(v.c[2]) + ")";
+}
+
+// Swaps the host staging arrays (geometry + image map pages) for
+// copy-on-write file mappings under the scene spill dir. Safe to call
+// only after the device upload queue has been synchronized; arrays
+// already spilled are skipped, so additional render threads calling
+// this just no-op. The mappings keep the data readable for device
+// restarts and later-started devices while letting the kernel evict
+// the pages under memory pressure.
+size_t CompiledScene::SpillHostStaging() {
+	if (!scene.GeoSpillEnabled() || scene.GeoSpillDir().empty())
+		return 0;
+
+	const std::string pfx = scene.GeoSpillDir() + "/stg-" +
+			std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+			"-" + std::to_string(reinterpret_cast<uintptr_t>(this)) + "-";
+	std::filesystem::create_directories(scene.GeoSpillDir());
+
+	const size_t minBytes = scene.GeoSpillMinBytes();
+	size_t spilled = 0;
+	auto spill = [&](auto &arr, const std::string &name) {
+		if (arr.size() * sizeof(arr[0]) >= minBytes)
+			spilled += arr.Spill(pfx + name + ".bin");
+	};
+	spill(verts, "verts");
+	spill(normals, "normals");
+	spill(triNormals, "trinormals");
+	spill(uvs, "uvs");
+	spill(cols, "cols");
+	spill(alphas, "alphas");
+	spill(vertexAOVs, "vertaovs");
+	spill(triAOVs, "triaovs");
+	spill(tris, "tris");
+	spill(interpolatedTransforms, "itran");
+	spill(curveCps, "curvecps");
+	spill(curveSegIndices, "curvesegs");
+	spill(curveCpAttrs, "curveattrs");
+	spill(meshDescs, "meshdescs");
+	spill(cameraBokehDistribution, "bokehdist");
+	spill(sceneObjs, "sceneobjs");
+	spill(lightDefs, "lightdefs");
+	spill(envLightIndices, "envlightidx");
+	spill(lightIndexOffsetByMeshIndex, "lightidxmesh");
+	spill(lightIndexByTriIndex, "lightidxtri");
+	spill(envLightDistributions, "envlightdist");
+	spill(emissionFuncDistributions, "emitdist");
+	spill(lightsDistribution, "lightdist");
+	spill(infiniteLightSourcesDistribution, "infdist");
+	spill(emitLightsDistribution, "emitlightdist");
+	spill(lightFocusCasters, "focuscasters");
+	spill(dlscAllEntries, "dlscentries");
+	spill(dlscDistributions, "dlscdist");
+	spill(dlscBVHArrayNode, "dlscbvh");
+	spill(elvcAllEntries, "elvcentries");
+	spill(elvcDistributions, "elvcdist");
+	spill(elvcTileDistributionOffsets, "elvctileoff");
+	spill(elvcBVHArrayNode, "elvcbvh");
+	spill(mats, "mats");
+	spill(volMajorants, "volmaj");
+	spill(eqLightPoints, "eqlightpts");
+	spill(texs, "texs");
+	spill(texEvalOps, "texevalops");
+	spill(imageMapDescs, "imapdescs");
+	spill(pgicRadiancePhotons, "pgicradiance");
+	spill(pgicRadiancePhotonsValues, "pgicvalues");
+	spill(pgicRadiancePhotonsBVHArrayNode, "pgicbvh");
+	spill(pgicCausticPhotons, "pgiccaustic");
+	spill(pgicCausticPhotonsBVHArrayNode, "pgiccbvh");
+	for (u_int i = 0; i < imageMapMemBlocks.size(); ++i)
+		spill(imageMapMemBlocks[i], "imaps-" + std::to_string(i));
+
+	return spilled;
 }
 
 #endif

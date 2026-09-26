@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -483,6 +484,33 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 
 	for (auto thread : renderNativeThreads)
 		thread->Start();
+
+	//--------------------------------------------------------------------------
+	// Spill the host-side accelerator trees
+	//--------------------------------------------------------------------------
+
+	// All device intersection kernels are built at this point, so the
+	// CPU-side BVH node arrays have been uploaded. Native threads always
+	// intersect through their own accelerator (EMBREE by default), so the
+	// OCL-side trees (BVH/MBVH) are dead weight on the host for the rest
+	// of the render: when scene spilling is enabled, swap them for
+	// file-backed mappings (re-uploads and updates still read through the
+	// mappings transparently). The accelerator traversed by native
+	// threads is kept hot.
+	if (renderConfig.GetScene().GeoSpillEnabled()) {
+		auto &ds = renderConfig.GetScene().GetDataSet();
+		const auto keepHot = (nativeRenderThreadCount > 0) ?
+				((ds.GetAcceleratorType() != luxrays::ACCEL_AUTO) ?
+						ds.GetAcceleratorType() : luxrays::ACCEL_EMBREE) :
+				luxrays::ACCEL_AUTO;
+		std::filesystem::create_directories(renderConfig.GetScene().GeoSpillDir());
+		const size_t spilled = ds.SpillAcceleratorNodes(
+				renderConfig.GetScene().GeoSpillDir(),
+				renderConfig.GetScene().GeoSpillMinBytes(), keepHot);
+		if (spilled)
+			SLG_LOG("Accelerator host nodes spilled to disk: " <<
+					spilled / (1024 * 1024) << " MB");
+	}
 }
 
 void PathOCLBaseRenderEngine::StopLockLess() {

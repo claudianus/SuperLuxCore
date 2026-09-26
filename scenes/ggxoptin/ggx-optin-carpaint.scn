@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Legacy Schlick -> GGX opt-in ("distribution = ggx") comparison scene.
+# Cornell box, two carpaint spheres:
+#   back  : carpaint preset "polaris silber" (legacy Schlick, default)
+#   front : carpaint preset "polaris silber" (distribution = ggx)
+
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+scene.materials.cp-schlick.type = carpaint
+scene.materials.cp-schlick.preset = "polaris silber"
+
+scene.materials.cp-ggx.type = carpaint
+scene.materials.cp-ggx.preset = "polaris silber"
+scene.materials.cp-ggx.distribution = ggx
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply
+# back: Schlick
+scene.objects.s-cp.material = cp-schlick
+scene.objects.s-cp.ply = scenes/cornell/sphere-mid.ply
+# front: GGX (shifted forward/down)
+scene.objects.g-cp.material = cp-ggx
+scene.objects.g-cp.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g-cp.transformation = 1 0 0 0  0 1 0 0  0 0 1 0  0 -1.8 -1.3 1
+################################################################################
+scene.lights.infinitelight.type = infinite
+scene.lights.infinitelight.file = scenes/simple-mat/arch.exr
+scene.lights.infinitelight.gamma = 1.0
+scene.lights.infinitelight.gain = 0.5 0.5 0.5
+scene.lights.infinitelight.storage = byte

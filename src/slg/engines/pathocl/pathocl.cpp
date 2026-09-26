@@ -284,16 +284,13 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 	}
 	if (lightTracingEnable) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
-		// Light tasks run their own sample sequence; Metropolis light
-		// sampling (the CPU hybrid contract) is not implemented on device,
-		// so a Metropolis eye sampler disables the light population
-		const std::string samplerType = cfg.Get(Property("sampler.type")("SOBOL")).Get<std::string>();
+		// Light tasks run their own sample sequence and are sampler
+		// independent: under METROPOLIS they draw an i.i.d. uniform
+		// stream instead of walking a mutation chain (see
+		// Sampler_GetLightSample)
 		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
 			SLG_LOG("WARNING: path.lighttracing supports only perspective and "
 					"orthographic cameras, light tasks disabled");
-		} else if (samplerType == "METROPOLIS") {
-			SLG_LOG("WARNING: path.lighttracing does not support the METROPOLIS "
-					"sampler, light tasks disabled");
 		} else {
 			// path.lighttracing.only is a debug/validation mode: the whole
 			// population traces light paths (LIGHTCPU-style output)

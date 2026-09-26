@@ -918,6 +918,7 @@ void CompiledScene::CompileMaterials() {
 				mat->carpaint.R3TexIndex = scene.GetTextures().GetTextureIndex(cm.R3);
 				mat->carpaint.KaTexIndex = scene.GetTextures().GetTextureIndex(cm.Ka);
 				mat->carpaint.depthTexIndex = scene.GetTextures().GetTextureIndex(cm.depth);
+				mat->carpaint.useGgx = cm.IsGgx() ? 1 : 0;
 				break;
 			}
 			case GLOSSYTRANSLUCENT: {

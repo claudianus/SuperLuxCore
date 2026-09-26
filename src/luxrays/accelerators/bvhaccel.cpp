@@ -27,6 +27,7 @@
 
 #include "luxrays/accelerators/bvhaccel.h"
 #include "luxrays/utils/utils.h"
+#include "luxrays/utils/memspill.h"
 #include "luxrays/core/context.h"
 #include "luxrays/core/exttrianglemesh.h"
 
@@ -77,7 +78,7 @@ void BVHAccel::Init(const deque<const Mesh *> &ms, const u_longlong totVert,
 	if (totalTriangleCount == 0) {
 		LR_LOG(ctx, "Empty BVH");
 		nNodes = 0;
-		bvhTree = NULL;
+		bvhTree = nullptr;
 		initialized = true;
 
 		return;
@@ -279,6 +280,21 @@ bool BVHAccel::Intersect(const Ray *initialRay, RayHit *rayHit) const {
 	}
 
 	return !rayHit->Miss();
+}
+
+size_t BVHAccel::SpillBVHNodes(const std::string &dir,
+		const std::string &prefix, const size_t minBytes) const {
+	if (!bvhTree || nNodes * sizeof(ocl::BVHArrayNode) < minBytes)
+		return 0;
+
+	std::shared_ptr<void> k = SpillToFile(bvhTree.get(),
+			nNodes * sizeof(ocl::BVHArrayNode), dir + "/" + prefix + ".bin");
+	if (!k)
+		return 0;
+
+	ocl::BVHArrayNode *mp = static_cast<ocl::BVHArrayNode *>(k.get());
+	bvhTree = std::shared_ptr<ocl::BVHArrayNode[]>(k, mp);
+	return nNodes * sizeof(ocl::BVHArrayNode);
 }
 
 }

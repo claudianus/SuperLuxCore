@@ -377,13 +377,16 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 
 	__global float *group = filmScreenRadianceGroup[lightGroupID];
 	if (!filterLUTs) {
-		const uint x = Floor2UInt(filmX);
-		const uint y = Floor2UInt(filmY);
-		if ((x < filmSubRegion0) || (x > filmSubRegion1) ||
-				(y < filmSubRegion2) || (y > filmSubRegion3))
+		// Signed check: tile engines accept splat centers up to the
+		// filter-margin halo past the tile rect, so filmX/filmY may be
+		// negative here (Floor2UInt would wrap them to pixel 0)
+		const int x = Floor2Int(filmX);
+		const int y = Floor2Int(filmY);
+		if ((x < (int)filmSubRegion0) || (x > (int)filmSubRegion1) ||
+				(y < (int)filmSubRegion2) || (y > (int)filmSubRegion3))
 			return;
 
-		__global float *dst = &group[(x + y * filmWidth) * 3];
+		__global float *dst = &group[((uint)x + (uint)y * filmWidth) * 3];
 		AtomicAdd(&dst[0], radiance.x);
 		AtomicAdd(&dst[1], radiance.y);
 		AtomicAdd(&dst[2], radiance.z);

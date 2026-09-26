@@ -57,11 +57,11 @@ void CompiledScene::AddToImageMapMem(slg::ocl::ImageMap &im, const void *data, c
 			throw runtime_error("More than 8 blocks of memory are required for image maps");
 
 		// Add a new page
-		imageMapMemBlocks.push_back(vector<float>());
+		imageMapMemBlocks.emplace_back();
 		page = imageMapMemBlocks.size() - 1;
 	}
 
-	vector<float> &imageMapMemBlock = imageMapMemBlocks[page];
+	luxrays::SpillableArray<float> &imageMapMemBlock = imageMapMemBlocks[page];
 
 	const size_t start = imageMapMemBlock.size();
 	const size_t memSizeInFloat = memSize / sizeof(float);

@@ -249,6 +249,7 @@ typedef struct {
 	unsigned int R3TexIndex;
 	unsigned int KaTexIndex;
 	unsigned int depthTexIndex;
+	int useGgx;
 } CarPaintParam;
 
 typedef struct {

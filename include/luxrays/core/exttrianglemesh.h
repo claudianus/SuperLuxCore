@@ -42,6 +42,7 @@
 #include "luxrays/core/namedobject.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/utils/serializationutils.h"
+#include "luxrays/utils/memspill.h"
 
 namespace luxrays {
 
@@ -113,6 +114,21 @@ public:
 	void DeleteLayer(const u_int layerIndex) {
 		(*this)[layerIndex].reset();
 		(*this)[layerIndex] = nullptr;
+	}
+	// Spill the layer to a file and swap the array for a copy-on-write
+	// file mapping (see luxrays::SpillToFile). Returns false on failure,
+	// leaving the layer untouched.
+	bool SpillLayer(const u_int layerIndex, const std::string &fileName) {
+		auto &layer = (*this)[layerIndex];
+		if (!layer)
+			return false;
+		auto keeper = luxrays::SpillToFile(layer.get(), _size * sizeof(T),
+				fileName);
+		if (!keeper)
+			return false;
+		auto *mapped = static_cast<T*>(keeper.get());
+		layer = Layer(std::move(keeper), mapped);
+		return true;
 	}
 	bool LayerHasValues(const u_int layerIndex) const {
 		return (*this)[layerIndex] != nullptr;
@@ -261,6 +277,16 @@ public:
 
 	virtual void Delete() = 0;
 	virtual void Save(const std::string &fileName) const = 0;
+
+	// Spills the mesh's buffers (vertices, triangles, normals, attribute
+	// layers, vertex motion steps) larger than minBytes to files
+	// `dir`/`namePrefix`<n>_<tag>.bin and swaps them for copy-on-write
+	// file mappings. Returns the total spilled byte count. Base
+	// implementation does nothing.
+	virtual size_t SpillBuffers(const std::string &dir,
+			const std::string &namePrefix, const size_t minBytes) {
+		return 0;
+	}
 
 	friend class boost::serialization::access;
 
@@ -633,6 +659,9 @@ public:
 	virtual bool IntersectBevel(const luxrays::Ray &ray, const luxrays::RayHit &rayHit,
 			bool &continueToTrace, float &rayHitT,
 			luxrays::Point &p, luxrays::Normal &n) const;
+
+	virtual size_t SpillBuffers(const std::string &dir,
+			const std::string &namePrefix, const size_t minBytes);
 
 	static ExtTriangleMeshUPtr Load(const std::string &fileName);
 

@@ -228,6 +228,10 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                                 gpuTaskStats.get());
                         intersectionDevice.FinishQueue();
 
+                        // Fold the measured light-path counts into the
+                        // thread film before the merge below
+                        ConsumeLightSampleCounts();
+
                         engine->tileRepository->NextTile(engine->GetFilm(), engine->filmMutex, tileWork, threadFilms[0]->GetFilm());
 
                         // There is only one tile for each device in RTPATHOCL

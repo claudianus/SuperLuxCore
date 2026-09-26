@@ -160,11 +160,14 @@ set(LUXRAYS_SRCS
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/nativeintersectiondevice.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/ocldevice.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/oclintersectiondevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/vkdevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/vkintersectiondevice.cpp
 
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/buffer.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/config.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/cuda.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/mc.cpp
+  ${PROJECT_SOURCE_DIR}/src/luxrays/utils/memspill.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/ocl.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/safesave.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/serializationutils.cpp
@@ -174,6 +177,7 @@ set(LUXRAYS_SRCS
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/utils.cpp
   ${PROJECT_SOURCE_DIR}/deps/cuew/src/cuew.cpp
   ${PROJECT_SOURCE_DIR}/deps/clew/src/clew.cpp
+  ${PROJECT_SOURCE_DIR}/deps/volk/volk.c
 )
 SOURCE_GROUP("Source Files\\LuxRays Library" FILES ${LUXRAYS_SRCS})
 
@@ -241,6 +245,16 @@ set(LUXRAYS_LIB_SRCS
 
 add_library(luxrays STATIC ${LUXRAYS_LIB_SRCS})
 add_definitions(-DCPP_API_EXPORTS ${VISIBILITY_FLAGS}) # for controlling visibility
+# Vulkan headers + volk meta-loader (runtime-loaded; no link-time dep)
+target_include_directories(luxrays PRIVATE
+  ${PROJECT_SOURCE_DIR}/deps/vulkan-headers/include
+  ${PROJECT_SOURCE_DIR}/deps/volk
+)
+if(APPLE)
+  # volk looks for libvulkan.dylib/libMoltenVK.dylib via dlopen at runtime
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/deps/volk/volk.c
+    PROPERTIES COMPILE_DEFINITIONS "VK_ENABLE_BETA_EXTENSIONS;VK_USE_PLATFORM_MACOS_MVK")
+endif()
 target_link_libraries(luxrays PRIVATE
   embree::embree
   openimageio::openimageio
@@ -306,6 +320,8 @@ add_executable(bvh_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/bvh_dump.
 add_executable(enum_metal_test ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/enum_metal_test.cpp)
 add_executable(metal_kernel_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_kernel_smoke.cpp)
 add_executable(metal_initseed_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_initseed_smoke.cpp)
+add_executable(enum_vk_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/enum_vk_test.cpp)
+add_executable(vk_intersect_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/vk_intersect_test.cpp)
 # E9: ExtTriangleMesh vertex-motion series unit test
 # (dev-tools/deformation-motion-blur-design.md)
 add_executable(vertexmotion_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/e9_vertexmotion_test.cpp)
@@ -351,6 +367,28 @@ target_link_libraries(vertexmotion_test PRIVATE
 )
 set_target_properties(vertexmotion_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set_target_properties(enum_metal_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Vulkan device enumeration smoke test (Context must list DEVICE_TYPE_VULKAN_GPU)
+target_link_libraries(enum_vk_test PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+  "-framework Metal"
+  "-framework Foundation")
+set_target_properties(enum_vk_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Vulkan intersection end-to-end test (BVH kernel via vkdevice -> clspv -> GPU)
+target_link_libraries(vk_intersect_test PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+  "-framework Metal"
+  "-framework Foundation")
+set_target_properties(vk_intersect_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 ################################################################################
 #

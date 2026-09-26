@@ -53,6 +53,18 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 			ctx.Stop();
 		}
 
+		// Out-of-core geometry spilling: swap large mesh buffers for
+		// file-backed copy-on-write mappings BEFORE the data set is
+		// built, so accelerators sharing the vertex buffers (Embree)
+		// bind to the mapped addresses.
+		if (geoSpillEnable) {
+			const size_t spilled = SpillGeometryBuffers();
+			if (spilled)
+				SLG_LOG("Geometry spilled to disk: " <<
+						spilled / (1024 * 1024) << " MB in " <<
+						geoSpillLastDir);
+		}
+
 		// Rebuild the data set
 		dataSet = std::make_unique<DataSet>(ctx);
 
@@ -175,6 +187,17 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 	//--------------------------------------------------------------------------
 
 	imgMapCache.Preprocess(*this, useRTMode);
+
+	// Out-of-core image map spilling: after resize policies and color
+	// conversions are done, swap large pixel storages for file-backed
+	// copy-on-write mappings. Pages become demand-paged and reclaimable.
+	if (geoSpillEnable && imgSpillEnable) {
+		const size_t spilled = SpillImageMaps();
+		if (spilled)
+			SLG_LOG("Image maps spilled to disk: " <<
+					spilled / (1024 * 1024) << " MB in " <<
+					geoSpillLastDir);
+	}
 
 	//--------------------------------------------------------------------------
 	// Reset the edit actions

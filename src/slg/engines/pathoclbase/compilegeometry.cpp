@@ -45,21 +45,22 @@ void CompiledScene::CompileGeometry() {
 
 	const double tStart = WallClockTime();
 
-	// Clear vectors
-	verts.resize(0);
-	normals.resize(0);
-	triNormals.resize(0);
-	uvs.resize(0);
-	cols.resize(0);
-	alphas.resize(0);
-	vertexAOVs.resize(0);
-	triAOVs.resize(0);
-	tris.resize(0);
-	interpolatedTransforms.resize(0);
-	meshDescs.resize(0);
-	curveCps.resize(0);
-	curveSegIndices.resize(0);
-	curveCpAttrs.resize(0);
+	// Clear arrays (Reset() also drops any file mapping from a previous
+	// spilled staging state)
+	verts.Reset();
+	normals.Reset();
+	triNormals.Reset();
+	uvs.Reset();
+	cols.Reset();
+	alphas.Reset();
+	vertexAOVs.Reset();
+	triAOVs.Reset();
+	tris.Reset();
+	interpolatedTransforms.Reset();
+	meshDescs.Reset();
+	curveCps.Reset();
+	curveSegIndices.Reset();
+	curveCpAttrs.Reset();
 
 	//--------------------------------------------------------------------------
 	// Translate geometry
@@ -253,7 +254,7 @@ void CompiledScene::CompileGeometry() {
 
 			if (baseMesh.get().HasNormals()) {
 				const auto& n = baseMesh.get().GetNormals().GetObjects();
-				normals.insert(normals.end(), n.begin(), n.begin() + baseMesh.get().GetTotalVertexCount());
+				normals.Append(n.begin(), n.begin() + baseMesh.get().GetTotalVertexCount());
 			}
 
 			//------------------------------------------------------------------
@@ -261,8 +262,7 @@ void CompiledScene::CompileGeometry() {
 			//------------------------------------------------------------------
 
 			const auto& tn = baseMesh.get().GetTriNormals().GetObjects();
-			triNormals.insert(
-				triNormals.end(),
+			triNormals.Append(
 				tn.begin(),
 				tn.begin() + baseMesh.get().GetTotalTriangleCount()
 			);
@@ -274,7 +274,7 @@ void CompiledScene::CompileGeometry() {
 
 				if (baseMesh.get().HasUVs(dataIndex)) {
 					const UV *u = baseMesh.get().GetUVs(dataIndex).get();
-					uvs.insert(uvs.end(), u, u + baseMesh.get().GetTotalVertexCount());
+					uvs.Append(u, u + baseMesh.get().GetTotalVertexCount());
 				}
 
 				//--------------------------------------------------------------
@@ -283,7 +283,7 @@ void CompiledScene::CompileGeometry() {
 
 				if (baseMesh.get().HasColors(dataIndex)) {
 					const Spectrum *c = baseMesh.get().GetColors(dataIndex).get();
-					cols.insert(cols.end(), c, c + baseMesh.get().GetTotalVertexCount());
+					cols.Append(c, c + baseMesh.get().GetTotalVertexCount());
 				}
 
 				//--------------------------------------------------------------
@@ -292,7 +292,7 @@ void CompiledScene::CompileGeometry() {
 
 				if (baseMesh.get().HasAlphas(dataIndex)) {
 					const float *a = baseMesh.get().GetAlphas(dataIndex).get();
-					alphas.insert(alphas.end(), a, a + baseMesh.get().GetTotalVertexCount());
+					alphas.Append(a, a + baseMesh.get().GetTotalVertexCount());
 				}
 
 				//--------------------------------------------------------------
@@ -301,7 +301,7 @@ void CompiledScene::CompileGeometry() {
 
 				if (baseMesh.get().HasVertexAOV(dataIndex)) {
 					const float *v = baseMesh.get().GetVertexAOVs(dataIndex).get();
-					vertexAOVs.insert(vertexAOVs.end(), v, v + baseMesh.get().GetTotalVertexCount());
+					vertexAOVs.Append(v, v + baseMesh.get().GetTotalVertexCount());
 				}
 
 				//--------------------------------------------------------------
@@ -310,7 +310,7 @@ void CompiledScene::CompileGeometry() {
 
 				if (baseMesh.get().HasTriAOV(dataIndex)) {
 					const float *t = baseMesh.get().GetTriAOVs(dataIndex).get();
-					triAOVs.insert(triAOVs.end(), t, t + baseMesh.get().GetTotalTriangleCount());
+					triAOVs.Append(t, t + baseMesh.get().GetTotalTriangleCount());
 				}
 			}
 
@@ -319,8 +319,7 @@ void CompiledScene::CompileGeometry() {
 			//------------------------------------------------------------------
 
 			const Points v = baseMesh.get().GetVertices();
-			verts.insert(
-				verts.end(),
+			verts.Append(
 				v.begin(),
 				v.begin() + baseMesh.get().GetTotalVertexCount()
 			);
@@ -330,7 +329,7 @@ void CompiledScene::CompileGeometry() {
 			//------------------------------------------------------------------
 
 			const auto t = baseMesh.get().GetTriangles();
-			tris.insert(tris.end(), t.begin(), t.begin() + baseMesh.get().GetTotalTriangleCount());
+			tris.Append(t.begin(), t.begin() + baseMesh.get().GetTotalTriangleCount());
 
 			//------------------------------------------------------------------
 			// Compile native curve primitives (Metal HWRT). Segment indices
@@ -341,10 +340,10 @@ void CompiledScene::CompileGeometry() {
 				const u_int cpBase = (u_int)curveCps.size();
 
 				const auto &cps = baseMesh.get().GetCurveCps();
-				curveCps.insert(curveCps.end(), cps.begin(), cps.end());
+				curveCps.Append(cps.begin(), cps.end());
 
 				const auto &attrs = baseMesh.get().GetCurveCpAttrs();
-				curveCpAttrs.insert(curveCpAttrs.end(), attrs.begin(), attrs.end());
+				curveCpAttrs.Append(attrs.begin(), attrs.end());
 
 				const auto &segs = baseMesh.get().GetCurveSegIndices();
 				for (const u_int s : segs)

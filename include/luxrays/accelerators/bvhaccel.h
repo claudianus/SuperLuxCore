@@ -52,6 +52,13 @@ public:
 
 	virtual bool Intersect(const Ray *ray, RayHit *hit) const;
 
+	// Spills the node array to a file-backed copy-on-write mapping under
+	// `dir` when it exceeds `minBytes`. Used for pure device renders where
+	// the host tree is dead weight after upload; reads stay transparent
+	// through the mapping (re-uploads, edits, native Intersect).
+	virtual size_t SpillBVHNodes(const std::string &dir,
+			const std::string &prefix, size_t minBytes) const override;
+
 	// Read-only access to the built GPU-layout tree: node array
 	// (leaf vertex indices are MESH-LOCAL - apply per-mesh offsets)
 	// and the mesh list order used at Init(). Metal/GPU backends and
@@ -76,7 +83,9 @@ private:
 	BVHParams params;
 
 	u_int nNodes;
-	std::unique_ptr<luxrays::ocl::BVHArrayNode[]> bvhTree;
+	// shared_ptr so the array can be swapped for a file mapping (aliasing
+	// keeper); mutable so SpillBVHNodes() stays logically const
+	mutable std::shared_ptr<luxrays::ocl::BVHArrayNode[]> bvhTree;
 
 	const Context & ctx;
 	std::deque<const Mesh *> meshes;

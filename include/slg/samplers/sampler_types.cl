@@ -137,6 +137,11 @@ typedef struct {
 	unsigned int tileWidth, tileHeight;
 	unsigned int tilePass, aaSamples;
 	unsigned int multipassIndexToRender;
+	// Halo around the tile rect where light-path splat centers are still
+	// accepted: a filtered splat centered just outside the tile covers
+	// edge pixels through its footprint (0 when the pixel filter is
+	// FILTER_NONE - a box splat only covers its own pixel)
+	unsigned int splatMarginX, splatMarginY;
 
 	// Plus Sobol directions array
 } TilePathSamplerSharedData;

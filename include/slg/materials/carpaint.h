@@ -33,7 +33,8 @@ public:
 			TextureConstPtr emitted, TextureConstPtr bump,
 			TextureConstPtr kd, TextureConstPtr ks1, TextureConstPtr ks2, TextureConstPtr ks3,
 			TextureConstPtr m1, TextureConstPtr m2, TextureConstPtr m3,
-			TextureConstPtr r1, TextureConstPtr r2, TextureConstPtr r3, TextureConstPtr ka, TextureConstPtr d);
+			TextureConstPtr r1, TextureConstPtr r2, TextureConstPtr r3, TextureConstPtr ka, TextureConstPtr d,
+			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return CARPAINT; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
@@ -80,6 +81,9 @@ public:
 	TextureConstPtr R3;
 	TextureConstPtr Ka;
 	TextureConstPtr depth;
+	const bool useGgx;
+
+	const bool IsGgx() const { return useGgx; }
 };
 
 }

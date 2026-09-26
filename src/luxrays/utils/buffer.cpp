@@ -19,6 +19,7 @@
 #include "luxrays/core/geometry/point.h"
 #include "luxrays/core/geometry/triangle.h"
 #include "luxrays/utils/buffer.h"
+#include "luxrays/utils/memspill.h"
 
 #include <span>
 
@@ -66,6 +67,31 @@ Buffer<TYPE, SUBTYPE, PAD> Buffer<TYPE, SUBTYPE, PAD>::Adopt(
 	b.asSubType = std::span<SUBTYPE>(reinterpret_cast<SUBTYPE*>(ptr),
 			byteSize / sizeof(SUBTYPE));
 	return b;
+}
+
+// File-backed copy-on-write spill
+template< typename TYPE, typename SUBTYPE, std::array PAD >
+bool Buffer<TYPE, SUBTYPE, PAD>::SpillToFile(const std::string &fileName) {
+	if (!data || !effectiveSize)
+		return false;
+
+	// Only the effective bytes go to the file; the kernel zero-fills the
+	// tail of the last page so Embree's trailing over-read stays safe.
+	auto keeper = luxrays::SpillToFile(data.get(), effectiveSize, fileName);
+	if (!keeper)
+		return false;
+
+	auto *mapped = reinterpret_cast<std::byte *>(keeper.get());
+	// Aliasing constructor: the buffer owns the mapping (dropping the old
+	// storage here, which releases any external keeper)
+	data = std::shared_ptr<std::byte[]>(std::move(keeper), mapped);
+	external = true;
+	totalSize = effectiveSize;
+	asType = std::span<TYPE>(reinterpret_cast<TYPE*>(mapped),
+			effectiveSize / sizeof(TYPE));
+	asSubType = std::span<SUBTYPE>(reinterpret_cast<SUBTYPE*>(mapped),
+			effectiveSize / sizeof(SUBTYPE));
+	return true;
 }
 
 // Allocator

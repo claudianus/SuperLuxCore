@@ -53,6 +53,12 @@ public:
 
 	bool HasAccelerator(const AcceleratorType accelType) const;
 	AcceleratorConstSPtr GetAccelerator(const AcceleratorType accelType) const;
+	// Spills all built accelerators' host-side node arrays to file-backed
+	// mappings under `dir` (see Accelerator::SpillBVHNodes), except the
+	// `keepHot` accelerator type (the one native threads traverse; pass
+	// ACCEL_AUTO to spill everything).
+	size_t SpillAcceleratorNodes(const std::string &dir, size_t minBytes,
+			AcceleratorType keepHot = ACCEL_AUTO) const;
 	bool DoesAllAcceleratorsSupportUpdate() const;
 	void UpdateAccelerators();
 

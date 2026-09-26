@@ -74,6 +74,11 @@ public:
 	u_int GetSize()const { return static_cast<u_int>(mapByKey.size()); }
 	bool IsImageMapDefined(const std::string &name) const { return mapByKey.find(name) != mapByKey.end(); }
 
+	// Spills every image map with a pixel storage of at least minBytes to
+	// file-backed copy-on-write mappings inside dir. Returns the total
+	// number of bytes swapped out.
+	size_t SpillImageMaps(const std::string &dir, const size_t minBytes);
+
 
 	friend class Scene;
 	friend class ImageMapResizePolicy;

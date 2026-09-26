@@ -54,6 +54,13 @@ public:
 
 	virtual bool Intersect(const Ray *ray, RayHit *hit) const = 0;
 
+	// Swaps the host-side node arrays for file-backed copy-on-write
+	// mappings under `dir` when they exceed `minBytes`. Default no-op;
+	// implemented by BVHAccel/MBVHAccel. Safe only when no native thread
+	// traverses the host trees during the render.
+	virtual size_t SpillBVHNodes(const std::string &dir,
+			const std::string &prefix, size_t minBytes) const { return 0; }
+
 	static std::string AcceleratorType2String(const AcceleratorType type);
 	static AcceleratorType String2AcceleratorType(const std::string &type);
 };

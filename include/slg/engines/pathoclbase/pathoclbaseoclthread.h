@@ -157,6 +157,9 @@ public:
 		FilmUPtr film;
 		FilmPtr engineFilm;
 		PathOCLBaseOCLRenderThread *renderThread;
+		// Persistent zero page for clearing the screen-normalized
+		// splat channels (EnqueueWriteBuffer is async)
+		std::vector<float> screenChannelZeros;
 	};
 
 protected:

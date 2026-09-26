@@ -265,6 +265,46 @@ void ExtTriangleMesh::Preprocess() {
 	PreprocessBevel();
 }
 
+// Spills every buffer over minBytes to `dir` and remaps it file-backed
+// copy-on-write (see luxrays::SpillToFile). Called before the DataSet is
+// built so accelerators sharing the vertex buffer (e.g. Embree's
+// rtcSetSharedGeometryBuffer) see the mapped address.
+size_t ExtTriangleMesh::SpillBuffers(const std::string &dir,
+		const std::string &namePrefix, const size_t minBytes) {
+	size_t spilled = 0;
+	u_int fileIndex = 0;
+	const auto fileName = [&](const char *tag) {
+		return dir + "/" + namePrefix + std::to_string(fileIndex++) +
+				"_" + tag + ".bin";
+	};
+	const auto spillBuf = [&](auto &buf, const char *tag) {
+		const size_t n = buf.GetBytes().size();
+		if ((n >= minBytes) && buf.SpillToFile(fileName(tag)))
+			spilled += n;
+	};
+	const auto spillProp = [&](auto &prop, const char *tag) {
+		for (u_int i = 0; i < prop.GetMaxLayerNumber(); ++i) {
+			const size_t n = prop.GetLayerSpan(i).size_bytes();
+			if ((n >= minBytes) && prop.SpillLayer(i, fileName(tag)))
+				spilled += n;
+		}
+	};
+
+	spillBuf(vertices, "verts");
+	spillBuf(tris, "tris");
+	spillBuf(normals, "normals");
+	spillBuf(triNormals, "trinormals");
+	spillProp(uvs, "uv");
+	spillProp(cols, "col");
+	spillProp(alphas, "alpha");
+	spillProp(vertAOV, "vertaov");
+	spillProp(triAOV, "triaov");
+	for (auto &step : motionVertSteps)
+		spillBuf(step, "motion");
+
+	return spilled;
+}
+
 void ExtTriangleMesh::Delete() {
 
 	uvs.DeleteAll();

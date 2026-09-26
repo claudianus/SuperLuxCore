@@ -22,6 +22,7 @@
 #include <Imath/half.h>
 
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <limits>
 #include <unordered_map>
@@ -39,6 +40,7 @@
 #include "luxrays/core/geometry/uv.h"
 #include "luxrays/core/namedobject.h"
 #include "luxrays/utils/properties.h"
+#include "luxrays/utils/memspill.h"
 #include "luxrays/utils/serializationutils.h"
 #include "luxrays/utils/ocl.h"
 #include "slg/core/colorspace.h"
@@ -702,6 +704,10 @@ public:
 	virtual OIIO::image_span<std::byte> ToSpan() = 0;
 	virtual OIIO::image_span<const std::byte> ToSpan() const = 0;
 
+	// Spills the pixel data to `fileName` and remaps it file-backed
+	// copy-on-write (see luxrays::SpillToFile). Returns false on failure.
+	virtual bool SpillPixels(const std::string &fileName) { return false; }
+
 	static StorageType String2StorageType(const std::string &type);
 	static std::string StorageType2String(const StorageType type);
 	static ChannelSelectionType String2ChannelSelectionType(const std::string &type);
@@ -743,7 +749,7 @@ public:
 		const FilterType ft
 	) :
 		ImageMapStorage(w, h, wm, ft),
-		pixels(w * h)
+		pixels(std::make_shared<ImageMapPixel<T, CHANNELS>[]>(w * h))
 	{}
 
 	ImageMapStorageImpl(
@@ -751,7 +757,7 @@ public:
 		const u_int h,
 		const WrapType wm,
 		const FilterType ft,
-		std::vector<ImageMapPixel<T, CHANNELS>>&& ps
+		std::shared_ptr<ImageMapPixel<T, CHANNELS>[]>&& ps
 	) :
 		ImageMapStorage(w, h, wm, ft),
 		pixels(std::move(ps))
@@ -766,8 +772,8 @@ public:
 	virtual size_t GetMemorySize() const { return width * height * CHANNELS * sizeof(T); };
 	constexpr virtual size_t GetMemoryPixelSize() const { return CHANNELS * sizeof(T); };
 	constexpr virtual size_t GetMemoryChannelSize() const { return sizeof(T); };
-	virtual void *GetPixelsData() { return &pixels[0][0]; }
-	virtual const void *GetPixelsData() const { return &pixels[0][0]; }
+	virtual void *GetPixelsData() { return pixels.get(); }
+	virtual const void *GetPixelsData() const { return pixels.get(); }
 
 	OIIO::image_span<T> GetPixelsSpan();
 
@@ -791,6 +797,8 @@ public:
 	virtual OIIO::image_span<std::byte> ToSpan();
 	virtual OIIO::image_span<const std::byte> ToSpan() const;
 
+	virtual bool SpillPixels(const std::string &fileName);
+
 	friend class boost::serialization::access;
 
 private:
@@ -800,21 +808,34 @@ private:
 	const ImageMapPixel<T, CHANNELS> *GetTexel(const int s, const int t) const;
 
 	// save()/load() are placed here instead of imageserialize.cpp because
-	// ImageMapStorageImpl is a template class
+	// ImageMapStorageImpl is a template class. The pixel array is stored
+	// as raw elements (not a vector) so file-mapped storage serializes
+	// transparently.
 	template<class Archive> void save(Archive &ar, const unsigned int version) const {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImageMapStorage);
 
-		ar & pixels;
+		ar & boost::serialization::make_array(pixels.get(),
+				(size_t)width * height);
 	}
 
 	template<class Archive>	void load(Archive &ar, const unsigned int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImageMapStorage);
 
-		ar & pixels;
+		pixels = std::make_shared<ImageMapPixel<T, CHANNELS>[]>(
+				(size_t)width * height);
+		ar & boost::serialization::make_array(pixels.get(),
+				(size_t)width * height);
 	}
 	BOOST_SERIALIZATION_SPLIT_MEMBER()
 
-	std::vector<ImageMapPixel<T, CHANNELS>> pixels;
+	// shared_ptr so spilled file mappings can carry their munmap keeper
+	// in the control block (aliasing constructor), matching Buffer.
+	std::shared_ptr<ImageMapPixel<T, CHANNELS>[]> pixels;
+
+	// Set once the pixels have been swapped for a file-backed mapping;
+	// prevents re-spilling the same storage on later preprocess calls.
+	// Not serialized: a deserialized storage is always heap-backed.
+	bool pixelsSpilled = false;
 };
 
 // Mostly used for Boost serialization macros
@@ -1029,6 +1050,10 @@ public:
 	// very high floating point pixel values (it is a classic filtering problem).
 	// So Resample() should be used instead of Resize() for HDR images.
 	void Resize(const u_int newWidth, const u_int newHeight);
+
+	// Spills the pixel storage to `fileName` and remaps it file-backed
+	// copy-on-write (see luxrays::SpillToFile). Returns false on failure.
+	bool SpillPixels(const std::string &fileName);
 
 	std::string GetFileExtension() const;
 	void WriteImage(const std::string &fileName) const;

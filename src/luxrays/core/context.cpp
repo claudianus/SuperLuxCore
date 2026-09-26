@@ -44,6 +44,10 @@
 #include "luxrays/devices/metaldevice.h"
 #include "luxrays/devices/metalintersectiondevice.h"
 #endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+#include "luxrays/devices/vkdevice.h"
+#include "luxrays/devices/vkintersectiondevice.h"
+#endif
 
 using namespace std;
 using namespace luxrays;
@@ -158,6 +162,17 @@ Context::Context(LuxRaysDebugHandler handler, PropertiesUPtr&& config)
 	MetalDeviceDescription::AddDeviceDescs(deviceDescriptions);
 #else
 	LR_LOG((*this), "Metal support: disabled");
+#endif
+
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+	//--------------------------------------------------------------------------
+	// Add all Vulkan devices
+	//--------------------------------------------------------------------------
+
+	LR_LOG((*this), "Vulkan support: enabled");
+	VulkanDeviceDescription::AddDeviceDescs(deviceDescriptions);
+#else
+	LR_LOG((*this), "Vulkan support: disabled");
 #endif
 
 	// Print device info
@@ -351,6 +366,17 @@ std::vector<IntersectionDeviceUPtr> Context::CreateIntersectionDevices(
 			);
 		}
 #endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+		else if (deviceType & DEVICE_TYPE_VULKAN_ALL) {
+			// Vulkan devices
+			const auto& vkDeviceDesc =
+				static_cast<VulkanDeviceDescriptionConstRef>(devDesc);
+
+			device = std::make_unique<VulkanIntersectionDevice>(
+				*this, vkDeviceDesc, indexOffset + i
+			);
+		}
+#endif
 		else {
 			throw runtime_error(
 				"Unknown device type in Context::CreateIntersectionDevices(): "
@@ -444,6 +470,17 @@ std::vector<HardwareDeviceUPtr> Context::CreateHardwareDevices(
 
 			device = std::make_unique<MetalDevice>(
 				*this, metalDeviceDesc, indexOffset + i
+			);
+		}
+#endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+		else if (deviceType & DEVICE_TYPE_VULKAN_ALL) {
+			// Vulkan devices
+			const auto& vkDeviceDesc =
+				static_cast<VulkanDeviceDescriptionConstRef>(devDesc);
+
+			device = std::make_unique<VulkanDevice>(
+				*this, vkDeviceDesc, indexOffset + i
 			);
 		}
 #endif

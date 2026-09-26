@@ -1298,6 +1298,21 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::ClearFilm(
 	intersectionDevice.EnqueueKernel(filmClearKernel,
 			HardwareDeviceRange(RoundUp<u_int>(filmPixelCount, filmClearWorkGroupSize)),
 			HardwareDeviceRange(filmClearWorkGroupSize));
+
+	// GPU light tracing: the screen-normalized splat channels are not
+	// covered by Film_Clear - they are KERNEL_ARGS_LIGHT buffers, kept
+	// out of KERNEL_ARGS_FILM for the Apple buffer-argument limit.
+	// Without this a tile engine would keep splats accumulated by the
+	// previous tile works sharing this film.
+	for (HardwareDeviceBuffer *buff : channel_RADIANCE_PER_SCREEN_NORMALIZEDs_Buff) {
+		if (!buff)
+			continue;
+		const size_t count = buff->GetSize() / sizeof(float);
+		if (screenChannelZeros.size() < count)
+			screenChannelZeros.assign(count, 0.f);
+		intersectionDevice.EnqueueWriteBuffer(buff, CL_FALSE,
+				buff->GetSize(), screenChannelZeros.data());
+	}
 }
 
 #endif

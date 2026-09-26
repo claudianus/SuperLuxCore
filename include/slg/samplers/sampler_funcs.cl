@@ -200,6 +200,15 @@ OPENCL_FORCE_INLINE float Sampler_GetLightSample(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const uint index
 		SAMPLER_PARAM_DECL) {
+	// A light path is not a Metropolis chain: the eye-path mutation
+	// machinery (accept/reject, importance normalization) has no
+	// meaning for a task that just deposits splats. Light tasks draw
+	// an i.i.d. uniform stream from their private seed instead of
+	// touching the current/proposed sample vectors (which are also not
+	// sized for the light dimension offset)
+	if (taskConfig->sampler.type == METROPOLIS)
+		return Rnd_FloatValue(seed);
+
 	return Sampler_GetSample(taskConfig, index + 2 SAMPLER_PARAM);
 }
 
@@ -245,7 +254,8 @@ OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
 			break;
 		}
 		default:
-			// RANDOM is seed driven; METROPOLIS is rejected on the host
+			// RANDOM is seed driven; METROPOLIS light tasks are too
+			// (see Sampler_GetLightSample)
 			break;
 	}
 }

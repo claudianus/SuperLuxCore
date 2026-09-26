@@ -4725,6 +4725,53 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 // camera-side endpoint weight and the x1 -> lens visibility ray. The
 // pending splat fields carry the pre-visibility radiance for the normal
 // Stage A resolution (which multiplies connectionThroughput in).
+// Light-path splats project in *film* (camera) coordinates. Under tile
+// rendering the film buffer is tile-local while the projection still
+// needs the whole camera film: clip to the tile's film-space rect
+// (widened by the splat halo so footprint tails are not lost at tile
+// edges), then shift back to tile-local coordinates for
+// Film_SplatLight. Splats landing outside the halo are dropped; each
+// tile keeps an unbiased estimator because its pixels collect the
+// light paths generated while it is resident (the same population
+// every tile pass draws from).
+OPENCL_FORCE_INLINE bool LightPath_ProjectToFilm(
+		__global const Camera* restrict camera, __global Ray *visRay,
+		float *filmX, float *filmY,
+		const uint filmWidth, const uint filmHeight,
+		const uint filmSubRegion0, const uint filmSubRegion1,
+		const uint filmSubRegion2, const uint filmSubRegion3
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+		, __global void *samplerSharedDataBuff
+#endif
+		) {
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+	__global const TilePathSamplerSharedData *ssd =
+			(__global const TilePathSamplerSharedData *)samplerSharedDataBuff;
+	const uint tileX = ssd->tileStartX;
+	const uint tileY = ssd->tileStartY;
+	// Accept centers up to the splat halo past the tile rect: their
+	// filter footprint still covers the tile's edge pixels. The rect is
+	// clamped to the camera film - Film_SplatLight clips per-pixel.
+	const int rx0 = max(0, (int)(tileX + filmSubRegion0) - (int)ssd->splatMarginX);
+	const int rx1 = min((int)ssd->cameraFilmWidth - 1,
+			(int)(tileX + filmSubRegion1) + (int)ssd->splatMarginX);
+	const int ry0 = max(0, (int)(tileY + filmSubRegion2) - (int)ssd->splatMarginY);
+	const int ry1 = min((int)ssd->cameraFilmHeight - 1,
+			(int)(tileY + filmSubRegion3) + (int)ssd->splatMarginY);
+	if (!Camera_GetSamplePosition(camera, visRay, filmX, filmY,
+			ssd->cameraFilmWidth, ssd->cameraFilmHeight,
+			(uint)rx0, (uint)rx1, (uint)ry0, (uint)ry1))
+		return false;
+	*filmX -= tileX;
+	*filmY -= tileY;
+	return true;
+#else
+	return Camera_GetSamplePosition(camera, visRay, filmX, filmY,
+			filmWidth, filmHeight,
+			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+#endif
+}
+
 OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global GPUTask *task,
@@ -4740,6 +4787,9 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 		__global MneeSeedEntry *mneeSeeds,
 		const float worldRadius
 		, __global const Camera* restrict camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+		, __global void *samplerSharedDataBuff
+#endif
 		MATERIALS_PARAM_DECL
 		) {
 	// Post-solve validity check (same as the eye side): the half-vector
@@ -4789,9 +4839,13 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 		Ray_Init3(visRay, v.p, orthoDir, dSeg2, time);
 	} else
 		Ray_Init3(visRay, lensPoint, toVtx / dSeg2, dSeg2, time);
-	if (!Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+	if (!LightPath_ProjectToFilm(camera, visRay, &filmX, &filmY,
 			filmWidth, filmHeight,
-			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3)) {
+			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+			, samplerSharedDataBuff
+#endif
+			)) {
 		lpi->mneeActive = false;
 		return;
 	}
@@ -4920,6 +4974,9 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		, __global const Camera* restrict camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+		, __global void *samplerSharedDataBuff
+#endif
 		MATERIALS_PARAM_DECL
 		) {
 	const int nn = mnee->chainN;
@@ -4958,9 +5015,13 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
 		Ray_Init3(visRay, lastP, orthoDir, dSeg2, time);
 	} else
 		Ray_Init3(visRay, lensPoint, toVtx / dSeg2, dSeg2, time);
-	if (!Camera_GetSamplePosition(camera, visRay, &filmX, &filmY,
+	if (!LightPath_ProjectToFilm(camera, visRay, &filmX, &filmY,
 			filmWidth, filmHeight,
-			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3)) {
+			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+			, samplerSharedDataBuff
+#endif
+			)) {
 		lpi->mneeActive = false;
 		return;
 	}
@@ -5037,6 +5098,9 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		__global const PathVolumeInfo *srcVol,
 		__global PathVolumeInfo *dlVolInfo
 		, __global const Camera* restrict camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+		, __global void *samplerSharedDataBuff
+#endif
 		MATERIALS_PARAM_DECL
 		) {
 	__global MneeState *mnee = &taskDirectLight->mnee;
@@ -5442,6 +5506,9 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 				mnee, x0p, ray, filmWidth, filmHeight,
 				filmSubRegion0, filmSubRegion1, filmSubRegion2,
 				filmSubRegion3, camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+				, samplerSharedDataBuff
+#endif
 				MATERIALS_PARAM);
 		return;
 	}
@@ -5551,6 +5618,9 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		const float worldRadius,
 		__global MneeSeedEntry *mneeSeeds
 		, __global const Camera* restrict camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+		, __global void *samplerSharedDataBuff
+#endif
 		MATERIALS_PARAM_DECL
 		) {
 	__global MneeState *mnee = &taskDirectLight->mnee;
@@ -5568,7 +5638,11 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				filmSubRegion0, filmSubRegion1,
 				filmSubRegion2, filmSubRegion3,
 				&lpi->volume, &lpi->connectVolInfo,
-				camera MATERIALS_PARAM);
+				camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+				, samplerSharedDataBuff
+#endif
+				MATERIALS_PARAM);
 		return;
 	}
 
@@ -5590,7 +5664,11 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 					mnee, x0p, g, visRay, filmWidth, filmHeight,
 					filmSubRegion0, filmSubRegion1, filmSubRegion2,
 					filmSubRegion3, mneeSeeds, worldRadius,
-					camera MATERIALS_PARAM);
+					camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+					, samplerSharedDataBuff
+#endif
+					MATERIALS_PARAM);
 			return;
 		}
 		// Single-vertex solve failed: hand off to the chain (CPU
@@ -5682,7 +5760,11 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				mnee, x0p, gConverged, visRay, filmWidth, filmHeight,
 				filmSubRegion0, filmSubRegion1, filmSubRegion2,
 				filmSubRegion3, mneeSeeds, worldRadius,
-				camera MATERIALS_PARAM);
+				camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+				, samplerSharedDataBuff
+#endif
+				MATERIALS_PARAM);
 		return;
 	}
 
@@ -5704,7 +5786,11 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				mnee, x0p, g, visRay, filmWidth, filmHeight,
 				filmSubRegion0, filmSubRegion1, filmSubRegion2,
 				filmSubRegion3, mneeSeeds, worldRadius,
-				camera MATERIALS_PARAM);
+				camera
+#if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
+				, samplerSharedDataBuff
+#endif
+				MATERIALS_PARAM);
 		return;
 	}
 	LMnee_FailToChainOrSeed(taskConfig, task, taskDirectLight,

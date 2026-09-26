@@ -277,6 +277,11 @@ public:
 	auto& GetDataSet() { return *dataSet; }
 	const auto& GetDataSet() const { return *dataSet; }
 
+	// Out-of-core spilling settings (scene.spill.*)
+	bool GeoSpillEnabled() const { return geoSpillEnable; }
+	const std::string &GeoSpillDir() const { return geoSpillDir; }
+	size_t GeoSpillMinBytes() const { return geoSpillMinBytes; }
+
 	auto& GetDefaultWorldVolume() const { return *defaultWorldVolume; }
 	bool HasDefaultWorldVolume() const { return bool(defaultWorldVolume); }
 
@@ -347,6 +352,19 @@ protected:
 	luxrays::BSphere sceneBSphere;
 
 	EditActionList editActions;
+
+	// Out-of-core geometry spilling (scene.spill.* properties): mesh
+	// buffers over geoSpillMinBytes are written to files under geoSpillDir
+	// and swapped for copy-on-write file mappings before the DataSet is
+	// built, so the kernel can evict cold pages under memory pressure.
+	bool geoSpillEnable = false;
+	std::string geoSpillDir;
+	std::string geoSpillLastDir; // unique per-instance subdir actually used
+	size_t geoSpillMinBytes = 4u * 1024u * 1024u;
+	// scene.spill.images: also spill large image map pixel storages
+	bool imgSpillEnable = true;
+	size_t SpillGeometryBuffers();
+	size_t SpillImageMaps();
 
 	bool enableParsePrint;
 	friend class boost::serialization::access;

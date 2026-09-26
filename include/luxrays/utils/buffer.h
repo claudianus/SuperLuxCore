@@ -23,6 +23,7 @@
 #include <span>
 #include <bit>
 #include <memory>
+#include <string>
 
 namespace luxrays {
 
@@ -63,6 +64,15 @@ public:
 	// no trailing pad, so GetPad() returns the compile-time pad value.
 	static Buffer Adopt(void *ptr, std::size_t byteSize,
 			std::shared_ptr<void> keeper);
+
+	// Spill the buffer contents to `fileName` and swap the storage for a
+	// copy-on-write file mapping: the pages become file-backed so the
+	// kernel can evict them under memory pressure and page them back on
+	// demand (out-of-core geometry). Works on both owned and adopted
+	// buffers — on adopted ones the external keeper (e.g. the source
+	// Python array) is released. Returns false on failure, leaving the
+	// buffer untouched.
+	bool SpillToFile(const std::string &fileName);
 
 	// Move is ok
 	inline Buffer(Buffer&&) = default;

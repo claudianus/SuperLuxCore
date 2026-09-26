@@ -210,4 +210,22 @@ void ImageMapCache::GetImageMaps(std::vector<std::reference_wrapper<const ImageM
 void ImageMapCache::Preprocess(SceneConstRef scene, const bool useRTMode) {
 	resizePolicy->Preprocess(*this, scene, useRTMode);
 }
+
+size_t ImageMapCache::SpillImageMaps(const string &dir, const size_t minBytes) {
+	size_t total = 0;
+	u_int index = 0;
+
+	for (auto &im : maps) {
+		const size_t bytes = im->GetStorage().GetMemorySize();
+		if (bytes >= minBytes) {
+			const string fileName = dir + "/imgmap-" +
+					boost::str(boost::format("%05d") % index) + ".spill";
+			if (im->SpillPixels(fileName))
+				total += bytes;
+		}
+		++index;
+	}
+
+	return total;
+}
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

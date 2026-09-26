@@ -28,6 +28,7 @@
 #include "luxrays/accelerators/mbvhaccel.h"
 #include "luxrays/core/context.h"
 #include "luxrays/core/exttrianglemesh.h"
+#include "luxrays/utils/memspill.h"
 #include "luxrays/utils/strutils.h"
 
 using namespace std;
@@ -61,7 +62,7 @@ void MBVHAccel::Init(const deque<const Mesh *> &ms, const u_longlong totalVertex
 	if (totalTriangleCount == 0) {
 		LR_LOG(ctx, "Empty MBVH");
 		nRootNodes = 0;
-		bvhRootTree = NULL;
+		bvhRootTree = nullptr;
 		initialized = true;
 
 		return;
@@ -205,7 +206,7 @@ void MBVHAccel::Init(const deque<const Mesh *> &ms, const u_longlong totalVertex
 		bvhLeafsList[i] = bvhLeaf;
 	}
 
-	bvhRootTree = NULL;
+	bvhRootTree = nullptr;
 	UpdateRootBVH();
 
 	LR_LOG(ctx, "MBVH build time: " << int((WallClockTime() - t0) * 1000) << "ms");
@@ -235,6 +236,30 @@ void MBVHAccel::UpdateRootBVH() {
 		bvhRootTree = BuildEmbreeBVHMorton(params, &nRootNodes, NULL, bvhLeafsList);
 	else
 		throw runtime_error("Unknown BVH builder type in MBVHAccel::UpdateRootBVH(): " + builderType);
+}
+
+size_t MBVHAccel::SpillBVHNodes(const std::string &dir,
+		const std::string &prefix, const size_t minBytes) const {
+	size_t spilled = 0;
+
+	// Root tree
+	if (bvhRootTree && nRootNodes * sizeof(ocl::BVHArrayNode) >= minBytes) {
+		std::shared_ptr<void> k = SpillToFile(bvhRootTree.get(),
+				nRootNodes * sizeof(ocl::BVHArrayNode),
+				dir + "/" + prefix + "-root.bin");
+		if (k) {
+			ocl::BVHArrayNode *mp = static_cast<ocl::BVHArrayNode *>(k.get());
+			bvhRootTree = std::shared_ptr<ocl::BVHArrayNode[]>(k, mp);
+			spilled += nRootNodes * sizeof(ocl::BVHArrayNode);
+		}
+	}
+
+	// Unique leaf trees
+	for (u_int i = 0; i < uniqueLeafs.size(); ++i)
+		spilled += uniqueLeafs[i]->SpillBVHNodes(dir,
+				prefix + "-leaf" + ToString(i), minBytes);
+
+	return spilled;
 }
 
 void MBVHAccel::Update() {
