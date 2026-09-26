@@ -27,6 +27,7 @@
 #include <OpenImageIO/imagebuf.h>
 
 #include "luxrays/core/geometry/point.h"
+#include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/utils/safesave.h"
 #include "luxrays/utils/fileext.h"
@@ -143,6 +144,9 @@ size_t Film::GetOutputSize(const FilmOutputs::FilmOutputType type) const {
 			return 3 * pixelCount;
 		case FilmOutputs::MOTION_VECTOR:
 			return 4 * pixelCount;
+		case FilmOutputs::CRYPTOMATTE_OBJECT:
+		case FilmOutputs::CRYPTOMATTE_MATERIAL:
+			return SLG_CRYPTO_LEVELS * 2 * pixelCount;
 		default:
 			throw runtime_error("Unknown FilmOutputType in Film::GetOutputSize(): " + ToString(type));
 	}
@@ -248,6 +252,10 @@ bool Film::HasOutput(const FilmOutputs::FilmOutputType type) const {
 			return HasChannel(VARIANCE);
 		case FilmOutputs::MOTION_VECTOR:
 			return HasChannel(MOTION_VECTOR);
+		case FilmOutputs::CRYPTOMATTE_OBJECT:
+			return HasChannel(CRYPTOMATTE_OBJECT);
+		case FilmOutputs::CRYPTOMATTE_MATERIAL:
+			return HasChannel(CRYPTOMATTE_MATERIAL);
 		default:
 			throw runtime_error("Unknown film output type in Film::HasOutput(): " + ToString(type));
 	}
@@ -568,6 +576,16 @@ void Film::Output(
 				return;
 			channelCount = 4;
 			break;
+		case FilmOutputs::CRYPTOMATTE_OBJECT:
+			if (!HasChannel(CRYPTOMATTE_OBJECT))
+				return;
+			channelCount = SLG_CRYPTO_LEVELS * 2;
+			break;
+		case FilmOutputs::CRYPTOMATTE_MATERIAL:
+			if (!HasChannel(CRYPTOMATTE_MATERIAL))
+				return;
+			channelCount = SLG_CRYPTO_LEVELS * 2;
+			break;
 		default:
 			throw runtime_error("Unknown film output type in Film::Output(): " + ToString(type));
 	}
@@ -625,6 +643,33 @@ void Film::Output(
 
 		// For all others copy into float buffer first and let OIIO figure out the conversion on write
 		ImageSpec spec(width, height, (channelCount == 1) ? 3 : channelCount, TypeDesc::FLOAT);
+
+		if ((type == FilmOutputs::CRYPTOMATTE_OBJECT) || (type == FilmOutputs::CRYPTOMATTE_MATERIAL)) {
+			// Cryptomatte EXR channels: <name><rank2d>.<RGBA> per the
+			// spec (2 (id, coverage) pairs per RGBA layer) ->
+			// CryptoObject00..CryptoObject02 for 6 levels
+			const string cryptoName = (type == FilmOutputs::CRYPTOMATTE_OBJECT) ?
+					"CryptoObject" : "CryptoMaterial";
+			for (u_int i = 0; i < channelCount; ++i) {
+				char ch[24];
+				snprintf(ch, sizeof(ch), "%s%02u.%c", cryptoName.c_str(), i / 4, "RGBA"[i % 4]);
+				spec.channelnames[i] = ch;
+			}
+
+			// The manifest metadata is injected by the session (it owns
+			// the scene->name mapping); the hash/key entries are
+			// derivable here
+			const string cryptoKey = CryptoManifestKey(cryptoName);
+			if (!GetMetadata("cryptomatte/" + cryptoKey + "/name"))
+				spec.attribute("cryptomatte/" + cryptoKey + "/name", cryptoName);
+			if (!GetMetadata("cryptomatte/" + cryptoKey + "/hash"))
+				spec.attribute("cryptomatte/" + cryptoKey + "/hash", "MurmurHash3_32");
+			if (!GetMetadata("cryptomatte/" + cryptoKey + "/conversion"))
+				spec.attribute("cryptomatte/" + cryptoKey + "/conversion", "uint32_to_float32");
+			for (const auto &kv : filmMetadata)
+				spec.attribute(kv.first, kv.second);
+		}
+
 		buffer.reset(spec);
 	
 		const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
@@ -868,6 +913,22 @@ void Film::Output(
 					pixel[1] = src[1];
 					pixel[2] = src[2];
 					pixel[3] = src[3];
+					break;
+				}
+				case FilmOutputs::CRYPTOMATTE_OBJECT:
+				case FilmOutputs::CRYPTOMATTE_MATERIAL: {
+					const auto &channel = (type == FilmOutputs::CRYPTOMATTE_OBJECT) ?
+							channel_CRYPTOMATTE_OBJECT : channel_CRYPTOMATTE_MATERIAL;
+					// Sorted (id, coverage) pairs, coverage normalized by the
+					// pixel's accumulated splat weight
+					float ids[SLG_CRYPTO_LEVELS], covs[SLG_CRYPTO_LEVELS];
+					const u_int n = channel->GetSortedPairs(x + y * width, ids, covs);
+					const float w = channel->GetPixel(x, y)[SLG_CRYPTO_LEVELS * 2];
+					const float k = (w > 0.f) ? (1.f / w) : 0.f;
+					for (u_int i = 0; i < SLG_CRYPTO_LEVELS; ++i) {
+						pixel[i * 2] = (i < n) ? ids[i] : 0.f;
+						pixel[i * 2 + 1] = (i < n) ? covs[i] * k : 0.f;
+					}
 					break;
 				}
 				default:
@@ -1202,6 +1263,23 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 		case FilmOutputs::MOTION_VECTOR:
 			copy(channel_MOTION_VECTOR->GetPixels(), channel_MOTION_VECTOR->GetPixels() + pixelCount * 4, buffer);
 			break;
+		case FilmOutputs::CRYPTOMATTE_OBJECT:
+		case FilmOutputs::CRYPTOMATTE_MATERIAL: {
+			const auto &channel = (type == FilmOutputs::CRYPTOMATTE_OBJECT) ?
+					channel_CRYPTOMATTE_OBJECT : channel_CRYPTOMATTE_MATERIAL;
+			for (u_int i = 0; i < pixelCount; ++i) {
+				float *dst = &buffer[i * SLG_CRYPTO_LEVELS * 2];
+				float ids[SLG_CRYPTO_LEVELS], covs[SLG_CRYPTO_LEVELS];
+				const u_int n = channel->GetSortedPairs(i, ids, covs);
+				const float w = channel->GetPixel(i)[SLG_CRYPTO_LEVELS * 2];
+				const float k = (w > 0.f) ? (1.f / w) : 0.f;
+				for (u_int j = 0; j < SLG_CRYPTO_LEVELS; ++j) {
+					dst[j * 2] = (j < n) ? ids[j] : 0.f;
+					dst[j * 2 + 1] = (j < n) ? covs[j] * k : 0.f;
+				}
+			}
+			break;
+		}
 		default:
 			throw runtime_error("Unknown film output type in Film::GetOutput<float>(): " + ToString(type));
 	}

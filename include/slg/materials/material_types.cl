@@ -468,6 +468,9 @@ typedef struct {
 	// The result of calling Material::IsDelta()
 	int isDelta; 
 
+	// Cryptomatte float id (host-computed murmur3 of the material name)
+	float cryptoID;
+
 	// Material eval. ops start index and length 
 	unsigned int evalAlbedoOpStartIndex, evalAlbedoOpLength;
 	unsigned int evalGetInteriorVolumeOpStartIndex, evalGetInteriorVolumeOpLength;

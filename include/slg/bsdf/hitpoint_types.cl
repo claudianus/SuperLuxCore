@@ -53,6 +53,9 @@ typedef struct {
 	unsigned int interiorIorTexIndex, exteriorIorTexIndex;
 
 	unsigned int objectID;
+	// Cryptomatte float id of the hit scene object (murmur3 of its name,
+	// host-computed into SceneObject::cryptoID)
+	float cryptoObjectID;
 
 	int intoObject, throughShadowTransparency;
 

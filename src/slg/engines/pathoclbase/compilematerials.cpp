@@ -613,6 +613,7 @@ void CompiledScene::CompileMaterials() {
 
 		mat->matID = m.GetID();
 		mat->lightID = m.GetLightID();
+		mat->cryptoID = m.GetCryptoID();
         mat->bumpSampleDistance = m.GetBumpSampleDistance();
 
 		// Material transparency

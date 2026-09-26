@@ -21,6 +21,7 @@
 
 #include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/core/namedobject.h"
+#include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/properties.h"
 #include "slg/materials/material.h"
 #include "slg/scene/extmeshcache.h"
@@ -59,6 +60,13 @@ public:
 	MaterialRef GetMaterial() { return mat; }
 	u_int GetID() const { return objID; }
 	bool IsCameraInvisible() const { return cameraInvisible; }
+
+	// Cryptomatte float id (murmur3 of the object name), lazily cached.
+	float GetCryptoID() const {
+		if (cryptoID == 0.f)
+			cryptoID = luxrays::CryptoNameToID(GetName());
+		return cryptoID;
+	}
 
 	void SetMaterial(MaterialRef newMat) {
 		mat = newMat;
@@ -100,6 +108,8 @@ private:
 	u_int bakeMapUVIndex;
 
 	bool cameraInvisible;
+
+	mutable float cryptoID = 0.f;
 };
 
 

@@ -246,6 +246,8 @@ void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 	} else {
 		std::unique_lock<std::mutex> lock(filmMutex);
 		film->Parse(props);
+		// Cryptomatte manifests follow the parsed channel set
+		renderConfig.InjectCryptomatteManifests(*film);
 
 		// Update render config properties
 		renderConfig.UpdateFilmProperties(*props);

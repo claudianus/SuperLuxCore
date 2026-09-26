@@ -68,6 +68,10 @@ public:
 
 	FilterUPtr AllocPixelFilter() const;
 	FilmUPtr AllocFilm() const;
+	// Cryptomatte EXR manifests (scene-owned name->id map injected as
+	// opaque film metadata); also called from RenderSession::Parse when
+	// outputs change without a film realloc
+	void InjectCryptomatteManifests(Film &film) const;
 
 	SamplerSharedDataUPtr AllocSamplerSharedData(
 		const luxrays::RandomGeneratorUPtr & rndGen,

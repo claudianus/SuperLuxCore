@@ -356,6 +356,168 @@ typedef GenericFrameBuffer<2, 0, float> GenericFrameBuffer20Float;
 typedef GenericFrameBuffer<1, 0, float> GenericFrameBuffer10Float;
 typedef GenericFrameBuffer<1, 0, u_int> GenericFrameBuffer10UInt;
 
+//------------------------------------------------------------------------------
+// Cryptomatte coverage accumulator
+//------------------------------------------------------------------------------
+
+// Per-pixel Cryptomatte state: LEVELS (float id, float coverage) pairs
+// plus a trailing total-weight slot. The merge keys on the id rather
+// than summing channels, so it can not reuse GenericFrameBuffer.
+// Slots stay unordered during accumulation; GetSortedPairs() emits the
+// spec's coverage-descending order (id-bits tie-break -> deterministic
+// across CPU/GPU and across merges).
+
+#define SLG_CRYPTO_LEVELS 6
+
+template<u_int LEVELS> class CryptoFrameBuffer {
+public:
+	// [id0, cov0, ..., idN-1, covN-1, totalWeight]
+	static const u_int STRIDE = LEVELS * 2 + 1;
+
+	CryptoFrameBuffer(const u_int w, const u_int h)
+		: width(w), height(h), pixels(width * height * STRIDE, 0.f) {
+	}
+	~CryptoFrameBuffer() { }
+
+	void Clear() { std::fill(pixels.begin(), pixels.end(), 0.f); }
+
+	const float *GetPixels() const { return &pixels[0]; }
+	float *GetPixels() { return &pixels[0]; }
+
+	const float *GetPixel(const u_int index) const { return &pixels[index * STRIDE]; }
+	float *GetPixel(const u_int index) { return &pixels[index * STRIDE]; }
+	const float *GetPixel(const u_int x, const u_int y) const {
+		return &pixels[(x + y * width) * STRIDE];
+	}
+	float *GetPixel(const u_int x, const u_int y) {
+		return &pixels[(x + y * width) * STRIDE];
+	}
+
+	void SetPixel(const u_int index, const float *v) {
+		std::copy(v, v + STRIDE, &pixels[index * STRIDE]);
+	}
+	void SetPixel(const u_int x, const u_int y, const float *v) {
+		SetPixel(x + y * width, v);
+	}
+
+	// Serial merge of one (id, coverage) contribution. weight always
+	// accumulates (including id==0 background samples) so coverages
+	// normalize to <= 1 per pixel.
+	void AddCoverage(const u_int index, const float id, const float weight) {
+		float *pix = &pixels[index * STRIDE];
+		pix[LEVELS * 2] += weight;
+		MergePair(pix, id, weight);
+	}
+	void AddCoverage(const u_int x, const u_int y, const float id, const float weight) {
+		AddCoverage(x + y * width, id, weight);
+	}
+
+	// Thread-safe merge (CPU film splatter). Claims a slot via CAS on
+	// the id bits then atomic-adds coverage; crypto ids always have
+	// exponent >= 1 so the 0 bit pattern is a safe empty marker.
+	void AtomicAddCoverage(const u_int index, const float id, const float weight) {
+		float *pix = &pixels[index * STRIDE];
+		luxrays::AtomicAdd(&pix[LEVELS * 2], weight);
+		if ((id == 0.f) || (weight == 0.f))
+			return;
+
+		u_int idBits;
+		memcpy(&idBits, &id, 4);
+		for (u_int i = 0; i < LEVELS; ++i) {
+			u_int *idSlot = reinterpret_cast<u_int *>(&pix[i * 2]);
+			const u_int old = boost::interprocess::ipcdetail::atomic_cas32(
+					idSlot, idBits, 0u);
+			if ((old == 0u) || (old == idBits)) {
+				luxrays::AtomicAdd(&pix[i * 2 + 1], weight);
+				return;
+			}
+		}
+		// Overflow: see AddCoverage.
+	}
+	void AtomicAddCoverage(const u_int x, const u_int y, const float id, const float weight) {
+		AtomicAddCoverage(x + y * width, id, weight);
+	}
+
+	// Film merge: fold another film's pixel into this one by re-inserting
+	// each of its (id, coverage) pairs. Slot order can differ across
+	// sources, so element-wise add is NOT correct here.
+	void MergePixel(const u_int dstIndex, const float *srcPixel) {
+		float *dst = &pixels[dstIndex * STRIDE];
+		dst[LEVELS * 2] += srcPixel[LEVELS * 2];
+		for (u_int i = 0; i < LEVELS; ++i)
+			MergePair(dst, srcPixel[i * 2], srcPixel[i * 2 + 1]);
+	}
+
+	// Emit the pixel's pairs sorted by coverage desc (id-bits asc as
+	// tie-break). Returns the number of live pairs.
+	u_int GetSortedPairs(const u_int index, float *ids, float *covs) const {
+		const float *pix = &pixels[index * STRIDE];
+		u_int n = 0;
+		for (u_int i = 0; i < LEVELS; ++i) {
+			if (pix[i * 2] != 0.f) {
+				ids[n] = pix[i * 2];
+				covs[n] = pix[i * 2 + 1];
+				++n;
+			}
+		}
+		for (u_int i = 1; i < n; ++i) {
+			const float id = ids[i], cov = covs[i];
+			u_int idBitsI, idBitsJ;
+			memcpy(&idBitsI, &id, 4);
+			u_int j = i;
+			while (j > 0) {
+				memcpy(&idBitsJ, &ids[j - 1], 4);
+				if ((covs[j - 1] > cov) || ((covs[j - 1] == cov) && (idBitsJ < idBitsI)))
+					break;
+				ids[j] = ids[j - 1]; covs[j] = covs[j - 1]; --j;
+			}
+			ids[j] = id; covs[j] = cov;
+		}
+		return n;
+	}
+
+	u_int GetWidth() const { return width; }
+	u_int GetHeight() const { return height; }
+	size_t GetSize() const { return width * height * STRIDE * sizeof(float); }
+
+	friend class boost::serialization::access;
+
+private:
+	CryptoFrameBuffer() { }
+
+	// Insert (id, coverage) into a pixel without touching the weight
+	// slot. Overflow (>LEVELS distinct ids) drops the tail — the same
+	// policy as the reference implementation's rank truncation.
+	static void MergePair(float *pix, const float id, const float cov) {
+		if ((id == 0.f) || (cov == 0.f))
+			return;
+
+		for (u_int i = 0; i < LEVELS; ++i) {
+			float &slotID = pix[i * 2];
+			if (slotID == id) {
+				pix[i * 2 + 1] += cov;
+				return;
+			}
+			if (slotID == 0.f) {
+				slotID = id;
+				pix[i * 2 + 1] = cov;
+				return;
+			}
+		}
+	}
+
+	template<class Archive> void serialize(Archive &ar, const u_int version) {
+		ar & width;
+		ar & height;
+		ar & pixels;
+	}
+
+	u_int width, height;
+	std::vector<float> pixels;
+};
+
+typedef CryptoFrameBuffer<SLG_CRYPTO_LEVELS> CryptoFrameBuffer6;
+
 }
 
 BOOST_CLASS_VERSION(slg::GenericFrameBuffer41Float, 1)
@@ -364,6 +526,7 @@ BOOST_CLASS_VERSION(slg::GenericFrameBuffer21Float, 1)
 BOOST_CLASS_VERSION(slg::GenericFrameBuffer20Float, 1)
 BOOST_CLASS_VERSION(slg::GenericFrameBuffer10Float, 1)
 BOOST_CLASS_VERSION(slg::GenericFrameBuffer10UInt, 1)
+BOOST_CLASS_VERSION(slg::CryptoFrameBuffer6, 1)
 
 BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer41Float)
 BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer30Float)
@@ -371,6 +534,7 @@ BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer21Float)
 BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer20Float)
 BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer10Float)
 BOOST_CLASS_EXPORT_KEY(slg::GenericFrameBuffer10UInt)
+BOOST_CLASS_EXPORT_KEY(slg::CryptoFrameBuffer6)
 
 #endif	/* _SLG_FRAMEBUFFER_H */
 

@@ -32,5 +32,7 @@ typedef struct {
 	unsigned int  bakeMapUVIndex;
 
 	int cameraInvisible;
+	// Cryptomatte float id (host-computed murmur3 of the object name)
+	float cryptoID;
 } SceneObject;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

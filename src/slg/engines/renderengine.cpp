@@ -133,6 +133,10 @@ void RenderEngine::Start(FilmRef flm, std::mutex *flmMutex) {
 
 	StartLockLess();
 
+	// The render threads are running only now: kernel compilation inside
+	// StartLockLess() must not count against batch.halttime
+	film->RestartSampleClock();
+
 	film->ResetTests();
 	} catch (...) {
 		// A start that failed halfway (i.e. a kernel compilation error
@@ -195,6 +199,10 @@ void RenderEngine::EndSceneEdit(const EditActionList &editActions) {
 	film->ResetTests();
 
 	EndSceneEditLockLess(editActions);
+
+	// Scene edits can recompile kernels: the halt clock restarts with
+	// the (re)started render threads, like at Start()
+	film->RestartSampleClock();
 
 	editMode = false;
 }

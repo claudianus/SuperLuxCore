@@ -39,6 +39,7 @@
 #include "luxrays/core/randomgen.h"
 #include "luxrays/core/trianglemesh.h"
 #include "luxrays/usings.h"
+#include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/utils/utils.h"
 #include "slg/core/sphericalfunction/sphericalfunction.h"
@@ -1052,5 +1053,33 @@ string Scene::EncodeTriangleLightNamePrefix(const string &objectName) {
 }
 
 ImageMapConstSPtr Scene::GetRandomImageMap() const { return randomImageMap; }
+
+string Scene::GetCryptomatteManifest(const bool useObjectNames) const {
+	// Manifest maps "name" -> "<id as hex float>", per the Cryptomatte
+	// specification (e.g. {"chair": "3f800000"}).
+	const auto names = useObjectNames ? objDefs.GetSceneObjectNames() :
+			matDefs.GetMaterialNames();
+
+	string manifest = "{";
+	bool first = true;
+	for (const auto &name : names) {
+		// Manifest maps "name" -> "<id bits as 8-hex>" (cryptomatte notation)
+		if (!first)
+			manifest += ", ";
+		// Minimal JSON escaping for quotes and backslashes in names
+		string escaped;
+		for (const char c : name) {
+			if ((c == '\"') || (c == '\\'))
+				escaped += '\\';
+			escaped += c;
+		}
+		manifest += (boost::format("\"%s\": \"%s\"") % escaped %
+				CryptoIDToHex(CryptoNameToID(name))).str();
+		first = false;
+	}
+	manifest += "}";
+
+	return manifest;
+}
 
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

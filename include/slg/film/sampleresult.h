@@ -83,6 +83,9 @@ public:
 	u_int materialID;
 	// Note: OBJECT_ID_MASK is calculated starting from objectID field
 	u_int objectID;
+	// Cryptomatte float ids of the first camera-visible surface
+	// (0.f = no contribution: miss, holdout or light-path sample)
+	float cryptoObjectID, cryptoMaterialID;
 	luxrays::Spectrum directDiffuseReflect, directDiffuseTransmit;
 	luxrays::Spectrum directGlossyReflect, directGlossyTransmit;
 	luxrays::Spectrum emission;

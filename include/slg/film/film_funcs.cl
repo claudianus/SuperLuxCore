@@ -147,6 +147,28 @@ OPENCL_FORCE_INLINE void Film_AddIfValidWeightedPixel4(const bool usePixelAtomic
 	}*/
 }
 
+// Cryptomatte coverage merge (GPU mirror of
+// CryptoFrameBuffer::AtomicAddCoverage). The weight slot always
+// accumulates; each (id, coverage) pair is claimed by CAS on the id
+// bits then the coverage is atomic-added. Overflow (>LEVELS distinct
+// ids) drops the tail, same rank-truncation policy as the CPU buffer.
+OPENCL_FORCE_INLINE void Film_CryptoAddCoverage(__global float *cryptoPixel,
+		const float id, const float weight) {
+	AtomicAdd(&cryptoPixel[SLG_CRYPTO_LEVELS * 2], weight);
+	if ((id == 0.f) || (weight == 0.f))
+		return;
+
+	const uint idBits = as_uint(id);
+	for (uint i = 0; i < SLG_CRYPTO_LEVELS; ++i) {
+		__global uint *idSlot = (__global uint *)&cryptoPixel[i * 2];
+		const uint old = atomic_cmpxchg(idSlot, 0u, idBits);
+		if ((old == 0u) || (old == idBits)) {
+			AtomicAdd(&cryptoPixel[i * 2 + 1], weight);
+			return;
+		}
+	}
+}
+
 OPENCL_FORCE_INLINE void Film_AddSampleResultColor(const uint x, const uint y,
 		__global SampleResult *sampleResult, const float weight
 		FILM_PARAM_DECL) {
@@ -271,6 +293,18 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultColor(const uint x, const uint y,
 			c += VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c);
 		Film_AddIfValidWeightedPixel4Val(usePixelAtomics, &filmVariance[index4], c * c, weight);
 	}
+
+	// Cryptomatte: merge (id, coverage) keyed on the id bits. Pixel
+	// layout mirrors slg::CryptoFrameBuffer: LEVELS (id, coverage)
+	// pairs + a trailing total-weight slot. The empty-slot claim is a
+	// CAS on the id bits (crypto ids always have exponent >= 1 so the
+	// 0 bit pattern is a safe empty marker).
+	if (film->hasChannelCryptoObject)
+		Film_CryptoAddCoverage(&filmCryptoObject[index1 * SLG_CRYPTO_STRIDE],
+				sampleResult->cryptoObjectID, weight);
+	if (film->hasChannelCryptoMaterial)
+		Film_CryptoAddCoverage(&filmCryptoMaterial[index1 * SLG_CRYPTO_STRIDE],
+				sampleResult->cryptoMaterialID, weight);
 }
 
 OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
@@ -365,7 +399,12 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		const uint filmWidth, const uint filmHeight,
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3,
-		__global const float *filterLUTs) {
+		__global const float *filterLUTs,
+		// Cryptomatte coverage of the splat's visible surface: same
+		// filter-footprint weights as the radiance deposit. NULL
+		// buffers skip the write entirely.
+		__global float *filmCryptoObject, __global float *filmCryptoMaterial,
+		const float cryptoObjectID, const float cryptoMaterialID) {
 	if ((lightGroupID >= FILM_MAX_RADIANCE_GROUP_COUNT) ||
 			!filmScreenRadianceGroup[lightGroupID])
 		return;
@@ -390,6 +429,14 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		AtomicAdd(&dst[0], radiance.x);
 		AtomicAdd(&dst[1], radiance.y);
 		AtomicAdd(&dst[2], radiance.z);
+		if (filmCryptoObject)
+			Film_CryptoAddCoverage(&filmCryptoObject[
+					((uint)x + (uint)y * filmWidth) * SLG_CRYPTO_STRIDE],
+					cryptoObjectID, 1.f);
+		if (filmCryptoMaterial)
+			Film_CryptoAddCoverage(&filmCryptoMaterial[
+					((uint)x + (uint)y * filmWidth) * SLG_CRYPTO_STRIDE],
+					cryptoMaterialID, 1.f);
 		return;
 	}
 
@@ -432,6 +479,14 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 			AtomicAdd(&dst[0], radiance.x * w);
 			AtomicAdd(&dst[1], radiance.y * w);
 			AtomicAdd(&dst[2], radiance.z * w);
+			if (filmCryptoObject)
+				Film_CryptoAddCoverage(&filmCryptoObject[
+						(ix + iy * filmWidth) * SLG_CRYPTO_STRIDE],
+						cryptoObjectID, w);
+			if (filmCryptoMaterial)
+				Film_CryptoAddCoverage(&filmCryptoMaterial[
+						(ix + iy * filmWidth) * SLG_CRYPTO_STRIDE],
+						cryptoMaterialID, w);
 		}
 	}
 }
@@ -548,6 +603,8 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		, __global float *filmUserImportance \
 		, __global float *filmVariance \
 		, __global float *filmMotionVector \
+		, __global float *filmCryptoObject \
+		, __global float *filmCryptoMaterial \
 		KERNEL_ARGS_FILM_DENOISER
 
 //------------------------------------------------------------------------------
@@ -749,6 +806,16 @@ __kernel void Film_Clear(
 		filmMotionVector[gid * 4 + 1] = 0.f;
 		filmMotionVector[gid * 4 + 2] = 0.f;
 		filmMotionVector[gid * 4 + 3] = 0.f;
+	}
+
+	if (filmCryptoObject) {
+		for (uint i = 0; i < SLG_CRYPTO_STRIDE; ++i)
+			filmCryptoObject[gid * SLG_CRYPTO_STRIDE + i] = 0.f;
+	}
+
+	if (filmCryptoMaterial) {
+		for (uint i = 0; i < SLG_CRYPTO_STRIDE; ++i)
+			filmCryptoMaterial[gid * SLG_CRYPTO_STRIDE + i] = 0.f;
 	}
 
 	//--------------------------------------------------------------------------

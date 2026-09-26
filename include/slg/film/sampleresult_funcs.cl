@@ -58,6 +58,8 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 	sampleResult->motionVector[1] = 0.f;
 	sampleResult->motionVector[2] = 0.f;
 	sampleResult->motionVector[3] = 0.f;
+	sampleResult->cryptoObjectID = 0.f;
+	sampleResult->cryptoMaterialID = 0.f;
 
 	sampleResult->firstPathVertexEvent = NONE;
 	sampleResult->firstPathVertex = true;

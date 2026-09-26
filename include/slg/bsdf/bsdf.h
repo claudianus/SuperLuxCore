@@ -128,6 +128,12 @@ public:
 	const std::string &GetMaterialName() const;
 	u_int GetMaterialID() const { return material->GetID(); }
 	u_int GetLightID() const { return material->GetLightID(); }
+	// Cryptomatte float ids (0.f when there is no scene object, i.e.
+	// volumes): the empty-slot marker, so misses never claim one.
+	float GetCryptoObjectID() const {
+		return (sceneObject) ? sceneObject->GetCryptoID() : 0.f;
+	}
+	float GetCryptoMaterialID() const { return material->GetCryptoID(); }
 
 	VolumeConstPtr GetMaterialInteriorVolume() const {
 		return material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent);

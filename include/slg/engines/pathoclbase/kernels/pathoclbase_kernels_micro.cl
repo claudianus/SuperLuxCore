@@ -223,6 +223,8 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 		sampleResult->shadingNormal.z = 0.f;
 		sampleResult->materialID = 0;
 		sampleResult->objectID = 0;
+		sampleResult->cryptoObjectID = 0.f;
+		sampleResult->cryptoMaterialID = 0.f;
 		sampleResult->uv.u = INFINITY;
 		sampleResult->uv.v = INFINITY;
 		sampleResult->isHoldout = false;
@@ -304,6 +306,9 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		sampleResult->materialID = BSDF_GetMaterialID(bsdf
 				MATERIALS_PARAM);
 		sampleResult->objectID = BSDF_GetObjectID(bsdf, sceneObjs);
+		sampleResult->cryptoObjectID = BSDF_GetCryptoObjectID(bsdf);
+		sampleResult->cryptoMaterialID = BSDF_GetCryptoMaterialID(bsdf
+				MATERIALS_PARAM);
 		sampleResult->uv = bsdf->hitPoint.defaultUV;
 		sampleResult->isHoldout = isHoldout;
 		if (taskConfig->film.hasChannelMotionVector)
@@ -2916,7 +2921,10 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					filmScreenRadianceGroup,
 					filmWidth, filmHeight,
 					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3,
-					lightFilterLUTs);
+					lightFilterLUTs,
+					filmCryptoObject, filmCryptoMaterial,
+					lpi->pendingSplat.cryptoObjectID,
+					lpi->pendingSplat.cryptoMaterialID);
 
 			// Caustic focus cache: a path that crossed a delta surface
 			// and connected to the camera is productive - append its
@@ -3262,6 +3270,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 								// splat if the ray turns out unblocked
 								lpi->pendingSplat.isCaustic = !evalBlack;
 								lpi->pendingSplat.fromMnee = false;
+								// The splat's visible surface is the
+								// connected light-path vertex
+								lpi->pendingSplat.cryptoObjectID = BSDF_GetCryptoObjectID(bsdf);
+								lpi->pendingSplat.cryptoMaterialID = BSDF_GetCryptoMaterialID(bsdf
+										MATERIALS_PARAM);
 								lpi->pendingSplat.valid = true;
 
 								lpi->connectVolInfo = lpi->volume;

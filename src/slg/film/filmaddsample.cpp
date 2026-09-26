@@ -209,6 +209,13 @@ void Film::AddSampleResultColor(const u_int x, const u_int y,
 			const Spectrum c2 = c * c;
 			channel_VARIANCE->AddIfValidWeightedPixel(x, y, c2.c, weight);
 		}
+
+		// Cryptomatte coverage accumulates the splat weight keyed on the
+		// first-hit id (0.f = no contribution)
+		if (channel_CRYPTOMATTE_OBJECT && sampleResult.HasChannel(CRYPTOMATTE_OBJECT))
+			channel_CRYPTOMATTE_OBJECT->AddCoverage(x, y, sampleResult.cryptoObjectID, weight);
+		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
+			channel_CRYPTOMATTE_MATERIAL->AddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
 	}
 }
 
@@ -443,6 +450,13 @@ void Film::AtomicAddSampleResultColor(const u_int x, const u_int y,
 			const Spectrum c2 = c * c;
 			channel_VARIANCE->AtomicAddIfValidWeightedPixel(x, y, c2.c, weight);
 		}
+
+		// Cryptomatte coverage accumulates the splat weight keyed on the
+		// first-hit id (0.f = no contribution)
+		if (channel_CRYPTOMATTE_OBJECT && sampleResult.HasChannel(CRYPTOMATTE_OBJECT))
+			channel_CRYPTOMATTE_OBJECT->AtomicAddCoverage(x, y, sampleResult.cryptoObjectID, weight);
+		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
+			channel_CRYPTOMATTE_MATERIAL->AtomicAddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
 	}
 }
 

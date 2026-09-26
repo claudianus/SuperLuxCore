@@ -26,6 +26,7 @@
 #include "luxrays/core/geometry/point.h"
 #include "luxrays/core/namedobject.h"
 #include "luxrays/utils/mc.h"
+#include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/properties.h"
 #include "slg/usings.h"
 #include "slg/bsdf/bsdfevents.h"
@@ -73,6 +74,13 @@ public:
 	u_int GetLightID() const { return lightID; }
 	void SetID(const u_int id) { matID = id; }
 	u_int GetID() const { return matID; }
+
+	// Cryptomatte float id (murmur3 of the material name), lazily cached.
+	float GetCryptoID() const {
+		if (cryptoID == 0.f)
+			cryptoID = luxrays::CryptoNameToID(GetName());
+		return cryptoID;
+	}
 	void SetEmittedGain(const luxrays::Spectrum &v) { emittedGain = v; UpdateEmittedFactor(); }
 	const luxrays::Spectrum &GetEmittedGain() const { return emittedGain; }
 	void SetEmittedPower(const float v) { emittedPower = v; UpdateEmittedFactor(); }
@@ -286,6 +294,8 @@ protected:
 	bool isVisibleIndirectDiffuse, isVisibleIndirectGlossy, isVisibleIndirectSpecular,
 		usePrimitiveArea, isShadowCatcher, isShadowCatcherOnlyInfiniteLights, isPhotonGIEnabled,
 		isHoldout;
+
+	mutable float cryptoID = 0.f;
 };
 
 //------------------------------------------------------------------------------

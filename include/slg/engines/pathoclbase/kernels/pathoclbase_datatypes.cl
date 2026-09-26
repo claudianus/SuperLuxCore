@@ -245,6 +245,9 @@ typedef struct {
 		// camera-productive surface point credited to the emitting
 		// light's focus ring (manifold-guided emission)
 		float recvPX, recvPY, recvPZ;
+		// Cryptomatte ids of the receiver surface (the splat's visible
+		// surface, CPU ConnectToEye parity)
+		float cryptoObjectID, cryptoMaterialID;
 		int valid;
 	} pendingSplat;
 } LightPathInfo;

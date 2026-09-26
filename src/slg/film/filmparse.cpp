@@ -517,6 +517,24 @@ void Film::ParseOutputs(const Properties &props) {
 					throw runtime_error("Motion vector image can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case FilmOutputs::CRYPTOMATTE_OBJECT: {
+				if (hdrImage) {
+					if (!initialized)
+						AddChannel(Film::CRYPTOMATTE_OBJECT);
+					filmOutputs.Add(FilmOutputs::CRYPTOMATTE_OBJECT, fileName);
+				} else
+					throw runtime_error("Cryptomatte can be saved only in HDR formats: " + outputName);
+				break;
+			}
+			case FilmOutputs::CRYPTOMATTE_MATERIAL: {
+				if (hdrImage) {
+					if (!initialized)
+						AddChannel(Film::CRYPTOMATTE_MATERIAL);
+					filmOutputs.Add(FilmOutputs::CRYPTOMATTE_MATERIAL, fileName);
+				} else
+					throw runtime_error("Cryptomatte can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown type in film output: " + type);
 		}

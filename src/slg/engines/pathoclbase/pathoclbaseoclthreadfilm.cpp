@@ -91,6 +91,8 @@ PathOCLBaseOCLRenderThread::ThreadFilm::ThreadFilm(PathOCLBaseOCLRenderThread *t
 	channel_USER_IMPORTANCE_Buff = NULL;
 	channel_VARIANCE_Buff = NULL;
 	channel_MOTION_VECTOR_Buff = NULL;
+	channel_CRYPTOMATTE_OBJECT_Buff = NULL;
+	channel_CRYPTOMATTE_MATERIAL_Buff = NULL;
 	
 	// Denoiser sample accumulator buffers
 	denoiser_NbOfSamplesImage_Buff = NULL;
@@ -380,6 +382,16 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 		renderThread->intersectionDevice.AllocBuffer(&channel_MOTION_VECTOR_Buff, memTypeFlags, nullptr, sizeof(float[4]) * filmPixelCount, "MOTION_VECTOR");
 	else
 		renderThread->intersectionDevice.FreeBuffer(&channel_MOTION_VECTOR_Buff);
+	//--------------------------------------------------------------------------
+	// CryptoFrameBuffer: SLG_CRYPTO_LEVELS (id, coverage) pairs + weight
+	if (film->HasChannel(Film::CRYPTOMATTE_OBJECT))
+		renderThread->intersectionDevice.AllocBuffer(&channel_CRYPTOMATTE_OBJECT_Buff, memTypeFlags, nullptr, sizeof(float) * CryptoFrameBuffer6::STRIDE * filmPixelCount, "CRYPTOMATTE_OBJECT");
+	else
+		renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_OBJECT_Buff);
+	if (film->HasChannel(Film::CRYPTOMATTE_MATERIAL))
+		renderThread->intersectionDevice.AllocBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff, memTypeFlags, nullptr, sizeof(float) * CryptoFrameBuffer6::STRIDE * filmPixelCount, "CRYPTOMATTE_MATERIAL");
+	else
+		renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff);
 
 	//--------------------------------------------------------------------------
 	// Film denoiser sample accumulator buffers
@@ -455,6 +467,8 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::FreeAllOCLBuffers() {
 	renderThread->intersectionDevice.FreeBuffer(&channel_USER_IMPORTANCE_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_VARIANCE_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_MOTION_VECTOR_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_OBJECT_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&channel_CRYPTOMATTE_MATERIAL_Buff);
 
 	// Film denoiser sample accumulator buffers
 	renderThread->intersectionDevice.FreeBuffer(&denoiser_NbOfSamplesImage_Buff);
@@ -525,6 +539,8 @@ u_int PathOCLBaseOCLRenderThread::ThreadFilm::SetFilmKernelArgs(HardwareIntersec
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_USER_IMPORTANCE_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_VARIANCE_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_MOTION_VECTOR_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_CRYPTOMATTE_OBJECT_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_CRYPTOMATTE_MATERIAL_Buff);
 
 	// Film denoiser sample accumulator parameters
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -900,6 +916,20 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 			channel_MOTION_VECTOR_Buff->GetSize(),
 			film->channel_MOTION_VECTOR->GetPixels());
 	}
+	if (channel_CRYPTOMATTE_OBJECT_Buff) {
+		intersectionDevice.EnqueueReadBuffer(
+			channel_CRYPTOMATTE_OBJECT_Buff,
+			CL_FALSE,
+			channel_CRYPTOMATTE_OBJECT_Buff->GetSize(),
+			film->channel_CRYPTOMATTE_OBJECT->GetPixels());
+	}
+	if (channel_CRYPTOMATTE_MATERIAL_Buff) {
+		intersectionDevice.EnqueueReadBuffer(
+			channel_CRYPTOMATTE_MATERIAL_Buff,
+			CL_FALSE,
+			channel_CRYPTOMATTE_MATERIAL_Buff->GetSize(),
+			film->channel_CRYPTOMATTE_MATERIAL->GetPixels());
+	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -1248,6 +1278,20 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDevice
 			CL_FALSE,
 			channel_MOTION_VECTOR_Buff->GetSize(),
 			film->channel_MOTION_VECTOR->GetPixels());
+	}
+	if (channel_CRYPTOMATTE_OBJECT_Buff) {
+		intersectionDevice.EnqueueWriteBuffer(
+			channel_CRYPTOMATTE_OBJECT_Buff,
+			CL_FALSE,
+			channel_CRYPTOMATTE_OBJECT_Buff->GetSize(),
+			film->channel_CRYPTOMATTE_OBJECT->GetPixels());
+	}
+	if (channel_CRYPTOMATTE_MATERIAL_Buff) {
+		intersectionDevice.EnqueueWriteBuffer(
+			channel_CRYPTOMATTE_MATERIAL_Buff,
+			CL_FALSE,
+			channel_CRYPTOMATTE_MATERIAL_Buff->GetSize(),
+			film->channel_CRYPTOMATTE_MATERIAL->GetPixels());
 	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers

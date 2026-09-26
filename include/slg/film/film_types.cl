@@ -22,6 +22,11 @@
 // Film
 //------------------------------------------------------------------------------
 
+// Cryptomatte levels (id, coverage pairs per pixel); must match
+// SLG_CRYPTO_LEVELS in include/slg/film/framebuffer.h
+#define SLG_CRYPTO_LEVELS 6
+#define SLG_CRYPTO_STRIDE (SLG_CRYPTO_LEVELS * 2 + 1)
+
 typedef struct {
 	unsigned int radianceGroupCount;
 	int bcdDenoiserEnable, usePixelAtomics;
@@ -72,6 +77,8 @@ typedef struct {
 	int hasChannelUserImportance;
 	int hasChannelVariance;
 	int hasChannelMotionVector;
+	int hasChannelCryptoObject;
+	int hasChannelCryptoMaterial;
 } Film;
 
 //------------------------------------------------------------------------------
@@ -151,6 +158,8 @@ typedef struct {
 	, __global float *filmUserImportance \
 	, __global float *filmVariance \
 	, __global float *filmMotionVector \
+	, __global float *filmCryptoObject \
+	, __global float *filmCryptoMaterial \
 	FILM_DENOISER_PARAM_DECL
 
 #define FILM_PARAM \
@@ -199,6 +208,8 @@ typedef struct {
 	, filmUserImportance \
 	, filmVariance \
 	, filmMotionVector \
+	, filmCryptoObject \
+	, filmCryptoMaterial \
 	FILM_DENOISER_PARAM
 
 #endif

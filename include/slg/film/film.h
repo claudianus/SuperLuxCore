@@ -159,7 +159,11 @@ public:
 		VARIANCE,
 		// Screen-space velocity of the first camera-visible surface point in
 		// pixels per scene time unit (forward in time). (vx, vy, valid, objMotion)
-		MOTION_VECTOR
+		MOTION_VECTOR,
+		// Cryptomatte (id, coverage) pairs for object and material mattes;
+		// ids are murmur3 hashes of the object/material names
+		CRYPTOMATTE_OBJECT,
+		CRYPTOMATTE_MATERIAL
 	} FilmChannelType;
 
 	typedef std::unordered_set<FilmChannelType, std::hash<int> > FilmChannels;
@@ -310,6 +314,10 @@ public:
 		const double t = GetTotalTime();
 		return (t > 0.0) ? (GetTotalLightSampleCount() / t) : 0.0;
 	}
+	// The halt/stats clock must measure sampling time, not startup: kernel
+	// compilation can take minutes (e.g. Metal) and would otherwise consume
+	// the whole batch.halttime budget before the first sample is rendered.
+	void RestartSampleClock() { statsStartSampleTime = luxrays::WallClockTime(); }
 
 	//--------------------------------------------------------------------------
 	// Tests related methods (halt conditions, noise estimation, etc.)
@@ -320,6 +328,17 @@ public:
 	// Convergence can be set by external source (like TileRepository convergence test)
 	void SetConvergence(const float conv) { statsConvergence = conv; }
 	float GetConvergence() { return statsConvergence; }
+
+	// EXR metadata injection (e.g. Cryptomatte manifests). The session
+	// fills this once the scene is known; Film::Output writes every
+	// entry as an attribute on .exr outputs.
+	void SetMetadata(const std::string &key, const std::string &value) {
+		filmMetadata[key] = value;
+	}
+	const std::string *GetMetadata(const std::string &key) const {
+		const auto it = filmMetadata.find(key);
+		return (it == filmMetadata.end()) ? nullptr : &it->second;
+	}
 
 	//--------------------------------------------------------------------------
 	// Used by BCD denoiser plugin
@@ -468,6 +487,12 @@ public:
 	std::unique_ptr<GenericFrameBuffer<1, 0, float>> channel_USER_IMPORTANCE;
 	std::unique_ptr<GenericFrameBuffer<4, 1, float>> channel_VARIANCE;
 	std::unique_ptr<GenericFrameBuffer<4, 1, float>> channel_MOTION_VECTOR;
+	std::unique_ptr<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>> channel_CRYPTOMATTE_OBJECT;
+	std::unique_ptr<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>> channel_CRYPTOMATTE_MATERIAL;
+
+	// Opaque EXR metadata injected by the session (Cryptomatte
+	// manifests, ...). Written verbatim as attributes on .exr outputs.
+	std::map<std::string, std::string> filmMetadata;
 
 	// Per-pixel luminance first and second moments (2 floats per pixel,
 	// full film indexing) used by the samplers' second-moment adaptive

@@ -2683,6 +2683,8 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .value("CAUSTIC", Film::OUTPUT_CAUSTIC)
     .value("VARIANCE", Film::OUTPUT_VARIANCE)
     .value("MOTION_VECTOR", Film::OUTPUT_MOTION_VECTOR)
+    .value("CRYPTOMATTE_OBJECT", Film::OUTPUT_CRYPTOMATTE_OBJECT)
+    .value("CRYPTOMATTE_MATERIAL", Film::OUTPUT_CRYPTOMATTE_MATERIAL)
     .def_property_readonly_static("names", [](py::object self){
         return self.attr("__members__");
     })

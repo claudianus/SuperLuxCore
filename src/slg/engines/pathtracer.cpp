@@ -88,11 +88,13 @@ const Film::FilmChannels PathTracer::eyeSampleResultsChannels({
 	Film::DIRECT_SHADOW_MASK, Film::INDIRECT_SHADOW_MASK, Film::UV, Film::RAYCOUNT,
 	Film::IRRADIANCE, Film::OBJECT_ID, Film::SAMPLECOUNT, Film::CONVERGENCE,
 	Film::MATERIAL_ID_COLOR, Film::ALBEDO, Film::AVG_SHADING_NORMAL, Film::NOISE,
-	Film::VARIANCE, Film::MOTION_VECTOR
+	Film::VARIANCE, Film::MOTION_VECTOR,
+	Film::CRYPTOMATTE_OBJECT, Film::CRYPTOMATTE_MATERIAL
 });
 
 const Film::FilmChannels PathTracer::lightSampleResultsChannels({
-	Film::RADIANCE_PER_SCREEN_NORMALIZED
+	Film::RADIANCE_PER_SCREEN_NORMALIZED,
+	Film::CRYPTOMATTE_OBJECT, Film::CRYPTOMATTE_MATERIAL
 }); 
 
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
@@ -968,6 +970,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				sampleResult.shadingNormal = Normal();
 				sampleResult.materialID = 0;
 				sampleResult.objectID = 0;
+				sampleResult.cryptoObjectID = 0.f;
+				sampleResult.cryptoMaterialID = 0.f;
 				sampleResult.uv = UV(numeric_limits<float>::infinity(),
 						numeric_limits<float>::infinity());
 			} else if (!sampleResult.isHoldout && pathInfo.isTransmittedPath) {
@@ -996,6 +1000,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			sampleResult.geometryNormal = bsdf.hitPoint.geometryN;
 			sampleResult.materialID = bsdf.GetMaterialID();
 			sampleResult.objectID = bsdf.GetObjectID();
+			sampleResult.cryptoObjectID = bsdf.GetCryptoObjectID();
+			sampleResult.cryptoMaterialID = bsdf.GetCryptoMaterialID();
 			sampleResult.uv = bsdf.hitPoint.GetUV(0);
 			sampleResult.isHoldout = bsdf.IsHoldout();
 			if (sampleResult.HasChannel(Film::MOTION_VECTOR))
@@ -1952,6 +1958,11 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 
 				sampleResult.pixelX = Floor2UInt(filmX);
 				sampleResult.pixelY = Floor2UInt(filmY);
+
+				// The splat's visible surface is the connected light-path
+				// vertex (visibility just verified above)
+				sampleResult.cryptoObjectID = bsdf.GetCryptoObjectID();
+				sampleResult.cryptoMaterialID = bsdf.GetCryptoMaterialID();
 
 #if !defined(NDEBUG)
 				const u_int *subRegion = film.GetSubRegion();

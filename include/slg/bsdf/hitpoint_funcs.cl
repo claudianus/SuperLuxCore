@@ -49,6 +49,7 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 	VSTORE3F(fixedDir, &hitPoint->fixedDir.x);
 
 	hitPoint->objectID = sceneObjs[meshIndex].objectID;
+	hitPoint->cryptoObjectID = sceneObjs[meshIndex].cryptoID;
 
 	const bool isCurveHit = (triIndex & RAYHIT_CURVE_FLAG) != 0u;
 
@@ -140,6 +141,7 @@ OPENCL_FORCE_INLINE void HitPoint_InitDefault(__global HitPoint *hitPoint) {
 	VSTORE3F(MAKE_FLOAT3(0.f, 0.f, 0.f), &hitPoint->fixedDir.x);
 
 	hitPoint->objectID = 0;
+	hitPoint->cryptoObjectID = 0.f;
 	
 	VSTORE3F(MAKE_FLOAT3(0.f, 0.f, 0.f),  &hitPoint->geometryN.x);
 	VSTORE3F(MAKE_FLOAT3(0.f, 0.f, 0.f),  &hitPoint->interpolatedN.x);

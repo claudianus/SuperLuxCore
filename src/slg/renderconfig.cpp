@@ -28,6 +28,7 @@
 #include <boost/serialization/optional.hpp>
 
 #include "luxrays/usings.h"
+#include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/serializationutils.h"
 #include "slg/usings.h"
 #include "slg/renderconfig.h"
@@ -351,7 +352,25 @@ FilmUPtr RenderConfig::AllocFilm() const {
 	for (auto const c : channels)
 		film->AddChannel(c);
 
+	InjectCryptomatteManifests(*film);
+
 	return film;
+}
+
+// Cryptomatte manifests: the scene owns the name->id mapping, the film
+// only stores opaque metadata for EXR output. Injected whenever the
+// matching channel is enabled so Film stays scene-agnostic.
+void RenderConfig::InjectCryptomatteManifests(Film &film) const {
+	if (film.HasChannel(Film::CRYPTOMATTE_OBJECT)) {
+		const string key = CryptoManifestKey("CryptoObject");
+		film.SetMetadata("cryptomatte/" + key + "/manifest",
+				sceneRef->GetCryptomatteManifest(true));
+	}
+	if (film.HasChannel(Film::CRYPTOMATTE_MATERIAL)) {
+		const string key = CryptoManifestKey("CryptoMaterial");
+		film.SetMetadata("cryptomatte/" + key + "/manifest",
+				sceneRef->GetCryptomatteManifest(false));
+	}
 }
 
 std::unique_ptr<SamplerSharedData> RenderConfig::AllocSamplerSharedData(

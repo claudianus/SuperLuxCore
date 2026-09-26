@@ -99,6 +99,8 @@ Film::Film() {
 	channel_USER_IMPORTANCE = nullptr;
 	channel_VARIANCE = nullptr;
 	channel_MOTION_VECTOR = nullptr;
+	channel_CRYPTOMATTE_OBJECT = nullptr;
+	channel_CRYPTOMATTE_MATERIAL = nullptr;
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
@@ -174,6 +176,8 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 	channel_USER_IMPORTANCE = nullptr;
 	channel_VARIANCE = nullptr;
 	channel_MOTION_VECTOR = nullptr;
+	channel_CRYPTOMATTE_OBJECT = nullptr;
+	channel_CRYPTOMATTE_MATERIAL = nullptr;
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
@@ -619,6 +623,16 @@ void Film::Resize(const u_int w, const u_int h) {
 		channel_MOTION_VECTOR->Clear();
 		hasDataChannel = true;
 	}
+	if (HasChannel(CRYPTOMATTE_OBJECT)) {
+		channel_CRYPTOMATTE_OBJECT = std::make_unique<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>>(width, height);
+		channel_CRYPTOMATTE_OBJECT->Clear();
+		hasComposingChannel = true;
+	}
+	if (HasChannel(CRYPTOMATTE_MATERIAL)) {
+		channel_CRYPTOMATTE_MATERIAL = std::make_unique<CryptoFrameBuffer<SLG_CRYPTO_LEVELS>>(width, height);
+		channel_CRYPTOMATTE_MATERIAL->Clear();
+		hasComposingChannel = true;
+	}
 
 	// Per-pixel luminance moments for the samplers' second-moment
 	// adaptive convergence estimate (2 floats per pixel; not cleared by
@@ -731,6 +745,10 @@ void Film::Clear() {
 		channel_VARIANCE->Clear();
 	if (HasChannel(MOTION_VECTOR))
 		channel_MOTION_VECTOR->Clear();
+	if (HasChannel(CRYPTOMATTE_OBJECT))
+		channel_CRYPTOMATTE_OBJECT->Clear();
+	if (HasChannel(CRYPTOMATTE_MATERIAL))
+		channel_CRYPTOMATTE_MATERIAL->Clear();
 
 	// denoiser is not cleared otherwise the collected data would be lost
 
@@ -1323,6 +1341,33 @@ void Film::AddFilmImpl(const Film &film,
 					const float *srcPixel = film.channel_MOTION_VECTOR->GetPixel(srcOffsetX + x, srcOffsetY + y);
 					channel_MOTION_VECTOR->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
 				}
+			}
+		}
+	}
+
+	// Cryptomatte coverage merges by id, not channel-wise: slot order can
+	// differ across films so AddPixel would corrupt the pairs
+	if (HasChannel(CRYPTOMATTE_OBJECT) && film.HasChannel(CRYPTOMATTE_OBJECT)) {
+		for (u_int y = 0; y < srcHeight; ++y) {
+			for (u_int x = 0; x < srcWidth; ++x) {
+				const float *srcPixel = film.channel_CRYPTOMATTE_OBJECT->GetPixel(srcOffsetX + x, srcOffsetY + y);
+				const u_int dstIndex = (dstOffsetX + x) + (dstOffsetY + y) * width;
+				if (overwrite)
+					channel_CRYPTOMATTE_OBJECT->SetPixel(dstIndex, srcPixel);
+				else
+					channel_CRYPTOMATTE_OBJECT->MergePixel(dstIndex, srcPixel);
+			}
+		}
+	}
+	if (HasChannel(CRYPTOMATTE_MATERIAL) && film.HasChannel(CRYPTOMATTE_MATERIAL)) {
+		for (u_int y = 0; y < srcHeight; ++y) {
+			for (u_int x = 0; x < srcWidth; ++x) {
+				const float *srcPixel = film.channel_CRYPTOMATTE_MATERIAL->GetPixel(srcOffsetX + x, srcOffsetY + y);
+				const u_int dstIndex = (dstOffsetX + x) + (dstOffsetY + y) * width;
+				if (overwrite)
+					channel_CRYPTOMATTE_MATERIAL->SetPixel(dstIndex, srcPixel);
+				else
+					channel_CRYPTOMATTE_MATERIAL->MergePixel(dstIndex, srcPixel);
 			}
 		}
 	}

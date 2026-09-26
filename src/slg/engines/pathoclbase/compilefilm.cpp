@@ -88,6 +88,8 @@ void CompiledScene::CompileFilm(const Film &film, slg::ocl::Film &oclFilm) {
 	oclFilm.hasChannelUserImportance = film.HasChannel(Film::USER_IMPORTANCE);
 	oclFilm.hasChannelVariance = film.HasChannel(Film::VARIANCE);
 	oclFilm.hasChannelMotionVector = film.HasChannel(Film::MOTION_VECTOR);
+	oclFilm.hasChannelCryptoObject = film.HasChannel(Film::CRYPTOMATTE_OBJECT);
+	oclFilm.hasChannelCryptoMaterial = film.HasChannel(Film::CRYPTOMATTE_MATERIAL);
 }
 
 #endif

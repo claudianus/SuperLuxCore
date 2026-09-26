@@ -45,11 +45,13 @@ const Film::FilmChannels BiDirCPURenderThread::eyeSampleResultsChannels({
 	Film::RADIANCE_PER_PIXEL_NORMALIZED, Film::ALPHA, Film::DEPTH,
 	Film::POSITION, Film::GEOMETRY_NORMAL, Film::SHADING_NORMAL, Film::MATERIAL_ID,
 	Film::UV, Film::OBJECT_ID, Film::SAMPLECOUNT, Film::CONVERGENCE,
-	Film::MATERIAL_ID_COLOR, Film::ALBEDO, Film::AVG_SHADING_NORMAL, Film::NOISE
+	Film::MATERIAL_ID_COLOR, Film::ALBEDO, Film::AVG_SHADING_NORMAL, Film::NOISE,
+	Film::CRYPTOMATTE_OBJECT, Film::CRYPTOMATTE_MATERIAL
 });
 
 const Film::FilmChannels BiDirCPURenderThread::lightSampleResultsChannels({
-	Film::RADIANCE_PER_SCREEN_NORMALIZED
+	Film::RADIANCE_PER_SCREEN_NORMALIZED,
+	Film::CRYPTOMATTE_OBJECT, Film::CRYPTOMATTE_MATERIAL
 }); 
 
 BiDirCPURenderThread::BiDirCPURenderThread(BiDirCPURenderEngine *engine,
@@ -443,7 +445,11 @@ void BiDirCPURenderThread::ConnectToEye(const float time,
 				SampleResult &sampleResult = AddResult(sampleResults, true);
 				sampleResult.filmX = filmX;
 				sampleResult.filmY = filmY;
-				
+
+				// The splat's visible surface is the connected light vertex
+				sampleResult.cryptoObjectID = lightVertex.bsdf.GetCryptoObjectID();
+				sampleResult.cryptoMaterialID = lightVertex.bsdf.GetCryptoMaterialID();
+
 				// Add radiance from the light source
 				sampleResult.radiance[lightVertex.lightID] = radiance;
 			}
@@ -999,6 +1005,8 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 						eyeSampleResult.shadingNormal = Normal();
 						eyeSampleResult.materialID = 0;
 						eyeSampleResult.objectID = 0;
+						eyeSampleResult.cryptoObjectID = 0.f;
+						eyeSampleResult.cryptoMaterialID = 0.f;
 						eyeSampleResult.uv = UV(numeric_limits<float>::infinity(),
 								numeric_limits<float>::infinity());
 					} else if (isTransmittedEyePath) {
@@ -1026,6 +1034,8 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 					eyeSampleResult.geometryNormal = eyeVertex.bsdf.hitPoint.geometryN;
 					eyeSampleResult.materialID = eyeVertex.bsdf.GetMaterialID();
 					eyeSampleResult.objectID = eyeVertex.bsdf.GetObjectID();
+					eyeSampleResult.cryptoObjectID = eyeVertex.bsdf.GetCryptoObjectID();
+					eyeSampleResult.cryptoMaterialID = eyeVertex.bsdf.GetCryptoMaterialID();
 					eyeSampleResult.uv = eyeVertex.bsdf.hitPoint.GetUV(0);
 					// for the camera ray, we need to add the clipping distance
 					// because eyeRayHit.t is measured from clipping start.

@@ -5372,6 +5372,10 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 	lpi->pendingSplat.recvPX = x0p.x;
 	lpi->pendingSplat.recvPY = x0p.y;
 	lpi->pendingSplat.recvPZ = x0p.z;
+	// The splat's visible surface is the x0 receiver (taskState->bsdf)
+	lpi->pendingSplat.cryptoObjectID = BSDF_GetCryptoObjectID(&taskState->bsdf);
+	lpi->pendingSplat.cryptoMaterialID = BSDF_GetCryptoMaterialID(&taskState->bsdf
+			MATERIALS_PARAM);
 
 	// Volume state after the specular event at the vertex (the seg2
 	// march runs through it), same convention as the eye side
@@ -5538,6 +5542,10 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
 	lpi->pendingSplat.recvPX = x0p.x;
 	lpi->pendingSplat.recvPY = x0p.y;
 	lpi->pendingSplat.recvPZ = x0p.z;
+	// The splat's visible surface is the x0 receiver (taskState->bsdf)
+	lpi->pendingSplat.cryptoObjectID = BSDF_GetCryptoObjectID(&taskState->bsdf);
+	lpi->pendingSplat.cryptoMaterialID = BSDF_GetCryptoMaterialID(&taskState->bsdf
+			MATERIALS_PARAM);
 
 	lpi->connectDepth = lpi->depth;
 	lpi->connectThroughShadow = false;

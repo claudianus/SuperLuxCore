@@ -36,9 +36,22 @@ OPENCL_FORCE_INLINE uint BSDF_GetObjectID(__global const BSDF *bsdf, __global co
 	return (sceneObjectIndex != NULL_INDEX) ? sceneObjs[sceneObjectIndex].objectID : NULL_INDEX;
 }
 
+OPENCL_FORCE_INLINE float BSDF_GetCryptoObjectID(__global const BSDF *bsdf) {
+	// HitPoint carries the id (bsdf->sceneObjectIndex == meshIndex at
+	// BSDF_Init): reachable without the sceneObjs table, which matters
+	// inside helpers that only take MATERIALS_PARAM
+	return (bsdf->sceneObjectIndex != NULL_INDEX) ?
+			bsdf->hitPoint.cryptoObjectID : 0.f;
+}
+
 OPENCL_FORCE_INLINE uint BSDF_GetMaterialID(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
 	return mats[bsdf->materialIndex].matID;
+}
+
+OPENCL_FORCE_INLINE float BSDF_GetCryptoMaterialID(__global const BSDF *bsdf
+		MATERIALS_PARAM_DECL) {
+	return mats[bsdf->materialIndex].cryptoID;
 }
 
 OPENCL_FORCE_INLINE uint BSDF_GetLightID(__global const BSDF *bsdf

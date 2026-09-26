@@ -213,12 +213,27 @@ the device fallback.
 - Halt conditions are evaluated inside `Film::RunTests()`, which only
   runs during `UpdateFilm`/`UpdateStats` — a bare `WaitForDone()`
   never returns. Poll `HasDone()` + `UpdateStats()`.
+- `batch.halttime` measures SAMPLING time: `RenderEngine::Start()` and
+  `EndSceneEdit()` call `film->RestartSampleClock()` after the render
+  threads (re)start, so kernel compilation no longer eats the halt
+  budget (a cold Metal build is ~100 s — previously a 25 s limit fired
+  instantly and produced a near-empty denoised image). A resumed
+  session likewise gets a fresh per-session clock.
 - With no `film.imagepipeline*`/`film.imagepipelines*` defined the film
   applies `AutoLinearToneMap` + gamma 2.2 (`Film::CreateImagePipeline`
   fallback) — it normalizes the image mean to ~0.5, so furnace/energy
   tests that read `RGB_IMAGEPIPELINE` see ~0.51 regardless of material
   or light gain. Measure radiance via the raw `RGB` output or set
   `film.imagepipelines.0.0.type = NOP`.
+- `HardwareDevice::AllocBuffer(&ptr, ...)` overwrites a non-null `ptr`
+  WITHOUT freeing — re-allocating an existing member leaks the old
+  buffer and its `usedMemory` accounting (the "memory leak in LuxRays
+  HardwareDevice" shutdown warning). Free first or keep init paths
+  idempotent (`ThreadFilm::Init` now calls `FreeAllOCLBuffers()` up
+  front). Conversely `FreeBuffer` on an uninitialized member crashes —
+  every `HardwareDeviceBuffer*` member must be nullptr-set in the ctor.
+  `InitFilm()` must not loop-Init after `IncThreadFilms()` — that call
+  already inits the new film.
 
 ## OpenPBR / SSS debugging findings (e35)
 

@@ -374,6 +374,14 @@ PropertiesUPtr FilmOutputs::ToProperties(const Properties &cfg) {
 					throw runtime_error("Motion vector image can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case CRYPTOMATTE_OBJECT:
+			case CRYPTOMATTE_MATERIAL: {
+				if (hdrImage)
+					*props << type << fileName;
+				else
+					throw runtime_error("Cryptomatte can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown film output type: " + type.Get<string>());
 		}
@@ -479,6 +487,10 @@ FilmOutputs::FilmOutputType FilmOutputs::String2FilmOutputType(const string &typ
 		return VARIANCE;
 	else if (type == "MOTION_VECTOR")
 		return MOTION_VECTOR;
+	else if (type == "CRYPTOMATTE_OBJECT")
+		return CRYPTOMATTE_OBJECT;
+	else if (type == "CRYPTOMATTE_MATERIAL")
+		return CRYPTOMATTE_MATERIAL;
 	else
 		throw runtime_error("Unknown film output type: " + type);
 }
@@ -581,6 +593,10 @@ const string FilmOutputs::FilmOutputType2String(const FilmOutputs::FilmOutputTyp
 			return "VARIANCE";
 		case MOTION_VECTOR:
 			return "MOTION_VECTOR";
+		case CRYPTOMATTE_OBJECT:
+			return "CRYPTOMATTE_OBJECT";
+		case CRYPTOMATTE_MATERIAL:
+			return "CRYPTOMATTE_MATERIAL";
 		default:
 			throw runtime_error("Unknown film output type: " + ToString(type));
 	}

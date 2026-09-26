@@ -303,6 +303,10 @@ public:
 
 	ImageMapConstSPtr GetRandomImageMap() const;
 
+	// Cryptomatte JSON manifest: {"name": "<float-id-hex>"} for every
+	// named object or material, per the spec's manifest format.
+	std::string GetCryptomatteManifest(const bool useObjectNames) const;
+
 	// Serialization
 	static SceneUPtr LoadSerialized(const std::string &fileName);
 	static void SaveSerialized(const std::string &fileName, SceneUPtr&& scene);

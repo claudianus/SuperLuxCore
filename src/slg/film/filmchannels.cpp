@@ -176,6 +176,10 @@ u_int Film::GetChannelCount(const FilmChannelType type) const {
 			return channel_VARIANCE ? 1 : 0;
 		case MOTION_VECTOR:
 			return channel_MOTION_VECTOR ? 1 : 0;
+		case CRYPTOMATTE_OBJECT:
+			return channel_CRYPTOMATTE_OBJECT ? 1 : 0;
+		case CRYPTOMATTE_MATERIAL:
+			return channel_CRYPTOMATTE_MATERIAL ? 1 : 0;
 		default:
 			throw runtime_error("Unknown FilmChannelType in Film::GetChannelCount(): " + ToString(type));
 	}
@@ -275,6 +279,10 @@ template<> float *Film::GetChannel<float>(const FilmChannelType type,
 			return channel_VARIANCE->GetPixels();
 		case MOTION_VECTOR:
 			return channel_MOTION_VECTOR->GetPixels();
+		case CRYPTOMATTE_OBJECT:
+			return channel_CRYPTOMATTE_OBJECT->GetPixels();
+		case CRYPTOMATTE_MATERIAL:
+			return channel_CRYPTOMATTE_MATERIAL->GetPixels();
 		default:
 			throw runtime_error("Unknown FilmChannelType in Film::GetChannel<float>(): " + ToString(type));
 	}
@@ -547,6 +555,10 @@ Film::FilmChannelType Film::String2FilmChannelType(const string &type) {
 		return VARIANCE;
 	else if (type == "MOTION_VECTOR")
 		return MOTION_VECTOR;
+	else if (type == "CRYPTOMATTE_OBJECT")
+		return CRYPTOMATTE_OBJECT;
+	else if (type == "CRYPTOMATTE_MATERIAL")
+		return CRYPTOMATTE_MATERIAL;
 	else
 		throw runtime_error("Unknown film output type in Film::String2FilmChannelType(): " + type);
 }
@@ -639,6 +651,10 @@ const string Film::FilmChannelType2String(const Film::FilmChannelType type) {
 			return "VARIANCE";
 		case Film::MOTION_VECTOR:
 			return "MOTION_VECTOR";
+		case Film::CRYPTOMATTE_OBJECT:
+			return "CRYPTOMATTE_OBJECT";
+		case Film::CRYPTOMATTE_MATERIAL:
+			return "CRYPTOMATTE_MATERIAL";
 		default:
 			throw runtime_error("Unknown film output type in Film::FilmChannelType2String(): " + ToString(type));
 	}

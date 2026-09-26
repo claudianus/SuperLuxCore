@@ -39,6 +39,8 @@ typedef struct {
 	unsigned int materialID;
 	// Note: OBJECT_ID_MASK and BY_OBJECT_ID are calculated starting from objectID field
 	unsigned int objectID;
+	// Cryptomatte float ids of the first camera-visible surface
+	float cryptoObjectID, cryptoMaterialID;
 	Spectrum directDiffuse, directDiffuseReflect, directDiffuseTransmit;
 	Spectrum directGlossy, directGlossyReflect, directGlossyTransmit;
 	Spectrum emission;

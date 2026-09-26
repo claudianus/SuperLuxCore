@@ -2129,8 +2129,8 @@ static bool LMneeRejEnabled() {
 // pending splat uses the same convention).
 static void LMneeSplat(FilmConstRef film, const LightSource &light,
 		const float filmX, const float filmY, const Spectrum &radiance,
-		std::vector<SampleResult> &sampleResults, const char *how = nullptr,
-		const Point *x0dbg = nullptr) {
+		const BSDF &receiver, std::vector<SampleResult> &sampleResults,
+		const char *how = nullptr, const Point *x0dbg = nullptr) {
 	if (LMneeRejEnabled() && how) {
 		printf("LMNEE_ACC %s film=%.1f %.1f r=%.4g %.4g %.4g x0=%.4g %.4g %.4g\n",
 				how, filmX, filmY, radiance.c[0], radiance.c[1], radiance.c[2],
@@ -2145,6 +2145,9 @@ static void LMneeSplat(FilmConstRef film, const LightSource &light,
 	sampleResult.pixelX = Floor2UInt(filmX);
 	sampleResult.pixelY = Floor2UInt(filmY);
 	sampleResult.isCaustic = true;
+	// The splat's visible surface is the solved receiver vertex x0
+	sampleResult.cryptoObjectID = receiver.GetCryptoObjectID();
+	sampleResult.cryptoMaterialID = receiver.GetCryptoMaterialID();
 	sampleResult.radiance[light.GetID()] = radiance;
 }
 
@@ -2362,7 +2365,7 @@ bool PathTracer::LMNEEConnectToEye(
 	if (radiance.IsNaN() || radiance.IsInf())
 		{ LMNEE_REJ("nan"); return false; }
 
-	LMneeSplat(film, light, filmX, filmY, radiance, sampleResults, "single", &x0p);
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "single", &x0p);
 
 	// Manifold-guided emission: a solved-manifold connect reaches the
 	// camera only through specular interfaces - credit the receiver x0
@@ -2554,7 +2557,7 @@ bool PathTracer::LMNEEMultiConnectToEye(
 	if (radiance.IsNaN() || radiance.IsInf())
 		{ LMNEE_REJ("ms-nan"); return false; }
 
-	LMneeSplat(film, light, filmX, filmY, radiance, sampleResults, "chain", &x0p);
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "chain", &x0p);
 	LightFocusCredit(scene, light.lightSceneIndex, x0p);
 	return true;
 }
