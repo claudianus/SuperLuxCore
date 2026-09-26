@@ -347,6 +347,8 @@ string Material::MaterialType2String(const MaterialType type) {
 		case DISNEY: return "DISNEY";
 		case TWOSIDED: return "TWOSIDED";
 		case HAIR: return "HAIR";
+		case OPENPBR: return "OPENPBR";
+		case DIFFRACTION: return "DIFFRACTION";
 
 		// Volumes
 		case HOMOGENEOUS_VOL: return "HOMOGENEOUS_VOL";

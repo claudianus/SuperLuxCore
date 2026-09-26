@@ -57,6 +57,7 @@ ask for.
 | Random-walk SSS (S2/E35) | material defs / AGENTS.md | `26340ee73` albedo/mfp | `dev-tools/e35_sss_albedo.py`, `e35_visual_demo.py` | CPU/OCL/Metal |
 | Huang hair (S3) | [hair.md](hair.md) | `f1935c607` Chiang/Huang model select | `dev-tools/e36_hair_huang.py`, `e36_visual_demo.py` | CPU/OCL/Metal |
 | .lxm proxy + scene.spill out-of-core | AGENTS.md §.lxm/§spill | `b2c383d56` v1, `addcf1feb` cluster idx, `dd00ac0c0` v4, `99d62338a` stride, `25a24e38b` residency pool, spill `8abe2f9d7`+ | SuperBlendLuxCore `dev-tools/lxm*_test.py`, `cluster_residency_test.py`, `imagemap_stream_test.py`, `*spill*_test.py` | all (POSIX+Win COW) |
+| Diffraction grating (CD rainbow) | [diffraction.md](diffraction.md) | this branch | `dev-tools/e43_diffraction_test.py` (T1–T4), `scenes/diffraction/cd-rainbow.scn` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.

@@ -34,6 +34,7 @@
 #include "slg/materials/archglass.h"
 #include "slg/materials/carpaint.h"
 #include "slg/materials/cloth.h"
+#include "slg/materials/diffraction.h"
 #include "slg/materials/glass.h"
 #include "slg/materials/glossy2.h"
 #include "slg/materials/glossycoating.h"
@@ -144,6 +145,7 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 		case DISNEY:
 		case HAIR:
 		case OPENPBR:
+		case DIFFRACTION:
 		case HOMOGENEOUS_VOL:
 		case CLEAR_VOL:
 		case HETEROGENEOUS_VOL:
@@ -1090,6 +1092,24 @@ void CompiledScene::CompileMaterials() {
 				mat->openpbr.filmWeightTexIndex = ti(om.GetFilmWeight());
 				mat->openpbr.filmThicknessTexIndex = ti(om.GetFilmThickness());
 				mat->openpbr.filmIorTexIndex = ti(om.GetFilmIor());
+				break;
+			}
+			case DIFFRACTION: {
+				auto& dm = dynamic_cast<const DiffractionMaterial &>(m);
+
+				mat->type = slg::ocl::DIFFRACTION;
+				mat->diffraction.krTexIndex = scene.GetTextures().GetTextureIndex(dm.GetKr());
+				mat->diffraction.spacingTexIndex = scene.GetTextures().GetTextureIndex(dm.GetSpacing());
+				mat->diffraction.roughTexIndex = scene.GetTextures().GetTextureIndex(dm.GetRoughness());
+				mat->diffraction.fillTexIndex = scene.GetTextures().GetTextureIndex(dm.GetFillFactor());
+				mat->diffraction.blaze = dm.GetBlaze();
+				mat->diffraction.centerX = dm.GetCenter().x;
+				mat->diffraction.centerY = dm.GetCenter().y;
+				mat->diffraction.centerZ = dm.GetCenter().z;
+				mat->diffraction.centerU = dm.GetCenterU();
+				mat->diffraction.centerV = dm.GetCenterV();
+				mat->diffraction.maxOrder = dm.GetMaxOrder();
+				mat->diffraction.orientation = (unsigned int)dm.GetOrientation();
 				break;
 			}
 			//------------------------------------------------------------------

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Diffraction grating (CD rainbow) test scene.
+#
+# A flat annulus with a 1.6um radial grating is lit by a small emissive
+# sphere placed along the specular reflection fan. Diffracted delta lobes
+# that land inside the sphere pick up its emission -> rainbow arcs that fan
+# radially like a real compact disc.
+#
+# Scene units are meters. Render with e.g.:
+#   luxcoreconsole -o scenes/diffraction/cd-rainbow.cfg
+
+scene.camera.lookat = 0. -0.155 0.10 0. 0.005 0.
+scene.camera.fieldofview = 33.0
+
+################################################################################
+# CD: 1.6um radial groove grating
+scene.materials.dfr.type = diffraction
+scene.materials.dfr.kr = 0.95 0.95 0.95
+scene.materials.dfr.spacing = 1600.
+scene.materials.dfr.orientation = radial
+scene.materials.dfr.center = 0. 0. 0.
+scene.materials.dfr.roughness = 0.03
+scene.materials.dfr.fillfactor = 0.5
+scene.materials.dfr.blaze = 0.
+scene.materials.dfr.orders = 8
+################################################################################
+scene.objects.disc.material = dfr
+scene.objects.disc.ply = scenes/diffraction/cd-annulus.ply
+################################################################################
+# Studio environment: softbox sheen + hot key spot that the grating
+# smears into concentric rainbow rings (see gen_assets.py:gen_env)
+scene.lights.env.type = infinite
+scene.lights.env.file = scenes/diffraction/studio-env.pfm
+scene.lights.env.gain = 1. 1. 1.
+scene.lights.env.gamma = 1.0
+scene.lights.env.importance = 1.0

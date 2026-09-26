@@ -51,6 +51,7 @@
 #include "slg/materials/roughmattetranslucent.h"
 #include "slg/materials/velvet.h"
 #include "slg/materials/disney.h"
+#include "slg/materials/diffraction.h"
 #include "slg/materials/hairmat.h"
 #include "slg/materials/openpbr.h"
 #include "slg/materials/twosided.h"
@@ -885,6 +886,38 @@ MaterialUPtr Scene::CreateMaterial(
 			eta, betaM, betaN, alpha,
 			roughness, aspectRatio, scaleR, scaleTT, scaleTRT, hairModel
 		);
+	} else if (matType == "diffraction") {
+		// 1D reflective diffraction grating (CDs, holographic foils)
+		auto kr = parseTex("kr", {1.f, 1.f, 1.f});
+		auto spacing = parseTex("spacing", {1600.f});
+		auto roughness = parseTex("roughness", {0.f});
+		auto fillFactor = parseTex("fillfactor", {.5f});
+
+		const string orientName = parseString("orientation", "radial");
+		DiffractionOrientation orientation;
+		if (orientName == "u")
+			orientation = DIFFRACTION_U;
+		else if (orientName == "v")
+			orientation = DIFFRACTION_V;
+		else if (orientName == "radialuv")
+			orientation = DIFFRACTION_RADIAL_UV;
+		else if (orientName == "radial")
+			orientation = DIFFRACTION_RADIAL;
+		else
+			throw runtime_error("Unknown diffraction orientation: " + orientName +
+					" (expected u/v/radialuv/radial)");
+
+		const Point center = props.Get(
+				Property(propName + ".center")(Point())).Get<Point>();
+		const float centerU = std::clamp(parseFloat("centeru", .5f), 0.f, 1.f);
+		const float centerV = std::clamp(parseFloat("centerv", .5f), 0.f, 1.f);
+		const float blaze = parseFloat("blaze", 0.f) * float(M_PI / 180.0);
+		const u_int maxOrder = std::clamp(u_int(std::max(0.f, parseFloat("orders", 8.f))), 1u, 32u);
+
+		mat = std::make_unique<DiffractionMaterial>(
+			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
+			kr, spacing, roughness, fillFactor, orientation,
+			center, centerU, centerV, blaze, maxOrder);
 	} else if (matType == "twosided") {
 		MaterialConstRef frontMat = matDefs.GetMaterial(parseString("frontmaterial", "front"));
 		MaterialConstRef backMat = matDefs.GetMaterial(parseString("backmaterial", "back"));

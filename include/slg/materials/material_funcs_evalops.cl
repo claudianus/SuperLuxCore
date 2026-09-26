@@ -192,6 +192,12 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 			OpenPBRMat_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
 		//----------------------------------------------------------------------
+		// DIFFRACTION
+		//----------------------------------------------------------------------
+		case DIFFRACTION:
+			DiffractionMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		// CLEAR_VOL
 		//----------------------------------------------------------------------
 		case CLEAR_VOL:

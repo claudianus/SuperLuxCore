@@ -160,6 +160,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_carpaint.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_clearvol.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_cloth.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_diffraction.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glass.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossy2.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossycoating.cl
@@ -372,6 +373,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/materials/archglass.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/carpaint.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/cloth.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/materials/diffraction.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/disney.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/glass.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/glossy2.cpp
@@ -604,6 +606,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/materialdefs_funcs_carpaint_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_clearvol_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_cloth_kernel.cpp
+  ${generated_kernels_dir}/materialdefs_funcs_diffraction_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_disney_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_microfacet_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_openpbr_kernel.cpp

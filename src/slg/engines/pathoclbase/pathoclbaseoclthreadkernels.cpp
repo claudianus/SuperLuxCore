@@ -233,6 +233,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_materialdefs_funcs_carpaint <<
 			slg::ocl::KernelSource_materialdefs_funcs_clearvol <<
 			slg::ocl::KernelSource_materialdefs_funcs_cloth <<
+			slg::ocl::KernelSource_materialdefs_funcs_diffraction <<
 			slg::ocl::KernelSource_materialdefs_funcs_disney <<
 			slg::ocl::KernelSource_materialdefs_funcs_glass <<
 			slg::ocl::KernelSource_materialdefs_funcs_glossy2 <<

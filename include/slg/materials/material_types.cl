@@ -69,7 +69,7 @@ typedef enum {
 	MATTE, MIRROR, GLASS, ARCHGLASS, MIX, NULLMAT, MATTETRANSLUCENT,
 	GLOSSY2, METAL2, ROUGHGLASS, VELVET, CLOTH, CARPAINT, ROUGHMATTE,
 	ROUGHMATTETRANSLUCENT, GLOSSYTRANSLUCENT, GLOSSYCOATING, DISNEY,
-	TWOSIDED, HAIR, OPENPBR,
+	TWOSIDED, HAIR, OPENPBR, DIFFRACTION,
 
 	// Volumes
 	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
@@ -368,6 +368,18 @@ typedef struct {
 } OpenPBRParam;
 
 typedef struct {
+	unsigned int krTexIndex;
+	unsigned int spacingTexIndex; // groove period in nanometers
+	unsigned int roughTexIndex;
+	unsigned int fillTexIndex;
+	float blaze;                  // blaze angle in radians (0 = symmetric)
+	float centerX, centerY, centerZ; // object-space center (RADIAL mode)
+	float centerU, centerV;       // UV-space center (RADIAL_UV mode)
+	unsigned int maxOrder;        // hard cap on |m|
+	unsigned int orientation;     // 0=U, 1=V, 2=RADIAL_UV, 3=RADIAL
+} DiffractionParam;
+
+typedef struct {
 	unsigned int sigmaATexIndex;
 } ClearVolumeParam;
 
@@ -503,6 +515,7 @@ typedef struct {
 		TwoSidedParam twosided;
 		HairParam hair;
 		OpenPBRParam openpbr;
+		DiffractionParam diffraction;
 		VolumeParam volume;
 	};
 } Material;
