@@ -73,7 +73,9 @@ typedef enum {
 	// Fresnel textures
 	FRESNELCOLOR_TEX, FRESNELCONST_TEX,
 	// Generic math-function texture (trig/exp/log)
-	MATHFUNC_TEX
+	MATHFUNC_TEX,
+	// Sparse Gabor convolution noise
+	GABORNOISE_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

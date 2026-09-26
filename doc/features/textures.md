@@ -59,6 +59,42 @@ ignore it). Scalar and float3 inputs both supported.
 **Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
 through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
 
+## gabornoise texture — sparse Gabor convolution
+
+Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeTexGabor`
+(Value / Phase / Intensity outputs).
+
+**Properties.** `gabornoise.vector` (eval coordinates, e.g. `position` or
+`uv`), `gabornoise.scale` (coordinate multiplier, default 1),
+`gabornoise.frequency` (kernel band rate, default 2),
+`gabornoise.isotropy` (1 = all kernels at `orientation`, 0 = random
+per-impulse orientation, blends in between),
+`gabornoise.orientation` (base kernel angle, radians),
+`gabornoise.output` = `value|phase|intensity`.
+
+**Algorithm.** Independent implementation of Lagae et al. 2009 "Procedural
+noise using sparse Gabor convolution" (2D case): a 3×3 cell neighbourhood
+sums 8 impulse kernels per cell; each kernel is a Hann-windowed Gaussian
+multiplied by a phasor (cos/sin of the orientation-projected offset).
+The phasor sum is normalised by the analytically quadratured standard
+deviation (Tavernier et al. 2019), then `value` maps to roughly [0, 1],
+`phase` returns the phasor angle in [0, 1), `intensity` the normalised
+phasor magnitude (Tricard et al. 2019). The impulse schedule is drawn from
+the shared Tausworthe RNG seeded by the white-noise cell hash, so CPU and
+GPU evaluate bit-for-bit identical noise.
+
+**Limitations.** 2D only (Blender `gabor_type=3D` is not yet mapped); no
+per-cell impulse-density texture input.
+
+**Validation:** `dev-tools/e11_gabor_test.py` — PATHCPU vs TILEPATHOCL
+(Metal via cl2msl) agree to ~1e-3 on mean/std/range for all three outputs.
+
+**Known issue (pre-existing, unrelated to this texture):** PATHOCL
+nondeterministically corrupts texture evals with multiple child inputs
+(even `add` of two constants reads ~1/4 of the correct value on some
+runs). TILEPATHOCL and all CPU engines are unaffected; tracked in
+`roadmap.md` / needs a dedicated fix.
+
 ## Platforms
 
 All textures: CPU, OpenCL GPU, Metal GPU (cl2msl-compatible kernel code).

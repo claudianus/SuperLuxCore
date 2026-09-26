@@ -43,6 +43,7 @@
 #include "slg/textures/cloud.h"
 #include "slg/textures/densitygrid.h"
 #include "slg/textures/whitenoise.h"
+#include "slg/textures/gabor.h"
 #include "slg/textures/distort.h"
 #include "slg/textures/dots.h"
 #include "slg/textures/fbm.h"
@@ -1103,6 +1104,23 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
 					// The seed is a 3D vector: push it as a spectrum
 					evalOpStackSize += CompileTextureOps(tex->whiteNoiseTex.texIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					break;
+				}
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
+					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+					break;
+				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::GABORNOISE_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					// The evaluation vector is a 3D point: push as a spectrum
+					evalOpStackSize += CompileTextureOps(tex->gaborNoiseTex.vecTexIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -2381,6 +2399,19 @@ void CompiledScene::CompileTextures() {
 				auto& t1 = wnt.GetTexture();
 				tex->whiteNoiseTex.texIndex = scene.GetTextures().GetTextureIndex(t1);
 				tex->whiteNoiseTex.seedOffset = wnt.GetSeedOffset();
+				break;
+			}
+			case GABORNOISE_TEX: {
+				auto& gnt = dynamic_cast<const GaborNoiseTexture &>(t);
+
+				tex->type = slg::ocl::GABORNOISE_TEX;
+				tex->gaborNoiseTex.vecTexIndex = scene.GetTextures().GetTextureIndex(gnt.GetVec());
+				tex->gaborNoiseTex.scale = gnt.GetScale();
+				tex->gaborNoiseTex.frequency = gnt.GetFrequency();
+				tex->gaborNoiseTex.isotropy = gnt.GetIsotropy();
+				tex->gaborNoiseTex.orientation = gnt.GetOrientation();
+				tex->gaborNoiseTex.output = (u_int)gnt.GetOutput();
+				tex->gaborNoiseTex.sigmaInv = GaborNoiseTexture::SigmaInv(gnt.GetFrequency());
 				break;
 			}
 			case WIREFRAME_TEX: {

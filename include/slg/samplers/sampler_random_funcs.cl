@@ -91,21 +91,24 @@ OPENCL_FORCE_INLINE void RandomSampler_InitNewSample(__constant const GPUTaskCon
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
+	const uint bucketCycleStart = sample->bucketCycleStart;
 
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
 			pixelOffset++;
+			if (pixelOffset >= bucketSize)
+				pixelOffset = 0;
 			passOffset = 0;
 
-			if (pixelOffset >= bucketSize) {
-				// Ask for a new bucket
+			if (pixelOffset == bucketCycleStart) {
+				// The task completed a full cyclic sweep of the bucket:
+				// ask for a new bucket. The sweep stays staggered so the
+				// first pixel of the new bucket is at bucketCycleStart.
 				RandomSamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
 						&bucketIndex);
 
 				sample->bucketIndex = bucketIndex;
-				pixelOffset = 0;
-				passOffset = 0;
 			}
 		}
 
@@ -197,7 +200,11 @@ OPENCL_FORCE_INLINE bool RandomSampler_Init(
 	__global RandomSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->random.bucketSize;
-	sample->pixelOffset = bucketSize * bucketSize;
+	// Staggered cyclic sweep: start this task's first bucket at a
+	// gid-derived offset so tasks sharing a bucket cover all pixel
+	// offsets on the first wave instead of sweeping in lockstep.
+	sample->bucketCycleStart = gid % bucketSize;
+	sample->pixelOffset = sample->bucketCycleStart - 1;
 	sample->passOffset = sampler->sobol.superSampling;
 
 	RandomSampler_NextSample(taskConfig,

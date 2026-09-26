@@ -29,10 +29,26 @@ claims backed by measured evidence.
 | E1 | OIDN Metal into dep bundle | validated locally; needs LuxCoreDeps `with_device_metal=True` recipe + dep release |
 | Wavefront M3 | material bucketing | decided: not pursued — wavefront loses on every tested workload (dense-vs-wavefront −7~−17%, re-verified 2026-09 cornell 512²/30s: 13.4M vs 12.2M spp/s ≈ −9%); see `dev-tools/wavefront-design.md` M2 status |
 | Blender UX | V-Ray/Corona-level polish | persistent-scene cache + deltas landed; remaining: render stats UX, low-resource fallback profiles |
-| Compatibility | Cycles shader-node / Geometry Nodes coverage | audited vs Blender 5.2.1 (97 node branches); Math/VectorMath nearly complete via `mathfunc` (trig/exp/log/hyperbolic/invsqrt/floormod + smooth-min/max); BsdfHair/RayPortal/PointInfo/VectorRotate/VectorTransform/EeveeSpecular/Squeeze mapped; residual gaps are scene-query nodes (Raycast/CameraData/LightFalloff/IES/Gabor/Script) — warn+neutral fallback, see BlendLuxCore `doc/cycles_node_coverage.md` |
+| Compatibility | Cycles shader-node / Geometry Nodes coverage | audited vs Blender 5.2.1 (97 node branches); Math/VectorMath nearly complete via `mathfunc` (trig/exp/log/hyperbolic/invsqrt/floormod + smooth-min/max); BsdfHair/RayPortal/PointInfo/VectorRotate/VectorTransform/EeveeSpecular/Squeeze/Gabor mapped (native `gabornoise` texture); IES light nodes map to mappoint/mapsphere iesblob (parity-tested vs native IES path); residual gaps are scene-query nodes (Raycast/CameraData/LightFalloff/Script) — warn+neutral fallback, see BlendLuxCore `doc/cycles_node_coverage.md` |
 
 ## Standing gaps (honest list)
 
+- ~~Critical bug found 2026-10 (PATHOCL texture eval corruption)~~ —
+  **fixed 2026-10.** Root cause was not texture evaluation: PATHOCL's
+  bucketed samplers (RANDOM/SOBOL/PMJ02) assigned buckets via an atomic
+  counter and every task sharing a bucket swept `pixelOffset`
+  0..bucketSize-1 in lockstep, so each sample wave covered only
+  `bucketCount` morton-clustered positions. With the default task count
+  (≈512K) far exceeding small film pixel counts and `batch.haltspp`
+  halting after a few waves, ~3/4 of pixels received zero samples —
+  a deterministic `..##` mask (dark pixels had RAYCOUNT=0).
+  Fix: per-task staggered cyclic bucket sweep (`bucketCycleStart`, see
+  `include/slg/samplers/sampler_types.cl`); wave-1 coverage now spreads
+  across the film while every visited bucket is still swept completely.
+  Verified on dense+wavefront PATHOCL, RANDOM/SOBOL/PMJ02, 64²/32×16/
+  256², 6+ repeats — `dev-tools/e12_pathocl_eval_corruption.py` is the
+  regression test. Also fixed: `atan2(0,0)` in the Gabor phase output
+  returned garbage on Metal fast-math paths (explicit guard added).
 - Metal is Apple-only by design; OpenCL SW path is the cross-vendor
   fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and

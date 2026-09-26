@@ -150,21 +150,23 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
+	const uint bucketCycleStart = sample->bucketCycleStart;
 
 	for (;;) {
 		passOffset++;
 		if (passOffset >= superSampling) {
 			pixelOffset++;
+			if (pixelOffset >= bucketSize)
+				pixelOffset = 0;
 			passOffset = 0;
 
-			if (pixelOffset >= bucketSize) {
-				// Ask for a new bucket
+			if (pixelOffset == bucketCycleStart) {
+				// The task completed a full cyclic sweep of the bucket:
+				// ask for a new bucket (see RandomSample::bucketCycleStart)
 				PMJ02SamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
 						&bucketIndex);
 
 				sample->bucketIndex = bucketIndex;
-				pixelOffset = 0;
-				passOffset = 0;
 			}
 		}
 
@@ -277,7 +279,9 @@ OPENCL_FORCE_INLINE bool PMJ02Sampler_Init(__constant const GPUTaskConfiguration
 	__global RandomSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->pmj02.bucketSize;
-	sample->pixelOffset = bucketSize * bucketSize;
+	// Staggered cyclic sweep (see RandomSample::bucketCycleStart)
+	sample->bucketCycleStart = gid % bucketSize;
+	sample->pixelOffset = sample->bucketCycleStart - 1;
 	sample->passOffset = sampler->pmj02.superSampling;
 
 	PMJ02Sampler_NextSample(taskConfig,

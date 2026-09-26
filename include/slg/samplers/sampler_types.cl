@@ -60,6 +60,16 @@
 
 typedef struct {
 	unsigned int bucketIndex, pixelOffset, passOffset, pass;
+
+	// Staggered cyclic bucket sweep: offset inside the current bucket at
+	// which this task's sweep started (and wraps back to, triggering the
+	// next bucket fetch). Without a per-task stagger, all tasks sharing a
+	// bucket walk pixelOffset 0..bucketSize-1 in lockstep: the first
+	// sample wave then covers only bucketCount distinct morton offsets
+	// (a periodic pixel mask when taskCount >> filmPixels and rendering
+	// halts early). A gid-derived stagger spreads wave-1 coverage over
+	// the whole film while preserving per-bucket sweep completeness.
+	unsigned int bucketCycleStart;
 } RandomSample;
 
 typedef struct {
@@ -80,6 +90,9 @@ typedef struct {
 	Seed rngGeneratorSeed;
 	unsigned int rngPass;
 	float rng0, rng1;
+
+	// See RandomSample::bucketCycleStart
+	unsigned int bucketCycleStart;
 } SobolSample;
 
 typedef struct {

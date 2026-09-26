@@ -72,6 +72,7 @@
 #include "slg/textures/math/power.h"
 #include "slg/textures/math/random.h"
 #include "slg/textures/whitenoise.h"
+#include "slg/textures/gabor.h"
 #include "slg/textures/math/remap.h"
 #include "slg/textures/math/rounding.h"
 #include "slg/textures/math/scale.h"
@@ -665,6 +666,20 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& texture = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const u_int seedOffset = props.Get(Property(propName + ".seed")(0u)).Get<u_int>();
 		tex = std::make_unique<WhiteNoiseTexture>(texture, seedOffset);
+	} else if (texType == "gabornoise") {
+		auto& vec = GetTexture(props.Get(Property(propName + ".vector")(0.f, 0.f, 0.f)));
+		const float scale = props.Get(Property(propName + ".scale")(1.f)).Get<float>();
+		const float freq = props.Get(Property(propName + ".frequency")(2.f)).Get<float>();
+		const float isotropy = props.Get(Property(propName + ".isotropy")(0.f)).Get<float>();
+		const float orient = props.Get(Property(propName + ".orientation")(0.f)).Get<float>();
+		const string outStr = props.Get(Property(propName + ".output")("value")).Get<string>();
+		const GaborOutput out =
+				outStr == "phase" ? GABOR_PHASE :
+				outStr == "intensity" ? GABOR_INTENSITY :
+				outStr == "value" ? GABOR_VALUE :
+				throw runtime_error("Unknown gabornoise texture output: " + outStr);
+		tex = std::make_unique<GaborNoiseTexture>(vec, scale, freq,
+				isotropy, orient, out);
 	} else if (texType == "wireframe") {
 		auto& borderTex = GetTexture(props.Get(Property(propName + ".border")(1.f)));
 		auto& insideTex = GetTexture(props.Get(Property(propName + ".inside")(0.f)));

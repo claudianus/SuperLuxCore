@@ -210,6 +210,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_imagemap_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_others_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_triplanar_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_gabor_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_whitenoise_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelcolor_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelconst_funcs.cl
@@ -474,6 +475,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/modulo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/power.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/random.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/gabor.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/whitenoise.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/remap.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/rounding.cpp
@@ -637,6 +639,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/texture_imagemap_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_others_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_random_funcs_kernel.cpp
+  ${generated_kernels_dir}/texture_gabor_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_whitenoise_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_triplanar_funcs_kernel.cpp
   ${generated_kernels_dir}/evalstack_funcs_kernel.cpp
