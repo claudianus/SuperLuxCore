@@ -182,7 +182,8 @@ Verified end-to-end on Apple M5 Pro via MoltenVK (2026-09):
 - **SPIRV-Cross fixes** live on the writable fork
   `claudianus/SPIRV-Cross@luxcore-psb-msl-fixes` (`be1636d3`,
   `335eaf6c`, `f7e6f6da`, `69472361`); the MoltenVK build in
-  `dev-tools/vkrt` references it (rebuild steps in AGENTS.md §Gotchas).
+  `dev-tools/vkrt` references it (rebuild steps in
+  `../engineering/gotchas.md`).
 - **Full regression**: `vulkan-regression.sh --full` PASS — Stage A
   `vk_intersect_test` 8/8 rays, Stage B 1280×720 PATHOCL render with
   deterministic centre-pixel assert (needs fix #5 below; without it

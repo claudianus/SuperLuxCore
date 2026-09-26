@@ -20,7 +20,7 @@ more supported shader nodes, more object/volume types, and a simpler UX.
 | Volumes | fire emission via flame/temperature grid, blackbody | OpenVDB heterogeneous volumes; fire emission is a true Planckian |
 | Render features UI | GPU light tracing + LT-only, caustic focus/MGE, adaptive caustics, ReSTIR GI/visibility toggles, **vertex connection controls** (`fa10122e`/`d764044e`), **P5 path-guiding controls** (`d0711457`), **adaptive robust clamping** (`644e34f0`), **Vulkan backend + device select** (`2919ba87`) | Artist-first panels; engine features exposed promptly |
 | View layer / AOV | Cryptomatte toggles (`082a2854`), **LPE outputs** (`8c8b0548`), light-linking UI + instanced coverage (`a2ddf8cd`/`dfe8be83`/`c256ac89`), view-layer flags + opt-in halt overrides (`d0155949`), temporal accumulation panel | LPE: `film.lpe.N.*`; Cryptomatte: object/material |
-| UX | Quick Setup 2.0 + scene-aware auto config (`884b95fa`/`6216356a`), auto light strategy/clamp/device, low-VRAM profile, quality presets, convergence stat row | Post-restore property trap documented in AGENTS.md |
+| UX | Quick Setup 2.0 + scene-aware auto config (`884b95fa`/`6216356a`), auto light strategy/clamp/device, low-VRAM profile, quality presets, convergence stat row | Post-restore property trap documented in `SuperBlendLuxCore/doc/engineering/render-session.md` |
 | Viewport | Async session worker, edit pacing, hold-last-frame, interactive OIDN, **runtime resolution reduction (~26 ms apply→sample)**, external-process render | depth-less reprojection reverted |
 | Branding | `387883c1` extension/engine rebrand to SuperLuxCore, `d28ec167` smoke test | `extensions/user_default/superluxcore`, `pysuperluxcore` wheel |
 

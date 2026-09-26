@@ -6,7 +6,9 @@ doxygen-luxrays.conf
 doxygen-slg.conf
 doxygen-luxcore.conf
 bin/
-doc/
+doc/*
+!doc/features/
+!doc/engineering/
 generated/
 lib/
 nbproject/
