@@ -468,6 +468,14 @@ inline size_t LxmAlignUp(const size_t v) {
 // Expected element sizes — the format is a raw dump of the in-memory
 // layout, so it is only portable across builds with identical POD
 // layouts (same compiler/architecture family). Guarded at load time.
+// On-disk v2/v3 cluster record (32B) — v4 grew it with the
+// self-contained vertex range fields (firstVert/vertCount).
+struct LxmClusterV3 {
+	float bboxMin[3], bboxMax[3];
+	u_int firstTri, triCount;
+};
+static_assert(sizeof(LxmClusterV3) == 32);
+
 inline bool LxmCheckSizes() {
 	return sizeof(Point) == 12 && sizeof(Triangle) == 12 &&
 			sizeof(Normal) == 12 && sizeof(UV) == 8 &&
@@ -490,15 +498,20 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 
 	// --- Spatial reorder for out-of-core page locality -----------------
 	// Triangles are stored sorted by the Morton code of their centroid
-	// and vertices renumbered by first use: rays then touch spatially
-	// coherent, page-local runs of the mapped sections, so under memory
-	// pressure the kernel can evict the untouched regions (virtualized
-	// geometry at OS page granularity). Unreferenced vertices are
-	// dropped, shrinking the file. Transparent to the reader: every
-	// index layer is permuted consistently.
+	// and vertices renumbered per cluster (v4): rays then touch
+	// spatially coherent, page-local runs of the mapped sections, and
+	// each cluster's vertex range is contiguous — a self-contained
+	// streaming payload (verts[firstVert..firstVert+vertCount) +
+	// tris[firstTri..firstTri+triCount)). Boundary vertices duplicate
+	// across clusters; unreferenced vertices are still dropped.
+	// Transparent to the reader: every index layer is permuted
+	// consistently.
 	std::vector<u_int> triPerm(srcTriCount), vertPerm;
 	vertPerm.reserve(srcVertCount);
 	std::vector<Triangle> newTris(srcTriCount);
+	const u_int clusterCount = (srcTriCount + clusterTriStride - 1) /
+			clusterTriStride;
+	std::vector<LxmCluster> clusters(clusterCount);
 	{
 		BBox bb;
 		for (u_int i = 0; i < srcVertCount; ++i)
@@ -532,17 +545,33 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 		std::stable_sort(triPerm.begin(), triPerm.end(),
 				[&](const u_int a, const u_int b) { return keys[a] < keys[b]; });
 
-		// Vertex renumbering by first use in the sorted triangle order
+		// v4: per-cluster vertex renumbering — within each cluster's
+		// triangle range, first-use vertices map to fresh contiguous
+		// indices, so cluster c's referenced verts occupy
+		// [firstVert, firstVert+vertCount). Boundary verts are
+		// duplicated across clusters: each cluster's vertex span is a
+		// self-contained payload (streaming / tight page residency).
 		std::vector<u_int> remap(srcVertCount, ~0u);
-		for (u_int i = 0; i < srcTriCount; ++i) {
-			const Triangle &t = srcTris[triPerm[i]];
-			for (u_int k = 0; k < 3; ++k) {
-				if (remap[t.v[k]] == ~0u) {
-					remap[t.v[k]] = vertPerm.size();
-					vertPerm.push_back(t.v[k]);
+		std::vector<u_int> remapCluster(srcVertCount, ~0u);
+		for (u_int c = 0; c < clusterCount; ++c) {
+			const u_int first = c * clusterTriStride;
+			const u_int last = Min(first + clusterTriStride, srcTriCount);
+			clusters[c].firstVert = vertPerm.size();
+			clusters[c].firstTri = first;
+			clusters[c].triCount = last - first;
+			for (u_int i = first; i < last; ++i) {
+				const Triangle &t = srcTris[triPerm[i]];
+				for (u_int k = 0; k < 3; ++k) {
+					const u_int v = t.v[k];
+					if (remapCluster[v] != c) {
+						remapCluster[v] = c;
+						remap[v] = vertPerm.size();
+						vertPerm.push_back(v);
+					}
+					newTris[i].v[k] = remap[v];
 				}
 			}
-			newTris[i] = Triangle(remap[t.v[0]], remap[t.v[1]], remap[t.v[2]]);
+			clusters[c].vertCount = vertPerm.size() - clusters[c].firstVert;
 		}
 	}
 
@@ -556,12 +585,9 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 	// Fixed-stride runs of the Morton-sorted triangles become the
 	// residency unit: accelerators build against cluster bounds only,
 	// and triangle/vertex pages fault in per-cluster under traversal.
-	const u_int clusterCount = (srcTriCount + clusterTriStride - 1) /
-			clusterTriStride;
-	std::vector<LxmCluster> clusters(clusterCount);
 	for (u_int c = 0; c < clusterCount; ++c) {
-		const u_int first = c * clusterTriStride;
-		const u_int last = Min(first + clusterTriStride, srcTriCount);
+		const u_int first = clusters[c].firstTri;
+		const u_int last = first + clusters[c].triCount;
 		BBox bb;
 		for (u_int i = first; i < last; ++i) {
 			const Triangle &t = newTris[i];
@@ -573,14 +599,12 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 		LxmCluster &cl = clusters[c];
 		cl.bboxMin[0] = bb.pMin.x; cl.bboxMin[1] = bb.pMin.y; cl.bboxMin[2] = bb.pMin.z;
 		cl.bboxMax[0] = bb.pMax.x; cl.bboxMax[1] = bb.pMax.y; cl.bboxMax[2] = bb.pMax.z;
-		cl.firstTri = first;
-		cl.triCount = last - first;
 	}
 
 	LxmHeader hdr = {};
 	hdr.magic[0] = 'L'; hdr.magic[1] = 'X';
 	hdr.magic[2] = 'M'; hdr.magic[3] = '1';
-	hdr.version = 3;
+	hdr.version = 4;
 	hdr.flags = (HasNormals() ? 1u : 0u) | 2u /* spatially sorted */ |
 			4u /* cluster index */;
 	hdr.vertCount = vertPerm.size();
@@ -660,10 +684,13 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 	// v3: bake per-triangle geometry normals so LoadProxy can adopt them
 	// instead of rescanning every triangle/vertex at load time. Pad first:
 	// the section offset recorded in the header must be the aligned
-	// position `write` will actually use.
+	// position `write` will actually use. The normals must be permuted by
+	// triPerm — the triangle section is Morton-sorted, so file triangle i
+	// is srcTris[triPerm[i]] and its normal must match that source
+	// triangle (an unpermuted dump silently misaligns normals).
 	pad(file, pos);
 	const u_longlong triNormalsOff = pos;
-	write(triNormals.Data(), hdr.triCount * sizeof(Normal));
+	writePermuted(static_cast<const Normal *>(triNormals.Data()), triPerm);
 	hdr.flags |= 8u;
 
 	file.seekp(0);
@@ -689,7 +716,7 @@ ExtTriangleMeshUPtr ExtTriangleMesh::LoadProxy(const string &fileName) {
 		throw runtime_error("Truncated .lxm proxy: " + fileName);
 
 	const LxmHeader &hdr = *static_cast<const LxmHeader *>(mapped.get());
-	if (memcmp(hdr.magic, "LXM1", 4) || hdr.version < 1 || hdr.version > 3)
+	if (memcmp(hdr.magic, "LXM1", 4) || hdr.version < 1 || hdr.version > 4)
 		throw runtime_error("Bad .lxm proxy header: " + fileName);
 
 	// v1 files have the cluster/triNormals fields zeroed (they sat in
@@ -731,14 +758,17 @@ ExtTriangleMeshUPtr ExtTriangleMesh::LoadProxy(const string &fileName) {
 
 	if (hasClusterIndex) {
 		// The cluster table must sit at a 64B-aligned offset inside the
-		// file and hold clusterIndexCount records.
+		// file and hold clusterIndexCount records. Record size grew at
+		// v4 (firstVert/vertCount fields).
+		const u_longlong recSize = (hdr.version >= 4) ?
+				sizeof(LxmCluster) : sizeof(LxmClusterV3);
 		if (hdr.clusterIndexOffset > fileSize ||
 				LxmAlignUp(hdr.clusterIndexOffset) != hdr.clusterIndexOffset)
 			throw runtime_error("Bad .lxm proxy cluster index: " + fileName);
-		if (hdr.clusterIndexCount > fileSize / sizeof(LxmCluster))
+		if (hdr.clusterIndexCount > fileSize / recSize)
 			throw runtime_error("Bad .lxm proxy cluster count: " + fileName);
 		if (hdr.clusterIndexOffset +
-				hdr.clusterIndexCount * sizeof(LxmCluster) > fileSize)
+				hdr.clusterIndexCount * recSize > fileSize)
 			throw runtime_error("Truncated .lxm proxy cluster index: " + fileName);
 		// Cluster tri ranges must tile the triangle section exactly.
 		if (hdr.clusterTriStride == 0 ||
@@ -833,13 +863,35 @@ ExtTriangleMeshUPtr ExtTriangleMesh::LoadProxy(const string &fileName) {
 	}
 	mesh->buffersFromFileMapping = true;
 	if (hasClusterIndex) {
-		// The index aliases the same mapping — the buffers' keeper holds
-		// it alive. Per-cluster bounds let accelerators treat clusters as
-		// primitives so untouched regions never fault in.
-		mesh->SetClusterIndex(
-				reinterpret_cast<const LxmCluster *>(
-					base + hdr.clusterIndexOffset),
-				hdr.clusterIndexCount);
+		if (hdr.version >= 4) {
+			// The index aliases the same mapping — the buffers' keeper
+			// holds it alive. Per-cluster bounds let accelerators treat
+			// clusters as primitives so untouched regions never fault in.
+			mesh->SetClusterIndex(
+					reinterpret_cast<const LxmCluster *>(
+						base + hdr.clusterIndexOffset),
+					hdr.clusterIndexCount);
+		} else {
+			// v2/v3 files store 32B records: expand into an owned array.
+			// firstVert/vertCount get the conservative whole-mesh range
+			// (v3 vertex order is global first-use, not per-cluster).
+			auto owned = std::shared_ptr<LxmCluster[]>(
+					new LxmCluster[hdr.clusterIndexCount]);
+			const LxmClusterV3 *src =
+					reinterpret_cast<const LxmClusterV3 *>(
+						base + hdr.clusterIndexOffset);
+			for (u_int i = 0; i < hdr.clusterIndexCount; ++i) {
+				LxmCluster &d = owned[i];
+				memcpy(d.bboxMin, src[i].bboxMin, sizeof(d.bboxMin));
+				memcpy(d.bboxMax, src[i].bboxMax, sizeof(d.bboxMax));
+				d.firstTri = src[i].firstTri;
+				d.triCount = src[i].triCount;
+				d.firstVert = 0;
+				d.vertCount = hdr.vertCount;
+			}
+			mesh->SetClusterIndex(owned.get(), hdr.clusterIndexCount,
+					std::move(owned));
+		}
 	}
 
 	return mesh;

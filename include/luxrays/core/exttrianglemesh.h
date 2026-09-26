@@ -318,8 +318,13 @@ private:
 struct LxmCluster {
 	float bboxMin[3], bboxMax[3];
 	u_int firstTri, triCount;
+	// v4: contiguous vertex range this cluster's triangles index into
+	// (vertices are renumbered per cluster, boundary verts duplicated,
+	// so [firstVert, firstVert+vertCount) is a self-contained upload
+	// payload together with [firstTri, firstTri+triCount)).
+	u_int firstVert, vertCount;
 };
-static_assert(sizeof(LxmCluster) == 32);
+static_assert(sizeof(LxmCluster) == 40);
 
 struct CurveControlPoint {
 	float x, y, z, radius;
@@ -689,16 +694,19 @@ public:
 	// would fault the entire mesh in and double the I/O).
 	bool buffersFromFileMapping = false;
 
-	// .lxm v2 cluster index: points inside the same file mapping as the
-	// buffers (the mapping is kept alive by them). Accelerators use the
-	// cluster bounds as primitives so triangle/vertex pages stay
-	// untouched until a ray reaches them.
+	// .lxm v2+ cluster index: points inside the same file mapping as the
+	// buffers (the mapping is kept alive by them), or into an owned
+	// array when an older on-disk record layout must be expanded.
+	// Accelerators use the cluster bounds as primitives so
+	// triangle/vertex pages stay untouched until a ray reaches them.
 	bool HasClusterIndex() const { return clusterIndex != nullptr; }
 	u_int GetClusterIndexCount() const { return clusterIndexCount; }
 	const LxmCluster &GetCluster(const u_int i) const { return clusterIndex[i]; }
-	void SetClusterIndex(const LxmCluster *index, const u_int count) {
+	void SetClusterIndex(const LxmCluster *index, const u_int count,
+			std::shared_ptr<const LxmCluster[]> owner = nullptr) {
 		clusterIndex = index;
 		clusterIndexCount = count;
+		clusterIndexOwner = owner;
 	}
 
 	static ExtTriangleMeshUPtr Load(const std::string &fileName);
@@ -883,6 +891,7 @@ public:
 	// .lxm v2 cluster index (points inside the file mapping owned by the
 	// buffers; no separate keeper needed). Set by LoadProxy.
 	const LxmCluster *clusterIndex = nullptr;
+	std::shared_ptr<const LxmCluster[]> clusterIndexOwner;
 	u_int clusterIndexCount = 0;
 };
 

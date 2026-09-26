@@ -47,21 +47,32 @@ centroid + vertices renumbered first-use (spatial locality for paging;
 loader is order-independent). Robust: bad magic/truncated/OOB counts
 throw cleanly (`LxmCheckSizes` POD-layout guard).
 
-### v2/v3: cluster index + ray-driven residency
+### v2-v4: cluster index + ray-driven residency
 
-- flags bit2 = cluster index: `LxmCluster[clusterCount]` (32B each:
-  bbox + `firstTri`/`triCount`) at `clusterIndexOffset`, appended after
-  the data sections. Clusters are fixed-stride (16 tri default) runs of
-  the Morton-sorted triangles — the residency unit. `SaveProxy(name,
-  stride)` / `Scene::SaveMeshClusterStride` expose the stride; measured
-  on a 717k-tri terrain: stride 16 ~2.3x faster than 64 (cluster-leaf
+- flags bit2 = cluster index: `LxmCluster[clusterCount]` (40B each:
+  bbox + `firstTri`/`triCount` + `firstVert`/`vertCount`) at
+  `clusterIndexOffset`, appended after the data sections. Clusters are
+  fixed-stride (16 tri default) runs of the Morton-sorted triangles —
+  the residency unit. `SaveProxy(name, stride)` /
+  `Scene::SaveMeshClusterStride` expose the stride; measured on a
+  717k-tri terrain: stride 16 ~2.3x faster than 64 (cluster-leaf
   intersect is a linear scan; smaller strides win until the cluster
   count's BVH-leaf overhead dominates).
+- v4: vertices are renumbered *per cluster* (boundary verts
+  duplicated), so `verts[firstVert..firstVert+vertCount)` +
+  `tris[firstTri..firstTri+triCount)` is a self-contained upload
+  payload — the >VRAM streamer's DMA unit. Older v2/v3 files load via
+  an owned 32B→40B record expansion (firstVert=0,
+  vertCount=hdr.vertCount = whole-mesh fallback).
 - flags bit3 = baked `Normal[triCount]` triNormals at
   `triNormalsOffset`; `LoadProxy` adopts it and constructs the mesh
   field-by-field (bypassing `Init`/`Preprocess`), so loading faults in
   **zero** geometry pages — `Preprocess` skips the triNormals scan when
-  `triNormals.IsExternal()`.
+  `triNormals.IsExternal()`. **The section is written permuted by
+  triPerm**: file triangle i is `srcTris[triPerm[i]]`, so an
+  unpermuted normal dump silently misaligns normals↔triangles (this
+  bug shipped in v3 bakes — old .lxm render with subtly wrong flat
+  normals; rebake to fix).
 - `EmbreeAccel`: a cluster-indexed mesh exports as
   `RTC_GEOMETRY_TYPE_USER` — `boundsFunc` returns stored cluster bounds
   (BVH build touches no vertex/triangle pages), `intersectFunc` walks
@@ -96,11 +107,12 @@ triangle BVH. True >VRAM streaming needs a device-side cluster cache:
 5. Backends: Metal sparse buffers (`MTLHeap` tile attach/detach) or
    CUDA VMM (`cuMemMap` physical chunks); OpenCL SVM is too limited —
    prefer host-side staging + regular buffers.
-6. Payload gap: today's vertex renumbering is global first-use order,
-   so a cluster's referenced vertices are NOT contiguous. A v4 stream
-   format needs per-cluster local vertex streams (cluster-referenced
-   vertex subset packed next to its triangles) for self-contained
-   uploads — CPU paging tolerates scatter, DMA uploads don't.
+6. Payload format is DONE: .lxm v4 renumbers vertices per cluster, so
+   `verts[firstVert..firstVert+vertCount)` + the cluster's triangle
+   range is a self-contained DMA unit. Measured on a 717k-tri terrain
+   at stride 16: +233% boundary duplication (360k -> 1.2M stored
+   verts; fine-grained clusters share most of their verts) — the cost
+   of self-contained payloads, still mmap'd so residency stays lazy.
 7. `include/luxrays/utils/geomstream.h` — `ClusterResidencyPool`
    skeleton: fixed-capacity LRU slot pool with fill/evict callbacks a
    device backend subscribes to.
@@ -137,6 +149,14 @@ Windows: `SpillToFile`/`MapFileCopyOnWrite` use
   BOTH OPENCL_GPU and METAL_GPU (same physical GPU) and crashes inside
   AGX OpenCL-over-Metal encode — pre-existing, unrelated to spilling.
   Select a single device.
+- Vulkan on macOS needs MoltenVK loaded: `volkInitialize` only tries
+  leaf-name dlopens (no DYLD_* env → silent zero-device enumeration).
+  vkdevice falls back to `dlopen(abs path)+volkInitializeCustom` over
+  `LUXRAYS_MOLTENVK`, `~/.luxcore/vktools/lib/libMoltenVK.dylib`, and
+  module-adjacent paths. `dev-tools/vulkan-tools-install.sh` installs
+  the clspv toolchain + MoltenVK into `~/.luxcore/vktools` (layout
+  mirrors the clspv build tree — `opt`/`llvm-dis` resolve via
+  `<clspv>/../third_party/llvm/bin`). `LUXRAYS_CLSPV` still wins if set.
 - Bool scene props must be typed: `scene.spill.enable = true` inside
   `SetFromString` parses to false (lexical_cast accepts only 0/1) —
   spill silently no-ops. Use `= 1` or a typed `Property(name, True)`.
