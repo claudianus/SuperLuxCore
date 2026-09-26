@@ -827,6 +827,36 @@ OPENCL_FORCE_INLINE void PathOCL_ComputeFirstHitMotionVector(
 	mv[2] = 1.f;
 }
 
+// MOTION_VECTOR channel for rays that hit nothing (environment): the
+// sky is infinitely far away so only camera motion displaces it in
+// screen space. Projects a point far along the ray - exact for camera
+// rotation, translation error fades with the 1e6 distance factor.
+OPENCL_FORCE_INLINE void Camera_ComputeEnvMotionVector(
+		__global const Camera* restrict camera,
+		const float3 rayO, const float3 rayD, const float rayTime,
+		const uint filmHeight,
+		__global float *mv) {
+	if (camera->base.motionSystem.interpolatedInverseTransformFirstIndex == NULL_INDEX) {
+		mv[2] = 1.f;
+		return;
+	}
+
+	const float dt = fmax((camera->base.shutterClose - camera->base.shutterOpen) * .5f, 1e-4f);
+	const float ta = rayTime - dt;
+	const float tb = rayTime + dt;
+	const float3 farP = rayO + rayD * 1e6f;
+
+	float xa, ya, xb, yb;
+	if (!Camera_ProjectWorldPointToFilm(camera, farP, ta, filmHeight, &xa, &ya) ||
+			!Camera_ProjectWorldPointToFilm(camera, farP, tb, filmHeight, &xb, &yb))
+		return;
+
+	const float invDt = 1.f / (tb - ta);
+	mv[0] = (xb - xa) * invDt;
+	mv[1] = (yb - ya) * invDt;
+	mv[2] = 1.f;
+}
+
 OPENCL_FORCE_INLINE void PerspectiveCamera_GetPDF(
 		__global const Camera* restrict camera,
 		__global const Ray *eyeRay, const float eyeDistance,

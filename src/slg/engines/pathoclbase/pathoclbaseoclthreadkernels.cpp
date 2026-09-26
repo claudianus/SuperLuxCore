@@ -208,6 +208,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 
 	ssKernel <<
 			slg::ocl::KernelSource_materialdefs_funcs_generic <<
+			slg::ocl::KernelSource_materialdefs_funcs_microfacet <<
 			slg::ocl::KernelSource_materialdefs_funcs_default <<
 			slg::ocl::KernelSource_materialdefs_funcs_thinfilmcoating <<
 			slg::ocl::KernelSource_materialdefs_funcs_archglass <<
@@ -228,6 +229,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_materialdefs_funcs_mirror <<
 			slg::ocl::KernelSource_materialdefs_funcs_mix <<
 			slg::ocl::KernelSource_materialdefs_funcs_null <<
+			slg::ocl::KernelSource_materialdefs_funcs_openpbr <<
 			slg::ocl::KernelSource_materialdefs_funcs_roughglass <<
 			slg::ocl::KernelSource_materialdefs_funcs_roughmatte_translucent <<
 			slg::ocl::KernelSource_materialdefs_funcs_twosided <<

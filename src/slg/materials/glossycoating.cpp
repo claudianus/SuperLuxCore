@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/textures/fresnel/fresneltexture.h"
+#include "slg/materials/microfacet.h"
 #include "slg/materials/glossycoating.h"
 
 using namespace std;
@@ -35,9 +36,9 @@ GlossyCoatingMaterial::GlossyCoatingMaterial(
 	TextureConstPtr v,
 	TextureConstPtr ka, TextureConstPtr d,
 	TextureConstPtr i,
-const bool mbounce) :
+const bool mbounce, const bool useGgx) :
 			Material(frontTransp, backTransp, emitted, bump), matBase(mB), Ks(ks), nu(u), nv(v),
-			Ka(ka), depth(d), index(i), multibounce(mbounce) {
+			Ka(ka), depth(d), index(i), multibounce(mbounce), useGgx(useGgx) {
 	glossiness = Min(ComputeGlossiness(nu, nv), matBase->GetGlossiness());
 }
 
@@ -135,13 +136,18 @@ Spectrum GlossyCoatingMaterial::Evaluate(const HitPoint &hitPoint,
 		const float v2 = v * v;
 		const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 		const float roughness = u * v;
+		// GGX path: perceptual roughnesses map to squared GGX alphas
+		const float alphaT = Max(u2, 1e-4f);
+		const float alphaB = Max(v2, 1e-4f);
 
 		if (directPdfW) {
 			const float wCoating = SchlickBSDF_CoatingWeight(ks, hitPoint.fromLight ? localLightDir : localEyeDir);
 			const float wBase = 1.f - wCoating;
 
 			*directPdfW = wBase * *directPdfW +
-				wCoating * SchlickBSDF_CoatingPdf(roughness, anisotropy, localLightDir, localEyeDir);
+				wCoating * (useGgx ?
+					GgxBSDF_CoatingPdf(alphaT, alphaB, localLightDir, localEyeDir) :
+					SchlickBSDF_CoatingPdf(roughness, anisotropy, localLightDir, localEyeDir));
 		}
 
 		if (reversePdfW) {
@@ -149,7 +155,9 @@ Spectrum GlossyCoatingMaterial::Evaluate(const HitPoint &hitPoint,
 			const float wBaseR = 1.f - wCoatingR;
 
 			*reversePdfW = wBaseR * *reversePdfW +
-				wCoatingR * SchlickBSDF_CoatingPdf(roughness, anisotropy, localEyeDir, localLightDir);
+				wCoatingR * (useGgx ?
+					GgxBSDF_CoatingPdf(alphaT, alphaB, localEyeDir, localLightDir) :
+					SchlickBSDF_CoatingPdf(roughness, anisotropy, localEyeDir, localLightDir));
 		}
 
 		// Absorption
@@ -161,8 +169,11 @@ Spectrum GlossyCoatingMaterial::Evaluate(const HitPoint &hitPoint,
 		const Vector H(Normalize(localLightDir + localEyeDir));
 		const Spectrum S = FresnelTexture::SchlickEvaluate(ks, AbsDot(localEyeDir, H));
 
-		const Spectrum coatingF = SchlickBSDF_CoatingF(true, ks, roughness, anisotropy, multibounce,
-			localLightDir, localEyeDir);
+		const Spectrum coatingF = useGgx ?
+			GgxBSDF_CoatingF(true, ks, alphaT, alphaB, multibounce,
+				localLightDir, localEyeDir) :
+			SchlickBSDF_CoatingF(true, ks, roughness, anisotropy, multibounce,
+				localLightDir, localEyeDir);
 
 		// Blend in base layer Schlick style
 		// assumes coating bxdf takes fresnel factor S into account
@@ -257,6 +268,8 @@ Spectrum GlossyCoatingMaterial::Sample(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	float basePdf, coatingPdf;
 	Spectrum baseF, coatingF;
@@ -280,18 +293,26 @@ Spectrum GlossyCoatingMaterial::Sample(const HitPoint &hitPoint,
 		// Don't add the coating scattering if the base sampled
 		// component is specular	
 		if (!(*event & SPECULAR)) {
-			coatingF = SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
-				localFixedDir, *localSampledDir);
+			coatingF = useGgx ?
+				GgxBSDF_CoatingF(hitPoint.fromLight, ks, alphaT, alphaB, multibounce,
+					localFixedDir, *localSampledDir) :
+				SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
+					localFixedDir, *localSampledDir);
 			assert (coatingF.IsValid());
 
-			coatingPdf = SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, *localSampledDir);
+			coatingPdf = useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localFixedDir, *localSampledDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, *localSampledDir);
 			assert (IsValid(coatingPdf));
 		} else
 			coatingPdf = 0.f;
 	} else {
 		// Sample coating BxDF
-		coatingF = SchlickBSDF_CoatingSampleF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
-			localFixedDir, localSampledDir, u0, u1, &coatingPdf);
+		coatingF = useGgx ?
+			GgxBSDF_CoatingSampleF(hitPoint.fromLight, ks, alphaT, alphaB, multibounce,
+				localFixedDir, localSampledDir, u0, u1, &coatingPdf) :
+			SchlickBSDF_CoatingSampleF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
+				localFixedDir, localSampledDir, u0, u1, &coatingPdf);
 		assert (coatingF.IsValid());
 
 		if (coatingF.Black())
@@ -408,13 +429,17 @@ void GlossyCoatingMaterial::Pdf(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	if (directPdfW) {
 		const float wCoating = SchlickBSDF_CoatingWeight(ks, localFixedDir);
 		const float wBase = 1.f - wCoating;
 
 		*directPdfW = wBase * *directPdfW +
-			wCoating * SchlickBSDF_CoatingPdf(roughness, anisotropy, localLightDir, localEyeDir);
+			wCoating * (useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localLightDir, localEyeDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localLightDir, localEyeDir));
 	}
 
 	if (reversePdfW) {
@@ -422,7 +447,9 @@ void GlossyCoatingMaterial::Pdf(const HitPoint &hitPoint,
 		const float wBaseR = 1.f - wCoatingR;
 
 		*reversePdfW = wBaseR * *reversePdfW +
-			wCoatingR * SchlickBSDF_CoatingPdf(roughness, anisotropy, localEyeDir, localLightDir);
+			wCoatingR * (useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localEyeDir, localLightDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localEyeDir, localLightDir));
 	}
 }
 
@@ -498,6 +525,7 @@ PropertiesUPtr GlossyCoatingMaterial::ToProperties(const ImageMapCache &imgMapCa
 	props->Set(Property("scene.materials." + name + ".d")(depth->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".index")(index->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".multibounce")(multibounce));
+	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

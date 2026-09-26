@@ -309,24 +309,6 @@ void PathGuidingCache::Record(const Point &p, const Vector &wi, float flux) cons
 	AtomicAdd(ls.dirZ, wi.z * flux);
 }
 
-bool PathGuidingCache::RecordBin(u_int cell, u_int bin, float flux) const {
-	if (!(flux > 0.f) || !isfinite(flux))
-		return false;
-	if (cell >= GRID_RES * GRID_RES * GRID_RES || bin >= DIR_BINS)
-		return false;
-	// Map the legacy fine cell to its center and re-record there; the
-	// write tree places it in whatever leaf currently owns that region.
-	const float cs = cubeSize / GRID_RES;
-	const u_int cz = cell / (GRID_RES * GRID_RES);
-	const u_int cy = (cell / GRID_RES) % GRID_RES;
-	const u_int cx = cell % GRID_RES;
-	const Point p(cubeMin.x + (cx + .5f) * cs,
-			cubeMin.y + (cy + .5f) * cs,
-			cubeMin.z + (cz + .5f) * cs);
-	Record(p, BinDir(bin, .5f, .5f), flux);
-	return true;
-}
-
 //------------------------------------------------------------------------------
 // Round swap: fit the read tree, refine the write tree, publish both
 //------------------------------------------------------------------------------

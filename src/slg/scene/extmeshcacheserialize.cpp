@@ -37,9 +37,11 @@ template<class Archive> void ExtMeshCache::load(Archive &ar, const u_int version
 	ar & size;
 
 	for (u_int i = 0; i < size; ++i) {
-		// Load the mesh
-		luxrays::ExtMeshUPtr m;
-		ar & m;
+		// Load the mesh (serialized as a raw pointer; the cache takes
+		// ownership here)
+		luxrays::ExtMesh *raw = nullptr;
+		ar & raw;
+		luxrays::ExtMeshUPtr m(raw);
 		SDL_LOG("Loading serialized mesh: " << m->GetName());
 		meshes.DefineObj(std::move(m));
 	}
@@ -53,9 +55,8 @@ template<class Archive> void ExtMeshCache::save(Archive &ar, const u_int version
 	ar & size;
 
 	for (u_int i = 0; i < size; ++i) {
-		auto& obj = meshes.objs[i];
-		auto ptr = obj.get();
-		ExtMeshUPtr m{dynamic_cast<ExtMesh *>(ptr)};
+		// Non-owning pointer: the cache keeps owning the mesh
+		ExtMesh *m = dynamic_cast<ExtMesh *>(meshes.objs[i].get());
 		SDL_LOG("Saving serialized mesh: " << m->GetName());
 
 		// Save the mesh

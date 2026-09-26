@@ -42,7 +42,8 @@ public:
 		TextureConstPtr ka,
 		TextureConstPtr d,
 		TextureConstPtr i,
-		const bool mbounce
+		const bool mbounce,
+		const bool useGgx = false
 	);
 
 	virtual MaterialType GetType() const { return GLOSSYCOATING; }
@@ -99,6 +100,7 @@ public:
 	auto GetDepth() const { return depth; }
 	auto GetIndex() const { return index; }
 	const bool IsMultibounce() const { return multibounce; }
+	const bool IsGgx() const { return useGgx; }
 
 protected:
 	virtual void UpdateAvgPassThroughTransparency();
@@ -112,6 +114,7 @@ private:
 	TextureConstPtr depth;
 	TextureConstPtr index;
 	const bool multibounce;
+	const bool useGgx;
 };
 
 }

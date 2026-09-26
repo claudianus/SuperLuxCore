@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# glossy2 Schlick -> GGX opt-in comparison scene.
+# Cornell box, three spheres with identical roughness/ks:
+#   left  : glossy2 legacy Schlick (default)
+#   mid   : glossy2 distribution = ggx
+#   right : glossy2 distribution = ggx + multibounce (rougher)
+
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+scene.materials.g2-schlick.type = glossy2
+scene.materials.g2-schlick.kd = 0.3 0.1 0.1
+scene.materials.g2-schlick.ks = 0.5 0.5 0.5
+scene.materials.g2-schlick.uroughness = 0.2
+scene.materials.g2-schlick.vroughness = 0.2
+scene.materials.g2-schlick.index = 1.5
+################################################################################
+scene.materials.g2-ggx.type = glossy2
+scene.materials.g2-ggx.kd = 0.3 0.1 0.1
+scene.materials.g2-ggx.ks = 0.5 0.5 0.5
+scene.materials.g2-ggx.uroughness = 0.2
+scene.materials.g2-ggx.vroughness = 0.2
+scene.materials.g2-ggx.index = 1.5
+scene.materials.g2-ggx.distribution = ggx
+################################################################################
+scene.materials.g2-ggxmb.type = glossy2
+scene.materials.g2-ggxmb.kd = 0.3 0.1 0.1
+scene.materials.g2-ggxmb.ks = 0.5 0.5 0.5
+scene.materials.g2-ggxmb.uroughness = 0.45
+scene.materials.g2-ggxmb.vroughness = 0.45
+scene.materials.g2-ggxmb.index = 1.5
+scene.materials.g2-ggxmb.distribution = ggx
+scene.materials.g2-ggxmb.multibounce = 1
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply
+scene.objects.sphere-left.material = g2-schlick
+scene.objects.sphere-left.ply = scenes/cornell/sphere-left.ply
+scene.objects.sphere-mid.material = g2-ggx
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-right.material = g2-ggxmb
+scene.objects.sphere-right.ply = scenes/cornell/sphere-right.ply
+################################################################################
+scene.lights.infinitelight.type = infinite
+scene.lights.infinitelight.file = scenes/simple-mat/arch.exr
+scene.lights.infinitelight.gamma = 1.0
+scene.lights.infinitelight.gain = 0.5 0.5 0.5
+scene.lights.infinitelight.storage = byte

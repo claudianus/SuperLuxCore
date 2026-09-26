@@ -32,10 +32,12 @@ class Metal2Material : public Material {
 public:
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
-			TextureConstPtr nn, TextureConstPtr kk, TextureConstPtr u, TextureConstPtr v);
+			TextureConstPtr nn, TextureConstPtr kk, TextureConstPtr u, TextureConstPtr v,
+			const bool useGgx = false);
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
-			FresnelTextureConstPtr ft, TextureConstPtr u, TextureConstPtr v);
+			FresnelTextureConstPtr ft, TextureConstPtr u, TextureConstPtr v,
+			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return METAL2; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
@@ -63,7 +65,8 @@ public:
 	TextureConstPtr GetK() const { return k; }
 	TextureConstPtr GetNu() const { return nu; }
 	TextureConstPtr GetNv() const { return nv; }
-	
+	const bool IsGgx() const { return useGgx; }
+
 private:
 	FresnelTextureConstPtr fresnelTex;
 	// For compatibility with the past
@@ -71,6 +74,7 @@ private:
 
 	TextureConstPtr nu;
 	TextureConstPtr nv;
+	const bool useGgx;
 };
 
 }

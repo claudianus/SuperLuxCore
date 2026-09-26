@@ -36,7 +36,8 @@ public:
 			TexRef refl, TexRef trans,
 			TexRef exteriorIorFact, TexRef interiorIorFact,
 			TexRef u, TexRef v,
-			TexRef cauchyB, TexRef filmThickness, TexRef filmIor);
+			TexRef cauchyB, TexRef filmThickness, TexRef filmIor,
+			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return ROUGHGLASS; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT | TRANSMIT; };
@@ -68,6 +69,7 @@ public:
 	TexRef GetCauchyB() const { return cauchyB; }
 	TexRef GetFilmThickness() const { return filmThickness; }
 	TexRef GetFilmIOR() const { return filmIor; }
+	const bool IsGgx() const { return useGgx; }
 
 private:
 	TexRef Kr;
@@ -79,6 +81,7 @@ private:
 	TexRef cauchyB;
 	TexRef filmThickness;
 	TexRef filmIor;
+	const bool useGgx;
 };
 
 }

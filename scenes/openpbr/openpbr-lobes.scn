@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# OpenPBR Surface lobe showcase / regression scene.
+# Cornell box, three spheres exercising the major lobe paths:
+#   left  : metal (basemetalness = 1, gold-tinted F82)
+#   mid   : dielectric transmission + thin-film + dispersion
+#   right : coated diffuse with fuzz (velvet-like)
+# Render with e.g.:
+#   luxcoreconsole -o scenes/openpbr/openpbr-lobes.cfg
+
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+# Cornell box walls (white diffuse -> also exercises EON path when roughness > 0)
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 30. 30. 30.
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+# Left sphere: metal (F82 conductor, gold-like)
+scene.materials.openpbr-metal.type = openpbr
+scene.materials.openpbr-metal.basecolor = 1.0 0.66 0.31
+scene.materials.openpbr-metal.basemetalness = 1.0
+scene.materials.openpbr-metal.specularroughness = 0.15
+################################################################################
+# Mid sphere: dielectric transmission + thin film + dispersion
+scene.materials.openpbr-glass.type = openpbr
+scene.materials.openpbr-glass.basecolor = 0.0 0.0 0.0
+scene.materials.openpbr-glass.baseweight = 0.0
+scene.materials.openpbr-glass.specularior = 1.5
+scene.materials.openpbr-glass.transmissionweight = 1.0
+scene.materials.openpbr-glass.transmissioncolor = 1.0 1.0 1.0
+scene.materials.openpbr-glass.filmweight = 0.4
+scene.materials.openpbr-glass.filmthickness = 0.4
+scene.materials.openpbr-glass.filmior = 1.38
+scene.materials.openpbr-glass.dispersion = 0.02
+################################################################################
+# Right sphere: coated diffuse + fuzz (velvet under clear coat)
+scene.materials.openpbr-coated.type = openpbr
+scene.materials.openpbr-coated.basecolor = 0.65 0.1 0.15
+scene.materials.openpbr-coated.basediffuseroughness = 0.8
+scene.materials.openpbr-coated.specularroughness = 0.4
+scene.materials.openpbr-coated.coatweight = 0.6
+scene.materials.openpbr-coated.coatroughness = 0.15
+scene.materials.openpbr-coated.coatdarkening = 0.8
+scene.materials.openpbr-coated.fuzzweight = 0.4
+scene.materials.openpbr-coated.fuzzcolor = 0.9 0.6 0.6
+scene.materials.openpbr-coated.fuzzroughness = 0.7
+################################################################################
+# SSS-ish sphere material (kept for manual tests; uses implicit volume)
+scene.materials.openpbr-sss.type = openpbr
+scene.materials.openpbr-sss.basecolor = 0.8 0.5 0.35
+scene.materials.openpbr-sss.specularroughness = 0.5
+scene.materials.openpbr-sss.subsurfaceweight = 1.0
+scene.materials.openpbr-sss.subsurfacecolor = 0.9 0.45 0.25
+scene.materials.openpbr-sss.subsurfaceradius = 0.5
+scene.materials.openpbr-sss.subsurfaceradiusscale = 1.0 0.5 0.25
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply
+scene.objects.sphere-left.material = openpbr-metal
+scene.objects.sphere-left.ply = scenes/cornell/sphere-left.ply
+scene.objects.sphere-mid.material = openpbr-glass
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-right.material = openpbr-coated
+scene.objects.sphere-right.ply = scenes/cornell/sphere-right.ply
+# Front-right: subsurface scattering (implicit interior volume)
+scene.objects.sphere-sss.material = openpbr-sss
+scene.objects.sphere-sss.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-sss.transformation = 1 0 0 0  0 1 0 0  0 0 1 0  1.1 -1.9 -1.5 1
+################################################################################
+scene.lights.infinitelight.type = infinite
+scene.lights.infinitelight.file = scenes/simple-mat/arch.exr
+scene.lights.infinitelight.gamma = 1.0
+scene.lights.infinitelight.gain = 0.5 0.5 0.5
+scene.lights.infinitelight.storage = byte

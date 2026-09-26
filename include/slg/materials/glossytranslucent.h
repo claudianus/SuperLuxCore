@@ -34,7 +34,8 @@ public:
 			TextureConstPtr kd, TextureConstPtr kt, TextureConstPtr ks, TextureConstPtr ks2,
 			TextureConstPtr u, TextureConstPtr u2, TextureConstPtr v, TextureConstPtr v2,
 			TextureConstPtr ka, TextureConstPtr ka2, TextureConstPtr d, TextureConstPtr d2,
-			TextureConstPtr i, TextureConstPtr i2, const bool mbounce, const bool mbounce2);
+			TextureConstPtr i, TextureConstPtr i2, const bool mbounce, const bool mbounce2,
+			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return GLOSSYTRANSLUCENT; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT | TRANSMIT; };
@@ -73,6 +74,7 @@ public:
 	TextureConstPtr GetIndex_bf() const { return index_bf; }
 	const bool IsMultibounce() const { return multibounce; }
 	const bool IsMultibounce_bf() const { return multibounce_bf; }
+	const bool IsGgx() const { return useGgx; }
 
 private:
 	TextureConstPtr Kd;
@@ -91,6 +93,7 @@ private:
 	TextureConstPtr index_bf;
 	const bool multibounce;
 	const bool multibounce_bf;
+	const bool useGgx;
 };
 
 }

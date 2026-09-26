@@ -44,7 +44,7 @@ typedef enum {
 	MATTE, MIRROR, GLASS, ARCHGLASS, MIX, NULLMAT, MATTETRANSLUCENT,
 	GLOSSY2, METAL2, ROUGHGLASS, VELVET, CLOTH, CARPAINT, ROUGHMATTE,
 	ROUGHMATTETRANSLUCENT, GLOSSYTRANSLUCENT, GLOSSYCOATING, DISNEY,
-	TWOSIDED, HAIR,
+	TWOSIDED, HAIR, OPENPBR,
 
 	// Volumes
 	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
@@ -337,6 +337,21 @@ extern luxrays::Spectrum SchlickBSDF_CoatingSampleF(const bool fromLight, const 
 	const float roughness, const float anisotropy, const bool mbounce, const luxrays::Vector &localFixedDir, luxrays::Vector *localSampledDir,
 	float u0, float u1, float *pdf);
 extern float SchlickBSDF_CoatingPdf(const float roughness, const float anisotropy,
+	const luxrays::Vector &localFixedDir, const luxrays::Vector &localSampledDir);
+
+//------------------------------------------------------------------------------
+// GgxBSDF related functions (GGX + Smith G2 + VNDF; opt-in replacement for
+// the Schlick coating used by glossy2/glossycoating/glossytranslucent).
+// alphaT/alphaB are the squared roughnesses along the local tangent axes.
+//------------------------------------------------------------------------------
+extern luxrays::Spectrum GgxBSDF_CoatingF(const bool fromLight, const luxrays::Spectrum &ks,
+	const float alphaT, const float alphaB, const bool mbounce,
+	const luxrays::Vector &localFixedDir, const luxrays::Vector &localSampledDir);
+extern luxrays::Spectrum GgxBSDF_CoatingSampleF(const bool fromLight, const luxrays::Spectrum &ks,
+	const float alphaT, const float alphaB, const bool mbounce,
+	const luxrays::Vector &localFixedDir, luxrays::Vector *localSampledDir,
+	const float u0, const float u1, float *pdf);
+extern float GgxBSDF_CoatingPdf(const float alphaT, const float alphaB,
 	const luxrays::Vector &localFixedDir, const luxrays::Vector &localSampledDir);
 
 }  // namespace slg

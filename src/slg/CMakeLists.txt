@@ -176,6 +176,8 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_thinfilmcoating.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_velvet.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_disney.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_microfacet.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_openpbr.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_twosided.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/material_funcs_evalops.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/material_funcs.cl
@@ -378,6 +380,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/materials/mirror.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/mixmat.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/null.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/materials/openpbr.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/roughglass.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/roughmatte.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/roughmattetranslucent.cpp
@@ -595,6 +598,8 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/materialdefs_funcs_clearvol_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_cloth_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_disney_kernel.cpp
+  ${generated_kernels_dir}/materialdefs_funcs_microfacet_kernel.cpp
+  ${generated_kernels_dir}/materialdefs_funcs_openpbr_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glass_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossy2_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossycoating_kernel.cpp
@@ -748,6 +753,7 @@ set(SLG_FILM_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/intel_oidn.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/whitebalance.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/optixdenoiser.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/temporalaccumulate.cpp
 )
 SOURCE_GROUP("Source Files\\SLG Film Library" FILES ${SLG_FILM_SRCS})
 

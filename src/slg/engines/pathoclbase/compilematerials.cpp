@@ -55,6 +55,7 @@
 #include "slg/volumes/homogenous.h"
 #include "slg/materials/disney.h"
 #include "slg/materials/hairmat.h"
+#include "slg/materials/openpbr.h"
 
 using namespace std;
 using namespace luxrays;
@@ -142,6 +143,7 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 		case GLOSSYTRANSLUCENT:
 		case DISNEY:
 		case HAIR:
+		case OPENPBR:
 		case HOMOGENEOUS_VOL:
 		case CLEAR_VOL:
 		case HETEROGENEOUS_VOL:
@@ -814,6 +816,7 @@ void CompiledScene::CompileMaterials() {
 				mat->glossy2.indexTexIndex = scene.GetTextures().GetTextureIndex(indexTex);
 				mat->glossy2.multibounce = g2m.IsMultibounce () ? 1 : 0;
 				mat->glossy2.doublesided = g2m.IsDoubleSided () ? 1 : 0;
+				mat->glossy2.useGgx = g2m.IsGgx () ? 1 : 0;
 				break;
 			}
 			case METAL2: {
@@ -837,6 +840,7 @@ void CompiledScene::CompileMaterials() {
 				auto nvTex = m2m.GetNv();
 				mat->metal2.nuTexIndex = scene.GetTextures().GetTextureIndex(nuTex);
 				mat->metal2.nvTexIndex = scene.GetTextures().GetTextureIndex(nvTex);
+				mat->metal2.useGgx = m2m.IsGgx() ? 1 : 0;
 				break;
 			}
 			case ROUGHGLASS: {
@@ -871,6 +875,7 @@ void CompiledScene::CompileMaterials() {
 					mat->roughglass.filmIorTexIndex = scene.GetTextures().GetTextureIndex(rgm.GetFilmIOR());
 				else
 					mat->roughglass.filmIorTexIndex = NULL_INDEX;
+				mat->roughglass.useGgx = rgm.IsGgx() ? 1 : 0;
 				break;
 			}
 			case VELVET: {
@@ -945,6 +950,7 @@ void CompiledScene::CompileMaterials() {
 
 				mat->glossytranslucent.multibounce = gtm.IsMultibounce() ? 1 : 0;
 				mat->glossytranslucent.multibouncebf = gtm.IsMultibounce_bf() ? 1 : 0;
+				mat->glossytranslucent.useGgx = gtm.IsGgx() ? 1 : 0;
 				break;
 			}
 			case GLOSSYCOATING: {
@@ -966,6 +972,7 @@ void CompiledScene::CompileMaterials() {
 				auto indexTex = gcm.GetIndex();
 				mat->glossycoating.indexTexIndex = scene.GetTextures().GetTextureIndex(indexTex);
 				mat->glossycoating.multibounce = gcm.IsMultibounce() ? 1 : 0;
+				mat->glossycoating.useGgx = gcm.IsGgx() ? 1 : 0;
 				break;
 			}
 			case DISNEY: {
@@ -1031,6 +1038,49 @@ void CompiledScene::CompileMaterials() {
 				mat->hair.betaMTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaM());
 				mat->hair.betaNTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaN());
 				mat->hair.alphaTexIndex = scene.GetTextures().GetTextureIndex(hm.GetAlpha());
+				break;
+			}
+			case OPENPBR: {
+				auto& om = dynamic_cast<const OpenPBRMaterial &>(m);
+
+				mat->type = slg::ocl::OPENPBR;
+				auto ti = [&](TextureConstPtr t) {
+					return scene.GetTextures().GetTextureIndex(t);
+				};
+				mat->openpbr.baseColorTexIndex = ti(om.GetBaseColor());
+				mat->openpbr.baseWeightTexIndex = ti(om.GetBaseWeight());
+				mat->openpbr.baseMetalnessTexIndex = ti(om.GetBaseMetalness());
+				mat->openpbr.baseDiffuseRoughnessTexIndex = ti(om.GetBaseDiffuseRoughness());
+				mat->openpbr.specWeightTexIndex = ti(om.GetSpecularWeight());
+				mat->openpbr.specColorTexIndex = ti(om.GetSpecularColor());
+				mat->openpbr.specRoughnessTexIndex = ti(om.GetSpecularRoughness());
+				mat->openpbr.specAnisotropyTexIndex = ti(om.GetSpecularAnisotropy());
+				mat->openpbr.specRotationTexIndex = ti(om.GetSpecularRotation());
+				mat->openpbr.specIorTexIndex = ti(om.GetSpecularIor());
+				mat->openpbr.transWeightTexIndex = ti(om.GetTransmissionWeight());
+				mat->openpbr.transColorTexIndex = ti(om.GetTransmissionColor());
+				mat->openpbr.transDepthTexIndex = ti(om.GetTransmissionDepth());
+				mat->openpbr.transScatterTexIndex = ti(om.GetTransmissionScatter());
+				mat->openpbr.transScatterAnisoTexIndex = ti(om.GetTransmissionScatterAnisotropy());
+				mat->openpbr.dispersionTexIndex = ti(om.GetDispersion());
+				mat->openpbr.sssWeightTexIndex = ti(om.GetSubsurfaceWeight());
+				mat->openpbr.sssColorTexIndex = ti(om.GetSubsurfaceColor());
+				mat->openpbr.sssRadiusTexIndex = ti(om.GetSubsurfaceRadius());
+				mat->openpbr.sssRadiusScaleTexIndex = ti(om.GetSubsurfaceRadiusScale());
+				mat->openpbr.sssAnisotropyTexIndex = ti(om.GetSubsurfaceAnisotropy());
+				mat->openpbr.coatWeightTexIndex = ti(om.GetCoatWeight());
+				mat->openpbr.coatColorTexIndex = ti(om.GetCoatColor());
+				mat->openpbr.coatRoughnessTexIndex = ti(om.GetCoatRoughness());
+				mat->openpbr.coatAnisotropyTexIndex = ti(om.GetCoatAnisotropy());
+				mat->openpbr.coatRotationTexIndex = ti(om.GetCoatRotation());
+				mat->openpbr.coatIorTexIndex = ti(om.GetCoatIor());
+				mat->openpbr.coatDarkeningTexIndex = ti(om.GetCoatDarkening());
+				mat->openpbr.fuzzWeightTexIndex = ti(om.GetFuzzWeight());
+				mat->openpbr.fuzzColorTexIndex = ti(om.GetFuzzColor());
+				mat->openpbr.fuzzRoughnessTexIndex = ti(om.GetFuzzRoughness());
+				mat->openpbr.filmWeightTexIndex = ti(om.GetFilmWeight());
+				mat->openpbr.filmThicknessTexIndex = ti(om.GetFilmThickness());
+				mat->openpbr.filmIorTexIndex = ti(om.GetFilmIor());
 				break;
 			}
 			//------------------------------------------------------------------

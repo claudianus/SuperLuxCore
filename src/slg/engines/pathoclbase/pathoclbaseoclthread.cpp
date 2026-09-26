@@ -323,7 +323,9 @@ void PathOCLBaseOCLRenderThread::StartRenderThread() {
 void PathOCLBaseOCLRenderThread::StopRenderThread() {
 	if (renderThread) {
 		renderThread->request_stop();
-		renderThread->join();
+		// WaitForDone() may have already joined the thread
+		if (renderThread->joinable())
+			renderThread->join();
 	}
 }
 

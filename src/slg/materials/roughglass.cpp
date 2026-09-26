@@ -18,6 +18,7 @@
 
 #include "luxrays/core/color/spectral.h"
 #include "slg/textures/fresnel/fresneltexture.h"
+#include "slg/materials/microfacet.h"
 #include "slg/materials/roughglass.h"
 #include "slg/materials/thinfilmcoating.h"
 #include "slg/usings.h"
@@ -37,10 +38,12 @@ RoughGlassMaterial::RoughGlassMaterial(TextureConstPtr frontTransp, TextureConst
 		TextureConstPtr refl, TextureConstPtr trans,
 		TextureConstPtr exteriorIorFact, TextureConstPtr interiorIorFact,
 		TextureConstPtr u, TextureConstPtr v,
-		TextureConstPtr cauchyBFact, TextureConstPtr filmThickness, TextureConstPtr filmIor) :
+		TextureConstPtr cauchyBFact, TextureConstPtr filmThickness, TextureConstPtr filmIor,
+		const bool useGgx) :
 			Material(frontTransp, backTransp, emitted, bump), Kr(refl), Kt(trans),
 			exteriorIor(exteriorIorFact), interiorIor(interiorIorFact), nu(u), nv(v),
-			cauchyB(cauchyBFact), filmThickness(filmThickness), filmIor(filmIor) {
+			cauchyB(cauchyBFact), filmThickness(filmThickness), filmIor(filmIor),
+			useGgx(useGgx) {
 	glossiness = ComputeGlossiness(nu, nv);
 }
 
@@ -68,6 +71,9 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	// GGX path: perceptual roughnesses map to squared GGX alphas
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
 	if (localLightDir.z * localEyeDir.z < 0.f) {
@@ -88,16 +94,22 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 		const float cosThetaIH = AbsDot(localEyeDir, wh);
 		const float cosThetaOH = Dot(localLightDir, wh);
 
-		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
-		const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float D = useGgx ? GgxD(wh, alphaT, alphaB) :
+				SchlickDistribution_D(roughness, wh, anisotropy);
+		const float G = useGgx ? GgxG2(localLightDir, localEyeDir, alphaT, alphaB) :
+				SchlickDistribution_G(roughness, localLightDir, localEyeDir);
+		// Half-vector pdf evaluated at the direction each pdf samples from
+		const float specPdfD = useGgx ? GgxVNDFHalfPdf(localEyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float specPdfR = useGgx ? GgxVNDFHalfPdf(localLightDir, wh, alphaT, alphaB) :
+				specPdfD;
 		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
 
 		if (directPdfW)
-			*directPdfW = threshold * specPdf * (hitPoint.fromLight ? fabsf(cosThetaIH) : (fabsf(cosThetaOH) * eta * eta)) / lengthSquared;
+			*directPdfW = threshold * specPdfD * (hitPoint.fromLight ? fabsf(cosThetaIH) : (fabsf(cosThetaOH) * eta * eta)) / lengthSquared;
 
 		if (reversePdfW)
-			*reversePdfW = threshold * specPdf * (hitPoint.fromLight ? (fabsf(cosThetaOH) * eta * eta) : fabsf(cosThetaIH)) / lengthSquared;
+			*reversePdfW = threshold * specPdfR * (hitPoint.fromLight ? (fabsf(cosThetaOH) * eta * eta) : fabsf(cosThetaIH)) / lengthSquared;
 
 		const Spectrum result = (fabsf(cosThetaOH) * cosThetaIH * D *
 			G / (cosThetaI * lengthSquared)) *
@@ -120,16 +132,21 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 			wh = -wh;
 
 		float cosThetaH = Dot(localEyeDir, wh);
-		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
-		const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float D = useGgx ? GgxD(wh, alphaT, alphaB) :
+				SchlickDistribution_D(roughness, wh, anisotropy);
+		const float G = useGgx ? GgxG2(localLightDir, localEyeDir, alphaT, alphaB) :
+				SchlickDistribution_G(roughness, localLightDir, localEyeDir);
+		const float specPdfD = useGgx ? GgxVNDFReflectionPdf(localEyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localLightDir, wh));
+		const float specPdfR = useGgx ? GgxVNDFReflectionPdf(localLightDir, wh, alphaT, alphaB) :
+				specPdfD;
 		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaH);
 
 		if (directPdfW)
-			*directPdfW = (1.f - threshold) * specPdf / (4.f * AbsDot(localLightDir, wh));
+			*directPdfW = (1.f - threshold) * specPdfD;
 
 		if (reversePdfW)
-			*reversePdfW = (1.f - threshold) * specPdf / (4.f * AbsDot(localLightDir, wh));
+			*reversePdfW = (1.f - threshold) * specPdfR;
 
 		const Spectrum result = (D * G / (4.f * cosThetaI)) * kr * F;
 
@@ -165,10 +182,17 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	Vector wh;
-	float d, specPdf;
-	SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
+	float d = 0.f, specPdf = 0.f;
+	if (useGgx) {
+		wh = GgxSampleVNDF(localFixedDir, alphaT, alphaB, u0, u1);
+		specPdf = GgxVNDFHalfPdf(localFixedDir, wh, alphaT, alphaB);
+	} else {
+		SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
+	}
 	if (wh.z < 0.f)
 		wh = -wh;
 	const float cosThetaOH = Dot(localFixedDir, wh);
@@ -219,15 +243,26 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 
 		const float cosi = fabsf(localSampledDir->z);
 
-		const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
-		float factor = (d / specPdf) * G * fabsf(cosThetaOH) / threshold;
-
-		if (!hitPoint.fromLight) {
-			const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaIH);
-			result = (factor / coso) * kt * (Spectrum(1.f) - F);
+		if (useGgx) {
+			// (f*cos)/pdf = kt*(1-F)*G2/G1(wo) with VNDF sampling
+			const float g1 = GgxG1(localFixedDir, alphaT, alphaB);
+			if (g1 <= 0.f)
+				return Spectrum();
+			const float g2 = GgxG2(*localSampledDir, localFixedDir, alphaT, alphaB);
+			const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue,
+					hitPoint.fromLight ? cosThetaOH : cosThetaIH);
+			result = kt * (Spectrum(1.f) - F) * (g2 / (g1 * threshold));
 		} else {
-			const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
-			result = (factor / cosi) * kt * (Spectrum(1.f) - F);
+			const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
+			float factor = (d / specPdf) * G * fabsf(cosThetaOH) / threshold;
+
+			if (!hitPoint.fromLight) {
+				const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaIH);
+				result = (factor / coso) * kt * (Spectrum(1.f) - F);
+			} else {
+				const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
+				result = (factor / cosi) * kt * (Spectrum(1.f) - F);
+			}
 		}
 
 		*pdfW *= threshold;
@@ -247,12 +282,20 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 		if ((cosi < DEFAULT_COS_EPSILON_STATIC) || (localFixedDir.z * localSampledDir->z < 0.f))
 			return Spectrum();
 
-		const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
-		float factor = (d / specPdf) * G * fabsf(cosThetaOH) / (1.f - threshold);
-
 		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
-		factor /= (!hitPoint.fromLight) ? coso : cosi;
-		result = factor * F * kr;
+		if (useGgx) {
+			// (f*cos)/pdf = kr*F*G2/G1(wo) with VNDF sampling
+			const float g1 = GgxG1(localFixedDir, alphaT, alphaB);
+			if (g1 <= 0.f)
+				return Spectrum();
+			result = kr * F * (GgxG2(*localSampledDir, localFixedDir, alphaT, alphaB) /
+					(g1 * (1.f - threshold)));
+		} else {
+			const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
+			float factor = (d / specPdf) * G * fabsf(cosThetaOH) / (1.f - threshold);
+			factor /= (!hitPoint.fromLight) ? coso : cosi;
+			result = factor * F * kr;
+		}
 		
 		const float localFilmThickness = filmThickness ? filmThickness->GetFloatValue(hitPoint) : 0.f;
 		if (localFilmThickness > 0.f) {
@@ -296,6 +339,8 @@ void RoughGlassMaterial::Pdf(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
 	if (localLightDir.z * localEyeDir.z < 0.f) {
@@ -316,13 +361,16 @@ void RoughGlassMaterial::Pdf(const HitPoint &hitPoint,
 		const float cosThetaIH = AbsDot(localEyeDir, wh);
 		const float cosThetaOH = AbsDot(localLightDir, wh);
 
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float specPdfD = useGgx ? GgxVNDFHalfPdf(localEyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float specPdfR = useGgx ? GgxVNDFHalfPdf(localLightDir, wh, alphaT, alphaB) :
+				specPdfD;
 
 		if (directPdfW)
-			*directPdfW = threshold * specPdf * cosThetaIH / lengthSquared;
+			*directPdfW = threshold * specPdfD * cosThetaIH / lengthSquared;
 
 		if (reversePdfW)
-			*reversePdfW = threshold * specPdf * cosThetaOH * eta * eta / lengthSquared;
+			*reversePdfW = threshold * specPdfR * cosThetaOH * eta * eta / lengthSquared;
 	} else {
 		// Reflect
 		const float cosThetaO = fabsf(CosTheta(localLightDir));
@@ -337,13 +385,16 @@ void RoughGlassMaterial::Pdf(const HitPoint &hitPoint,
 		if (wh.z < 0.f)
 			wh = -wh;
 
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float specPdfD = useGgx ? GgxVNDFReflectionPdf(localEyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localLightDir, wh));
+		const float specPdfR = useGgx ? GgxVNDFReflectionPdf(localLightDir, wh, alphaT, alphaB) :
+				specPdfD;
 
 		if (directPdfW)
-			*directPdfW = (1.f - threshold) * specPdf / (4.f * AbsDot(localLightDir, wh));
+			*directPdfW = (1.f - threshold) * specPdfD;
 
 		if (reversePdfW)
-			*reversePdfW = (1.f - threshold) * specPdf / (4.f * AbsDot(localLightDir, wh));
+			*reversePdfW = (1.f - threshold) * specPdfR;
 	}
 }
 
@@ -416,6 +467,7 @@ PropertiesUPtr RoughGlassMaterial::ToProperties(const ImageMapCache &imgMapCache
 		props->Set(Property("scene.materials." + name + ".filmthickness")(filmThickness->GetSDLValue()));
 	if (filmIor)
 		props->Set(Property("scene.materials." + name + ".filmior")(filmIor->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

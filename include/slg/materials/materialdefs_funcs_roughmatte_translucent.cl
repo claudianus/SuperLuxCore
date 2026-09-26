@@ -97,34 +97,24 @@ OPENCL_FORCE_INLINE void RoughMatteTranslucentMaterial_Evaluate(__global const M
 		}
 	}
 
-	const bool reflected = (CosTheta(lightDir) * CosTheta(eyeDir) > 0.f);
+	// EON diffuse (Portsmouth, Kutz, Hill '25): wi/wo lifted to the upper
+	// hemisphere for both the reflect and the transmit lobes.
+	const float rough = clamp(Texture_GetFloatValue(material->roughmatteTranslucent.sigmaTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+	const float3 wo = MAKE_FLOAT3(eyeDir.x, eyeDir.y, fabs(eyeDir.z));
+	const float3 wi = MAKE_FLOAT3(lightDir.x, lightDir.y, fabs(lightDir.z));
+
 	const float weight = (lightDir.z * eyeDir.z > 0.f) ? threshold : (1.f - threshold);
-
-	const float directPdfW = weight * fabs(lightDir.z * M_1_PI_F);
-
-	const float sigma = Texture_GetFloatValue(material->roughmatteTranslucent.sigmaTexIndex, hitPoint TEXTURES_PARAM);
-	const float sigma2 = sigma * sigma;
-	const float A = 1.f - (sigma2 / (2.f * (sigma2 + 0.33f)));
-	const float B = 0.45f * sigma2 / (sigma2 + 0.09f);
-	const float sinthetai = SinTheta(eyeDir);
-	const float sinthetao = SinTheta(lightDir);
-	float maxcos = 0.f;
-	if (sinthetai > 1e-4f && sinthetao > 1e-4f) {
-		const float dcos = CosPhi(lightDir) * CosPhi(eyeDir) +
-			SinPhi(lightDir) * SinPhi(eyeDir);
-		maxcos = fmax(0.f, dcos);
-	}
-
-	float3 result = TO_FLOAT3(M_1_PI_F * fabs(lightDir.z) *
-		(A + B * maxcos * sinthetai * sinthetao / fmax(fabs(CosTheta(lightDir)), fabs(CosTheta(eyeDir)))));
+	const float directPdfW = weight * EON_Pdf(wo, wi, rough);
 
 	BSDFEvent event;
+	float3 result;
 	if (lightDir.z * eyeDir.z > 0.f) {
 		event = DIFFUSE | REFLECT;
-		result *= r;
+		// rho enters the multi-scatter term nonlinearly; pass the true albedo
+		result = EON_Eval(r, rough, wi, wo) * fabs(lightDir.z);
 	} else {
 		event = DIFFUSE | TRANSMIT;
-		result *= t;
+		result = EON_Eval(t, rough, wi, wo) * fabs(lightDir.z);
 	}
 
 	EvalStack_PushFloat3(result);
@@ -147,16 +137,12 @@ OPENCL_FORCE_INLINE void RoughMatteTranslucentMaterial_Sample(__global const Mat
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
-	float pdfW;
-	float3 sampledDir = CosineSampleHemisphereWithPdf(u0, u1, &pdfW);
-	if (fabs(CosTheta(sampledDir)) < DEFAULT_COS_EPSILON_STATIC) {
-		MATERIAL_SAMPLE_RETURN_BLACK;
-	}
+	const float rough = clamp(Texture_GetFloatValue(material->roughmatteTranslucent.sigmaTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
 
 	const float3 krVal = Texture_GetSpectrumValue(material->roughmatteTranslucent.krTexIndex, hitPoint TEXTURES_PARAM);
 	const float3 ktVal = Texture_GetSpectrumValue(material->roughmatteTranslucent.ktTexIndex, hitPoint TEXTURES_PARAM);
 	const float3 kr = Spectrum_Clamp(krVal);
-	const float3 kt = Spectrum_Clamp(ktVal) * 
+	const float3 kt = Spectrum_Clamp(ktVal) *
 		// Energy conservation
 		(1.f - kr);
 
@@ -181,34 +167,29 @@ OPENCL_FORCE_INLINE void RoughMatteTranslucentMaterial_Sample(__global const Mat
 		}
 	}
 
-	const float sigma = Texture_GetFloatValue(material->roughmatteTranslucent.sigmaTexIndex, hitPoint TEXTURES_PARAM);
-	const float sigma2 = sigma * sigma;
-	const float A = 1.f - (sigma2 / (2.f * (sigma2 + 0.33f)));
-	const float B = 0.45f * sigma2 / (sigma2 + 0.09f);
-	const float sinthetai = SinTheta(fixedDir);
-	const float sinthetao = SinTheta(sampledDir);
-	float maxcos = 0.f;
-	if (sinthetai > 1e-4f && sinthetao > 1e-4f) {
-		const float dcos = CosPhi(sampledDir) * CosPhi(fixedDir) +
-			SinPhi(sampledDir) * SinPhi(fixedDir);
-		maxcos = max(0.f, dcos);
+	// EON CLTC + uniform mixture sampling in the upper hemisphere
+	float pdfW;
+	const float3 wo = MAKE_FLOAT3(fixedDir.x, fixedDir.y, fabs(fixedDir.z));
+	const float3 wi = EON_Sample(wo, rough, u0, u1, &pdfW);
+	if (fabs(wi.z) < DEFAULT_COS_EPSILON_STATIC) {
+		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
-	const float coef = (A + B * maxcos * sinthetai * sinthetao / max(fabs(CosTheta(sampledDir)), fabs(CosTheta(fixedDir))));
 
 	BSDFEvent event;
 	float3 result;
+	float3 sampledDir;
 	if (passThroughEvent < threshold) {
-		sampledDir *= (signbit(fixedDir.z) ? -1.f : 1.f);
+		sampledDir = MAKE_FLOAT3(wi.x, wi.y, signbit(fixedDir.z) ? -wi.z : wi.z);
 		event = DIFFUSE | REFLECT;
 		pdfW *= threshold;
 
-		result = kr * (coef / threshold);
+		result = EON_Eval(kr, rough, wi, wo) * fabs(sampledDir.z) / pdfW;
 	} else {
-		sampledDir *= -(signbit(fixedDir.z) ? -1.f : 1.f);
+		sampledDir = MAKE_FLOAT3(wi.x, wi.y, signbit(fixedDir.z) ? wi.z : -wi.z);
 		event = DIFFUSE | TRANSMIT;
 		pdfW *= (1.f - threshold);
 
-		result = kt * (coef / (1.f - threshold));
+		result = EON_Eval(kt, rough, wi, wo) * fabs(sampledDir.z) / pdfW;
 	}
 
 	EvalStack_PushFloat3(result);

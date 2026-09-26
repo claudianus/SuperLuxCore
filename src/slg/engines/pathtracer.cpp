@@ -787,11 +787,34 @@ namespace {
 // mv = {vx, vy, valid, objectMotion}: camera/object/deformation motion
 // are all supported.
 void ComputeFirstHitMotionVector(SceneConstRef scene, const float rayTime,
-		const HitPoint &hitPoint, float *mv) {
+		const HitPoint *hitPoint, const Ray &eyeRay, float *mv) {
 	const Camera &camera = scene.GetCamera();
-	ExtMeshConstPtr mesh = hitPoint.mesh;
-	if (!mesh)
+	ExtMeshConstPtr mesh = hitPoint ? hitPoint->mesh : nullptr;
+
+	// Finite-difference half window inside the shutter interval
+	const float dt = Max((camera.shutterClose - camera.shutterOpen) * .5f, 1e-4f);
+	const float ta = rayTime - dt;
+	const float tb = rayTime + dt;
+
+	if (!mesh) {
+		// Environment miss: the sky is infinitely far away so only
+		// camera motion displaces it in screen space. Project a point
+		// far along the ray - exact for camera rotation, translation
+		// error fades with the 1e6 distance factor.
+		if (!camera.motionSystem) {
+			mv[2] = 1.f;
+			return;
+		}
+		const Point farP = eyeRay(1e6f);
+		float xa, ya, xb, yb;
+		if (!camera.ProjectPointToFilm(farP, ta, &xa, &ya) ||
+				!camera.ProjectPointToFilm(farP, tb, &xb, &yb))
+			return;
+		mv[0] = (xb - xa) / (tb - ta);
+		mv[1] = (yb - ya) / (tb - ta);
+		mv[2] = 1.f;
 		return;
+	}
 
 	const ExtTriangleMesh *extTri = ExtTriangleMesh::FromMesh(mesh);
 	const bool objMotion = (mesh->GetType() == TYPE_EXT_TRIANGLE_MOTION) ||
@@ -804,24 +827,19 @@ void ComputeFirstHitMotionVector(SceneConstRef scene, const float rayTime,
 		return;
 	}
 
-	// Finite-difference half window inside the shutter interval
-	const float dt = Max((camera.shutterClose - camera.shutterOpen) * .5f, 1e-4f);
-	const float ta = rayTime - dt;
-	const float tb = rayTime + dt;
-
 	// Local-space position of the surface point at time t: for meshes
 	// with per-vertex deformation the vertex motion series is
 	// barycentrically interpolated at t, otherwise the (static) local
 	// position is recovered through the hit transform
 	auto localPosAt = [&](const float t) {
 		if (extTri && extTri->HasVertexMotion()) {
-			const Triangle &tri = mesh->GetTriangles()[hitPoint.triangleIndex];
-			const float b0 = 1.f - hitPoint.triangleBariCoord1 - hitPoint.triangleBariCoord2;
+			const Triangle &tri = mesh->GetTriangles()[hitPoint->triangleIndex];
+			const float b0 = 1.f - hitPoint->triangleBariCoord1 - hitPoint->triangleBariCoord2;
 			return b0 * extTri->GetVertexAtTime(tri.v[0], t) +
-				hitPoint.triangleBariCoord1 * extTri->GetVertexAtTime(tri.v[1], t) +
-				hitPoint.triangleBariCoord2 * extTri->GetVertexAtTime(tri.v[2], t);
+				hitPoint->triangleBariCoord1 * extTri->GetVertexAtTime(tri.v[1], t) +
+				hitPoint->triangleBariCoord2 * extTri->GetVertexAtTime(tri.v[2], t);
 		} else
-			return Inverse(hitPoint.localToWorld) * hitPoint.p;
+			return Inverse(hitPoint->localToWorld) * hitPoint->p;
 	};
 
 	auto worldPosAt = [&](const float t) {
@@ -935,6 +953,9 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				// I set to 0.0 also the alpha all purely transmitted paths hitting nothing
 				sampleResult.alpha = 0.f;
 			}
+			if (sampleResult.firstPathVertex && sampleResult.HasChannel(Film::MOTION_VECTOR))
+				ComputeFirstHitMotionVector(scene, eyeRay.time,
+						nullptr, eyeRay, sampleResult.motionVector);
 			break;
 		}
 
@@ -958,7 +979,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			sampleResult.isHoldout = bsdf.IsHoldout();
 			if (sampleResult.HasChannel(Film::MOTION_VECTOR))
 				ComputeFirstHitMotionVector(scene, eyeRay.time,
-						bsdf.hitPoint, sampleResult.motionVector);
+						&bsdf.hitPoint, eyeRay, sampleResult.motionVector);
 		}
 		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes());
 

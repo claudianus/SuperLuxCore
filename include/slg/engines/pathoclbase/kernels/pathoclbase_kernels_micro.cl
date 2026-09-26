@@ -222,6 +222,12 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 		sampleResult->uv.u = INFINITY;
 		sampleResult->uv.v = INFINITY;
 		sampleResult->isHoldout = false;
+		if (taskConfig->film.hasChannelMotionVector) {
+			__global const Ray *ray = &rays[gid];
+			Camera_ComputeEnvMotionVector(camera,
+					VLOAD3F(&ray->o.x), VLOAD3F(&ray->d.x), ray->time,
+					filmHeight, sampleResult->motionVector);
+		}
 	} else if (!sampleResult->isHoldout && pathInfo->isTransmittedPath) {
 		// I set to 0.0 also the alpha all purely transmitted paths hitting nothing
 		sampleResult->alpha = 0.f;
@@ -1416,10 +1422,16 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					guideChunk8, guideChunk9, guideChunk10, guideChunk11,
 					guideChunk12, guideChunk13, guideChunk14, guideChunk15);
 			const uint guideLocal = guideCell & 31u;
+			// Mirrors CPU GuidableBsdf(): volume scattering vertices are
+			// always guidable (phase lobes sample blind w.r.t. the
+			// incident field); glossy bounces need enough roughness;
+			// pure diffuse stays off (CPU LUX_PG_DIFFUSE opt-in).
+			const bool guidableBsdf = bsdf->isVolume ||
+					(((eventTypes & GLOSSY) != 0u) &&
+					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
 			const bool tryGuide = (guidingEnable != 0u) &&
 					!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
-					((eventTypes & GLOSSY) != 0u) &&
-					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f) &&
+					guidableBsdf &&
 					(pathInfo->depth.depth >= 2u) &&
 					(guideTb[guideLocal * 33u + 32u] >= GUIDE_WARMUP_RECORDS);
 			// Guiding stats
@@ -1447,7 +1459,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 				if (Guide_Sample(guideTb, guideLocal,
 						shadeN, uBin, uSelRescaled,
 						Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
-						&guideDir, &guidePdfW) && (guidePdfW > 0.f)) {
+						&guideDir, &guidePdfW, bsdf->isVolume) && (guidePdfW > 0.f)) {
 					float3 discardDir;
 					float discardPdfW, discardCos;
 					BSDFEvent shadowEvent = (BSDFEvent)0;
@@ -1510,7 +1522,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
 					const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 					const float guidePdfW = Guide_Pdf(guideTb, guideLocal,
-							shadeN, sampledDir);
+							shadeN, sampledDir, bsdf->isVolume);
 					const float mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
 					if (mixPdfW > 0.f) {
 						bsdfSample *= bsdfPdfW / mixPdfW;
@@ -1521,11 +1533,14 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			} // giPending != 1u
 
 			// Path guiding (P1-3 M2b-2): incident-value training record
-			// (strided per-task slot, no atomics): local DL+emission value
-			// added at this vertex, normalized by arrival throughput.
-			// First bounce per task uses a garbage baseline (clamped by
-			// the host drain guard); duplicates across passes are valid
-			// training data (mixture stays exact for any field).
+			// (strided per-task slot, no atomics). Exact record matching
+			// the CPU Record() contract: p = ray->o (the vertex the ray
+			// LEFT - where future queries land), d = ray->d (toward the
+			// contributing vertex), flux = local DL+emission added at
+			// this vertex / arrival throughput. Gated like the CPU: no
+			// delta vertices, no depth 0 (a camera-origin record sits
+			// where nothing queries and would use a garbage radStart
+			// baseline).
 			// NOTE: guideRec*/guideDbgBuff are null buffers when
 			// path.guiding.enable is off - the writes must be gated.
 			if (guidingEnable != 0u) {
@@ -1544,22 +1559,23 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 				taskState->guideRadStart[2] = radNow.z;
 				const float localValue = (radNow.x + radNow.y + radNow.z -
 						radStart.x - radStart.y - radStart.z) * (1.f / 3.f);
-				const float3 thr = VLOAD3F(&taskState->throughput.c[0]);
-				const float arrival = max((thr.x + thr.y + thr.z) * (1.f / 3.f), 1e-3f);
-				const float3 backDir = -VLOAD3F(&ray->d.x);
-				const uint recCell = Guide_CellIndex16(
-						VLOAD3F(&bsdf->hitPoint.p.x),
-						guideCubeMinX, guideCubeMinY, guideCubeMinZ, invGuideSize);
-				const uint recBin = Guide_DirBin16(backDir);
-				const float flux = localValue / arrival;
-				Guide_RecBuf((uint)gid,
-						guideRec0, guideRec1, guideRec2, guideRec3,
-						guideRec4, guideRec5, guideRec6, guideRec7,
-						guideRec8, guideRec9, guideRec10, guideRec11,
-						guideRec12, guideRec13, guideRec14, guideRec15)
-						[((uint)gid >> 5) & 255u] =
-						MAKE_FLOAT4((float)recCell, (float)recBin, flux, 1.f);
-				guideDbgBuff[2] = 1u;
+				if ((pathInfo->depth.depth >= 1u) &&
+						!BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+					const float3 thr = VLOAD3F(&taskState->throughput.c[0]);
+					const float arrival = max((thr.x + thr.y + thr.z) * (1.f / 3.f), 1e-3f);
+					const float flux = localValue / arrival;
+					const float3 recP = VLOAD3F(&ray->o.x);
+					const float3 recD = VLOAD3F(&ray->d.x);
+					__global float4 *rec = Guide_RecBuf((uint)gid,
+							guideRec0, guideRec1, guideRec2, guideRec3,
+							guideRec4, guideRec5, guideRec6, guideRec7,
+							guideRec8, guideRec9, guideRec10, guideRec11,
+							guideRec12, guideRec13, guideRec14, guideRec15) +
+							2u * (((uint)gid >> 5) & 127u);
+					rec[0] = MAKE_FLOAT4(recP.x, recP.y, recP.z, flux);
+					rec[1] = MAKE_FLOAT4(recD.x, recD.y, recD.z, 1.f);
+					guideDbgBuff[2] = 1u;
+				}
 			}
 
 			pathInfo->isPassThroughPath = false;

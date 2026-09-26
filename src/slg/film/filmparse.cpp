@@ -54,6 +54,7 @@ namespace OCIO = OCIO_NAMESPACE;
 #include "slg/film/imagepipeline/plugins/whitebalance.h"
 #include "slg/film/imagepipeline/plugins/bakemapmargin.h"
 #include "slg/film/imagepipeline/plugins/colorlut.h"
+#include "slg/film/imagepipeline/plugins/temporalaccumulate.h"
 #include "slg/film/imagepipeline/plugins/optixdenoiser.h"
 
 using namespace std;
@@ -802,6 +803,26 @@ ImagePipeline *Film::CreateImagePipeline(const Properties &props, const string &
 				const u_int minSPP = props.Get(Property(prefix + ".minspp")(0)).Get<u_int>();
 				imagePipeline->AddPlugin(new OptixDenoiserPlugin(sharpness, minSPP));
 #endif
+			} else if (type == "TEMPORAL_ACCUMULATE") {
+				const u_int frameIndex = props.Get(Property(prefix + ".frame")(0)).Get<u_int>();
+				const string stateDir = props.Get(Property(prefix + ".statedir")(".")).Get<string>();
+				const float historyCap = Max(props.Get(Property(prefix + ".history")(32.0)).Get<double>(), 1.0);
+				const float clipSigma = Max(props.Get(Property(prefix + ".clipsigma")(2.5)).Get<double>(), 0.0);
+				const float depthRelThreshold = Max(props.Get(Property(prefix + ".depththreshold")(.05)).Get<double>(), 0.0);
+				const float normalCosThreshold = Clamp(props.Get(Property(prefix + ".normalthreshold")(.6)).Get<double>(), -1.0, 1.0);
+
+				// The plugin needs the motion vectors for reprojection
+				// and the geometric guides for disocclusion detection:
+				// request them here so users do not have to enable the
+				// AOV outputs by hand
+				AddChannel(Film::MOTION_VECTOR);
+				AddChannel(Film::DEPTH);
+				AddChannel(Film::AVG_SHADING_NORMAL);
+				AddChannel(Film::OBJECT_ID);
+				AddChannel(Film::VARIANCE);
+
+				imagePipeline->AddPlugin(new TemporalAccumulate(frameIndex, stateDir,
+						historyCap, clipSigma, depthRelThreshold, normalCosThreshold));
 			} else if (type == "TONEMAP_OPENCOLORIO") {
 				const string mode = props.Get(Property(prefix + ".mode")("COLORSPACE_CONVERSION")).Get<string>();
 

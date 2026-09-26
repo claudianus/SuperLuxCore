@@ -29,7 +29,7 @@ namespace slg {
 
 class DivideTexture : public Texture {
 public:
-	DivideTexture(TextureRef t1, TextureRef t2) : tex1(t1), tex2(t2) { }
+	DivideTexture(TextureConstRef t1, TextureConstRef t2) : tex1(t1), tex2(t2) { }
 	virtual ~DivideTexture() { }
 
 	virtual TextureType GetType() const { return DIVIDE_TEX; }
@@ -59,8 +59,8 @@ public:
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 private:
-	std::reference_wrapper<Texture> tex1;
-	std::reference_wrapper<Texture> tex2;
+	std::reference_wrapper<const Texture> tex1;
+	std::reference_wrapper<const Texture> tex2;
 };
 
 }

@@ -52,7 +52,13 @@
 #include "slg/materials/velvet.h"
 #include "slg/materials/disney.h"
 #include "slg/materials/hairmat.h"
+#include "slg/materials/openpbr.h"
 #include "slg/materials/twosided.h"
+#include "slg/volumes/homogenous.h"
+
+#include "slg/textures/math/scale.h"
+#include "slg/textures/math/subtract.h"
+#include "slg/textures/math/divide.h"
 
 #include "slg/textures/texture.h"
 #include "slg/usings.h"
@@ -415,14 +421,17 @@ MaterialUPtr Scene::CreateMaterial(
 		auto index = parseTex("index", {0.f, 0.f, 0.f});
 		const auto multibounce = parseBool("multibounce", false);
 		const auto doublesided = parseBool("doublesided", false);
+		// Opt-in modern microfacet distribution (default: legacy Schlick)
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		mat = std::make_unique<Glossy2Material>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			kd, ks, nu, nv, ka, d, index, multibounce, doublesided
+			kd, ks, nu, nv, ka, d, index, multibounce, doublesided, useGgx
 		);
 	} else if (matType == "metal2") {
 		auto nu = parseTex("uroughness", {.1f});
 		auto nv = parseTex("vroughness", {.1f});
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		TextureConstPtr n, k;
 		if (isDefined("preset") || isDefined("name")) {
@@ -441,7 +450,8 @@ MaterialUPtr Scene::CreateMaterial(
 				bumpTex,
 				refpreset,
 				nu,
-				nv
+				nv,
+				useGgx
 			);
 			moveToTrash(std::move(oldTexPtr));
 		} else if (isDefined("fresnel")) {
@@ -454,14 +464,14 @@ MaterialUPtr Scene::CreateMaterial(
 			auto fresnelTex = static_cast<const FresnelTexture *>(tex.get());
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				FresnelTextureConstPtr(fresnelTex), nu, nv
+				FresnelTextureConstPtr(fresnelTex), nu, nv, useGgx
 			);
 		} else {
 			n = parseTex("n", {.5f, .5f, .5f});
 			k = parseTex("k", {.5f, .5f, .5f});
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				n, k, nu, nv
+				n, k, nu, nv, useGgx
 			);
 		}
 	} else if (matType == "roughglass") {
@@ -498,9 +508,11 @@ MaterialUPtr Scene::CreateMaterial(
 		if (isDefined("filmior"))
 			filmIor = parseTex("filmior", {1.5f});
 
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 		mat = std::make_unique<RoughGlassMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			kr, kt, exteriorIor, interiorIor, nu, nv, cauchyB, filmThickness, filmIor
+			kr, kt, exteriorIor, interiorIor, nu, nv, cauchyB, filmThickness, filmIor,
+			useGgx
 		);
 	} else if (matType == "velvet") {
 		auto kd = parseTex("kd", {.5f, .5f, .5f});
@@ -634,11 +646,13 @@ MaterialUPtr Scene::CreateMaterial(
 		auto index_bf = parseTex("index_bf", {0.f, 0.f, 0.f});
 		const bool multibounce = parseBool("multibounce", false);
 		const bool multibounce_bf = parseBool("multibounce_bf", false);
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		mat = std::make_unique<GlossyTranslucentMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
 			kd, kt, ks, ks_bf, nu, nu_bf, nv, nv_bf,
-			ka, ka_bf, d, d_bf, index, index_bf, multibounce, multibounce_bf
+			ka, ka_bf, d, d_bf, index, index_bf, multibounce, multibounce_bf,
+			useGgx
 		);
 	} else if (matType == "glossycoating") {
 		MaterialConstRef matBase = matDefs.GetMaterial(parseString("base", ""));
@@ -649,6 +663,7 @@ MaterialUPtr Scene::CreateMaterial(
 		auto d = parseTex("d", {0.f});
 		auto index = parseTex("index", {0.f, 0.f, 0.f});
 		const bool multibounce = parseBool("multibounce", false);
+		const auto useGgx = parseString("distribution", "schlick") == "ggx";
 
 		mat = std::make_unique<GlossyCoatingMaterial>(
 			frontTransparencyTex,
@@ -662,7 +677,8 @@ MaterialUPtr Scene::CreateMaterial(
 			ka,
 			d,
 			index,
-			multibounce
+			multibounce,
+			useGgx
 		);
 	} else if (matType == "disney") {
 		auto baseColor = parseTex("basecolor", {.5f, .5f, .5f});
@@ -707,6 +723,118 @@ MaterialUPtr Scene::CreateMaterial(
 			sheen, sheenTint, filmAmount, filmThickness, filmIor,
 			transmission, transmissionRoughness, ior, cauchyB
 		);
+	} else if (matType == "openpbr") {
+		// ASWF OpenPBR Surface v1.1 (lobe-mixture approximation)
+		auto baseColor = parseTex("basecolor", {.8f, .8f, .8f});
+		auto baseWeight = parseTex("baseweight", {1.f});
+		auto baseMetalness = parseTex("basemetalness", {0.f});
+		auto baseDiffuseRoughness = parseTex("basediffuseroughness", {0.f});
+		auto specWeight = parseTex("specularweight", {1.f});
+		auto specColor = parseTex("specularcolor", {1.f, 1.f, 1.f});
+		auto specRoughness = parseTex("specularroughness", {.3f});
+		auto specAniso = parseTex("specularanisotropy", {0.f});
+		auto specRotation = parseTex("specularrotation", {0.f});
+		auto specIor = parseTex("specularior", {1.5f});
+		auto transWeight = parseTex("transmissionweight", {0.f});
+		auto transColor = parseTex("transmissioncolor", {1.f, 1.f, 1.f});
+		auto transDepth = parseTex("transmissiondepth", {0.f});
+		auto transScatter = parseTex("transmissionscatter", {0.f, 0.f, 0.f});
+		auto transScatterAniso = parseTex("transmissionscatteranisotropy", {0.f});
+		auto dispersion = parseTex("dispersion", {0.f});
+		auto sssWeight = parseTex("subsurfaceweight", {0.f});
+		auto sssColor = parseTex("subsurfacecolor", {1.f, 1.f, 1.f});
+		auto sssRadius = parseTex("subsurfaceradius", {1.f});
+		auto sssRadiusScale = parseTex("subsurfaceradiusscale", {1.f, 1.f, 1.f});
+		auto sssAniso = parseTex("subsurfaceanisotropy", {0.f});
+		auto coatWeight = parseTex("coatweight", {0.f});
+		auto coatColor = parseTex("coatcolor", {1.f, 1.f, 1.f});
+		auto coatRoughness = parseTex("coatroughness", {0.f});
+		auto coatAniso = parseTex("coatanisotropy", {0.f});
+		auto coatRotation = parseTex("coatrotation", {0.f});
+		auto coatIor = parseTex("coatior", {1.5f});
+		auto coatDarkening = parseTex("coatdarkening", {1.f});
+		auto fuzzWeight = parseTex("fuzzweight", {0.f});
+		auto fuzzColor = parseTex("fuzzcolor", {1.f, 1.f, 1.f});
+		auto fuzzRoughness = parseTex("fuzzroughness", {.5f});
+		auto filmWeight = parseTex("filmweight", {0.f});
+		auto filmThickness = parseTex("filmthickness", {0.f});
+		auto filmIor = parseTex("filmior", {1.5f});
+
+		mat = std::make_unique<OpenPBRMaterial>(
+			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
+			baseColor, baseWeight, baseMetalness, baseDiffuseRoughness,
+			specWeight, specColor, specRoughness, specAniso,
+			specRotation, specIor,
+			transWeight, transColor, transDepth, transScatter,
+			transScatterAniso, dispersion,
+			sssWeight, sssColor, sssRadius, sssRadiusScale, sssAniso,
+			coatWeight, coatColor, coatRoughness, coatAniso,
+			coatRotation, coatIor, coatDarkening,
+			fuzzWeight, fuzzColor, fuzzRoughness,
+			filmWeight, filmThickness, filmIor
+		);
+
+		// Implicit interior volume: subsurface scattering (dense medium)
+		// wins over the transmission medium when both are active - the
+		// refracted ray then also scatters, matching the OpenPBR model
+		// where the interior medium IS the subsurface medium.
+		//   SSS:        mfp = radius*scale, sigma_t = 1/mfp,
+		//               sigma_s = sss_color*sigma_t, sigma_a = rest (albedo
+		//               driven - a Christensen-Burley inversion is S2 work)
+		//   Transmiss.: sigma_a = (1-transmission_color)/depth,
+		//               sigma_s = transmission_scatter/depth
+		// Skipped when the user sets an explicit volume.interior.
+		const bool wantSSSVol = isDefined("subsurfaceweight") &&
+				isDefined("subsurfaceradius");
+		const bool wantTransVol = isDefined("transmissiondepth") &&
+				parseFloat("transmissiondepth", 0.f) > 0.f;
+		if (!props.IsDefined(propName + ".volume.interior") &&
+				(wantSSSVol || wantTransVol)) {
+			auto defineTex = [&](TextureUPtr tex) -> TexturePtr {
+				tex->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolTex"));
+				auto [ref, old] = texDefs.DefineTexture(std::move(tex));
+				moveToTrash(std::move(old));
+				return TexturePtr(&ref);
+			};
+			auto constC = [&](const Spectrum &v) {
+				return defineTex(std::make_unique<ConstFloat3Texture>(v));
+			};
+			auto mul = [&](TexturePtr a, TexturePtr b) {
+				return defineTex(std::make_unique<ScaleTexture>(*a, *b));
+			};
+			auto sub1 = [&](TexturePtr a) {
+				return defineTex(std::make_unique<SubtractTexture>(
+						*constC(oneSpectrum), *a));
+			};
+			auto rcp = [&](TexturePtr a) {
+				return defineTex(std::make_unique<DivideTexture>(
+						*constC(oneSpectrum), *a));
+			};
+			auto div = [&](TexturePtr a, TexturePtr b) {
+				return defineTex(std::make_unique<DivideTexture>(*a, *b));
+			};
+
+			TexturePtr sigmaA, sigmaS, g;
+			if (wantSSSVol) {
+				// mfp = subsurfaceradius * subsurfaceradiusscale
+				auto sigmaT = rcp(mul(sssRadius, sssRadiusScale));
+				sigmaS = mul(sssColor, sigmaT);
+				sigmaA = mul(sub1(sssColor), sigmaT);
+				g = sssAniso;
+			} else {
+				sigmaA = div(sub1(transColor), transDepth);
+				sigmaS = div(transScatter, transDepth);
+				g = transScatterAniso;
+			}
+
+			auto vol = std::make_unique<HomogeneousVolume>(
+				*specIor, nullptr, *sigmaA, *sigmaS, *g,
+				true /* multiScattering */, true /* HG phase */);
+			vol->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolume"));
+			auto [volRef, oldVol] = matDefs.DefineMaterial(std::move(vol));
+			moveToTrash(std::move(oldVol));
+			mat->SetInteriorVolume(dynamic_cast<const Volume &>(volRef));
+		}
 	} else if (matType == "hairmat") {
 		// Absorption coefficient (mutually exclusive with color/eumelanin)
 		TextureConstPtr sigmaA = nullptr;

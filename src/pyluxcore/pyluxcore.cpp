@@ -2884,7 +2884,12 @@ PYBIND11_MODULE(pyluxcore, m) {
 		py::keep_alive<1, 3>(),
         py::call_guard<py::gil_scoped_release>()
 	)
-    //.def(py::init(&RenderConfig_LoadFile)) TODO
+	// Load a serialized (binary) RenderConfig saved with
+	// RenderConfig.Save() — used by the external render process.
+    .def(
+		py::init(&RenderConfig_LoadFile),
+        py::call_guard<py::gil_scoped_release>()
+	)
     .def("GetProperties", &luxcore::detail::RenderConfigImpl::GetProperties)
     .def("GetProperty", &luxcore::detail::RenderConfigImpl::GetProperty)
     .def("GetScene", &RenderConfig_GetScene)

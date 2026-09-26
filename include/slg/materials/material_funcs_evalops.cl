@@ -186,6 +186,12 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 			HairMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
 		//----------------------------------------------------------------------
+		// OPENPBR
+		//----------------------------------------------------------------------
+		case OPENPBR:
+			OpenPBRMat_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		// CLEAR_VOL
 		//----------------------------------------------------------------------
 		case CLEAR_VOL:

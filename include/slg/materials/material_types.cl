@@ -69,8 +69,8 @@ typedef enum {
 	MATTE, MIRROR, GLASS, ARCHGLASS, MIX, NULLMAT, MATTETRANSLUCENT,
 	GLOSSY2, METAL2, ROUGHGLASS, VELVET, CLOTH, CARPAINT, ROUGHMATTE,
 	ROUGHMATTETRANSLUCENT, GLOSSYTRANSLUCENT, GLOSSYCOATING, DISNEY,
-	TWOSIDED, HAIR,
-			
+	TWOSIDED, HAIR, OPENPBR,
+
 	// Volumes
 	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
 } MaterialType;
@@ -136,6 +136,7 @@ typedef struct {
 	unsigned int indexTexIndex;
 	int multibounce;
 	int doublesided;
+	int useGgx;
 } Glossy2Param;
 
 typedef struct {
@@ -144,6 +145,7 @@ typedef struct {
 	unsigned int kTexIndex;
 	unsigned int nuTexIndex;
 	unsigned int nvTexIndex;
+	int useGgx;
 } Metal2Param;
 
 typedef struct {
@@ -155,6 +157,7 @@ typedef struct {
 	unsigned int nvTexIndex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
+	int useGgx;
 } RoughGlassParam;
 
 typedef struct {
@@ -265,6 +268,7 @@ typedef struct {
 	unsigned int indexbfTexIndex;
 	int multibounce;
 	int multibouncebf;
+	int useGgx;
 } GlossyTranslucentParam;
 
 typedef struct {
@@ -276,6 +280,7 @@ typedef struct {
 	unsigned int depthTexIndex;
 	unsigned int indexTexIndex;
 	int multibounce;
+	int useGgx;
 } GlossyCoatingParam;
 
 typedef struct {
@@ -314,6 +319,44 @@ typedef struct {
 	unsigned int frontMatIndex;
 	unsigned int backMatIndex;
 } TwoSidedParam;
+
+// OpenPBR Surface (ASWF v1.1) lobe mixture. All texture indices.
+typedef struct {
+	unsigned int baseColorTexIndex;
+	unsigned int baseWeightTexIndex;
+	unsigned int baseMetalnessTexIndex;
+	unsigned int baseDiffuseRoughnessTexIndex;
+	unsigned int specWeightTexIndex;
+	unsigned int specColorTexIndex;
+	unsigned int specRoughnessTexIndex;
+	unsigned int specAnisotropyTexIndex;
+	unsigned int specRotationTexIndex;
+	unsigned int specIorTexIndex;
+	unsigned int transWeightTexIndex;
+	unsigned int transColorTexIndex;
+	unsigned int transDepthTexIndex;
+	unsigned int transScatterTexIndex;
+	unsigned int transScatterAnisoTexIndex;
+	unsigned int dispersionTexIndex;
+	unsigned int sssWeightTexIndex;
+	unsigned int sssColorTexIndex;
+	unsigned int sssRadiusTexIndex;
+	unsigned int sssRadiusScaleTexIndex;
+	unsigned int sssAnisotropyTexIndex;
+	unsigned int coatWeightTexIndex;
+	unsigned int coatColorTexIndex;
+	unsigned int coatRoughnessTexIndex;
+	unsigned int coatAnisotropyTexIndex;
+	unsigned int coatRotationTexIndex;
+	unsigned int coatIorTexIndex;
+	unsigned int coatDarkeningTexIndex;
+	unsigned int fuzzWeightTexIndex;
+	unsigned int fuzzColorTexIndex;
+	unsigned int fuzzRoughnessTexIndex;
+	unsigned int filmWeightTexIndex;
+	unsigned int filmThicknessTexIndex;
+	unsigned int filmIorTexIndex;
+} OpenPBRParam;
 
 typedef struct {
 	unsigned int sigmaATexIndex;
@@ -441,6 +484,7 @@ typedef struct {
 		DisneyParam disney;
 		TwoSidedParam twosided;
 		HairParam hair;
+		OpenPBRParam openpbr;
 		VolumeParam volume;
 	};
 } Material;

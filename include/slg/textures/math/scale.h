@@ -29,7 +29,7 @@ namespace slg {
 
 class ScaleTexture : public Texture {
 public:
-	ScaleTexture(TextureRef t1, TextureRef t2) : tex1(t1), tex2(t2) { }
+	ScaleTexture(TextureConstRef t1, TextureConstRef t2) : tex1(t1), tex2(t2) { }
 	virtual ~ScaleTexture() { }
 
 	virtual TextureType GetType() const { return SCALE_TEX; }
@@ -61,8 +61,8 @@ public:
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 private:
-	std::reference_wrapper<Texture> tex1;
-	std::reference_wrapper<Texture> tex2;
+	std::reference_wrapper<const Texture> tex1;
+	std::reference_wrapper<const Texture> tex2;
 };
 
 }

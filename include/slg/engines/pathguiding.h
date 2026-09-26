@@ -65,10 +65,11 @@ namespace slg {
 // pointer once per query: sampling and MIS weights always agree with the
 // round's field.
 //
-// GPU: unchanged contract - training records arrive through RecordBin()
-// (16^3 cell + bin -> Record at the cell center), sampling reads
-// SnapshotCoarseTable() which evaluates the fitted leaf model at coarse
-// cell/bin centers. M4e will upload the flattened tree + vMF table.
+// GPU: unchanged contract - training records arrive through Record()
+// (exact position + direction drained from the device record buffers),
+// sampling reads SnapshotCoarseTable() which evaluates the fitted leaf
+// model at coarse cell/bin centers. M4e will upload the flattened tree
+// + vMF table.
 //------------------------------------------------------------------------------
 
 class PathGuidingCache {
@@ -77,9 +78,6 @@ public:
 	static const u_int DIR_PHI = 16;
 	static const u_int DIR_THETA = 8;
 	static const u_int DIR_BINS = DIR_PHI * DIR_THETA;
-	// Legacy fine spatial grid: only used to map RecordBin() cell indices
-	// (GPU M2b-2 drain) to record positions - NOT the field structure.
-	static const u_int GRID_RES = 16;
 	// Training round length: sides swap every this many record attempts
 	static const unsigned long long SWAP_RECORDS = 1000000ULL;
 	// Coarse GPU field layout (M2b): shared with the OpenCL port, which
@@ -118,12 +116,6 @@ public:
 	// toward the previous vertex): caller-provided incident-radiance
 	// estimate (local direct light + emission, throughput-normalized).
 	void Record(const luxrays::Point &p, const luxrays::Vector &wi, float flux) const;
-
-	// Direct bin record for GPU-drained training data (M2b-2): fine cell
-	// and directional bin in the legacy 16^3 x 128 layout are mapped to
-	// the cell-center position + bin-center direction and re-recorded.
-	// Returns false for out-of-range input (dropped).
-	bool RecordBin(u_int cell, u_int bin, float flux) const;
 	// Force a training-round swap now (M2b-2 drain cadence)
 	void ForceSwap() const;
 

@@ -1,6 +1,7 @@
 # Render pass (AOV) audit + temporal animation denoising plan
 
-Status: design/audit. Written 2026-09-24.
+Status: D0 + D1 implemented (commits `74aa37f11`, `99e3e2637`, and the
+TEMPORAL_ACCUMULATE plugin commit). Updated 2026-09-24.
 
 ## Part 1 — AOV audit vs production baseline
 
@@ -160,6 +161,92 @@ noise → flicker.
   + e-test regression (`e3x_temporal_denoise_test.py`): synthetic moving
   scene, flicker metric = per-pixel temporal variance of denoised luma vs
   reference.
+
+## Implementation notes (2026-09-24)
+
+### D0 — done
+
+- `VARIANCE`: `GenericFrameBuffer<4,1,float>` accumulates the weighted
+  second moment E[x²] of merged radiance; output derives
+  `max(E[x²] - E[x]², 0)`. HDR-only.
+- `MOTION_VECTOR`: raw `{vx, vy, valid, objectMotion}` in px/frame,
+  forward-in-time. Finite-difference over the shutter interval at the
+  first camera-visible hit (CPU `pathtracer.cpp`,
+  `Camera::ProjectPointToFilm`; GPU `PathOCL_ComputeFirstHitMotionVector`
+  in `camera_funcs.cl`). Environment misses are handled by projecting a
+  point at 1e6 along the ray (camera rotation exact, translation error
+  ~1e-6 relative). GPU does NOT support per-vertex deformation (vertex
+  motion buffers are not passed to path kernels - transform component
+  only). CPU/GPU parity validated (max |vx| differs <0.1%).
+- Pre-existing bug found and fixed (`99e3e2637`): default object IDs came
+  from a process-global counter `defaultObjectIDIndex` → shifted every
+  session → per-frame OID instability. Now FNV-1a(name) & 0xffffff.
+  Required by both the temporal validator and compositing matte
+  consistency across animation frames.
+
+### D1 — `TEMPORAL_ACCUMULATE` image-pipeline plugin
+
+`src/slg/film/imagepipeline/plugins/temporalaccumulate.cpp`. Runs first
+in a pipeline. Accumulation targets are the image-pipeline beauty **and
+every radiance component channel present in the film** (DIRECT_*,
+INDIRECT_*, EMISSION) — this is essential, not optional: OIDN
+`components` mode denoises the raw film channels, so accumulating only
+the pipeline beauty would leave the denoiser's inputs unfiltered (and
+the `(beauty − Σcomponents)` residual would re-inject the unfiltered
+difference into the output). Validated: accumulating 7 targets made
+TA+OIDN both cleaner and more stable than raw+OIDN.
+
+Per pixel:
+
+1. Reverse reprojection `p - v(p)` with bilinear taps, each tap
+   validated (|Δdepth| relative, dot(prevN,curN), object ID equality,
+   empty-tap check). Reprojection/validation is shared across all
+   targets.
+2. Per-target history from the state EXR (`<TAG>R/G/B/W` channel
+   groups; beauty has an empty tag so the file stays backward
+   compatible). Missing/zero-weight taps fall back to the current
+   frame.
+3. TAA-style neighbourhood clip: history clamped to the current 5x5
+   mean ± `clipsigma` * sqrt(spatialVar + beauty sampleVar) — the
+   VARIANCE channel widens the box on noisy frames so stable history is
+   not over-clipped.
+4. EMA blend `w = min(prevW+1, history)`, written back into the
+   pipeline beauty and into each component channel (normalization
+   preserved via the raw weight).
+5. State persisted per pipeline index as a multi-channel EXR
+   (`slg_temporal_state_<index>.exr` in `.statedir`): per-target
+   RGBW + shared Z/NX/NY/NZ/OID. Survives across sessions → works for
+   per-frame animation renders.
+
+Properties: `film.imagepipelines.P.N.type = TEMPORAL_ACCUMULATE`,
+`.frame` (int, 0 resets history), `.statedir`, `.history` (EMA cap,
+default 32), `.clipsigma` (default 2.5, 0 disables), `.depththreshold`
+(relative, default 0.05), `.normalthreshold` (min dot, default 0.6).
+The parser auto-requests MOTION_VECTOR/DEPTH/AVG_SHADING_NORMAL/
+OBJECT_ID/VARIANCE channels.
+
+Caveats: the plugin writes accumulated values back into the film's
+component channels, so it is designed for final-frame pipelines
+(render to halt → pipeline once). Repeated mid-render executions
+double-count the same frame in the EMA. On PATHOCL the channel
+buffers are transferred asynchronously — the caller must let the film
+update land before executing the pipeline (a finished/halting render
+session already satisfies this).
+
+Validated (1280x720 PATHOCL, bigmonkey-motion split into real
+per-frame scenes, TA → OIDN components → tonemap):
+- history acceptance ~80-92% on true animated frames
+- temporal luma std 0.025 vs 0.063 raw+OIDN (~60% flicker reduction)
+- component accumulation prevents an OIDN blow-up observed on raw
+  input (a frame collapsed to ~50% mean luminance with spatial
+  artifacts)
+- no ghosting; regression: `tests/temporal_accumulate_test.py`.
+
+BlendLuxCore: `denoiser.temporal_*` properties, Temporal Accumulation
+sub-panel under Render > Denoiser; plugin is prepended to the denoiser
+pipeline (and to pipeline 0 when no denoiser) for final renders.
+Animated seed (`use_animated_seed`) already provides per-frame
+decorrelated noise — the accumulation needs it to converge.
 
 ## References
 

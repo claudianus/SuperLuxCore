@@ -196,12 +196,17 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_Evaluate(__global const Material*
 		const float v2 = v * v;
 		const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 		const float roughness = u * v;
+		const bool useGgx = material->glossycoating.useGgx;
+		const float alphaT = fmax(u2, 1e-4f);
+		const float alphaB = fmax(v2, 1e-4f);
 
 		const float wCoating = SchlickBSDF_CoatingWeight(ks, fixedDir);
 		const float wBase = 1.f - wCoating;
 
 		directPdfW = wBase * directPdfW +
-				wCoating * SchlickBSDF_CoatingPdf(roughness, anisotropy, fixedDir, sampledDir);
+				wCoating * (useGgx ?
+					GgxBSDF_CoatingPdf(alphaT, alphaB, fixedDir, sampledDir) :
+					SchlickBSDF_CoatingPdf(roughness, anisotropy, fixedDir, sampledDir));
 
 		// Absorption
 		const float cosi = fabs(sampledDir.z);
@@ -215,8 +220,11 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_Evaluate(__global const Material*
 		const float3 H = normalize(fixedDir + sampledDir);
 		const float3 S = FresnelSchlick_Evaluate(ks, fabs(dot(sampledDir, H)));
 
-		const float3 coatingF = SchlickBSDF_CoatingF(ks, roughness, anisotropy,
-				material->glossycoating.multibounce, fixedDir, sampledDir);
+		const float3 coatingF = useGgx ?
+			GgxBSDF_CoatingF(ks, alphaT, alphaB,
+					material->glossycoating.multibounce, fixedDir, sampledDir) :
+			SchlickBSDF_CoatingF(ks, roughness, anisotropy,
+					material->glossycoating.multibounce, fixedDir, sampledDir);
 
 		// Blend in base layer Schlick style
 		// assumes coating bxdf takes fresnel factor S into account
@@ -325,10 +333,14 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleSetUp(__global const Materi
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = fmax(u2, 1e-4f);
+	const float alphaB = fmax(v2, 1e-4f);
 
-	// Save roughness and anisotropy
+	// Save roughness, anisotropy and GGX alphas
 	EvalStack_PushFloat(roughness);
 	EvalStack_PushFloat(anisotropy);
+	EvalStack_PushFloat(alphaT);
+	EvalStack_PushFloat(alphaB);
 
 	// Coating is used only on the front face
 	const float wCoating = (fixedDir.z > DEFAULT_COS_EPSILON_STATIC) ? SchlickBSDF_CoatingWeight(ks, fixedDir) : 0.f;
@@ -374,11 +386,14 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleSetUp(__global const Materi
 		// To setup the following EVAL_CONDITIONAL_GOTO evaluation
 		EvalStack_PushInt(false);
 	} else {
-		// Sample coating BSDF (Schlick BSDF)
+		// Sample coating BSDF
 		float3 sampledDir;
 		float coatingPdf;
-		const float3 coatingF = SchlickBSDF_CoatingSampleF(ks, roughness, anisotropy,
-				material->glossycoating.multibounce, fixedDir, &sampledDir, u0, u1, &coatingPdf);
+		const float3 coatingF = material->glossycoating.useGgx ?
+			GgxBSDF_CoatingSampleF(ks, alphaT, alphaB,
+					material->glossycoating.multibounce, fixedDir, &sampledDir, u0, u1, &coatingPdf) :
+			SchlickBSDF_CoatingSampleF(ks, roughness, anisotropy,
+					material->glossycoating.multibounce, fixedDir, &sampledDir, u0, u1, &coatingPdf);
 
 		// Save coatingF, coatingPdf and sampledDir
 		EvalStack_PushFloat3(coatingF);
@@ -506,8 +521,10 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleMatBaseSample(__global cons
 	EvalStack_PopFloat(wCoating);
 	const float wBase = 1.f - wCoating;
 
-	// Pop roughness and anisotropy
-	float roughness, anisotropy;
+	// Pop roughness, anisotropy and GGX alphas
+	float roughness, anisotropy, alphaT, alphaB;
+	EvalStack_PopFloat(alphaB);
+	EvalStack_PopFloat(alphaT);
 	EvalStack_PopFloat(anisotropy);
 	EvalStack_PopFloat(roughness);
 
@@ -524,7 +541,7 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleMatBaseSample(__global cons
 	EvalStack_PopFloat3(fixedDir);
 
 	//--------------------------------------------------------------------------
-	
+
 	if (Spectrum_IsBlack(resultMatBase)) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
@@ -539,9 +556,15 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleMatBaseSample(__global cons
 	float3 coatingF;
 	float coatingPdf;
 	if (!(event & SPECULAR)) {
-		coatingF = SchlickBSDF_CoatingF(ks, roughness, anisotropy,
-				material->glossycoating.multibounce, fixedDir, sampledDir);
-		coatingPdf = SchlickBSDF_CoatingPdf(roughness, anisotropy, fixedDir, sampledDir);
+		if (material->glossycoating.useGgx) {
+			coatingF = GgxBSDF_CoatingF(ks, alphaT, alphaB,
+					material->glossycoating.multibounce, fixedDir, sampledDir);
+			coatingPdf = GgxBSDF_CoatingPdf(alphaT, alphaB, fixedDir, sampledDir);
+		} else {
+			coatingF = SchlickBSDF_CoatingF(ks, roughness, anisotropy,
+					material->glossycoating.multibounce, fixedDir, sampledDir);
+			coatingPdf = SchlickBSDF_CoatingPdf(roughness, anisotropy, fixedDir, sampledDir);
+		}
 	} else {
 		coatingF = BLACK;
 		coatingPdf = 0.f;
@@ -594,8 +617,10 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleMatBaseEvaluate(__global co
 	EvalStack_PopFloat(wCoating);
 	const float wBase = 1.f - wCoating;
 
-	// Pop roughness and anisotropy
-	float roughness, anisotropy;
+	// Pop roughness, anisotropy and GGX alphas
+	float alphaB, alphaT, anisotropy, roughness;
+	EvalStack_PopFloat(alphaB);
+	EvalStack_PopFloat(alphaT);
 	EvalStack_PopFloat(anisotropy);
 	EvalStack_PopFloat(roughness);
 

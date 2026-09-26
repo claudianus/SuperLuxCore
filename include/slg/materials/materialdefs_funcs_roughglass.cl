@@ -97,6 +97,9 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const bool useGgx = material->roughglass.useGgx;
+	const float alphaT = fmax(u2, 1e-4f);
+	const float alphaB = fmax(v2, 1e-4f);
 
 	float directPdfW;
 	BSDFEvent event;
@@ -121,9 +124,12 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		const float cosThetaIH = fabs(dot(eyeDir, wh));
 		const float cosThetaOH = dot(lightDir, wh);
 
-		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
-		const float G = SchlickDistribution_G(roughness, lightDir, eyeDir);
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float D = useGgx ? Microfacet_GgxD(wh, alphaT, alphaB) :
+				SchlickDistribution_D(roughness, wh, anisotropy);
+		const float G = useGgx ? Microfacet_GgxG2(lightDir, eyeDir, alphaT, alphaB) :
+				SchlickDistribution_G(roughness, lightDir, eyeDir);
+		const float specPdf = useGgx ? Microfacet_GgxVNDFHalfPdf(eyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy);
 #if defined(SLG_SPECTRAL)
 		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
 #else
@@ -157,9 +163,12 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 			wh = -wh;
 
 		float cosThetaH = dot(eyeDir, wh);
-		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
-		const float G = SchlickDistribution_G(roughness, lightDir, eyeDir);
-		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
+		const float D = useGgx ? Microfacet_GgxD(wh, alphaT, alphaB) :
+				SchlickDistribution_D(roughness, wh, anisotropy);
+		const float G = useGgx ? Microfacet_GgxG2(lightDir, eyeDir, alphaT, alphaB) :
+				SchlickDistribution_G(roughness, lightDir, eyeDir);
+		const float specPdf = useGgx ? Microfacet_GgxVNDFReflectionPdf(eyeDir, wh, alphaT, alphaB) :
+				SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * fabs(dot(lightDir, wh)));
 #if defined(SLG_SPECTRAL)
 		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaH, hitPoint);
 #else
@@ -167,7 +176,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 				FresnelCauchy_Evaluate(ntc, cosThetaH), FresnelCauchy_Evaluate(ntc, cosThetaH));
 #endif
 
-		directPdfW = (1.f - threshold) * specPdf / (4.f * fabs(dot(lightDir, wh)));
+		directPdfW = (1.f - threshold) * specPdf;
 
 		//if (reversePdfW)
 		//	*reversePdfW = (1.f - threshold) * specPdf / (4.f * fabs(dot(lightDir, wh));
@@ -224,10 +233,18 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const bool useGgx = material->roughglass.useGgx;
+	const float alphaT = fmax(u2, 1e-4f);
+	const float alphaB = fmax(v2, 1e-4f);
 
 	float3 wh;
-	float d, specPdf;
-	SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
+	float d = 0.f, specPdf;
+	if (useGgx) {
+		wh = Microfacet_GgxSampleVNDF(fixedDir, alphaT, alphaB, u0, u1);
+		specPdf = Microfacet_GgxVNDFHalfPdf(fixedDir, wh, alphaT, alphaB);
+	} else {
+		SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
+	}
 	if (wh.z < 0.f)
 		wh = -wh;
 	const float cosThetaOH = dot(fixedDir, wh);
@@ -288,20 +305,35 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 
 		const float cosi = fabs(sampledDir.z);
 
-		const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
-		float factor = (d / specPdf) * G * fabs(cosThetaOH) / threshold;
+		if (useGgx) {
+			// (f*cos)/pdf = kt*(1-F)*G2/G1(wo) with VNDF sampling
+			const float g1 = Microfacet_GgxG1(fixedDir, alphaT, alphaB);
+			if (g1 <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			const float g2 = Microfacet_GgxG2(sampledDir, fixedDir, alphaT, alphaB);
+#if defined(SLG_SPECTRAL)
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaIH, hitPoint);
+#else
+			const float F = FresnelCauchy_Evaluate(ntc, cosThetaIH);
+#endif
+			result = kt * (1.f - F) * (g2 / (g1 * threshold));
+		} else {
+			const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
+			float factor = (d / specPdf) * G * fabs(cosThetaOH) / threshold;
 
-		//if (!hitPoint.fromLight) {
+			//if (!hitPoint.fromLight) {
 #if defined(SLG_SPECTRAL)
 			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaIH, hitPoint);
 #else
 			const float F = FresnelCauchy_Evaluate(ntc, cosThetaIH);
 #endif
 			result = (factor / coso) * kt * (1.f - F);
-		//} else {
-		//	const Spectrum F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
-		//	result = (factor / cosi) * kt * (Spectrum(1.f) - F);
-		//}
+			//} else {
+			//	const Spectrum F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
+			//	result = (factor / cosi) * kt * (Spectrum(1.f) - F);
+			//}
+		}
 
 		pdfW *= threshold;
 		event = GLOSSY | TRANSMIT;
@@ -324,17 +356,26 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 			MATERIAL_SAMPLE_RETURN_BLACK;
 		}
 
-		const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
-		float factor = (d / specPdf) * G * fabs(cosThetaOH) / (1.f - threshold);
-
 #if defined(SLG_SPECTRAL)
 		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
 #else
 		const float F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
 #endif
-		//factor /= (!hitPoint.fromLight) ? coso : cosi;
-		factor /= coso;
-		result = factor * F * kr;
+		if (useGgx) {
+			// (f*cos)/pdf = kr*F*G2/G1(wo) with VNDF sampling
+			const float g1 = Microfacet_GgxG1(fixedDir, alphaT, alphaB);
+			if (g1 <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			result = kr * F * (Microfacet_GgxG2(sampledDir, fixedDir, alphaT, alphaB) /
+					(g1 * (1.f - threshold)));
+		} else {
+			const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
+			float factor = (d / specPdf) * G * fabs(cosThetaOH) / (1.f - threshold);
+			//factor /= (!hitPoint.fromLight) ? coso : cosi;
+			factor /= coso;
+			result = factor * F * kr;
+		}
 		
 		const float localFilmThickness = (material->roughglass.filmThicknessTexIndex != NULL_INDEX) 
 										 ? Texture_GetFloatValue(material->roughglass.filmThicknessTexIndex, hitPoint TEXTURES_PARAM) : 0.f;

@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/materials/metal2.h"
+#include "slg/materials/microfacet.h"
 
 using namespace std;
 using namespace luxrays;
@@ -36,14 +37,16 @@ Metal2Material::Metal2Material(
 	TextureConstPtr nn,
 	TextureConstPtr kk,
 	TextureConstPtr u,
-	TextureConstPtr v
+	TextureConstPtr v,
+	const bool useGgx
 ) :
 	Material(frontTransp, backTransp, emitted, bump),
 	fresnelTex(nullptr),
 	n(nn),
 	k(kk),
 	nu(u),
-	nv(v)
+	nv(v),
+	useGgx(useGgx)
 {
 	glossiness = ComputeGlossiness(nu, nv);
 }
@@ -55,14 +58,16 @@ Metal2Material::Metal2Material(
 	TextureConstPtr bump,
 	FresnelTextureConstPtr ft,
 	TextureConstPtr u,
-	TextureConstPtr v)
+	TextureConstPtr v,
+	const bool useGgx)
 	:
 	Material(frontTransp, backTransp, emitted, bump),
 	fresnelTex(ft),
 	n(nullptr),
 	k(nullptr),
 	nu(u),
-	nv(v)
+	nv(v),
+	useGgx(useGgx)
 {
 	glossiness = ComputeGlossiness(nu, nv);
 }
@@ -91,15 +96,25 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	// GGX path: perceptual roughnesses map to squared GGX alphas
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	const Vector wh(Normalize(localLightDir + localEyeDir));
 	const float cosWH = Dot(localLightDir, wh);
 
-	if (directPdfW)
-		*directPdfW = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * cosWH);
-
-	if (reversePdfW)
-		*reversePdfW = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * cosWH);
+	if (useGgx) {
+		if (directPdfW)
+			*directPdfW = GgxVNDFReflectionPdf(localEyeDir, wh, alphaT, alphaB);
+		if (reversePdfW)
+			*reversePdfW = GgxVNDFReflectionPdf(localLightDir, wh, alphaT, alphaB);
+	} else {
+		const float schlickPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * cosWH);
+		if (directPdfW)
+			*directPdfW = schlickPdf;
+		if (reversePdfW)
+			*reversePdfW = schlickPdf;
+	}
 
 	Spectrum F;
 	if (fresnelTex)
@@ -112,9 +127,14 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 	}
 	F.Clamp(0.f, 1.f);
 
-	const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
-
 	*event = GLOSSY | REFLECT;
+	if (useGgx) {
+		// f*|cos(lightDir)| = D * G2 * F / (4 * |eyeDir.z|)
+		return (GgxD(wh, alphaT, alphaB) *
+				GgxG2(localLightDir, localEyeDir, alphaT, alphaB) /
+				(4.f * fabsf(localEyeDir.z))) * F;
+	}
+	const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
 	return (SchlickDistribution_D(roughness, wh, anisotropy) * G / (4.f * fabsf(localEyeDir.z))) * F;
 }
 
@@ -131,10 +151,15 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	Vector wh;
 	float d, specPdf;
-	SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
+	if (useGgx)
+		wh = GgxSampleVNDF(localFixedDir, alphaT, alphaB, u0, u1);
+	else
+		SchlickDistribution_SampleH(roughness, anisotropy, u0, u1, &wh, &d, &specPdf);
 	const float cosWH = Dot(localFixedDir, wh);
 	*localSampledDir = 2.f * cosWH * wh - localFixedDir;
 
@@ -143,11 +168,12 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	if ((cosi < DEFAULT_COS_EPSILON_STATIC) || (localFixedDir.z * localSampledDir->z < 0.f))
 		return Spectrum();
 
-	*pdfW = specPdf / (4.f * fabsf(cosWH));
+	if (useGgx)
+		*pdfW = GgxVNDFReflectionPdf(localFixedDir, wh, alphaT, alphaB);
+	else
+		*pdfW = specPdf / (4.f * fabsf(cosWH));
 	if (*pdfW <= 0.f)
 		return Spectrum();
-
-	const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
 
 	Spectrum F;
 	if (fresnelTex)
@@ -160,13 +186,22 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	}
 	F.Clamp(0.f, 1.f);
 
+	*event = GLOSSY | REFLECT;
+
+	if (useGgx) {
+		// (f*cos_i)/pdf = F * G2/G1(wo) for VNDF sampling
+		const float g1 = GgxG1(localFixedDir, alphaT, alphaB);
+		if (g1 <= 0.f)
+			return Spectrum();
+		return F * (GgxG2(*localSampledDir, localFixedDir, alphaT, alphaB) / g1);
+	}
+
+	const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
 	float factor = (d / specPdf) * G * fabsf(cosWH);
 	if (!hitPoint.fromLight)
 		factor /= coso;
 	else
 		factor /= cosi;
-
-	*event = GLOSSY | REFLECT;
 
 	return factor * F;
 }
@@ -180,14 +215,23 @@ void Metal2Material::Pdf(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	const Vector wh(Normalize(localLightDir + localEyeDir));
 
-	if (directPdfW)
-		*directPdfW = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localLightDir, wh));
-
-	if (reversePdfW)
-		*reversePdfW = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localLightDir, wh));
+	if (useGgx) {
+		if (directPdfW)
+			*directPdfW = GgxVNDFReflectionPdf(localEyeDir, wh, alphaT, alphaB);
+		if (reversePdfW)
+			*reversePdfW = GgxVNDFReflectionPdf(localLightDir, wh, alphaT, alphaB);
+	} else {
+		const float schlickPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localLightDir, wh));
+		if (directPdfW)
+			*directPdfW = schlickPdf;
+		if (reversePdfW)
+			*reversePdfW = schlickPdf;
+	}
 }
 
 void Metal2Material::AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexs) const {
@@ -240,6 +284,7 @@ PropertiesUPtr Metal2Material::ToProperties(const ImageMapCache &imgMapCache, co
 		props->Set(Property("scene.materials." + name + ".k")(k->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".uroughness")(nu->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".vroughness")(nv->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

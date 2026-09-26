@@ -32,9 +32,10 @@ using namespace slg;
 Glossy2Material::Glossy2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 		TextureConstPtr emitted, TextureConstPtr bump,
 		TextureConstPtr kd, TextureConstPtr ks, TextureConstPtr u, TextureConstPtr v,
-		TextureConstPtr ka, TextureConstPtr d, TextureConstPtr i, const bool mbounce, const bool doublesided) :
+		TextureConstPtr ka, TextureConstPtr d, TextureConstPtr i, const bool mbounce, const bool doublesided,
+		const bool useGgx) :
 			Material(frontTransp, backTransp, emitted, bump), Kd(kd), Ks(ks), nu(u), nv(v),
-			Ka(ka), depth(d), index(i), multibounce(mbounce), doublesided (doublesided) {
+			Ka(ka), depth(d), index(i), multibounce(mbounce), doublesided (doublesided), useGgx(useGgx) {
 	glossiness = ComputeGlossiness(nu, nv);
 }
 
@@ -80,6 +81,9 @@ Spectrum Glossy2Material::Evaluate(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	// GGX path: perceptual roughnesses map to squared GGX alphas directly
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	if (directPdfW) {
 		if ((!doublesided) && (localFixedDir.z < 0.f)) {
@@ -89,9 +93,12 @@ Spectrum Glossy2Material::Evaluate(const HitPoint &hitPoint,
 		else {
 			const float wCoating = SchlickBSDF_CoatingWeight (ks, localFixedDir);
 			const float wBase = 1.f - wCoating;
+			const float coatingPdf = useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localFixedDir, localSampledDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, localSampledDir);
 
 			*directPdfW = wBase * fabsf (localSampledDir.z * INV_PI) +
-				wCoating * SchlickBSDF_CoatingPdf (roughness, anisotropy, localFixedDir, localSampledDir);
+				wCoating * coatingPdf;
 
 		}
 	}
@@ -104,9 +111,12 @@ Spectrum Glossy2Material::Evaluate(const HitPoint &hitPoint,
 		else {
 			const float wCoatingR = SchlickBSDF_CoatingWeight (ks, localSampledDir);
 			const float wBaseR = 1.f - wCoatingR;
+			const float coatingPdfR = useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localSampledDir, localFixedDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localSampledDir, localFixedDir);
 
 			*reversePdfW = wBaseR * fabsf (localFixedDir.z * INV_PI) +
-				wCoatingR * SchlickBSDF_CoatingPdf (roughness, anisotropy, localSampledDir, localFixedDir);
+				wCoatingR * coatingPdfR;
 		}
 	}
 	if ((!doublesided) && (localFixedDir.z < 0.f)) {
@@ -126,7 +136,9 @@ Spectrum Glossy2Material::Evaluate(const HitPoint &hitPoint,
 	const Vector H(Normalize(localFixedDir + localSampledDir));
 	const Spectrum S = FresnelTexture::SchlickEvaluate(ks, AbsDot(localSampledDir, H));
 
-	const Spectrum coatingF = SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce, localFixedDir, localSampledDir);
+	const Spectrum coatingF = useGgx ?
+		GgxBSDF_CoatingF(hitPoint.fromLight, ks, alphaT, alphaB, multibounce, localFixedDir, localSampledDir) :
+		SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce, localFixedDir, localSampledDir);
 
 	// Blend in base layer Schlick style
 	// assumes coating bxdf takes fresnel factor S into account
@@ -169,6 +181,8 @@ Spectrum Glossy2Material::Sample(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	// Coating is used only on the front face
 	const float wCoating = SchlickBSDF_CoatingWeight(ks, localFixedDir);
@@ -187,13 +201,20 @@ Spectrum Glossy2Material::Sample(const HitPoint &hitPoint,
 
 		baseF = Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) * INV_PI * fabsf(hitPoint.fromLight ? localFixedDir.z : absCosSampledDir);
 
-		// Evaluate coating BSDF (Schlick BSDF)
-		coatingF = SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce, localFixedDir, *localSampledDir);
-		coatingPdf = SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, *localSampledDir);
+		// Evaluate coating BSDF
+		coatingF = useGgx ?
+			GgxBSDF_CoatingF(hitPoint.fromLight, ks, alphaT, alphaB, multibounce, localFixedDir, *localSampledDir) :
+			SchlickBSDF_CoatingF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce, localFixedDir, *localSampledDir);
+		coatingPdf = useGgx ?
+			GgxBSDF_CoatingPdf(alphaT, alphaB, localFixedDir, *localSampledDir) :
+			SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, *localSampledDir);
 	} else {
-		// Sample coating BSDF (Schlick BSDF)
-		coatingF = SchlickBSDF_CoatingSampleF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
-				localFixedDir, localSampledDir, u0, u1, &coatingPdf);
+		// Sample coating BSDF
+		coatingF = useGgx ?
+			GgxBSDF_CoatingSampleF(hitPoint.fromLight, ks, alphaT, alphaB, multibounce,
+					localFixedDir, localSampledDir, u0, u1, &coatingPdf) :
+			SchlickBSDF_CoatingSampleF(hitPoint.fromLight, ks, roughness, anisotropy, multibounce,
+					localFixedDir, localSampledDir, u0, u1, &coatingPdf);
 		if (coatingF.Black())
 			return Spectrum();
 
@@ -249,6 +270,8 @@ void Glossy2Material::Pdf(const HitPoint &hitPoint,
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
 	const float roughness = u * v;
+	const float alphaT = Max(u2, 1e-4f);
+	const float alphaB = Max(v2, 1e-4f);
 
 	if (directPdfW) {
 		if ((!doublesided) && (localFixedDir.z < 0.f)) {
@@ -258,9 +281,12 @@ void Glossy2Material::Pdf(const HitPoint &hitPoint,
 		else {
 			const float wCoating = SchlickBSDF_CoatingWeight (ks, localFixedDir);
 			const float wBase = 1.f - wCoating;
+			const float coatingPdf = useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localFixedDir, localSampledDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localFixedDir, localSampledDir);
 
 			*directPdfW = wBase * fabsf (localSampledDir.z * INV_PI) +
-				wCoating * SchlickBSDF_CoatingPdf (roughness, anisotropy, localFixedDir, localSampledDir);
+				wCoating * coatingPdf;
 		}
 	}
 
@@ -273,9 +299,12 @@ void Glossy2Material::Pdf(const HitPoint &hitPoint,
 		else {
 			const float wCoatingR = SchlickBSDF_CoatingWeight (ks, localSampledDir);
 			const float wBaseR = 1.f - wCoatingR;
+			const float coatingPdfR = useGgx ?
+				GgxBSDF_CoatingPdf(alphaT, alphaB, localSampledDir, localFixedDir) :
+				SchlickBSDF_CoatingPdf(roughness, anisotropy, localSampledDir, localFixedDir);
 
 			*reversePdfW = wBaseR * fabsf (localFixedDir.z * INV_PI) +
-				wCoatingR * SchlickBSDF_CoatingPdf (roughness, anisotropy, localSampledDir, localFixedDir);
+				wCoatingR * coatingPdfR;
 		}
 	}
 }
@@ -333,6 +362,7 @@ PropertiesUPtr Glossy2Material::ToProperties(const ImageMapCache &imgMapCache, c
 	props->Set(Property("scene.materials." + name + ".index")(index->GetSDLValue()));
 	props->Set(Property ("scene.materials." + name + ".multibounce")(multibounce));
 	props->Set(Property ("scene.materials." + name + ".doublesided")(doublesided));
+	props->Set(Property ("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

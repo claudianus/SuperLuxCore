@@ -1994,31 +1994,12 @@ OPENCL_FORCE_INLINE uint Guide_CellIndex(float3 p,
 	return min(ix + iy * 8u + iz * 64u, 511u);
 }
 
-// Fine 16^3 cell index for M2b-2 training records (matches the CPU
-// PathGuidingCache layout that the host drain fills directly)
-OPENCL_FORCE_INLINE uint Guide_CellIndex16(float3 p,
-		float minX, float minY, float minZ, float invSize) {
-	const uint ix = (uint)(clamp((p.x - minX) * invSize, 0.f, 0.99999994f) * 16.f);
-	const uint iy = (uint)(clamp((p.y - minY) * invSize, 0.f, 0.99999994f) * 16.f);
-	const uint iz = (uint)(clamp((p.z - minZ) * invSize, 0.f, 0.99999994f) * 16.f);
-	return min(ix + iy * 16u + iz * 256u, 4095u);
-}
-
 OPENCL_FORCE_INLINE uint Guide_DirBin(float3 dir) {
 	const float phi = atan2(dir.y, dir.x);
 	const float c = clamp(dir.z, -1.f, 1.f);
 	const uint pi = min((uint)((phi + M_PI_F) / (2.f * M_PI_F) * 8.f), 7u);
 	const uint ti = min((uint)((c * .5f + .5f) * 4.f), 3u);
 	return ti * 8u + pi;
-}
-
-// Fine 16x8 directional bin for M2b-2 training records
-OPENCL_FORCE_INLINE uint Guide_DirBin16(float3 dir) {
-	const float phi = atan2(dir.y, dir.x);
-	const float c = clamp(dir.z, -1.f, 1.f);
-	const uint pi = min((uint)((phi + M_PI_F) / (2.f * M_PI_F) * 16.f), 15u);
-	const uint ti = min((uint)((c * .5f + .5f) * 8.f), 7u);
-	return ti * 16u + pi;
 }
 
 OPENCL_FORCE_INLINE float3 Guide_BinDir(uint bin, float u0, float u1) {
@@ -2056,7 +2037,7 @@ OPENCL_FORCE_INLINE float Guide_MixWeight(float total) {
 
 OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
 		float3 n, float uBin, float uDir0, float uDir1,
-		float3 *sampledDir, float *pdfW) {
+		float3 *sampledDir, float *pdfW, const bool isotropic) {
 	__global const float *cb = tb + localCell * 33u;
 	float total = cb[32];
 	if (!(total > 0.f))
@@ -2064,6 +2045,9 @@ OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
 
 	// M2c smoothing (mirrors the CPU GuideWeights): beta flattens
 	// noise-dominated bins toward uniform within the valid hemisphere.
+	// isotropic (volume scattering vertices, CPU Sample(..., isotropic)):
+	// bins cover the full sphere, no cosine weighting - media scatter
+	// over 4pi and the vertex normal is just -rayDir.
 	const float beta = .1f * total / 32.f;
 	float weights[32];
 	float wSum = 0.f;
@@ -2074,11 +2058,18 @@ OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
 		const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
 		const float s = sqrt(max(0.f, 1.f - c * c));
 		const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-		weights[i] = (cosB > 0.f) ? cb[i] * cosB + beta : 0.f;
+		weights[i] = isotropic ? (cb[i] + beta) :
+				((cosB > 0.f) ? cb[i] * cosB + beta : 0.f);
 		wSum += weights[i];
 	}
-	if (!(wSum > 0.f))
+	if (!(wSum > 0.f)) {
+		if (isotropic) {
+			*sampledDir = UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .25f / M_PI_F;
+			return true;
+		}
 		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
+	}
 
 	float pick = uBin * wSum;
 	uint bin = 0u;
@@ -2087,8 +2078,14 @@ OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
 		if (pick <= 0.f)
 			break;
 	}
-	if (!(weights[bin] > 0.f))
+	if (!(weights[bin] > 0.f)) {
+		if (isotropic) {
+			*sampledDir = UniformSampleSphere(uDir0, uDir1);
+			*pdfW = .25f / M_PI_F;
+			return true;
+		}
 		return Guide_CosineSample(n, uDir0, uDir1, sampledDir, pdfW);
+	}
 
 	*sampledDir = Guide_BinDir(bin, uDir0, uDir1);
 	*pdfW = (weights[bin] / wSum) / GUIDE_BIN_OMEGA;
@@ -2096,12 +2093,14 @@ OPENCL_FORCE_INLINE bool Guide_Sample(__global const float *tb, uint localCell,
 }
 
 OPENCL_FORCE_INLINE float Guide_Pdf(__global const float *tb, uint localCell,
-		float3 n, float3 dir) {
+		float3 n, float3 dir, const bool isotropic) {
 	__global const float *cb = tb + localCell * 33u;
 	float total = cb[32];
 	if (!(total > 0.f))
 		return 0.f;
 
+	// isotropic: same full-sphere weighting as Guide_Sample (both sides
+	// of the one-sample MIS must agree on the distribution).
 	const float beta = .1f * total / 32.f;
 	float wSum = 0.f;
 	for (uint i = 0u; i < GUIDE_DIR_BINS; ++i) {
@@ -2111,7 +2110,8 @@ OPENCL_FORCE_INLINE float Guide_Pdf(__global const float *tb, uint localCell,
 		const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
 		const float s = sqrt(max(0.f, 1.f - c * c));
 		const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-		wSum += (cosB > 0.f) ? cb[i] * cosB + beta : 0.f;
+		wSum += isotropic ? (cb[i] + beta) :
+				((cosB > 0.f) ? cb[i] * cosB + beta : 0.f);
 	}
 	if (!(wSum > 0.f))
 		return 0.f;
@@ -2123,15 +2123,16 @@ OPENCL_FORCE_INLINE float Guide_Pdf(__global const float *tb, uint localCell,
 	const float c = (((float)ti + .5f) / 4.f) * 2.f - 1.f;
 	const float s = sqrt(max(0.f, 1.f - c * c));
 	const float cosB = s * cos(phi) * n.x + s * sin(phi) * n.y + c * n.z;
-	const float w = (cosB > 0.f) ? cb[bin] * cosB + beta : 0.f;
+	const float w = isotropic ? (cb[bin] + beta) :
+			((cosB > 0.f) ? cb[bin] * cosB + beta : 0.f);
 	return (w / wSum) / GUIDE_BIN_OMEGA;
 }
 
 // Per-sample pass for the guide bin-pick hash (mirrors Sampler::GetPass):
 // RANDOM/SOBOL/PMJ02 share the leading (bucketIndex, pixelOffset,
 // passOffset, pass) per-work-item layout; TilePath has its own.
-// Record-buffer select (M2b-2): task t writes buffer (t&15),
-// slot (t>>5)&255 (no atomics; overwrites on collision are valid data)
+// Record-buffer select (M2b-2): task t writes buffer (t&15), 8-float
+// record at slot (t>>5)&127 (no atomics; overwrites are valid data)
 OPENCL_FORCE_INLINE __global float4 *Guide_RecBuf(uint t,
 		__global float4 *r0, __global float4 *r1,
 		__global float4 *r2, __global float4 *r3,
@@ -2268,15 +2269,21 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 				guideChunk8, guideChunk9, guideChunk10, guideChunk11,
 				guideChunk12, guideChunk13, guideChunk14, guideChunk15);
 		const uint guideLocal = guideCell & 31u;
+		// Mirrors CPU GuidableBsdf(): volume scattering vertices are
+		// always guidable (phase lobes sample blind w.r.t. the incident
+		// field); glossy bounces need enough roughness; pure diffuse is
+		// opt-in on CPU (LUX_PG_DIFFUSE) and stays off here.
+		const bool guidableBsdf = bsdf->isVolume ||
+				(((eventTypes & GLOSSY) != 0u) &&
+				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f));
 		if ((guidingEnable != 0u) && !BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
-				((eventTypes & GLOSSY) != 0u) &&
-				(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f) &&
+				guidableBsdf &&
 				(pathInfo->depth.depth >= 2u) &&
 				(guideTb[guideLocal * 33u + 32u] >= GUIDE_WARMUP_RECORDS)) {
 			const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 			const float wDl = Guide_MixWeight(guideTb[guideLocal * 33u + 32u]);
 			bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * Guide_Pdf(guideTb, guideLocal,
-					shadeN, shadowRayDir);
+					shadeN, shadowRayDir, bsdf->isVolume);
 		}
 	}
 

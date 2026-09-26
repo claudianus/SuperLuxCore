@@ -62,8 +62,10 @@ template<class Archive> void ImageMapCache::save(Archive &ar, const u_int versio
 		const bool rpta = resizePolicyToApply[i];
 		ar & rpta;
 
-		// Save the ImageMap
-		ar & maps[i];
+		// Save the ImageMap through a non-owning raw pointer (the cache
+		// keeps ownership)
+		const ImageMap *im = maps[i].get();
+		ar & im;
 	}
 
 	ar & resizePolicy;
@@ -75,6 +77,7 @@ template<class Archive> void ImageMapCache::load(Archive &ar, const u_int versio
 	ar & s;
 	mapNames.resize(s);
 	maps.resize(s);
+	resizePolicyToApply.resize(s);
 
 	for (u_int i = 0; i < maps.size(); ++i) {
 		// Load the name
@@ -86,16 +89,18 @@ template<class Archive> void ImageMapCache::load(Archive &ar, const u_int versio
 		ar & rpta;
 		resizePolicyToApply[i] = rpta;
 
-		// Load the ImageMap
-		ImageMapUPtr im;
-		ar & im;
+		// Load the ImageMap (raw pointer; boost constructs via the
+		// serialization access friend, the cache takes ownership)
+		ImageMap *raw = nullptr;
+		ar & raw;
+		ImageMapSPtr im(raw);
 		maps[i] = std::move(im);
 
 		// The image is internally store always with a 1.0 gamma
 		const std::string key = GetCacheKey(name, ImageMapConfig(1.f,
-				im->GetStorage().GetStorageType(), im->GetStorage().GetWrapType(),
+				raw->GetStorage().GetStorageType(), raw->GetStorage().GetWrapType(),
 				ImageMapStorage::ChannelSelectionType::DEFAULT));
-		mapByKey.insert(make_pair(key, std::ref(*im)));	
+		mapByKey.insert(make_pair(key, std::ref(*raw)));	
 	}
 
 	ar & resizePolicy;

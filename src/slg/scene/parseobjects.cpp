@@ -24,7 +24,21 @@ using namespace luxrays;
 using namespace slg;
 
 namespace slg {
-atomic<u_int> defaultObjectIDIndex(0);
+
+// Default object IDs are derived from the object NAME (FNV-1a, 24 bits
+// for the OBJECT_ID harlequin output): a session-independent counter
+// would assign different IDs every time a scene is re-parsed - e.g.
+// every frame of an animation render - breaking ID-based temporal
+// tools and matte consistency
+inline u_int NameToObjectID(const string &name) {
+	u_int h = 2166136261u;
+	for (const char c : name) {
+		h ^= (u_int)(unsigned char)c;
+		h *= 16777619u;
+	}
+	return h & 0xffffffu;
+}
+
 }
 
 void Scene::ParseObjects(const Properties &props) {
@@ -57,10 +71,7 @@ void Scene::ParseObjects(const Properties &props) {
 		}
 
 		// In order to have harlequin colors with OBJECT_ID output
-		const u_int index = defaultObjectIDIndex++;
-		const u_int objID = ((u_int)(RadicalInverse(index + 1, 2) * 255.f + .5f)) |
-				(((u_int)(RadicalInverse(index + 1, 3) * 255.f + .5f)) << 8) |
-				(((u_int)(RadicalInverse(index + 1, 5) * 255.f + .5f)) << 16);
+		const u_int objID = NameToObjectID(objName);
 		auto objptr = CreateObject(objID, objName, props);
 		//SceneObjectRef obj = objDefs.DefineSceneObject(objptr);
 		auto [obj, oldObjPtr] = objDefs.DefineSceneObject(std::move(objptr));

@@ -32,7 +32,8 @@ public:
 	Glossy2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
 			TextureConstPtr kd, TextureConstPtr ks, TextureConstPtr u, TextureConstPtr v,
-			TextureConstPtr ka, TextureConstPtr d, TextureConstPtr i, const bool mbounce, const bool doublesided);
+			TextureConstPtr ka, TextureConstPtr d, TextureConstPtr i, const bool mbounce, const bool doublesided,
+			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return GLOSSY2; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; }
@@ -64,6 +65,7 @@ public:
 	TextureConstPtr GetIndex() const { return index; }
 	const bool IsMultibounce () const { return multibounce; }
 	const bool IsDoubleSided () const { return doublesided; }
+	const bool IsGgx () const { return useGgx; }
 
 private:
 	TextureConstPtr Kd;
@@ -75,6 +77,7 @@ private:
 	TextureConstPtr index;
 	const bool multibounce;
 	const bool doublesided;
+	const bool useGgx;
 };
 
 }

@@ -201,26 +201,18 @@ OPENCL_FORCE_INLINE void RoughMatteMaterial_Evaluate(__global const Material* re
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
-	const float directPdfW = fabs(lightDir.z * M_1_PI_F);
+	// EON diffuse (Portsmouth, Kutz, Hill '25), directions lifted to the
+	// upper hemisphere; the roughmatte BRDF only exists for reflection.
+	const float rough = clamp(Texture_GetFloatValue(material->roughmatte.sigmaTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+	const float3 wo = MAKE_FLOAT3(eyeDir.x, eyeDir.y, fabs(eyeDir.z));
+	const float3 wi = MAKE_FLOAT3(lightDir.x, lightDir.y, fabs(lightDir.z));
+
+	const float directPdfW = EON_Pdf(wo, wi, rough);
 
 	const BSDFEvent event = DIFFUSE | REFLECT;
 
-	const float sigma = Texture_GetFloatValue(material->roughmatte.sigmaTexIndex, hitPoint TEXTURES_PARAM);
-	const float sigma2 = sigma * sigma;
-	const float A = 1.f - (sigma2 / (2.f * (sigma2 + 0.33f)));
-	const float B = 0.45f * sigma2 / (sigma2 + 0.09f);
-	const float sinthetai = SinTheta(eyeDir);
-	const float sinthetao = SinTheta(lightDir);
-	float maxcos = 0.f;
-	if (sinthetai > 1e-4f && sinthetao > 1e-4f) {
-			const float dcos = CosPhi(lightDir) * CosPhi(eyeDir) +
-					SinPhi(lightDir) * SinPhi(eyeDir);
-			maxcos = fmax(0.f, dcos);
-	}
-	
 	const float3 kdVal = Texture_GetSpectrumValue(material->roughmatte.kdTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 result = Spectrum_Clamp(kdVal) * fabs(lightDir.z * M_1_PI_F) *
-		(A + B * maxcos * sinthetai * sinthetao / fmax(fabs(CosTheta(lightDir)), fabs(CosTheta(eyeDir))));
+	const float3 result = EON_Eval(Spectrum_Clamp(kdVal), rough, wi, wo) * fabs(lightDir.z);
 	
 	EvalStack_PushFloat3(result);
 	EvalStack_PushBSDFEvent(event);
@@ -242,8 +234,12 @@ OPENCL_FORCE_INLINE void RoughMatteMaterial_Sample(__global const Material* rest
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
+	const float rough = clamp(Texture_GetFloatValue(material->roughmatte.sigmaTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+	const float3 wo = MAKE_FLOAT3(fixedDir.x, fixedDir.y, fabs(fixedDir.z));
+
 	float pdfW;
-	const float3 sampledDir = (signbit(fixedDir.z) ? -1.f : 1.f) * CosineSampleHemisphereWithPdf(u0, u1, &pdfW);
+	const float3 wi = EON_Sample(wo, rough, u0, u1, &pdfW);
+	const float3 sampledDir = MAKE_FLOAT3(wi.x, wi.y, signbit(fixedDir.z) ? -wi.z : wi.z);
 
 	if (fabs(sampledDir.z) < DEFAULT_COS_EPSILON_STATIC) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
@@ -251,22 +247,9 @@ OPENCL_FORCE_INLINE void RoughMatteMaterial_Sample(__global const Material* rest
 
 	const BSDFEvent event = DIFFUSE | REFLECT;
 
-	const float sigma = Texture_GetFloatValue(material->roughmatte.sigmaTexIndex, hitPoint TEXTURES_PARAM);
-	const float sigma2 = sigma * sigma;
-	const float A = 1.f - (sigma2 / (2.f * (sigma2 + 0.33f)));
-	const float B = 0.45f * sigma2 / (sigma2 + 0.09f);
-	const float sinthetai = SinTheta(fixedDir);
-	const float sinthetao = SinTheta(sampledDir);
-	float maxcos = 0.f;
-	if (sinthetai > 1e-4f && sinthetao > 1e-4f) {
-			const float dcos = CosPhi(sampledDir) * CosPhi(fixedDir) +
-					SinPhi(sampledDir) * SinPhi(fixedDir);
-			maxcos = fmax(0.f, dcos);
-	}
-
 	const float3 kdVal = Texture_GetSpectrumValue(material->roughmatte.kdTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 result = Spectrum_Clamp(kdVal) *
-		(A + B * maxcos * sinthetai * sinthetao / fmax(fabs(CosTheta(sampledDir)), fabs(CosTheta(fixedDir))));
+	const float3 result = EON_Eval(Spectrum_Clamp(kdVal), rough, wi, wo) *
+			fabs(sampledDir.z) / pdfW;
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

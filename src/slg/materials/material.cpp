@@ -22,6 +22,7 @@
 #include "luxrays/core/geometry/frame.h"
 #include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/materials/material.h"
+#include "slg/materials/microfacet.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/textures/fresnel/fresneltexture.h"
 
@@ -598,5 +599,63 @@ float slg::SchlickBSDF_CoatingPdf(const float roughness, const float anisotropy,
 		const Vector &localFixedDir, const Vector &localSampledDir) {
 	const Vector wh(Normalize(localFixedDir + localSampledDir));
 	return SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * AbsDot(localFixedDir, wh));
+}
+
+//------------------------------------------------------------------------------
+// GGX coating BSDF
+//
+// Drop-in GGX replacement for the Schlick coating: anisotropic GGX NDF,
+// height-correlated Smith G2, VNDF sampling. Same contract as the Schlick
+// versions: *F functions return f * |cos(lightDir)|, *SampleF returns
+// (f*cos)/pdf, *Pdf is the solid-angle pdf of the reflected direction.
+//------------------------------------------------------------------------------
+
+Spectrum slg::GgxBSDF_CoatingF(const bool fromLight, const Spectrum &ks,
+		const float alphaT, const float alphaB, const bool mbounce,
+		const Vector &localFixedDir, const Vector &localSampledDir) {
+	const Vector &localEyeDir = fromLight ? localSampledDir : localFixedDir;
+	if (fabsf(localEyeDir.z) < 1e-6f)
+		return Spectrum();
+	const Vector wh(Normalize(localFixedDir + localSampledDir));
+	const Spectrum S = FresnelTexture::SchlickEvaluate(ks,
+			Clamp(AbsDot(localSampledDir, wh), 0.f, 1.f));
+
+	// f*cos(eyeDir) = D * G2 * F / (4 * |eyeDir.z|)
+	float factor = GgxD(wh, alphaT, alphaB) *
+			GgxG2(localSampledDir, localFixedDir, alphaT, alphaB) /
+			(4.f * fabsf(localEyeDir.z));
+	if (mbounce) {
+		// Turquin multi-scattering energy compensation
+		const float alpha = .5f * (alphaT + alphaB);
+		factor *= GgxMSCompensation(fabsf(localEyeDir.z), alpha,
+				GgxFresnelAverage(ks, Spectrum(1.f)).Filter());
+	}
+	return factor * S;
+}
+
+Spectrum slg::GgxBSDF_CoatingSampleF(const bool fromLight, const Spectrum &ks,
+		const float alphaT, const float alphaB, const bool mbounce,
+		const Vector &localFixedDir, Vector *localSampledDir,
+		const float u0, const float u1, float *pdf) {
+	const Vector wh = GgxSampleVNDF(localFixedDir, alphaT, alphaB, u0, u1);
+	const float cosWH = Dot(localFixedDir, wh);
+	*localSampledDir = 2.f * cosWH * wh - localFixedDir;
+
+	if ((fabsf(localSampledDir->z) < DEFAULT_COS_EPSILON_STATIC) ||
+			(localFixedDir.z * localSampledDir->z < 0.f))
+		return Spectrum();
+
+	*pdf = GgxVNDFReflectionPdf(localFixedDir, wh, alphaT, alphaB);
+	if (*pdf <= 0.f)
+		return Spectrum();
+
+	return GgxBSDF_CoatingF(fromLight, ks, alphaT, alphaB, mbounce,
+			localFixedDir, *localSampledDir) / *pdf;
+}
+
+float slg::GgxBSDF_CoatingPdf(const float alphaT, const float alphaB,
+		const Vector &localFixedDir, const Vector &localSampledDir) {
+	const Vector wh(Normalize(localFixedDir + localSampledDir));
+	return GgxVNDFReflectionPdf(localFixedDir, wh, alphaT, alphaB);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

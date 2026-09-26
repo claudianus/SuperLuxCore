@@ -29,7 +29,7 @@ namespace slg {
 
 class SubtractTexture : public Texture {
 public:
-	SubtractTexture(TextureRef t1, TextureRef t2) : tex1(t1), tex2(t2) { }
+	SubtractTexture(TextureConstRef t1, TextureConstRef t2) : tex1(t1), tex2(t2) { }
 	virtual ~SubtractTexture() { }
 
 	virtual TextureType GetType() const { return SUBTRACT_TEX; }
@@ -66,8 +66,8 @@ public:
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 	
 private:
-	std::reference_wrapper<Texture> tex1;
-	std::reference_wrapper<Texture> tex2;
+	std::reference_wrapper<const Texture> tex1;
+	std::reference_wrapper<const Texture> tex2;
 };
 
 }

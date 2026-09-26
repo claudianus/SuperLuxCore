@@ -392,13 +392,14 @@ void PathOCLBaseOCLRenderThread::InitGuide() {
 	}
 
 	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each,
-	// 256 float4 records; 4KB is the reliable transfer size on this
-	// backend). Zeroed at init so the drain only sees fresh writes.
+	// 128 8-float records: (p.xyz, flux | d.xyz, marker); 4KB is the
+	// reliable transfer size on this backend). Zeroed at init so the
+	// drain only sees fresh writes.
 	if (renderEngine->guideHasTable) {
 		static float recZeros[1024] = { 0.f };
 		for (u_int i = 0u; i < 16u; ++i) {
 			intersectionDevice.AllocBufferRW(&guideRecBuff[i], nullptr,
-				256u * 4u * sizeof(float), "Path guiding training records");
+				1024u * sizeof(float), "Path guiding training records");
 			intersectionDevice.EnqueueWriteBuffer(guideRecBuff[i], CL_TRUE,
 					1024u * sizeof(float), recZeros);
 		}
@@ -420,24 +421,27 @@ void PathOCLBaseOCLRenderThread::InitGuide() {
 void PathOCLBaseOCLRenderThread::DrainGuide() {
 	if (!renderEngine->guideHasTable || !renderEngine->guideCache)
 		return;
-	// Read back the 16 record buffers (first 1K floats = 256 records each;
-	// reads above ~4KB silently fail on this backend) and apply to the
-	// CPU-side write side (RecordBin validates + clamps).
+	// Read back the 16 record buffers (128 8-float records each; reads
+	// above ~4KB silently fail on this backend), feed the CPU-side write
+	// tree through the same Record() the CPU uses, then zero the buffer:
+	// an un-cleared marker would re-count the same record every drain.
+	static float recZeros[1024] = { 0.f };
 	for (u_int b = 0u; b < 16u; ++b) {
 		if (!guideRecBuff[b])
 			continue;
 		float rec[1024];
 		intersectionDevice.EnqueueReadBuffer(guideRecBuff[b], CL_TRUE,
 				1024u * sizeof(float), rec);
-		for (u_int t = 0u; t < 256u; ++t) {
-			const float *r = &rec[(size_t)t * 4u];
-			if (!(r[3] > .5f && r[3] < 1.5f))
+		intersectionDevice.EnqueueWriteBuffer(guideRecBuff[b], CL_TRUE,
+				1024u * sizeof(float), recZeros);
+		for (u_int t = 0u; t < 128u; ++t) {
+			const float *r = &rec[(size_t)t * 8u];
+			if (!(r[7] > .5f && r[7] < 1.5f))
 				continue;
-			const u_int cell = (u_int)r[0];
-			const u_int bin = (u_int)r[1];
-			renderEngine->guideCache->RecordBin(cell, bin, r[2]);
+			renderEngine->guideCache->Record(
+					Point(r[0], r[1], r[2]),
+					Vector(r[4], r[5], r[6]), r[3]);
 		}
-
 	}
 
 	// New training round every 10 drains + re-upload coarse chunks
