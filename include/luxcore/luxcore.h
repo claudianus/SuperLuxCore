@@ -1028,6 +1028,27 @@ public:
 	virtual void SetMeshTriangleAOV(const std::string &meshName,
 			const unsigned int index, float *data, size_t size) = 0;
 	/*!
+	 * \brief Set per-vertex deformation motion blur data for a mesh: a
+	 * series of shutter-time samples, each holding the full object-space
+	 * vertex positions for that time. Every step must have the same vertex
+	 * count as the mesh (constant topology). Times must be finite and
+	 * strictly increasing. The static `vertices` stay the primary sample
+	 * and are used whenever vertex motion is not supported or not enabled.
+	 * NOTE: the arrays can be freed after the call.
+	 *
+	 * \param meshName is the name of a defined plain mesh. Instance or
+	 * motion wrapper meshes are not accepted; set vertex motion on the
+	 * base shape instead.
+	 * \param times is a pointer to an array of shutter times.
+	 * \param timesCount is the number of time samples (must be >= 2).
+	 * \param verts is a pointer to timesCount * meshVertexCount * 3
+	 * floats in step-major order: verts[s * n * 3 + v * 3 + c].
+	 * \param vertsCount is the number of floats in verts.
+	 */
+	virtual void SetMeshVertexMotion(const std::string &meshName,
+			const float *times, const size_t timesCount,
+			const float *verts, const size_t vertsCount) = 0;
+	/*!
 	 * \brief Save a previously defined mesh to file system in PLY or BPY format.
 	 *
 	 * \param meshName is the name of the defined mesh to be saved.

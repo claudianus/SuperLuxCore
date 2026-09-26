@@ -306,6 +306,9 @@ add_executable(bvh_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/bvh_dump.
 add_executable(enum_metal_test ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/enum_metal_test.cpp)
 add_executable(metal_kernel_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_kernel_smoke.cpp)
 add_executable(metal_initseed_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_initseed_smoke.cpp)
+# E9: ExtTriangleMesh vertex-motion series unit test
+# (dev-tools/deformation-motion-blur-design.md)
+add_executable(vertexmotion_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/e9_vertexmotion_test.cpp)
 set_target_properties(bvh_dump PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 target_link_libraries(bvh_dump PRIVATE
   luxrays
@@ -339,6 +342,14 @@ target_link_libraries(metal_initseed_smoke PRIVATE
   OpenMP::OpenMP_CXX
   "-framework Metal"
   "-framework Foundation")
+target_link_libraries(vertexmotion_test PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+)
+set_target_properties(vertexmotion_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set_target_properties(enum_metal_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 ################################################################################

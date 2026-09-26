@@ -48,6 +48,9 @@ public:
 		const unsigned int index, std::span<float> data);
 	void SetMeshTriangleAOV(const std::string &meshName,
 		const unsigned int index, std::span<float> data);
+	void SetMeshVertexMotion(const std::string &meshName,
+		std::vector<float> &&stepTimes,
+		std::vector<luxrays::VertexBuffer> &&stepVerts);
 
 	bool IsExtMeshDefined(const std::string &meshName) const;
 

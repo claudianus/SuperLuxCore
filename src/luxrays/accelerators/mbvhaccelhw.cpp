@@ -24,6 +24,8 @@
 #include <functional>
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <cstring>
 
 #include "luxrays/core/context.h"
 #include "luxrays/core/exttrianglemesh.h"
@@ -44,6 +46,8 @@ public:
 			HardwareIntersectionKernel(dev), mbvh(acc),
 			uniqueLeafsTransformBuff(nullptr), uniqueLeafsMotionSystemBuff(nullptr),
 			uniqueLeafsInterpolatedTransformBuff(nullptr),
+			vertMotionDescBuff(nullptr), vertMotionVertsBuff(nullptr),
+			vertMotionTimesBuff(nullptr),
 			kernel(nullptr) {
 		//const Context *deviceContext = device.GetContext();
 		//const std::string &deviceName(device.GetName());
@@ -53,6 +57,7 @@ public:
 			BUFFER_TYPE_READ_ONLY;
 
 		u_int pageNodeCount = 0;
+		u_int vertPageSize = 0; // vertex page capacity, used to decode vertex indices
 		if (mbvh.nRootNodes) {
 			// Check the max. number of vertices I can store in a single page
 			const size_t maxMemAlloc = device.GetDeviceDesc().GetMaxMemoryAllocSize();
@@ -76,6 +81,7 @@ public:
 
 			// Allocate a temporary buffer for the copy of the BVH vertices
 			const u_int pageVertCount = Min<size_t>(totalVertCount, maxVertCount);
+			vertPageSize = (u_int)maxVertCount;
 			vector<Point> tmpVerts(pageVertCount);
 			u_int tmpVertIndex = 0;
 
@@ -193,6 +199,76 @@ public:
 		}
 
 		//----------------------------------------------------------------------
+		// Allocate leaf vertex-motion buffers
+		//----------------------------------------------------------------------
+
+		// Per-vertex deformation motion blur: for every leaf reference
+		// (indexed by meshOffsetIndex) carrying a vertex-motion series, pack
+		// the step vertex buffers contiguously and record a descriptor. Step
+		// blocks are shared between leaf references pointing at the same
+		// unique leaf (e.g. deforming mesh instances).
+		{
+			vector<luxrays::ocl::VertMotionDesc> vertMotionDescs(mbvh.bvhLeafs.size());
+			vector<Point> vertMotionVerts;
+			vector<float> vertMotionTimes;
+			std::map<u_int, std::pair<u_int, u_int> > motionBlockByLeaf;
+
+			for (u_int i = 0; i < mbvh.bvhLeafs.size(); ++i) {
+				luxrays::ocl::VertMotionDesc &desc = vertMotionDescs[i];
+				memset(&desc, 0, sizeof(desc));
+
+				// uniqueLeafs[leafIndex]->meshes[0] is the base mesh (instance
+				// and motion wrappers are resolved at leaf-build time)
+				const u_int leafIndex = mbvh.bvhLeafs[i].bvhLeaf.leafIndex;
+				const BVHAccel *leaf = mbvh.uniqueLeafs[leafIndex];
+				if (leaf->meshes.size() != 1)
+					continue;
+				const ExtTriangleMesh *extMesh =
+						dynamic_cast<const ExtTriangleMesh *>(leaf->meshes[0]);
+				if (!extMesh || !extMesh->HasVertexMotion())
+					continue;
+
+				desc.vertCount = extMesh->GetTotalVertexCount();
+				desc.stepCount = extMesh->GetVertexMotionStepCount();
+				desc.staticVertOffset = vertOffsetPerLeafMesh[leafIndex][0];
+
+				auto blockIt = motionBlockByLeaf.find(leafIndex);
+				if (blockIt != motionBlockByLeaf.end()) {
+					desc.vertsOffset = blockIt->second.first;
+					desc.timesOffset = blockIt->second.second;
+				} else {
+					desc.vertsOffset = (u_int)vertMotionVerts.size();
+					desc.timesOffset = (u_int)vertMotionTimes.size();
+					motionBlockByLeaf[leafIndex] = std::make_pair(desc.vertsOffset, desc.timesOffset);
+
+					for (u_int s = 0; s < desc.stepCount; ++s) {
+						const auto &stepVerts = extMesh->GetVertexMotionStep(s);
+						vertMotionVerts.insert(vertMotionVerts.end(),
+								stepVerts.GetObjects().begin(), stepVerts.GetObjects().end());
+					}
+					const auto &times = extMesh->GetVertexMotionTimes();
+					vertMotionTimes.insert(vertMotionTimes.end(), times.begin(), times.end());
+				}
+			}
+
+			if (vertMotionVerts.size() > 0) {
+				device.AllocBuffer(&vertMotionDescBuff, memTypeFlags,
+						&vertMotionDescs[0],
+						sizeof(luxrays::ocl::VertMotionDesc) * vertMotionDescs.size(),
+						"MBVH leaf vertex motion descriptors");
+				device.AllocBuffer(&vertMotionVertsBuff, memTypeFlags,
+						&vertMotionVerts[0],
+						sizeof(Point) * vertMotionVerts.size(),
+						"MBVH leaf vertex motion vertices");
+				device.AllocBuffer(&vertMotionTimesBuff, memTypeFlags,
+						&vertMotionTimes[0],
+						sizeof(float) * vertMotionTimes.size(),
+						"MBVH leaf vertex motion times");
+				device.FinishQueue();
+			}
+		}
+
+		//----------------------------------------------------------------------
 		// Compile kernel sources
 		//----------------------------------------------------------------------
 
@@ -219,6 +295,12 @@ public:
 			kernelDefs << "#define MBVH_HAS_TRANSFORMATIONS 1\n";
 		if (uniqueLeafsMotionSystemBuff)
 			kernelDefs << "#define MBVH_HAS_MOTIONSYSTEMS 1\n";
+		if (vertMotionDescBuff) {
+			kernelDefs << "#define MBVH_HAS_VERTEXMOTION 1\n";
+			// Used by the kernel to decode page-encoded vertex indices back
+			// to the leaf-local motion vertex space
+			kernelDefs << "#define MBVH_VERTS_PAGE_SIZE " << vertPageSize << "\n";
+		}
 		//LR_LOG(deviceContext, "[HardwareIntersectionDevice::" << deviceName << "] MBVH kernel definitions: \n" << kernelDefs.str());
 
 		stringstream code;
@@ -276,6 +358,9 @@ public:
 		device.FreeBuffer(&uniqueLeafsTransformBuff);
 		device.FreeBuffer(&uniqueLeafsMotionSystemBuff);
 		device.FreeBuffer(&uniqueLeafsInterpolatedTransformBuff);
+		device.FreeBuffer(&vertMotionDescBuff);
+		device.FreeBuffer(&vertMotionVertsBuff);
+		device.FreeBuffer(&vertMotionTimesBuff);
 	}
 
 	void UpdateBVHNodes();
@@ -293,6 +378,11 @@ public:
 	HardwareDeviceBuffer *uniqueLeafsTransformBuff;
 	HardwareDeviceBuffer *uniqueLeafsMotionSystemBuff;
 	HardwareDeviceBuffer *uniqueLeafsInterpolatedTransformBuff;
+	// Per-vertex deformation motion blur buffers (nullptr when no leaf
+	// carries a vertex-motion series)
+	HardwareDeviceBuffer *vertMotionDescBuff;
+	HardwareDeviceBuffer *vertMotionVertsBuff;
+	HardwareDeviceBuffer *vertMotionTimesBuff;
 
 	// Used to update BVH node buffers
 	vector<vector<u_int> > vertOffsetPerLeafMesh;
@@ -479,6 +569,11 @@ void MBVHKernel::SetIntersectionKernelArgs() {
 	if (uniqueLeafsMotionSystemBuff) {
 		device.SetKernelArg(kernel, argIndex++, uniqueLeafsMotionSystemBuff);
 		device.SetKernelArg(kernel, argIndex++, uniqueLeafsInterpolatedTransformBuff);
+	}
+	if (vertMotionDescBuff) {
+		device.SetKernelArg(kernel, argIndex++, vertMotionDescBuff);
+		device.SetKernelArg(kernel, argIndex++, vertMotionVertsBuff);
+		device.SetKernelArg(kernel, argIndex++, vertMotionTimesBuff);
 	}
 	for (u_int i = 0; i < 8; ++i) {
 		if (i >= vertsBuffs.size())

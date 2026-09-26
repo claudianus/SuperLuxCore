@@ -19,6 +19,8 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 #include <execution>
 
 #include <boost/format.hpp>
@@ -273,6 +275,77 @@ void ExtTriangleMesh::Delete() {
 
 	delete[] bevelCylinders;
 	delete[] bevelBoundingCylinders;
+
+	motionVertTimes.clear();
+	motionVertSteps.clear();
+}
+
+void ExtTriangleMesh::SetVertexMotion(
+		std::vector<float> &&stepTimes,
+		std::vector<VertexBuffer> &&stepVerts) {
+	if (stepTimes.size() != stepVerts.size())
+		throw runtime_error("Error in ExtTriangleMesh::SetVertexMotion(): "
+			"number of times differs from number of vertex steps");
+	if (stepTimes.size() < 2)
+		throw runtime_error("Error in ExtTriangleMesh::SetVertexMotion(): "
+			"at least 2 motion steps are required");
+	for (u_int i = 0; i < stepTimes.size(); ++i) {
+		if (!isfinite(stepTimes[i]) || (i > 0 && stepTimes[i] <= stepTimes[i - 1]))
+			throw runtime_error("Error in ExtTriangleMesh::SetVertexMotion(): "
+				"motion times must be finite and strictly increasing");
+	}
+	for (u_int i = 0; i < stepVerts.size(); ++i) {
+		if (stepVerts[i].Count() != vertices.Count())
+			throw runtime_error("Error in ExtTriangleMesh::SetVertexMotion(): "
+				"motion step " + ToString(i) + " vertex count differs from the mesh ("
+				+ ToString(stepVerts[i].Count()) + " != " + ToString(vertices.Count()) + ")");
+	}
+
+	motionVertTimes = std::move(stepTimes);
+	motionVertSteps = std::move(stepVerts);
+	cachedBBoxValid = false;
+}
+
+Point ExtTriangleMesh::GetVertexAtTime(const u_int vertIndex, const float time) const {
+	if (!HasVertexMotion())
+		return vertices[vertIndex];
+	if (time <= motionVertTimes.front())
+		return motionVertSteps.front()[vertIndex];
+	if (time >= motionVertTimes.back())
+		return motionVertSteps.back()[vertIndex];
+
+	// Locate the [t0, t1] step interval containing time
+	const auto it = std::upper_bound(motionVertTimes.begin(), motionVertTimes.end(), time);
+	const u_int i1 = u_int(it - motionVertTimes.begin());
+	const u_int i0 = i1 - 1;
+
+	const float w = (time - motionVertTimes[i0]) /
+		(motionVertTimes[i1] - motionVertTimes[i0]);
+	return Lerp(w, motionVertSteps[i0][vertIndex], motionVertSteps[i1][vertIndex]);
+}
+
+BBox ExtTriangleMesh::GetBBox() const {
+	if (!cachedBBoxValid) {
+		cachedBBox = TriangleMesh::GetBBox();
+		for (const auto &stepVerts : motionVertSteps) {
+			for (u_int i = 0; i < stepVerts.Count(); ++i)
+				cachedBBox = Union(cachedBBox, stepVerts[i]);
+		}
+
+		cachedBBoxValid = true;
+	}
+
+	return cachedBBox;
+}
+
+const ExtTriangleMesh *ExtTriangleMesh::FromMesh(const Mesh *mesh) {
+	if (const ExtInstanceTriangleMesh *imesh =
+			dynamic_cast<const ExtInstanceTriangleMesh *>(mesh))
+		return &imesh->GetExtTriangleMesh();
+	if (const ExtMotionTriangleMesh *mmesh =
+			dynamic_cast<const ExtMotionTriangleMesh *>(mesh))
+		return &mmesh->GetExtTriangleMesh();
+	return dynamic_cast<const ExtTriangleMesh *>(mesh);
 }
 
 NormalBuffer ExtTriangleMesh::ComputeNormals() {
@@ -339,6 +412,12 @@ void ExtTriangleMesh::ApplyTransform(const Transform &trans) {
 			cp.z = p.z;
 			cp.radius *= rScale;
 		}
+	}
+
+	// Vertex-motion steps are object-space positions like `vertices`
+	for (auto &stepVerts : motionVertSteps) {
+		for (u_int i = 0; i < stepVerts.Count(); ++i)
+			stepVerts[i] = trans * stepVerts[i];
 	}
 
 	Preprocess();
@@ -424,6 +503,19 @@ ExtTriangleMeshUPtr ExtTriangleMesh::CopyExt(
 			std::vector<CurveControlPoint>(curveCps),
 			std::vector<u_int>(curveSegIndices),
 			std::vector<CurveCpAttr>(curveCpAttrs));
+
+	// Same rule as curve data: a vertex-motion series is meaningful only
+	// when the vertex set is carried over unchanged.
+	if (!meshVertices.has_value() && HasVertexMotion()) {
+		std::vector<VertexBuffer> steps;
+		steps.reserve(motionVertSteps.size());
+		for (const auto &src : motionVertSteps) {
+			VertexBuffer copy(src.Count());
+			copy.Set(src);
+			steps.push_back(std::move(copy));
+		}
+		m->SetVertexMotion(std::vector<float>(motionVertTimes), std::move(steps));
+	}
 
 	// Copy AOV too
 	CopyAOV(*m);
@@ -517,6 +609,26 @@ ExtTriangleMeshUPtr ExtTriangleMesh::Merge(
 	bool allCurves = true;
 	for (ExtTriangleMeshConstRef m : meshes)
 		allCurves &= m.HasCurveData();
+
+	// Vertex-motion series merge: either every input carries a series
+	// with identical shutter times, or none. Partial presence (like
+	// mismatched UV/AOV definitions) is an error rather than a silent
+	// loss of deformation blur.
+	bool anyVertexMotion = false, allVertexMotion = true;
+	for (ExtTriangleMeshConstRef m : meshes) {
+		const bool has = m.HasVertexMotion();
+		anyVertexMotion |= has;
+		allVertexMotion &= has;
+	}
+	if (anyVertexMotion) {
+		if (!allVertexMotion)
+			throw runtime_error("Error in ExtTriangleMesh::Merge(): trying to merge meshes with and without vertex motion");
+		const auto &times0 = mesh0.GetVertexMotionTimes();
+		for (ExtTriangleMeshConstRef m : meshes) {
+			if (m.GetVertexMotionTimes() != times0)
+				throw runtime_error("Error in ExtTriangleMesh::Merge(): trying to merge meshes with different vertex motion times");
+		}
+	}
 
 	std::vector<CurveControlPoint> curveCps;
 	std::vector<u_int> curveSegIndices;
@@ -660,6 +772,37 @@ ExtTriangleMeshUPtr ExtTriangleMesh::Merge(
 	for (u_int dataIndex = 0; dataIndex < EXTMESH_MAX_DATA_COUNT; dataIndex++) {
 		newMesh->SetVertexAOV(dataIndex, meshVertAOV.GetLayer(dataIndex), meshVertAOV.GetLayerSize());
 		newMesh->SetTriAOV(dataIndex, meshTriAOV.GetLayer(dataIndex), meshTriAOV.GetLayerSize());
+	}
+
+	// Merge the per-step vertex buffers: same transforms as the base
+	// vertices, step order and times already validated identical.
+	if (anyVertexMotion) {
+		const u_int stepCount = mesh0.GetVertexMotionStepCount();
+		std::vector<VertexBuffer> motionSteps;
+		motionSteps.reserve(stepCount);
+		for (u_int s = 0; s < stepCount; ++s)
+			motionSteps.emplace_back(totalVertexCount);
+
+		u_int mvIndex = 0;
+		for (u_int meshIndex = 0; meshIndex < meshes.size(); ++meshIndex) {
+			ExtTriangleMeshConstRef mesh = meshes[meshIndex];
+			const Transform *transformation = trans ? &((*trans)[meshIndex]) : nullptr;
+			const u_int nVerts = mesh.GetTotalVertexCount();
+			for (u_int s = 0; s < stepCount; ++s) {
+				const VertexBuffer &src = mesh.GetVertexMotionStep(s);
+				VertexBuffer &dst = motionSteps[s];
+				if (transformation) {
+					for (u_int i = 0; i < nVerts; ++i)
+						dst[i + mvIndex] = (*transformation) * src[i];
+				} else {
+					for (u_int i = 0; i < nVerts; ++i)
+						dst[i + mvIndex] = src[i];
+				}
+			}
+			mvIndex += nVerts;
+		}
+		newMesh->SetVertexMotion(std::vector<float>(mesh0.GetVertexMotionTimes()),
+				std::move(motionSteps));
 	}
 
 	if (allCurves && !curveSegIndices.empty())

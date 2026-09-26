@@ -383,6 +383,17 @@ void Scene::SetMeshTriangleAOV(const string &meshName,
 	extMeshCache.SetMeshTriangleAOV(meshName, index, data);
 }
 
+void Scene::SetMeshVertexMotion(const string &meshName,
+		std::vector<float> &&stepTimes,
+		std::vector<luxrays::VertexBuffer> &&stepVerts) {
+	extMeshCache.SetMeshVertexMotion(meshName, std::move(stepTimes), std::move(stepVerts));
+
+	// Vertex motion feeds the accelerator build once backends support it:
+	// flag a geometry edit so a following Preprocess() rebuilds the
+	// DataSet rather than reusing a stale one.
+	editActions.AddAction(GEOMETRY_EDIT);
+}
+
 Scene::ReturnType<ExtTriangleMesh>
 Scene::DefineStrands(const string &shapeName, const slg::cyHairFile &strandsFile,
 		const StrendsShape::TessellationType tesselType,

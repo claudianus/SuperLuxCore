@@ -51,8 +51,18 @@ void NextNode(uint *pageIndex, uint *nodeIndex) {
 #define MBVH_MOTIONSYSTEMS_PARAM
 #endif
 
-#define ACCELERATOR_INTERSECT_PARAM_DECL MBVH_TRANSFORMATIONS_PARAM_DECL MBVH_MOTIONSYSTEMS_PARAM_DECL, __global const Point* restrict accelVertPage0, __global const Point* restrict accelVertPage1, __global const Point* restrict accelVertPage2, __global const Point* restrict accelVertPage3, __global const Point* restrict accelVertPage4, __global const Point* restrict accelVertPage5, __global const Point* restrict accelVertPage6, __global const Point* restrict accelVertPage7, __global const BVHArrayNode* restrict accelNodePage0, __global const BVHArrayNode* restrict accelNodePage1, __global const BVHArrayNode* restrict accelNodePage2, __global const BVHArrayNode* restrict accelNodePage3, __global const BVHArrayNode* restrict accelNodePage4, __global const BVHArrayNode* restrict accelNodePage5, __global const BVHArrayNode* restrict accelNodePage6, __global const BVHArrayNode* restrict accelNodePage7
-#define ACCELERATOR_INTERSECT_PARAM MBVH_TRANSFORMATIONS_PARAM MBVH_MOTIONSYSTEMS_PARAM, accelVertPage0, accelVertPage1, accelVertPage2, accelVertPage3, accelVertPage4, accelVertPage5, accelVertPage6, accelVertPage7, accelNodePage0, accelNodePage1, accelNodePage2, accelNodePage3, accelNodePage4, accelNodePage5, accelNodePage6, accelNodePage7
+// Per-vertex deformation motion blur: leafVertMotionDescs is indexed by
+// meshOffsetIndex; leaves without motion have vertCount == 0.
+#if defined(MBVH_HAS_VERTEXMOTION)
+#define MBVH_VERTEXMOTION_PARAM_DECL , __global const VertMotionDesc* restrict leafVertMotionDescs , __global const Point* restrict vertMotionVerts , __global const float* restrict vertMotionTimes
+#define MBVH_VERTEXMOTION_PARAM , leafVertMotionDescs, vertMotionVerts, vertMotionTimes
+#else
+#define MBVH_VERTEXMOTION_PARAM_DECL
+#define MBVH_VERTEXMOTION_PARAM
+#endif
+
+#define ACCELERATOR_INTERSECT_PARAM_DECL MBVH_TRANSFORMATIONS_PARAM_DECL MBVH_MOTIONSYSTEMS_PARAM_DECL MBVH_VERTEXMOTION_PARAM_DECL, __global const Point* restrict accelVertPage0, __global const Point* restrict accelVertPage1, __global const Point* restrict accelVertPage2, __global const Point* restrict accelVertPage3, __global const Point* restrict accelVertPage4, __global const Point* restrict accelVertPage5, __global const Point* restrict accelVertPage6, __global const Point* restrict accelVertPage7, __global const BVHArrayNode* restrict accelNodePage0, __global const BVHArrayNode* restrict accelNodePage1, __global const BVHArrayNode* restrict accelNodePage2, __global const BVHArrayNode* restrict accelNodePage3, __global const BVHArrayNode* restrict accelNodePage4, __global const BVHArrayNode* restrict accelNodePage5, __global const BVHArrayNode* restrict accelNodePage6, __global const BVHArrayNode* restrict accelNodePage7
+#define ACCELERATOR_INTERSECT_PARAM MBVH_TRANSFORMATIONS_PARAM MBVH_MOTIONSYSTEMS_PARAM MBVH_VERTEXMOTION_PARAM, accelVertPage0, accelVertPage1, accelVertPage2, accelVertPage3, accelVertPage4, accelVertPage5, accelVertPage6, accelVertPage7, accelNodePage0, accelNodePage1, accelNodePage2, accelNodePage3, accelNodePage4, accelNodePage5, accelNodePage6, accelNodePage7
 
 #if (MBVH_NODES_PAGE_COUNT > 8)
 ERROR: unsupported MBVH_NODES_PAGE_COUNT !!!
@@ -151,12 +161,17 @@ void Accelerator_Intersect(
 #endif
 	
 	uint currentMeshOffset = 0;
+#if defined(MBVH_HAS_VERTEXMOTION)
+	// Motion descriptor of the leaf currently being traversed (set on leaf
+	// entry; leafVertMotionDescs is indexed by meshOffsetIndex).
+	__global const VertMotionDesc *currentVertMotion;
+#endif
 
 	const float3 rootRayOrig = MAKE_FLOAT3(ray->o.x, ray->o.y, ray->o.z);
 	const float3 rootRayDir = MAKE_FLOAT3(ray->d.x, ray->d.y, ray->d.z);
 	const float mint = ray->mint;
 	float maxt = ray->maxt;
-#if defined(MBVH_HAS_MOTIONSYSTEMS)
+#if defined(MBVH_HAS_MOTIONSYSTEMS) || defined(MBVH_HAS_VERTEXMOTION)
 	const float rayTime = ray->time;
 #endif
 
@@ -225,27 +240,63 @@ void Accelerator_Intersect(
 				const uint v1 = as_uint(data0.y);
 				const uint v2 = as_uint(data0.z);
 
+				float3 p0, p1, p2;
+#if defined(MBVH_HAS_VERTEXMOTION)
+				if (currentVertMotion->vertCount != 0u) {
+					// The leaf carries a per-vertex motion series: decode the
+					// global (page-encoded) vertex index into the leaf-local
+					// index and interpolate the two motion steps bracketing
+					// rayTime. For a single page the top 3 bits of v are 0,
+					// so the same decode works for both layouts.
+					const uint l0 = ((v0 >> 29) * MBVH_VERTS_PAGE_SIZE + (v0 & 0x1fffffffu)) - currentVertMotion->staticVertOffset;
+					const uint l1 = ((v1 >> 29) * MBVH_VERTS_PAGE_SIZE + (v1 & 0x1fffffffu)) - currentVertMotion->staticVertOffset;
+					const uint l2 = ((v2 >> 29) * MBVH_VERTS_PAGE_SIZE + (v2 & 0x1fffffffu)) - currentVertMotion->staticVertOffset;
+
+					// Step times are strictly increasing (validated host side)
+					__global const float *times = vertMotionTimes + currentVertMotion->timesOffset;
+					const uint lastStep = currentVertMotion->stepCount - 1u;
+					uint step0 = 0u;
+					while ((step0 < lastStep) && (times[step0 + 1u] <= rayTime))
+						++step0;
+
+					__global const Point *va = vertMotionVerts + currentVertMotion->vertsOffset + step0 * currentVertMotion->vertCount;
+					if ((step0 == lastStep) || (rayTime <= times[step0])) {
+						// At/before the first step or on the last step: no blend
+						p0 = VLOAD3F(&va[l0].x);
+						p1 = VLOAD3F(&va[l1].x);
+						p2 = VLOAD3F(&va[l2].x);
+					} else {
+						__global const Point *vb = va + currentVertMotion->vertCount;
+						const float w = clamp((rayTime - times[step0]) / (times[step0 + 1u] - times[step0]), 0.f, 1.f);
+						p0 = mix(VLOAD3F(&va[l0].x), VLOAD3F(&vb[l0].x), w);
+						p1 = mix(VLOAD3F(&va[l1].x), VLOAD3F(&vb[l1].x), w);
+						p2 = mix(VLOAD3F(&va[l2].x), VLOAD3F(&vb[l2].x), w);
+					}
+				} else
+#endif
+				{
 #if (MBVH_VERTS_PAGE_COUNT == 1)
 				// Fast path for when there is only one memory page
-				const float3 p0 = VLOAD3F(&accelVertPage0[v0].x);
-				const float3 p1 = VLOAD3F(&accelVertPage0[v1].x);
-				const float3 p2 = VLOAD3F(&accelVertPage0[v2].x);
+				p0 = VLOAD3F(&accelVertPage0[v0].x);
+				p1 = VLOAD3F(&accelVertPage0[v1].x);
+				p2 = VLOAD3F(&accelVertPage0[v2].x);
 #else
 				const uint pv0 = (v0 & 0xe0000000u) >> 29;
 				const uint iv0 = (v0 & 0x1fffffffu);
 				__global const Point* restrict vp0 = accelVertPages[pv0];
-				const float3 p0 = VLOAD3F(&vp0[iv0].x);
+				p0 = VLOAD3F(&vp0[iv0].x);
 
 				const uint pv1 = (v1 & 0xe0000000u) >> 29;
 				const uint iv1 = (v1 & 0x1fffffffu);
 				__global const Point* restrict vp1 = accelVertPages[pv1];
-				const float3 p1 = VLOAD3F(&vp1[iv1].x);
+				p1 = VLOAD3F(&vp1[iv1].x);
 
 				const uint pv2 = (v2 & 0xe0000000u) >> 29;
 				const uint iv2 = (v2 & 0x1fffffffu);
 				__global const Point* restrict vp2 = accelVertPages[pv2];
-				const float3 p2 = VLOAD3F(&vp2[iv2].x);
+				p2 = VLOAD3F(&vp2[iv2].x);
 #endif
+				}
 
 				//const uint meshIndex = node->triangleLeaf.meshIndex + currentMeshOffset;
 				//const uint triangleIndex = node->triangleLeaf.triangleIndex;
@@ -288,6 +339,9 @@ void Accelerator_Intersect(
 
 				//currentMeshOffset = node->bvhLeaf.meshOffsetIndex;
 				currentMeshOffset = as_int(data0.w);
+#if defined(MBVH_HAS_VERTEXMOTION)
+				currentVertMotion = leafVertMotionDescs + currentMeshOffset;
+#endif
 
 				//const uint leafIndex = node->bvhLeaf.leafIndex;
 				const uint leafIndex = as_int(data0.x);

@@ -28,6 +28,7 @@
 #include "luxrays/accelerators/bvhaccel.h"
 #include "luxrays/utils/utils.h"
 #include "luxrays/core/context.h"
+#include "luxrays/core/exttrianglemesh.h"
 
 using namespace std;
 
@@ -96,6 +97,12 @@ void BVHAccel::Init(const deque<const Mesh *> &ms, const u_longlong totVert,
 		const auto p = mesh->GetTriangles();
 		const auto triangleCount = mesh->GetTotalTriangleCount();
 
+		// TYPE_EXT_TRIANGLE meshes can carry a per-vertex motion series:
+		// per-triangle bounds must cover every step (swept bounds) so
+		// traversal stays conservative at any shutter time.
+		const ExtTriangleMesh *motionMesh = ExtTriangleMesh::FromMesh(mesh);
+		const bool hasVertMotion = motionMesh && motionMesh->HasVertexMotion();
+
 		#pragma omp parallel for
 		for (
 				// Visual C++ 2013 supports only OpenMP 2.5
@@ -113,6 +120,15 @@ void BVHAccel::Init(const deque<const Mesh *> &ms, const u_longlong totVert,
 						mesh->GetVertex(Transform::TRANS_IDENTITY, p[i].v[0]),
 						mesh->GetVertex(Transform::TRANS_IDENTITY, p[i].v[1])),
 						mesh->GetVertex(Transform::TRANS_IDENTITY, p[i].v[2]));
+			if (hasVertMotion) {
+				for (u_int s = 0; s < motionMesh->GetVertexMotionStepCount(); ++s) {
+					const auto &stepVerts = motionMesh->GetVertexMotionStep(s);
+					node->bbox = Union(node->bbox,
+							Union(
+								BBox(stepVerts[p[i].v[0]], stepVerts[p[i].v[1]]),
+								stepVerts[p[i].v[2]]));
+				}
+			}
 			// NOTE - Ratow - Expand bbox a little to make sure rays collide
 			node->bbox.Expand(MachineEpsilon::E(node->bbox));
 			node->triangleLeaf.meshIndex = meshIndex;
@@ -186,9 +202,20 @@ bool BVHAccel::Intersect(const Ray *initialRay, RayHit *rayHit) const {
 
 			// This is a fast path because I know Mesh can be only TYPE_TRIANGLE/TYPE_EXT_TRIANGLE
 			// in BVH
-			const Point p0 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[0]);
-			const Point p1 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[1]);
-			const Point p2 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[2]);
+			Point p0, p1, p2;
+			const ExtTriangleMesh *motionMesh = (mesh->GetType() == TYPE_EXT_TRIANGLE) ?
+				dynamic_cast<const ExtTriangleMesh *>(mesh) : NULL;
+			if (motionMesh && motionMesh->HasVertexMotion()) {
+				// Per-vertex motion series: interpolate at the ray shutter time
+				const float rayTime = initialRay->time;
+				p0 = motionMesh->GetVertexAtTime(node.triangleLeaf.v[0], rayTime);
+				p1 = motionMesh->GetVertexAtTime(node.triangleLeaf.v[1], rayTime);
+				p2 = motionMesh->GetVertexAtTime(node.triangleLeaf.v[2], rayTime);
+			} else {
+				p0 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[0]);
+				p1 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[1]);
+				p2 = mesh->GetVertex(Transform::TRANS_IDENTITY, node.triangleLeaf.v[2]);
+			}
 			
 			/* Generic implementation with support for all Mesh types
 

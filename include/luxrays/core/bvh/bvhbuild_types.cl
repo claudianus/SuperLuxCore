@@ -60,4 +60,16 @@ typedef struct {
 
 #define IndexBVHNodeData_IsLeaf(nodeData) ((nodeData) & 0x80000000u)
 #define IndexBVHNodeData_GetSkipIndex(nodeData) ((nodeData) & 0x7fffffffu)
+
+// Per-vertex deformation motion blur (dev-tools/deformation-motion-blur-design.md):
+// one entry per MBVH leaf reference (indexed by meshOffsetIndex). Leaves without
+// vertex motion have vertCount == 0 and take the static vertex fetch path.
+typedef struct {
+	unsigned int vertCount;        // 0 => leaf carries no vertex motion
+	unsigned int stepCount;        // number of motion steps (>= 2)
+	unsigned int vertsOffset;      // first vertex of step 0 in the motion vertex buffer
+	unsigned int timesOffset;      // first step time in the motion times buffer
+	unsigned int staticVertOffset; // first vertex of the leaf mesh in the global (page-decoded) vertex index space
+	unsigned int pad0, pad1, pad2; // pad to a multiple of float4
+} VertMotionDesc;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -26,6 +26,7 @@
 #include "luxrays/core/context.h"
 #include "luxrays/usings.h"
 #include "luxrays/core/trianglemesh.h"
+#include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/accelerators/bvhaccel.h"
 #include "luxrays/accelerators/mbvhaccel.h"
 #include "luxrays/accelerators/embreeaccel.h"
@@ -75,6 +76,12 @@ TriangleMeshID DataSet::Add(MeshConstRef mesh) {
 	if ((mesh.GetType() == TYPE_TRIANGLE_INSTANCE) || (mesh.GetType() == TYPE_EXT_TRIANGLE_INSTANCE))
 		hasInstances = true;
 	else if ((mesh.GetType() == TYPE_TRIANGLE_MOTION) || (mesh.GetType() == TYPE_EXT_TRIANGLE_MOTION))
+		hasMotionBlur = true;
+
+	// Per-vertex deformation motion requires the MBVH accelerator: only its
+	// traversal interpolates triangle vertices at the ray time
+	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mesh);
+	if (extMesh && extMesh->HasVertexMotion())
 		hasMotionBlur = true;
 
 	return id;

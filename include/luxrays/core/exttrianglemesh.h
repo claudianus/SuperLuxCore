@@ -413,6 +413,39 @@ public:
 	const std::vector<u_int> &GetCurveSegIndices() const { return curveSegIndices; }
 	const std::vector<CurveCpAttr> &GetCurveCpAttrs() const { return curveCpAttrs; }
 
+	// Per-vertex deformation motion blur (see
+	// dev-tools/deformation-motion-blur-design.md): a series of
+	// shutter-time samples, each a full vertex-position buffer with the
+	// same vertex count as `vertices` (constant topology). Times are
+	// strictly increasing; GetVertexAtTime() lerps between adjacent steps
+	// and clamps outside the series range, matching the MotionSystem
+	// convention. Positions only — per-step normals are intentionally not
+	// stored and must be recomputed by consumers from sampled positions.
+	void SetVertexMotion(
+		std::vector<float> &&stepTimes,
+		std::vector<VertexBuffer> &&stepVerts
+	);
+	void ClearVertexMotion() {
+		motionVertTimes.clear();
+		motionVertSteps.clear();
+		cachedBBoxValid = false;
+	}
+	bool HasVertexMotion() const { return !motionVertSteps.empty(); }
+	u_int GetVertexMotionStepCount() const { return (u_int)motionVertSteps.size(); }
+	const std::vector<float> &GetVertexMotionTimes() const { return motionVertTimes; }
+	const VertexBuffer &GetVertexMotionStep(const u_int step) const { return motionVertSteps[step]; }
+	Point GetVertexAtTime(const u_int vertIndex, const float time) const;
+
+	// Swept bounds: with a vertex-motion series the bounding box spans the
+	// union of the base vertices and every motion step, so it is
+	// conservative for every shutter time.
+	virtual BBox GetBBox() const;
+
+	// Resolves instance/motion wrappers to the base ExtTriangleMesh they
+	// wrap (vertex motion and curve data live on the base mesh); returns
+	// nullptr for plain TriangleMesh.
+	static const ExtTriangleMesh *FromMesh(const Mesh *mesh);
+
 	NormalBuffer ComputeNormals();
 
 	virtual MeshType GetType() const { return TYPE_EXT_TRIANGLE; }
@@ -667,6 +700,8 @@ public:
 		curveCps.clear();
 		curveSegIndices.clear();
 		curveCpAttrs.clear();
+		motionVertTimes.clear();
+		motionVertSteps.clear();
 
 		bevelCylinders = nullptr;
 		bevelBoundingCylinders = nullptr;
@@ -693,6 +728,13 @@ public:
 	std::vector<CurveControlPoint> curveCps;
 	std::vector<u_int> curveSegIndices;
 	std::vector<CurveCpAttr> curveCpAttrs;
+
+	// Per-vertex deformation motion blur time series (see
+	// SetVertexMotion). motionVertSteps[s][v] is the object-space
+	// position of vertex v at motionVertTimes[s]. Not serialized —
+	// loaded meshes fall back to static geometry, like curve data.
+	std::vector<float> motionVertTimes;
+	std::vector<VertexBuffer> motionVertSteps;
 
 	BevelCylinder *bevelCylinders;
 	BevelBoundingCylinder *bevelBoundingCylinders;

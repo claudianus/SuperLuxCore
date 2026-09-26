@@ -70,12 +70,19 @@ struct LuxRayHit {
 	uint meshIndex, triangleIndex;
 };
 
+// Metal's timed intersect() overload only exists on intersector tag
+// sequences that include instance_motion and/or primitive_motion, and it
+// takes a matchingly-tagged acceleration_structure parameter type. On a
+// plain <instancing, ...> intersector the "time" argument silently binds
+// to the uint mask overload instead (0.5 -> 0 masks every instance -> all
+// rays miss), so the motion variant must be a separate kernel entry point
+// with its own pipeline state: the host picks it when the instance AS was
+// built with motion instance descriptors.
 kernel void Accelerator_Intersect_RayBuffer_HWRT(
 		device const LuxRay *rays [[buffer(0)]],
 		device LuxRayHit *rayHits [[buffer(1)]],
 		constant uint &rayCount [[buffer(2)]],
 		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
-		constant uint &useMotionTime [[buffer(4)]],
 		uint gid [[thread_position_in_grid]]) {
 	if (gid >= rayCount)
 		return;
@@ -92,12 +99,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 	ray.max_distance = r.maxt;
 
 	raytracing::intersector<raytracing::instancing, raytracing::triangle_data> itr;
-	// r.time drives Metal's motion instance interpolation when the instance
-	// acceleration structure was built with motion descriptors. On a static
-	// (non-motion) instance AS the timed overload returns no intersection
-	// for every ray, so useMotionTime must gate it.
-	const auto hit = useMotionTime ?
-		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
+	const auto hit = itr.intersect(ray, sceneAS);
 
 	if (hit.type == raytracing::intersection_type::none) {
 		// Match the software kernel's miss record exactly:
@@ -113,6 +115,73 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 	rayHits[gid].b2 = hit.triangle_barycentric_coord.y;
 	// instance_id is the userID of the instance descriptor = MBVH leaf
 	// reference index = the meshIndex the software kernel produces.
+	rayHits[gid].meshIndex = hit.instance_id;
+	rayHits[gid].triangleIndex = hit.primitive_id;
+}
+)MSL";
+
+// Motion variant of the same kernel: motion-tagged intersector + motion
+// instance acceleration structure parameter, timed intersect() carrying
+// r.time for both transform (instance_motion) and per-vertex deformation
+// (primitive_motion) interpolation. Kept in a separate source string: it
+// needs Metal shading language 2.4+ (macOS 12+) while the static kernel
+// still targets 2.3, so a toolchain without motion support only loses the
+// motion pipeline, not the whole HWRT path.
+static const char *HWRT_MSL_SOURCE_MOTION = R"MSL(
+#include <metal_stdlib>
+#include <metal_raytracing>
+using namespace metal;
+
+struct LuxRay {
+	float ox, oy, oz;
+	float dx, dy, dz;
+	float mint, maxt, time;
+	uint flags;
+	float pad0, pad1;
+};
+
+struct LuxRayHit {
+	float t, b1, b2;
+	uint meshIndex, triangleIndex;
+};
+
+kernel void Accelerator_Intersect_RayBuffer_HWRT_Motion(
+		device const LuxRay *rays [[buffer(0)]],
+		device LuxRayHit *rayHits [[buffer(1)]],
+		constant uint &rayCount [[buffer(2)]],
+		raytracing::acceleration_structure<raytracing::instancing,
+				raytracing::instance_motion, raytracing::primitive_motion>
+				sceneAS [[buffer(3)]],
+		uint gid [[thread_position_in_grid]]) {
+	if (gid >= rayCount)
+		return;
+
+	const LuxRay r = rays[gid];
+	// RAY_FLAGS_MASKED
+	if (r.flags & 0x1u)
+		return;
+
+	raytracing::ray ray;
+	ray.origin = float3(r.ox, r.oy, r.oz);
+	ray.direction = float3(r.dx, r.dy, r.dz);
+	ray.min_distance = r.mint;
+	ray.max_distance = r.maxt;
+
+	raytracing::intersector<raytracing::instancing,
+			raytracing::instance_motion, raytracing::primitive_motion,
+			raytracing::triangle_data> itr;
+	const auto hit = itr.intersect(ray, sceneAS, DBG_TIME);
+
+	if (hit.type == raytracing::intersection_type::none) {
+		rayHits[gid].t = r.maxt;
+		rayHits[gid].meshIndex = 0xffffffffu;
+		rayHits[gid].triangleIndex = 0xffffffffu;
+		return;
+	}
+
+	rayHits[gid].t = hit.distance;
+	rayHits[gid].b1 = hit.triangle_barycentric_coord.x;
+	rayHits[gid].b2 = hit.triangle_barycentric_coord.y;
 	rayHits[gid].meshIndex = hit.instance_id;
 	rayHits[gid].triangleIndex = hit.primitive_id;
 }
@@ -149,7 +218,6 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 		device LuxRayHit *rayHits [[buffer(1)]],
 		constant uint &rayCount [[buffer(2)]],
 		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
-		constant uint &useMotionTime [[buffer(4)]],
 		uint gid [[thread_position_in_grid]]) {
 	if (gid >= rayCount)
 		return;
@@ -167,10 +235,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 
 	raytracing::intersector<raytracing::instancing, raytracing::triangle_data,
 			raytracing::curve_data> itr;
-	// On a static (non-motion) instance AS the timed overload returns no
-	// intersection for every ray, so useMotionTime must gate it.
-	const auto hit = useMotionTime ?
-		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
+	const auto hit = itr.intersect(ray, sceneAS);
 
 	if (hit.type == raytracing::intersection_type::none) {
 		rayHits[gid].t = r.maxt;
@@ -197,6 +262,83 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 }
 )MSL";
 
+// Motion variant of the curve-capable kernel (see the triangle-only
+// HWRT_MSL_SOURCE_MOTION for why it is a separate entry point).
+static const char *HWRT_MSL_SOURCE_CURVES_MOTION = R"MSL(
+#include <metal_stdlib>
+#include <metal_raytracing>
+using namespace metal;
+
+struct LuxRay {
+	float ox, oy, oz;
+	float dx, dy, dz;
+	float mint, maxt, time;
+	uint flags;
+	float pad0, pad1;
+};
+
+struct LuxRayHit {
+	float t, b1, b2;
+	uint meshIndex, triangleIndex;
+};
+
+kernel void Accelerator_Intersect_RayBuffer_HWRT_Motion(
+		device const LuxRay *rays [[buffer(0)]],
+		device LuxRayHit *rayHits [[buffer(1)]],
+		constant uint &rayCount [[buffer(2)]],
+		raytracing::acceleration_structure<raytracing::instancing,
+				raytracing::instance_motion, raytracing::primitive_motion>
+				sceneAS [[buffer(3)]],
+		uint gid [[thread_position_in_grid]]) {
+	if (gid >= rayCount)
+		return;
+
+	const LuxRay r = rays[gid];
+	// RAY_FLAGS_MASKED
+	if (r.flags & 0x1u)
+		return;
+
+	raytracing::ray ray;
+	ray.origin = float3(r.ox, r.oy, r.oz);
+	ray.direction = float3(r.dx, r.dy, r.dz);
+	ray.min_distance = r.mint;
+	ray.max_distance = r.maxt;
+
+	raytracing::intersector<raytracing::instancing,
+			raytracing::instance_motion, raytracing::primitive_motion,
+			raytracing::triangle_data, raytracing::curve_data> itr;
+	const auto hit = itr.intersect(ray, sceneAS, DBG_TIME);
+
+	if (hit.type == raytracing::intersection_type::none) {
+		rayHits[gid].t = r.maxt;
+		rayHits[gid].meshIndex = 0xffffffffu;
+		rayHits[gid].triangleIndex = 0xffffffffu;
+		return;
+	}
+
+	rayHits[gid].t = hit.distance;
+	rayHits[gid].meshIndex = hit.instance_id;
+
+	if (hit.type == raytracing::intersection_type::curve) {
+		rayHits[gid].b1 = hit.curve_parameter;
+		rayHits[gid].b2 = 0.f;
+		rayHits[gid].triangleIndex = 0x80000000u | hit.primitive_id;
+	} else {
+		rayHits[gid].b1 = hit.triangle_barycentric_coord.x;
+		rayHits[gid].b2 = hit.triangle_barycentric_coord.y;
+		rayHits[gid].triangleIndex = hit.primitive_id;
+	}
+}
+)MSL";
+
+// Resolve the underlying ExtTriangleMesh through instance / transform-
+// motion wrappers (Mesh is a virtual base, so it needs dynamic_cast):
+// both deformation and curve data live on the base mesh and compose with
+// leaf-level transforms.
+static const ExtTriangleMesh *ResolveExtTriangleMesh(const Mesh *mesh) {
+	return ExtTriangleMesh::FromMesh(mesh);
+}
+
 class MetalRTKernel : public HardwareIntersectionKernel {
 public:
 	MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &acc);
@@ -205,6 +347,7 @@ public:
 		[primRetainBag release];
 		[instRetainBag release];
 		[pso release];
+		if (psoMotion) [psoMotion release];
 	}
 
 	virtual void Update(DataSetConstSPtr newDataSet) override;
@@ -231,16 +374,32 @@ private:
 	bool useCurveData;
 
 	// True when the instance acceleration structure was built with motion
-	// instance descriptors (any leaf carries a motion system). The MSL
-	// kernel must only pass the ray time to intersect() when this is set:
-	// on a static (non-motion) instance AS the timed overload returns no
-	// intersection for every ray.
+	// instance descriptors (any leaf carries a transform-motion system or
+	// any primitive AS carries vertex-motion geometry). Selects the
+	// _Motion kernel/pipeline: the timed intersect() overload only exists
+	// on motion-tagged intersectors.
 	bool instanceASIsMotion;
+	// True when the motion kernel variant compiled and a motion pipeline
+	// state is available. When false the AS build must stay fully static:
+	// the static kernel cannot trace a motion-capable instance AS.
+	bool motionKernelReady;
+
+	// Per-vertex deformation motion blur (E9): enabled when the device
+	// supports primitive motion blur and LUXRAYS_METAL_VERTEX_MOTION != 0.
+	bool useVertexMotion;
+	// True when at least one primitive AS was built with a motion
+	// geometry descriptor: forces motion instance descriptors (the timed
+	// intersect() overload needs a motion-capable instance AS) even when
+	// no leaf carries a transform-motion system.
+	bool hasVertexMotionGeometry;
 
 	id<MTLDevice> mtlDev;
 	id<MTLCommandQueue> queue;
 
 	id<MTLComputePipelineState> pso;
+	// Pipeline state for the motion kernel variant (nil when the scene has
+	// no motion or the motion kernel failed to compile).
+	id<MTLComputePipelineState> psoMotion;
 	NSUInteger workGroupSize;
 
 	// GPU resources (all +1 retained, released in FreeAccelerationStructures)
@@ -312,8 +471,9 @@ bool MetalRTKernel::IsSupported(HardwareIntersectionDevice &dev, const MBVHAccel
 
 MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &acc) :
 		HardwareIntersectionKernel(dev), mdev(dynamic_cast<MetalIntersectionDevice &>(dev)),
-		mbvh(acc), pso(nil), workGroupSize(64), instanceAS(nil),
-		instanceASIsMotion(false) {
+		mbvh(acc), pso(nil), psoMotion(nil), workGroupSize(64), instanceAS(nil),
+		instanceASIsMotion(false), motionKernelReady(false),
+		useVertexMotion(false), hasVertexMotionGeometry(false) {
 	@autoreleasepool {
 		mtlDev = (__bridge id<MTLDevice>)mdev.GetMTLDevice();
 		queue = (__bridge id<MTLCommandQueue>)mdev.GetMTLCommandQueue();
@@ -331,6 +491,15 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 			else
 				useCurveData = false;
 		}
+
+		// Per-vertex deformation motion blur (E9): primitive-level vertex
+		// interpolation via MTLAccelerationStructureMotionTriangleGeometry
+		// Descriptor. Requires device primitive-motion support; otherwise
+		// meshes render their static `vertices` (static fallback).
+		// LUXRAYS_METAL_VERTEX_MOTION=0 forces it off (parity testing).
+		const char *vmEnv = getenv("LUXRAYS_METAL_VERTEX_MOTION");
+		useVertexMotion = !(vmEnv && string(vmEnv) == "0") &&
+				[mtlDev supportsPrimitiveMotionBlur];
 
 		// Compile the native MSL kernel (never goes through cl2msl)
 		MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
@@ -375,13 +544,69 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 
 		workGroupSize = MIN((NSUInteger)256, pso.maxTotalThreadsPerThreadgroup);
 
+		// Motion kernel variant: needed when any leaf carries a
+		// transform-motion system or a vertex-motion mesh. The timed
+		// intersect() overload exists only on motion-tagged intersectors,
+		// so it is a separate kernel + pipeline state.
+		bool wantsMotion = false;
+		for (size_t i = 0; !wantsMotion && i < mbvh.bvhLeafs.size(); ++i)
+			wantsMotion = (mbvh.bvhLeafs[i].bvhLeaf.motionIndex != NULL_INDEX);
+		for (size_t k = 0; !wantsMotion && useVertexMotion &&
+				k < mbvh.uniqueLeafs.size(); ++k)
+			wantsMotion = ResolveExtTriangleMesh(
+					mbvh.uniqueLeafs[k]->GetMeshes()[0]) &&
+					ResolveExtTriangleMesh(
+					mbvh.uniqueLeafs[k]->GetMeshes()[0])->HasVertexMotion();
+
+		if (wantsMotion) {
+			NSError *mErr = nil;
+			MTLCompileOptions *mOpts = [[MTLCompileOptions alloc] init];
+			// instance_motion/primitive_motion tags exist since MSL 2.4;
+			// the curve variant needs 3.1 anyway.
+			mOpts.languageVersion = useCurveData ?
+					MTLLanguageVersion3_1 : MTLLanguageVersion2_4;
+			// DEBUG: optional fixed ray time via env (e.g.
+			// LUXRAYS_METAL_DBG_TIME=0.5) to isolate temporal sampling
+			// from keyframe data issues.
+			const char *dbgT = getenv("LUXRAYS_METAL_DBG_TIME");
+			NSString *srcStr = [NSString stringWithFormat:
+					@"#define DBG_TIME %s\n%s",
+					dbgT ? [[NSString stringWithFormat:@"(%s)f", dbgT]
+							UTF8String] : "r.time",
+					useCurveData ? HWRT_MSL_SOURCE_CURVES_MOTION
+							: HWRT_MSL_SOURCE_MOTION];
+			id<MTLLibrary> mLib = [mtlDev newLibraryWithSource:srcStr
+					options:mOpts error:&mErr];
+			[mOpts release];
+			if (mLib) {
+				id<MTLFunction> mFn = [mLib newFunctionWithName:
+						@"Accelerator_Intersect_RayBuffer_HWRT_Motion"];
+				[mLib release];
+				if (mFn) {
+					psoMotion = [mtlDev newComputePipelineStateWithFunction:mFn
+							error:&mErr];
+					[mFn release];
+				}
+			}
+			motionKernelReady = (psoMotion != nil);
+			if (!motionKernelReady) {
+				LR_LOG(dev.GetContext(), "Metal HWRT motion kernel unavailable ("
+						<< (mErr ? mErr.localizedDescription.UTF8String : "?")
+						<< "): motion renders frozen (static AS fallback)");
+				useVertexMotion = false;
+			}
+		}
+
 		primRetainBag = [[NSMutableArray alloc] init];
 		instRetainBag = [[NSMutableArray alloc] init];
 		BuildAccelerationStructures();
 
 		LR_LOG(dev.GetContext(), "Metal HWRT: native MTLAccelerationStructure path active ("
 				<< primitiveAS.size() << " primitive AS, "
-				<< mbvh.bvhLeafs.size() << " instances)");
+				<< mbvh.bvhLeafs.size() << " instances"
+				<< (instanceASIsMotion ? ", motion instance AS" : "")
+				<< (hasVertexMotionGeometry ? " + primitive vertex motion" : "")
+				<< ")");
 	}
 }
 
@@ -432,26 +657,88 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 		for (size_t k = 0; k < mbvh.uniqueLeafs.size(); ++k) {
 			const Mesh *mesh = mbvh.uniqueLeafs[k]->GetMeshes()[0];
 
+			const ExtTriangleMesh *baseMesh = ResolveExtTriangleMesh(mesh);
+
+			// Per-vertex deformation motion blur (E9): a motion-triangle
+			// descriptor replaces the plain triangle descriptor — Metal
+			// interpolates vertex positions at ray.time. It also replaces
+			// the curve-primitive path when a mesh carries both: curve
+			// data has no deformation keyframes, so deformation
+			// correctness wins over the curve fast path.
+			const ExtTriangleMesh *vmMesh =
+					(useVertexMotion && baseMesh && baseMesh->HasVertexMotion()) ?
+					baseMesh : nullptr;
+
 			// Native curve primitives (dev-tools/metal_curve_design.md):
 			// strands meshes carry Catmull-Rom curve data next to their
 			// triangle tessellation. Plain and instanced ExtTriangleMesh
 			// leaves can use it (the instance transform is applied at the
 			// instance AS level, same as for triangles); motion leaves keep
 			// the triangle path (curve data has no deformation keyframes).
-			// Mesh is a virtual base, so resolving needs dynamic_cast.
 			const ExtTriangleMesh *curveMesh = nullptr;
-			if (useCurveData) {
-				if (const ExtInstanceTriangleMesh *imesh =
-						dynamic_cast<const ExtInstanceTriangleMesh *>(mesh)) {
-					curveMesh = &imesh->GetExtTriangleMesh();
-				} else {
-					curveMesh = dynamic_cast<const ExtTriangleMesh *>(mesh);
-				}
+			if (useCurveData && !vmMesh) {
+				curveMesh = baseMesh;
 				if (curveMesh && !curveMesh->HasCurveData())
 					curveMesh = nullptr;
 			}
 
 			MTLAccelerationStructureGeometryDescriptor *geo = nil;
+			u_int motionKeyframes = 0;
+			float motionStart = 0.f, motionEnd = 0.f;
+
+			if (vmMesh) {
+				// All keyframes packed into one MTLBuffer, each
+				// MTLMotionKeyframeData referencing its own slice; the
+				// shared index buffer comes from the constant topology.
+				const u_int stepCount = vmMesh->GetVertexMotionStepCount();
+				const auto &times = vmMesh->GetVertexMotionTimes();
+				const size_t stepBytes = vmMesh->GetTotalVertexCount() * sizeof(Point);
+
+				id<MTLBuffer> allKeyBuf = [mtlDev
+						newBufferWithLength:stepBytes * stepCount
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(allKeyBuf);
+				for (u_int s = 0; s < stepCount; ++s) {
+					const VertexBuffer &sv = vmMesh->GetVertexMotionStep(s);
+					memcpy((char *)allKeyBuf.contents + s * stepBytes,
+							sv.Data(), stepBytes);
+				}
+
+				NSMutableArray<MTLMotionKeyframeData *> *keyBufs =
+						[NSMutableArray arrayWithCapacity:stepCount];
+				for (u_int s = 0; s < stepCount; ++s) {
+					MTLMotionKeyframeData *kd = [MTLMotionKeyframeData data];
+					kd.buffer = allKeyBuf;
+					kd.offset = s * stepBytes;
+					[keyBufs addObject:kd];
+				}
+				[primRetainBag addObject:keyBufs];
+
+				const std::span<Triangle> tris = mesh->GetTriangles();
+				id<MTLBuffer> ibuf = [mtlDev newBufferWithBytes:tris.data()
+						length:tris.size() * sizeof(Triangle)
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(ibuf);
+
+				if (@available(macOS 12.0, *)) {
+					MTLAccelerationStructureMotionTriangleGeometryDescriptor *mgeo =
+							[MTLAccelerationStructureMotionTriangleGeometryDescriptor descriptor];
+					mgeo.vertexBuffers = keyBufs;
+					mgeo.vertexStride = sizeof(Point);
+					mgeo.vertexFormat = MTLAttributeFormatFloat3;
+					mgeo.indexBuffer = ibuf;
+					mgeo.indexBufferOffset = 0;
+					mgeo.indexType = MTLIndexTypeUInt32;
+					mgeo.triangleCount = tris.size();
+					mgeo.opaque = YES;
+					mgeo.allowDuplicateIntersectionFunctionInvocation = NO;
+					geo = mgeo;
+					motionKeyframes = stepCount;
+					motionStart = times.front();
+					motionEnd = times.back();
+					hasVertexMotionGeometry = true;
+				}
+			}
 
 			if (curveMesh) {
 				const auto &cps = curveMesh->GetCurveCps();
@@ -529,6 +816,13 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 					[MTLPrimitiveAccelerationStructureDescriptor descriptor];
 			NSArray *geos = @[geo];
 			primDesc.geometryDescriptors = geos;
+			if (motionKeyframes > 1) {
+				primDesc.motionKeyframeCount = motionKeyframes;
+				primDesc.motionStartTime = motionStart;
+				primDesc.motionEndTime = motionEnd;
+				primDesc.motionStartBorderMode = MTLMotionBorderModeClamp;
+				primDesc.motionEndBorderMode = MTLMotionBorderModeClamp;
+			}
 			[primRetainBag addObject:primDesc];
 			[primRetainBag addObject:geos];
 
@@ -595,15 +889,20 @@ void MetalRTKernel::BuildInstanceStructure() {
 					toPacked(mbvh.uniqueLeafsTransform[tIndex]->m) : identityTransform();
 		};
 
-		// Does any leaf carry a motion system? If so the whole instance AS must
-		// use MTLAccelerationStructureMotionInstanceDescriptor (the descriptor
-		// type is uniform across the instance buffer).
+		// Does any leaf carry a motion system, or any primitive AS carry
+		// vertex-motion geometry? If so the whole instance AS must use
+		// MTLAccelerationStructureMotionInstanceDescriptor (the descriptor
+		// type is uniform across the instance buffer) — the timed
+		// intersect() overload only works on motion-capable instance AS.
+		// Without a compiled motion pipeline the AS must stay static
+		// (the untimed kernel cannot trace a motion instance AS).
 		bool hasMotion = false;
-		for (size_t i = 0; i < nLeafs; ++i)
-			if (mbvh.bvhLeafs[i].bvhLeaf.motionIndex != NULL_INDEX) {
-				hasMotion = true;
-				break;
-			}
+		if (motionKernelReady) {
+			hasMotion = hasVertexMotionGeometry;
+			for (size_t i = 0; !hasMotion && i < nLeafs; ++i)
+				if (mbvh.bvhLeafs[i].bvhLeaf.motionIndex != NULL_INDEX)
+					hasMotion = true;
+		}
 		instanceASIsMotion = hasMotion;
 
 		MTLInstanceAccelerationStructureDescriptor *instDesc =
@@ -671,15 +970,25 @@ void MetalRTKernel::BuildInstanceStructure() {
 						motionTransforms.push_back(toPacked(msys->SampleInverse(t)));
 					}
 					inst[i].motionTransformsCount = count;
-					inst[i].motionStartTime = t0;
-					inst[i].motionEndTime = t1;
+					// A single keyframe is time-invariant: give it a
+					// non-degenerate interval (StartTime==EndTime for a
+					// static motion system) rather than [t0,t0].
+					if (count == 1) {
+						inst[i].motionStartTime = 0.f;
+						inst[i].motionEndTime = 1.f;
+					} else {
+						inst[i].motionStartTime = t0;
+						inst[i].motionEndTime = t1;
+					}
 				} else {
 					// Static leaf inside a motion instance array: a single
-					// keyframe makes it time-invariant.
+					// keyframe makes it time-invariant. A non-degenerate
+					// [0,1] range avoids any driver-side handling of an
+					// empty time interval (start==end).
 					motionTransforms.push_back(leafStaticTransform(i));
 					inst[i].motionTransformsCount = 1;
 					inst[i].motionStartTime = 0.f;
-					inst[i].motionEndTime = 0.f;
+					inst[i].motionEndTime = 1.f;
 				}
 			}
 
@@ -755,14 +1064,14 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 
 		id<MTLCommandBuffer> cb = [queue commandBuffer];
 		id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-		[enc setComputePipelineState:pso];
+		// The timed intersect() overload only exists on the motion-tagged
+		// kernel: pick the pipeline matching how the instance AS was built.
+		[enc setComputePipelineState:instanceASIsMotion ? psoMotion : pso];
 		[enc setBuffer:rays offset:0 atIndex:0];
 		[enc setBuffer:hits offset:0 atIndex:1];
 		u_int rc = rayCount;
 		[enc setBytes:&rc length:sizeof(rc) atIndex:2];
 		[enc setAccelerationStructure:instanceAS atBufferIndex:3];
-		u_int motionTime = instanceASIsMotion ? 1u : 0u;
-		[enc setBytes:&motionTime length:sizeof(motionTime) atIndex:4];
 
 		const MTLSize grid = MTLSizeMake(rayCount, 1, 1);
 		const MTLSize tg = MTLSizeMake(workGroupSize, 1, 1);

@@ -266,6 +266,9 @@ bool MBVHAccel::Intersect(const Ray *ray, RayHit *rayHit) const {
 	u_int currentNode = currentRootNode;
 	u_int currentStopNode = rootStopNode; // Non-existent
 	u_int currentMeshOffset = 0;
+	// Set on every leaf-tree entry: the base ExtTriangleMesh when the leaf
+	// carries a per-vertex motion series, nullptr otherwise.
+	const ExtTriangleMesh *currentVertMotionMesh = NULL;
 	std::reference_wrapper currentTree = bvhRootTree;
 
 	Ray currentRay(*ray);
@@ -298,12 +301,23 @@ bool MBVHAccel::Intersect(const Ray *ray, RayHit *rayHit) const {
 				// I'm inside a leaf tree, I have to check the triangle
 				const u_int absoluteMeshIndex = node.triangleLeaf.meshIndex + currentMeshOffset;
 				const Mesh * currentMesh = meshes[absoluteMeshIndex];
-				// I use currentMesh->GetVertices() in order to have access to not
-				// transformed vertices in the case of instances
-				const auto vertices = currentMesh->GetVertices();
-				const Point &p0 = vertices[node.triangleLeaf.v[0]];
-				const Point &p1 = vertices[node.triangleLeaf.v[1]];
-				const Point &p2 = vertices[node.triangleLeaf.v[2]];
+
+				Point p0, p1, p2;
+				if (currentVertMotionMesh) {
+					// Leaf carries a per-vertex motion series: interpolate
+					// the triangle vertices at the ray shutter time
+					const float rayTime = ray->time;
+					p0 = currentVertMotionMesh->GetVertexAtTime(node.triangleLeaf.v[0], rayTime);
+					p1 = currentVertMotionMesh->GetVertexAtTime(node.triangleLeaf.v[1], rayTime);
+					p2 = currentVertMotionMesh->GetVertexAtTime(node.triangleLeaf.v[2], rayTime);
+				} else {
+					// I use currentMesh->GetVertices() in order to have access to not
+					// transformed vertices in the case of instances
+					const auto vertices = currentMesh->GetVertices();
+					p0 = vertices[node.triangleLeaf.v[0]];
+					p1 = vertices[node.triangleLeaf.v[1]];
+					p2 = vertices[node.triangleLeaf.v[2]];
+				}
 
 				float t, b1, b2;
 				if (Triangle::Intersect(currentRay, p0, p1, p2, &t, &b1, &b2)) {
@@ -334,6 +348,13 @@ bool MBVHAccel::Intersect(const Ray *ray, RayHit *rayHit) const {
 				currentRay.maxt = rayHit->t;
 
 				currentMeshOffset = node.bvhLeaf.meshOffsetIndex;
+
+				// Resolve the leaf base mesh once per entry: instances/motion
+				// wrappers share the deformation data of the wrapped mesh
+				{
+					const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(meshes[currentMeshOffset]);
+					currentVertMotionMesh = (extMesh && extMesh->HasVertexMotion()) ? extMesh : NULL;
+				}
 
 				currentRootNode = currentNode + 1;
 				currentNode = 0;

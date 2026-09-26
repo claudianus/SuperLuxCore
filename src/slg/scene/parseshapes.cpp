@@ -132,9 +132,44 @@ ExtTriangleMeshUPtr Scene::CreateInlinedMesh(const string &shapeName, const stri
 		}
 	}
 
-	return std::make_unique<ExtTriangleMesh>(
+	auto mesh = std::make_unique<ExtTriangleMesh>(
 		std::move(points), std::move(tris), std::move(normals), uvs
 	);
+
+	// Per-vertex deformation motion blur: "<prefix>.motion.N.vertices"
+	// holds 3 * vertexCount object-space floats per step, sampled at
+	// "<prefix>.motion.N.time" — the same key an object uses for its
+	// transform motion steps, so a single shutter schedule can drive
+	// both. Steps without ".vertices" are simply not part of the vertex
+	// series (they can still carry ".transformation" only).
+	if (props.IsDefined(propName + ".motion.0.vertices")) {
+		std::vector<float> stepTimes;
+		std::vector<VertexBuffer> stepVerts;
+		for (u_int i = 0;; ++i) {
+			const string prefix = propName + ".motion." + ToString(i);
+			if (!props.IsDefined(prefix + ".vertices"))
+				break;
+			if (!props.IsDefined(prefix + ".time"))
+				throw runtime_error("Missing vertex motion time: " + prefix + ".time");
+
+			stepTimes.push_back(props.Get(prefix + ".time").Get<double>());
+
+			Property prop = props.Get(prefix + ".vertices");
+			if (prop.GetSize() != pointsSize * 3)
+				throw runtime_error("Wrong vertex motion list length: " + prefix + ".vertices");
+
+			VertexBuffer stepBuf(pointsSize);
+			for (u_int v = 0; v < pointsSize; ++v) {
+				const u_int index = v * 3;
+				stepBuf[v] = Point(prop.Get<double>(index),
+						prop.Get<double>(index + 1), prop.Get<double>(index + 2));
+			}
+			stepVerts.push_back(std::move(stepBuf));
+		}
+		mesh->SetVertexMotion(std::move(stepTimes), std::move(stepVerts));
+	}
+
+	return mesh;
 }
 
 ExtTriangleMeshUPtr Scene::CreateShape(const string &shapeName, const Properties &props) {

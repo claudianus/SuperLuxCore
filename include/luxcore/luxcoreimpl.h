@@ -357,6 +357,9 @@ public:
 		const unsigned int index, std::span<float> data);
 	void SetMeshTriangleAOV(const std::string &meshName,
 		const unsigned int index, std::span<float> data);
+	void SetMeshVertexMotion(const std::string &meshName,
+		const float *times, const size_t timesCount,
+		const float *verts, const size_t vertsCount) override;
 
 	void SaveMesh(const std::string &meshName, const std::string &fileName);
 	void DefineStrands(

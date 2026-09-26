@@ -136,6 +136,20 @@ void ExtMeshCache::SetMeshTriangleAOV(const string &meshName,
 	triMesh.SetTriAOV(index, data);
 }
 
+void ExtMeshCache::SetMeshVertexMotion(const string &meshName,
+	std::vector<float> &&stepTimes,
+	std::vector<VertexBuffer> &&stepVerts) {
+	if (!meshes.IsObjDefined(meshName))
+		throw runtime_error("Unknown mesh " + meshName + " while trying to set vertex motion");
+
+	auto& mesh = static_cast<ExtMesh&>(meshes.GetObj(meshName));
+	if (mesh.GetType() != TYPE_EXT_TRIANGLE)
+		throw runtime_error("Can not set vertex motion of mesh " + meshName + " of type " + ToString(mesh.GetType()));
+
+	auto& triMesh = static_cast<ExtTriangleMesh&>(mesh);
+	triMesh.SetVertexMotion(std::move(stepTimes), std::move(stepVerts));
+}
+
 ExtMeshUPtr ExtMeshCache::DeleteExtMesh(const string &meshName) {
 	if (deleteMeshData) {
 		auto& mesh = static_cast<ExtMesh&>(meshes.GetObj(meshName));

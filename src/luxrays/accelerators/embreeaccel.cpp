@@ -25,6 +25,7 @@
 
 #include "luxrays/core/context.h"
 #include "luxrays/accelerators/embreeaccel.h"
+#include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/utils/strutils.h"
 #include "luxrays/core/hardwareintersectiondevice.h"
 
@@ -56,17 +57,44 @@ EmbreeAccel::~EmbreeAccel() {
 void EmbreeAccel::ExportTriangleMesh(const RTCScene embreeScene, MeshConstRef mesh) const {
 	const RTCGeometry geom = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_TRIANGLE);
 
-	// Share with Embree the mesh vertices
-	auto meshVerts = mesh.GetVertices();
-	rtcSetSharedGeometryBuffer(
-		geom,
-		RTC_BUFFER_TYPE_VERTEX,
-		0,
-		RTC_FORMAT_FLOAT3,
-		meshVerts.data(),
-		0,
-		sizeof(Point),
-		mesh.GetTotalVertexCount());
+	// Per-vertex deformation motion: hand every step buffer to Embree as
+	// an additional vertex timestep. Embree distributes timesteps
+	// uniformly over the ray-time interval, so non-uniform step times are
+	// approximated (same convention as the Metal HWRT path).
+	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mesh);
+	if (extMesh && extMesh->HasVertexMotion()) {
+		const u_int stepCount = extMesh->GetVertexMotionStepCount();
+		if (stepCount > RTC_MAX_TIME_STEP_COUNT)
+			throw std::runtime_error("Embree accelerator supports up to " +
+					ToString(RTC_MAX_TIME_STEP_COUNT) +
+					" motion blur steps, unable to use " + ToString(stepCount));
+
+		rtcSetGeometryTimeStepCount(geom, stepCount);
+		for (u_int step = 0; step < stepCount; ++step) {
+			const auto &stepVerts = extMesh->GetVertexMotionStep(step);
+			rtcSetSharedGeometryBuffer(
+				geom,
+				RTC_BUFFER_TYPE_VERTEX,
+				step,
+				RTC_FORMAT_FLOAT3,
+				stepVerts.GetObjects().data(),
+				0,
+				sizeof(Point),
+				extMesh->GetTotalVertexCount());
+		}
+	} else {
+		// Share with Embree the mesh vertices
+		auto meshVerts = mesh.GetVertices();
+		rtcSetSharedGeometryBuffer(
+			geom,
+			RTC_BUFFER_TYPE_VERTEX,
+			0,
+			RTC_FORMAT_FLOAT3,
+			meshVerts.data(),
+			0,
+			sizeof(Point),
+			mesh.GetTotalVertexCount());
+	}
 
 
 	// Share with Embree the mesh triangles
@@ -93,6 +121,11 @@ void EmbreeAccel::ExportMotionTriangleMesh(const RTCScene embreeScene, const Mot
 	const RTCGeometry geom = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_TRIANGLE);
 	rtcSetGeometryTimeStepCount(geom, ms.times.size());
 
+	// The base mesh may itself carry a vertex-motion series: sample it at
+	// the same step times so transform and deformation compose.
+	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mtm);
+	const bool hasVertMotion = extMesh && extMesh->HasVertexMotion();
+
 	for (u_int step = 0; step < ms.times.size(); ++step) {
 		// Copy the mesh start position vertices
 		Point *vertices = (Point *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, step, RTC_FORMAT_FLOAT3,
@@ -100,8 +133,13 @@ void EmbreeAccel::ExportMotionTriangleMesh(const RTCScene embreeScene, const Mot
 
 		Transform local2World;
 		mtm.GetLocal2World(ms.times[step], local2World);
-		for (u_int i = 0; i < mtm.GetTotalVertexCount(); ++i)
-			vertices[i] = mtm.GetVertex(local2World, i);
+		if (hasVertMotion) {
+			for (u_int i = 0; i < mtm.GetTotalVertexCount(); ++i)
+				vertices[i] = local2World * extMesh->GetVertexAtTime(i, ms.times[step]);
+		} else {
+			for (u_int i = 0; i < mtm.GetTotalVertexCount(); ++i)
+				vertices[i] = mtm.GetVertex(local2World, i);
+		}
 	}
 
 	// Share the mesh triangles
@@ -136,6 +174,14 @@ void EmbreeAccel::Init(
 		if (mtm) {
 			minTime = Min(minTime, mtm->GetMotionSystem().StartTime());
 			maxTime = Max(maxTime, mtm->GetMotionSystem().EndTime());
+		}
+
+		// Per-vertex deformation series have their own shutter times
+		const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(mesh);
+		if (extMesh && extMesh->HasVertexMotion()) {
+			const auto &times = extMesh->GetVertexMotionTimes();
+			minTime = Min(minTime, times.front());
+			maxTime = Max(maxTime, times.back());
 		}
 	}
 
@@ -256,7 +302,9 @@ bool EmbreeAccel::Intersect(const Ray *ray, RayHit *hit) const {
 	embreeRayHit.ray.tfar = ray->maxt;
 
 	embreeRayHit.ray.mask = 0xFFFFFFFF;
-	embreeRayHit.ray.time = (ray->time - minTime) * timeScale;
+	// Clamp so out-of-range shutter times sample the boundary poses, like
+	// the BVH/MBVH and OpenCL motion paths do
+	embreeRayHit.ray.time = Clamp((ray->time - minTime) * timeScale, 0.f, 1.f);
 
 	embreeRayHit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
 	embreeRayHit.hit.primID = RTC_INVALID_GEOMETRY_ID;

@@ -140,6 +140,7 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 		// Build the motion system
 		vector<float> times;
 		vector<Transform> transforms;
+		bool hasTransformSteps = false;
 		for (u_int i = 0;; ++i) {
 			const string prefix = propName + ".motion." + ToString(i);
 			if (!props.IsDefined(prefix +".time"))
@@ -152,17 +153,25 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 
 			const Matrix4x4 mat = props.Get(Property(prefix +
 				".transformation")(Matrix4x4::MAT_IDENTITY)).Get<Matrix4x4>();
+			hasTransformSteps |= props.IsDefined(prefix + ".transformation");
 			// NOTE: Transform for MotionSystem are global2local for scene objects
 			// and not local2global for camera
 			transforms.push_back(Inverse(Transform(mat)));
 		}
 
-		MotionSystem ms(times, transforms);
-		const string motionShapeName = "MotionMesh-" + objName;
-		DefineMesh(motionShapeName, shapeName, ms);
+		// "motion.N.time" is also used by per-vertex deformation motion
+		// (motion.N.vertices on the inlined mesh): when no step carries a
+		// transformation the object transform is static, so skip the
+		// identity motion wrapper and keep the plain mesh path.
+		if (hasTransformSteps) {
+			MotionSystem ms(times, transforms);
+			const string motionShapeName = "MotionMesh-" + objName;
+			DefineMesh(motionShapeName, shapeName, ms);
 
-		//mesh = extMeshCache.GetExtMesh(motionShapeName);
-		meshName = motionShapeName;
+			//mesh = extMeshCache.GetExtMesh(motionShapeName);
+			meshName = motionShapeName;
+		} else
+			meshName = shapeName;
 	} else if (props.IsDefined(propName + ".transformation")) {
 		const Matrix4x4 mat = props.Get(Property(propName +
 			".transformation")(Matrix4x4::MAT_IDENTITY)).Get<Matrix4x4>();

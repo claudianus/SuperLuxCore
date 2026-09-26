@@ -1078,6 +1078,42 @@ void SceneImpl::SetMeshTriangleAOV(const string &meshName,
 	API_END();
 }
 
+void SceneImpl::SetMeshVertexMotion(const std::string &meshName,
+		const float *times, const size_t timesCount,
+		const float *verts, const size_t vertsCount) {
+	API_BEGIN("{}, {}, {}, {}, {}", ToArgString(meshName), timesCount,
+			(const void *)times, vertsCount, (const void *)verts);
+
+	// Invalidate the scene properties cache
+	scenePropertiesCache->Clear();
+
+	auto &slgScene = GetSlgScene();
+	if (!slgScene.IsMeshDefined(meshName))
+		throw std::runtime_error("Unknown mesh " + meshName + " in Scene::SetMeshVertexMotion()");
+
+	if (!times || !timesCount || !verts || !vertsCount)
+		throw std::runtime_error("Empty data in Scene::SetMeshVertexMotion(" + meshName + ")");
+
+	// The flat array is step-major: timesCount slices of nVerts * 3 floats
+	const u_int nVerts = slgScene.GetExtMeshes().GetExtMesh(meshName).GetTotalVertexCount();
+	if (vertsCount != (size_t)timesCount * nVerts * 3)
+		throw std::runtime_error("Wrong vertex motion data size in "
+			"Scene::SetMeshVertexMotion(" + meshName + "): expected "
+			+ ToString(timesCount * nVerts * 3) + " floats, got " + ToString(vertsCount));
+
+	std::vector<float> stepTimes(times, times + timesCount);
+	std::vector<luxrays::VertexBuffer> stepVerts;
+	stepVerts.reserve(timesCount);
+	for (size_t s = 0; s < timesCount; ++s) {
+		stepVerts.emplace_back(std::span<const float>(
+				verts + s * nVerts * 3, nVerts * 3));
+	}
+
+	slgScene.SetMeshVertexMotion(meshName, std::move(stepTimes), std::move(stepVerts));
+
+	API_END();
+}
+
 void SceneImpl::SaveMesh(const string &meshName, const string &fileName) {
 	API_BEGIN("{}, {}", ToArgString(meshName), ToArgString(fileName));
 
