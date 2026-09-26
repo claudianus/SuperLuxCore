@@ -39,6 +39,10 @@ using namespace std::chrono_literals;
 TilePathOCLRenderThread::TilePathOCLRenderThread(const u_int index,
 	HardwareIntersectionDeviceRef device, TilePathOCLRenderEngine *re) : 
 	PathOCLBaseOCLRenderThread(index, device, re) {
+	// TILEPATHOCL relies on multi-state-per-iteration progression
+	// (worstCaseIterationCount = maxDepth * 2 - 1): the wavefront
+	// one-state-per-iteration model is not applicable here.
+	wavefrontQueues = false;
 }
 
 TilePathOCLRenderThread::~TilePathOCLRenderThread() {

@@ -28,7 +28,7 @@ OPENCL_FORCE_INLINE float RandomSampler_GetSample(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const uint index
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global float *samplesData = &samplesDataBuff[gid * RANDOMSAMPLER_TOTAL_U_SIZE];
 
 	switch (index) {
@@ -46,7 +46,7 @@ OPENCL_FORCE_INLINE void RandomSampler_SplatSample(
 		SAMPLER_PARAM_DECL
 		FILM_PARAM_DECL
 		) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	Film_AddSample(sampleResult->pixelX, sampleResult->pixelY,
@@ -66,7 +66,7 @@ OPENCL_FORCE_INLINE void RandomSampler_InitNewSample(__constant const GPUTaskCon
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__constant const Sampler *sampler = &taskConfig->sampler;
 	__global RandomSamplerSharedData *samplerSharedData = (__global RandomSamplerSharedData *)samplerSharedDataBuff;
 	__global RandomSample *samples = (__global RandomSample *)samplesBuff;
@@ -191,7 +191,7 @@ OPENCL_FORCE_INLINE bool RandomSampler_Init(
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__constant const Sampler *sampler = &taskConfig->sampler;
 	__global RandomSample *samples = (__global RandomSample *)samplesBuff;
 	__global RandomSample *sample = &samples[gid];

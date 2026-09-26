@@ -141,6 +141,19 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	advancePathsKernel_MK_SPLAT_SAMPLE = nullptr;
 	advancePathsKernel_MK_NEXT_SAMPLE = nullptr;
 	advancePathsKernel_MK_GENERATE_CAMERA_RAY = nullptr;
+	advancePathsKernel_BuildQueues = nullptr;
+	advancePathsKernel_BucketHistogram = nullptr;
+
+	// Wavefront per-state task queues (B2/E3): opt-in via env
+	// LUXRAYS_WAVEFRONT_QUEUES=1 while the dense path stays the default
+	{
+		const char *env = getenv("LUXRAYS_WAVEFRONT_QUEUES");
+		wavefrontQueues = env && (atoi(env) != 0);
+	}
+	taskQueueBuff = nullptr;
+	taskQueueCountBuff = nullptr;
+	taskQueueBaseBuff = nullptr;
+	taskLambdaBuff = nullptr;
 
 	initKernelArgsCount  = 0;
 
@@ -217,6 +230,10 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&restirReservoirsBuff);
 	intersectionDevice.FreeBuffer(&directLightVolInfosBuff);
 	intersectionDevice.FreeBuffer(&pixelFilterBuff);
+	intersectionDevice.FreeBuffer(&taskQueueBuff);
+	intersectionDevice.FreeBuffer(&taskQueueCountBuff);
+	intersectionDevice.FreeBuffer(&taskQueueBaseBuff);
+	intersectionDevice.FreeBuffer(&taskLambdaBuff);
 
 	// Compiled-scene buffers. These are allocated by the Init*() functions
 	// (InitRender()/EndSceneEdit()) and persist across scene edits, so they are

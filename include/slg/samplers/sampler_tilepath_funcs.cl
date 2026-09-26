@@ -36,7 +36,7 @@ OPENCL_FORCE_INLINE float TilePathSampler_GetSample(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const uint index
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global float *samplesData = &samplesDataBuff[gid * TILEPATHSAMPLER_TOTAL_U_SIZE];
 
 	switch (index) {
@@ -66,7 +66,7 @@ OPENCL_FORCE_INLINE void TilePathSampler_SplatSample(
 		SAMPLER_PARAM_DECL
 		FILM_PARAM_DECL
 		) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 #if defined(RENDER_ENGINE_RTPATHOCL)
@@ -116,7 +116,7 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global TilePathSamplerSharedData *samplerSharedData = (__global TilePathSamplerSharedData *)samplerSharedDataBuff;
 	__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
 	__global TilePathSample *sample = &samples[gid];

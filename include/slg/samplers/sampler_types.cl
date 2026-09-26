@@ -170,11 +170,18 @@ typedef struct {
 		, __global void *samplerSharedDataBuff \
 		, __global void *samplesBuff \
 		, __global float *samplesDataBuff \
-		, __global SampleResult *sampleResultsBuff
+		, __global SampleResult *sampleResultsBuff \
+		/* Wavefront (B2/E3): the calling kernel's task index (its
+		 * remapped WAVEFRONT_GID, or plain get_global_id(0) under the
+		 * dense path). All task-persistent arrays must be indexed by
+		 * this value, never by get_global_id(0) directly, because a
+		 * compacted launch maps lane ids through the task queue. */ \
+		, const size_t gid
 #define SAMPLER_PARAM \
 		, seed \
 		, samplerSharedDataBuff \
 		, samplesBuff \
 		, samplesDataBuff \
-		, sampleResultsBuff
+		, sampleResultsBuff \
+		, gid
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

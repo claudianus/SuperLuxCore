@@ -31,6 +31,7 @@ ask for.
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
+| Wavefront task queues (M1, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` queues (branch `feature/wavefront-queues`) | cornell | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.
@@ -113,5 +114,12 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
   Regression scenes: `scenes/parity/` (emissive-direct → `(4,4,4)`,
   whiteenv → `(0,0,0)`, both exact on Metal now). Any residual CPU↔GPU
   delta on complex scenes should be re-measured post-fix.
+- **Wavefront queues (B2/E3 M1)**: opt-in per-state task queues for the
+  PATHOCL micro-kernel state machine (`LUXRAYS_WAVEFRONT_QUEUES=1`).
+  Validated on OpenCL + Metal vs dense (Monte-Carlo-noise-level parity,
+  queue integrity clean, SOBOL/RANDOM/METROPOLIS). By design a task
+  advances one state hop per iteration — same per-sample result, more
+  iterations. Dense stays default until the A/B benchmark pass (M2
+  λ-bucketing scope). See `dev-tools/wavefront-design.md` §M1 status.
 - Opt-in / experimental stages are **default-off** until regression coverage
   lands.

@@ -34,11 +34,14 @@
 __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
-	// This has to be done by the first kernel to run after RT kernel
-	sampleResult->rayCount += 1;
+	// This has to be done by the first kernel to run after RT kernel.
+	// Under wavefront queues, AdvancePaths_BuildQueues already accounts
+	// the traced ray for every task, so skip it here.
+	if (!wavefrontEnable)
+		sampleResult->rayCount += 1;
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -114,7 +117,7 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 __kernel void AdvancePaths_MK_HIT_NOTHING(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -204,7 +207,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 __kernel void AdvancePaths_MK_HIT_OBJECT(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -450,7 +453,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 __kernel void AdvancePaths_MK_RT_DL(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -587,7 +590,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -677,7 +680,7 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -771,7 +774,7 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -819,7 +822,7 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1125,7 +1128,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1227,7 +1230,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 __kernel void AdvancePaths_MK_NEXT_SAMPLE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1292,7 +1295,7 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 	// Generate a new path and camera ray only it is not TILEPATHOCL: path regeneration
 	// is not used in this case
 #if !defined(RENDER_ENGINE_TILEPATHOCL) && !defined(RENDER_ENGINE_RTPATHOCL)
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1344,6 +1347,87 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 	task->seed = seedValue;
 
 #endif
+}
+
+//------------------------------------------------------------------------------
+// Wavefront queue builder (B2/E3 M1+M2)
+//
+// Runs once per iteration when wavefront queues are enabled. Two
+// device passes with a host prefix step in between:
+//
+//   1. AdvancePaths_BucketHistogram counts each live task into
+//      taskQueueCount[state * SLG_SPECTRAL_BINS + lambda] and caches
+//      its lambda bucket in taskLambda[gid]. The host reads the
+//      counters back, exclusive-prefixes them per state into
+//      taskQueueBase (lambda-contiguous segments inside each flat
+//      per-state queue region) and uploads the result.
+//   2. AdvancePaths_BuildQueues appends every live task to its
+//      lambda segment via an atomic cursor on taskQueueBase, so the
+//      flat per-state queue ends up grouped by hero wavelength.
+//      Lanes of a state launch therefore share the same lambda bin
+//      (spectral coherence) without any extra memory: the queue
+//      stays NUM_STATES * taskCount.
+//
+// lambda is the hero-wavelength bin (SampleResult::spectralHeroAlive,
+// bits [3..4]); non-spectral builds bucket everything into lambda 0,
+// reproducing the M1 flat append order. Tasks in MK_DONE are terminal
+// and not queued. BuildQueues also accounts the per-iteration traced
+// ray on every task, matching the dense-mode semantics of
+// AdvancePaths_MK_RT_NEXT_VERTEX (which skips the increment under
+// wavefront).
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE uint Wavefront_TaskLambda(
+		__global const SampleResult* restrict sampleResult) {
+#if defined(SLG_SPECTRAL)
+	const uint hero = (sampleResult->spectralHeroAlive & SLG_SW_HERO_MASK) >>
+			SLG_SW_HERO_SHIFT;
+	return min(hero, SLG_SPECTRAL_BINS - 1u);
+#else
+	return 0u;
+#endif
+}
+
+__kernel void AdvancePaths_BucketHistogram(
+		__global GPUTaskState *tasksState,
+		__global SampleResult *sampleResultsBuff,
+		__global uint *taskQueueCount,
+		__global uint *taskLambda
+		) {
+	const size_t gid = get_global_id(0);
+
+	const uint state = (uint)tasksState[gid].state;
+	if (state == MK_DONE)
+		return;
+
+	const uint lambda = Wavefront_TaskLambda(&sampleResultsBuff[gid]);
+	taskLambda[gid] = lambda;
+	atomic_inc(&taskQueueCount[state * SLG_SPECTRAL_BINS + lambda]);
+}
+
+__kernel void AdvancePaths_BuildQueues(
+		__global GPUTaskState *tasksState,
+		__global SampleResult *sampleResultsBuff,
+		__global uint *taskQueueBuf,
+		__global uint *taskQueueBase,
+		__global uint *taskLambda,
+		const uint taskQueueStride
+		) {
+	const size_t gid = get_global_id(0);
+
+	// This has to be done once per iteration for each task while the
+	// RT pass is still dense (every task's ray is traced).
+	sampleResultsBuff[gid].rayCount += 1;
+
+	const uint state = (uint)tasksState[gid].state;
+	if (state == MK_DONE)
+		return;
+
+	// taskQueueBase doubles as the append cursor: the uploaded segment
+	// base advances on every append, ending at the segment end.
+	const uint slot = atomic_inc(
+			&taskQueueBase[state * SLG_SPECTRAL_BINS + taskLambda[gid]]);
+	taskQueueBuf[state * taskQueueStride + slot] = gid;
 }
 
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

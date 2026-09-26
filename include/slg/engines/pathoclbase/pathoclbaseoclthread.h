@@ -43,6 +43,15 @@ namespace ocl { namespace pathoclbase {
 
 class PathOCLBaseRenderEngine;
 
+// Number of per-state wavefront task queues: mirrors the PathState
+// enum in pathoclbase_datatypes.cl (MK_* states 0..11)
+inline constexpr u_int WAVEFRONT_NUM_STATES = 12;
+// Spectral hero-wavelength buckets per state queue (B2/E3 M2). Matches
+// SLG_SPECTRAL_BINS (3 spectral bins ride in the float3 channels).
+// Non-spectral builds bucket everything into lambda 0, which reproduces
+// the M1 flat queue layout exactly.
+inline constexpr u_int WAVEFRONT_NUM_LAMBDA = 3;
+
 //------------------------------------------------------------------------------
 // Path Tracing GPU-only render threads
 // (base class for all types of OCL path tracers)
@@ -181,7 +190,7 @@ protected:
 	void InitSampleResultsBuffer();
 
 	void SetInitKernelArgs(const u_int filmIndex);
-	void SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex);
+	void SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
 
@@ -193,6 +202,7 @@ protected:
 	);
 
 	void EnqueueAdvancePathsKernel();
+	void EnqueueAdvancePathsWavefront();
 
 	static luxrays::oclKernelCache *AllocKernelCache(const std::string &type);
 	static void GetKernelParamters(std::vector<std::string> &params,
@@ -305,7 +315,35 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_CAMERA_RAY;
+	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
+	// queues once per iteration from the authoritative taskState->state;
+	// BucketHistogram counts the per-(state, lambda) task population
+	// first so the host can compute the lambda-segment bases.
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_BuildQueues;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_BucketHistogram;
 	size_t advancePathsWorkGroupSize;
+
+	// Wavefront queues (B2/E3): taskQueueBuff holds
+	// WAVEFRONT_NUM_STATES * taskCount uint task indices laid out flat
+	// per state, with the M2 lambda-bucketed ordering inside each
+	// segment. taskQueueCountBuff holds WAVEFRONT_NUM_STATES *
+	// WAVEFRONT_NUM_LAMBDA counters (histogram output); taskQueueBaseBuff
+	// holds the same-shaped per-(state, lambda) segment bases uploaded
+	// by the host and consumed as atomic cursors by BuildQueues;
+	// taskLambdaBuff caches the per-task lambda bucket written by the
+	// histogram kernel. Allocated only when wavefrontQueues is enabled
+	// (env LUXRAYS_WAVEFRONT_QUEUES=1).
+	luxrays::HardwareDeviceBuffer *taskQueueBuff;
+	luxrays::HardwareDeviceBuffer *taskQueueCountBuff;
+	luxrays::HardwareDeviceBuffer *taskQueueBaseBuff;
+	luxrays::HardwareDeviceBuffer *taskLambdaBuff;
+	bool wavefrontQueues;
+	// Host-side snapshot of the per-(state, lambda) queue counters,
+	// refreshed by EnqueueAdvancePathsWavefront each iteration;
+	// wavefrontQueueTotals caches the per-state sums used for launch
+	// sizing.
+	std::vector<u_int> wavefrontQueueCounts;
+	std::vector<u_int> wavefrontQueueTotals;
 
 	std::unique_ptr<slg::ocl::pathoclbase::GPUTaskStats[]> gpuTaskStats;
 

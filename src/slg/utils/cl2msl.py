@@ -456,6 +456,15 @@ def _fn_spans(text: str):
     return spans
 
 
+def _code_only(body: str) -> str:
+    """Remove comments for dependency DETECTION only (the emitted text
+    keeps them). Block comments and whole-line // comments are stripped;
+    inline // after code is kept so string literals containing '//'
+    cannot truncate real code."""
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    return re.sub(r"^[ \t]*//[^\n]*$", "", body, flags=re.M)
+
+
 def propagate_gid(text: str) -> str:
     """Thread the work-item id through helper call graphs (see the
     gid propagation note in main()). Fixpoint over: functions whose
@@ -466,7 +475,7 @@ def propagate_gid(text: str) -> str:
     fn_map = {}
     for (name, hs, bo, bc) in _fn_spans(text):
         fn_map[name] = (hs, bo, bc)
-        if "get_global_id(0)" in text[bo:bc]:
+        if "get_global_id(0)" in _code_only(text[bo:bc]):
             needs.add(name)
     if not needs:
         return text
@@ -477,7 +486,7 @@ def propagate_gid(text: str) -> str:
         for name, (hs, bo, bc) in fn_map.items():
             if name in needs:
                 continue
-            body = text[bo : bc + 1]
+            body = _code_only(text[bo : bc + 1])
             for callee in needs:
                 if callee == name:
                     continue
@@ -525,6 +534,13 @@ def propagate_gid(text: str) -> str:
             inj = "thread const size_t& gid"
         else:
             inj = ", thread const size_t& gid"
+        # Skip injection when the signature already has a gid parameter
+        # (e.g. via SAMPLER_PARAM_DECL, which may already be expanded to
+        # 'const size_t gid' at this stage). Injecting a second gid
+        # parameter would collide.
+        if "SAMPLER_PARAM_DECL" in text[hs:sig_close] or \
+                re.search(r"\bgid\b", text[hs:sig_close]):
+            continue
         edits.append((sig_close, "", inj))
     # pass 2: call sites of needing functions get ', gid' appended
     # before the matching close paren of the call. Definition headers
@@ -557,9 +573,30 @@ def propagate_gid(text: str) -> str:
                 fhs, fbo, _ = fresh_spans[name]
                 if fhs <= m.start() < fbo:
                     continue
-            # does the call already pass gid? (generated earlier pass)
+            # does the call already pass gid as its last top-level
+            # argument? (generated earlier pass, or through
+            # SAMPLER_PARAM which expands to ", gid"). seg excludes
+            # the closing paren, so scan backward at depth 0 for the
+            # last argument instead of matching a trailing paren.
             seg = text[m.start() : call_close]
-            if re.search(r",\s*gid\s*\)$", seg) or re.search(r"\(\s*gid\s*\)$", seg):
+            if "SAMPLER_PARAM" in seg:
+                continue
+            depth = 0
+            last_arg = ""
+            call_open = cs - m.start()
+            for ci in range(len(seg) - 1, -1, -1):
+                ch = seg[ci]
+                if ch == ")":
+                    depth += 1
+                elif ch == "(":
+                    depth -= 1
+                    if ci == call_open:
+                        last_arg = seg[ci + 1:].strip()
+                        break
+                elif ch == "," and depth == 0:
+                    last_arg = seg[ci + 1:].strip()
+                    break
+            if last_arg == "gid":
                 continue
             inner = text[cs + 1 : call_close].rstrip()
             if not inner:

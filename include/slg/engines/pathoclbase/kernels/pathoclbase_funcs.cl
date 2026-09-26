@@ -41,7 +41,7 @@ OPENCL_FORCE_INLINE void InitSampleResult(
 		const uint filmSubRegion2, const uint filmSubRegion3,
 		__global float *pixelFilterDistribution
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	SampleResult_Init(&taskConfig->film, sampleResult);
@@ -97,7 +97,7 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 		const uint tileStartX, const uint tileStartY
 #endif
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	EyePathInfo_Init(pathInfo);
@@ -2863,7 +2863,46 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		 * dereferenced under RAYHIT_CURVE_FLAG hits. */ \
 		, __global const float4* restrict curveCps \
 		, __global const uint* restrict curveSegIndices \
-		, __global const float4* restrict curveCpAttrs
+		, __global const float4* restrict curveCpAttrs \
+		/* Wavefront per-state task queues (B2/E3): when
+		 * wavefrontEnable != 0, lane gid maps to
+		 * taskQueueBuf[taskQueueState * taskQueueStride + gid]
+		 * instead of indexing task arrays directly. A per-iteration
+		 * BuildQueues kernel refills the queues from the
+		 * authoritative taskState->state. taskQueueCount holds
+		 * NUM_STATES * SLG_SPECTRAL_BINS histogram counters
+		 * (per-state totals are their sums; M2 lambda bucketing). */ \
+		, __global const uint* restrict taskQueueBuf \
+		, __global const uint* restrict taskQueueCount \
+		, const uint taskQueueStride \
+		, const uint taskQueueState \
+		, const uint wavefrontEnable
+
+// Wavefront lane -> task index mapping. Under wavefrontEnable, lane
+// gid indexes this kernel's state queue; otherwise the dense mapping
+// (gid == task index) is used. Task data keeps being indexed by the
+// returned value, so downstream code is unchanged.
+#define WAVEFRONT_GID \
+	(wavefrontEnable ? \
+		taskQueueBuf[taskQueueState * taskQueueStride + get_global_id(0)] : \
+		get_global_id(0))
+
+// Wavefront lane bounds check + gid mapping. Per-state launches are
+// rounded up to the workgroup size (OpenCL requires global size to be
+// a multiple of it); lanes beyond the compacted queue length exit
+// before dereferencing the queue, whose tail slots hold stale task
+// indices from the previous iteration. The state launch covers the
+// sum of the per-(state, lambda) histogram counters (M2 lambda
+// bucketing keeps the queue layout flat). Must be the first statement
+// of every AdvancePaths_MK_* kernel.
+#define WAVEFRONT_GUARD \
+	if (wavefrontEnable && \
+			get_global_id(0) >= \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS] + \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 1] + \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 2]) \
+		return; \
+	const size_t gid = WAVEFRONT_GID;
 
 
 //------------------------------------------------------------------------------

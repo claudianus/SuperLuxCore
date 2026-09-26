@@ -44,7 +44,7 @@ OPENCL_FORCE_INLINE float PMJ02Sampler_GetSample(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const uint index
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 
 	switch (index) {
 		case IDX_SCREEN_X: {
@@ -104,7 +104,7 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_SplatSample(
 		SAMPLER_PARAM_DECL
 		FILM_PARAM_DECL
 		) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	Film_AddSample(sampleResult->pixelX, sampleResult->pixelY,
@@ -125,7 +125,7 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__constant const Sampler *sampler = &taskConfig->sampler;
 	__global SobolSamplerSharedData *samplerSharedData = (__global SobolSamplerSharedData *)samplerSharedDataBuff;
 	__global RandomSample *samples = (__global RandomSample *)samplesBuff;
@@ -271,7 +271,7 @@ OPENCL_FORCE_INLINE bool PMJ02Sampler_Init(__constant const GPUTaskConfiguration
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
-	const size_t gid = get_global_id(0);
+	// gid: task index supplied by the caller (wavefront-safe)
 	__constant const Sampler *sampler = &taskConfig->sampler;
 	__global RandomSample *samples = (__global RandomSample *)samplesBuff;
 	__global RandomSample *sample = &samples[gid];
