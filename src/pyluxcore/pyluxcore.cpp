@@ -703,7 +703,13 @@ static void Film_GetOutputFloat1(
 
         float *buffer = (float *)view.buf;
 
-        film.GetOutput<float>(type, buffer, index, executeImagePipeline);
+        {
+          // GetOutput runs a full film download + the image pipeline: release
+          // the GIL so viewport callers can run it on a worker thread without
+          // freezing Blender's UI thread.
+          py::gil_scoped_release release;
+          film.GetOutput<float>(type, buffer, index, executeImagePipeline);
+        }
 
         PyBuffer_Release(&view);
       } else {
@@ -735,7 +741,10 @@ static void Film_GetOutputFloat1(
               throw std::runtime_error("Film Output not available: " + luxrays::ToString(type));
             }
 
-            film.GetOutput<float>(type, bglBuffer->buf.asfloat, index, executeImagePipeline);
+            {
+              py::gil_scoped_release release;
+              film.GetOutput<float>(type, bglBuffer->buf.asfloat, index, executeImagePipeline);
+            }
           } else
             throw std::runtime_error("Not enough space in the Blender bgl.Buffer of Film.GetOutputFloat() method: " +
                 luxrays::ToString(bglBuffer->dimensions[0] * sizeof(float)) + " instead of " + luxrays::ToString(outputSize));
@@ -2564,7 +2573,8 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("AsyncExecuteImagePipeline", &luxcore::detail::FilmImpl::AsyncExecuteImagePipeline)
     .def("HasDoneAsyncExecuteImagePipeline", &luxcore::detail::FilmImpl::HasDoneAsyncExecuteImagePipeline)
     .def("WaitAsyncExecuteImagePipeline", &luxcore::detail::FilmImpl::WaitAsyncExecuteImagePipeline)
-	.def("ApplyOIDN", &Film_ApplyOIDN)
+	.def("ApplyOIDN", &Film_ApplyOIDN,
+		py::call_guard<py::gil_scoped_release>())
   ;
 
   //--------------------------------------------------------------------------

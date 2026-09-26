@@ -102,8 +102,13 @@ opencl.task.count = {TASK_COUNT}
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
     ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
+    # Parity gates are only meaningful if the leg actually ran on the
+    # selected backend - check the per-device render stats keys.
+    used = {n.split("stats.renderengine.devices.")[1].rsplit("-", 1)[0]
+            for n in ses.GetStats().GetAllNames()
+            if n.startswith("stats.renderengine.devices.")}
     ses.Stop()
-    return rgb.reshape(HEIGHT, WIDTH, 3)
+    return rgb.reshape(HEIGHT, WIDTH, 3), used
 
 
 def parity_check(tag, ocl, mtl, cpu):
@@ -147,11 +152,18 @@ def main():
 
     for image_file, tag in (("sky.exr", "T1.half-exr"),
                             ("image.png", "T2.float-png")):
-        cpu = render(image_file, engine="PATHCPU", spp=SPP)
-        ocl = render(image_file, sel=ocl_mask)
-        mtl = render(image_file, sel=mtl_mask)
+        cpu, _ = render(image_file, engine="PATHCPU", spp=SPP)
+        ocl, ocl_dev = render(image_file, sel=ocl_mask)
+        mtl, mtl_dev = render(image_file, sel=mtl_mask)
         print(f"  [{tag}] cpu={cpu.mean():.6f} ocl={ocl.mean():.6f} "
               f"mtl={mtl.mean():.6f}", flush=True)
+        print(f"       ocl devices={sorted(ocl_dev)} "
+              f"mtl devices={sorted(mtl_dev)}", flush=True)
+        record(f"{tag}.device-assert",
+               any("Metal" in d for d in mtl_dev) and
+               any("OpenCL" in d for d in ocl_dev),
+               "Metal leg must run on MetalIntersect, OpenCL leg on an "
+               "OpenCL intersect device")
         parity_check(tag, ocl, mtl, cpu)
 
 

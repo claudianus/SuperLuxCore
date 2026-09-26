@@ -816,7 +816,18 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 						if (thisPtr < directBound.size())
 							directBound[thisPtr] = true;
 					} else {
-						// table entry: record the gpu address
+						// Table entry: record the gpu address. Buffers
+						// reached through gpuAddress (not setBuffer) are
+						// NOT automatically resident for the dispatch -
+						// without useResource the driver may leave their
+						// pages unmapped and reads silently return zeros
+						// (observed: curveCps/curveSegIndices read as 0 ->
+						// zero curve tangent -> NaN BSDF frame). Read|Write
+						// because table members include film/task-queue
+						// outputs; the extra usage only widens hazard
+						// tracking, residency is the required part.
+						[e useResource:mtlBuff
+								usage:MTLResourceUsageRead | MTLResourceUsageWrite];
 						const size_t toff = m.ptrTableOffsets[thisPtr];
 						if (toff + 8 <= ptrBundle.size()) {
 							const uint64_t addr = mtlBuff.gpuAddress;

@@ -67,8 +67,21 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 		// For a round tube: dpdu ~ world-space strand tangent, dpdv ~
 		// shading normal, normal curvature ignored (sufficient for hair).
 		const float3 tObj = Curve_GetTangentObj(meshIndex, triIndex, b1 EXTMESH_PARAM);
-		const float3 tWorld = (meshDescs[meshIndex].type == TYPE_EXT_TRIANGLE) ?
+		float3 tWorld = (meshDescs[meshIndex].type == TYPE_EXT_TRIANGLE) ?
 				tObj : Transform_ApplyVector(&hitPoint->localToWorld, tObj);
+		// A degenerate curve segment (collapsed or duplicated control
+		// points -> zero-length Catmull-Rom window, or a tangent that
+		// numerically aligns with the tube normal) makes dpdu/dpdv
+		// degenerate; Frame_Set would then normalize a zero vector and
+		// the whole shading frame turns NaN (NaN continuation rays).
+		// The tube surface is rotationally symmetric about the strand
+		// axis, so any unit vector perpendicular to the shading normal
+		// is an equally valid dpdu.
+		if (length(cross(shadeN, tWorld)) < 1e-10f) {
+			const float3 refAxis = (fabs(shadeN.x) < .9f) ?
+					MAKE_FLOAT3(1.f, 0.f, 0.f) : MAKE_FLOAT3(0.f, 1.f, 0.f);
+			tWorld = normalize(cross(shadeN, refAxis));
+		}
 		dpdu = tWorld;
 		dpdv = cross(shadeN, dpdu);
 		dndu = ZERO;

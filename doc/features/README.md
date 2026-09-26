@@ -18,7 +18,7 @@ ask for.
 
 | Feature | Doc | Key commits | Test scene(s) | Platforms |
 |---|---|---|---|---|
-| Metal backend + HWRT | [metal-backend.md](metal-backend.md) + [../metal_backend_design.md](../metal_backend_design.md) | `562a3bf5f` device+HWRT, `9ffadfb12` cl2msl, `ca83e8ceb` pipeline, `30dc89ab3` film | luxball, cornell | **Apple only** |
+| Metal backend + HWRT | [metal-backend.md](metal-backend.md) + [../metal_backend_design.md](../metal_backend_design.md) | `562a3bf5f` device+HWRT, `9ffadfb12` cl2msl, `ca83e8ceb` pipeline, `30dc89ab3` film; primitive-AS residency `99513eaf8` | luxball, cornell, lightinstances | **Apple only** |
 | ReSTIR DI | [restir-di.md](restir-di.md) | `db4600a18`; visibility target `df93221fe`/`c4068c653`; screen-space merge `79a5f3b8f`; shift `b7b9c56ed`/`a77a32c5e`; clamp `2b2ee77bf`; vis-aware merge `b7b8a66ea` | manylights | CPU/OCL/Metal |
 | ReSTIR GI | [../../dev-tools/restir-gi-design.md](../../dev-tools/restir-gi-design.md) | CPU `be6c6d656`; spatial `4fa074565`; GPU `afc202ac6`; e19 10/10 CPU+GPU | cornell | CPU/OCL/Metal |
 | MNEE | [mnee.md](mnee.md) | `8363ad339` | causticcube | CPU/OCL/Metal |
@@ -30,7 +30,7 @@ ask for.
 | Gabor noise texture | [textures.md](textures.md) | `c8e96ee28` | `dev-tools/e11_gabor_test.py` (14 checks) | CPU/OCL/Metal |
 | Hair + Disney | [hair.md](hair.md) + [disney.md](disney.md) | `a8785faa2` | strands, hairmat-test, cornell-disney | CPU/OCL/Metal |
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
-| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn + BlendLuxCore adapter A/B (parity < MC noise) | **Apple only** (Metal HWRT) |
+| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd`; float3 packing `b85bfa07a`; gpuAddress residency fix `a728e02bf` | scenes/strands/hair.scn + `dev-tools/e22_metal_curve_test.py` (coverage/parity/indirect gates) | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material+geometry deltas (A6-III) `2579a019`, `c28f40f0` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |

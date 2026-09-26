@@ -703,16 +703,30 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 				const auto &times = vmMesh->GetVertexMotionTimes();
 				const auto &cpSteps = curveMesh->GetCurveMotionSteps();
 				const auto &segs = curveMesh->GetCurveSegIndices();
-				const size_t stepBytes =
-						cpSteps[0].size() * sizeof(CurveControlPoint);
+				const size_t cpsPerStep = cpSteps[0].size();
+				const size_t cpStepBytes = cpsPerStep * 3 * sizeof(float);
+				const size_t radStepBytes = cpsPerStep * sizeof(float);
 
+				// Packed float3 positions and float radii per keyframe,
+				// in separate buffers (same layout as the static path).
 				id<MTLBuffer> allCpBuf = [mtlDev
-						newBufferWithLength:stepBytes * stepCount
+						newBufferWithLength:cpStepBytes * stepCount
+						options:MTLResourceStorageModeShared];
+				id<MTLBuffer> allRadBuf = [mtlDev
+						newBufferWithLength:radStepBytes * stepCount
 						options:MTLResourceStorageModeShared];
 				ownedPrimBuffers.push_back(allCpBuf);
-				for (u_int s = 0; s < stepCount; ++s)
-					memcpy((char *)allCpBuf.contents + s * stepBytes,
-							cpSteps[s].data(), stepBytes);
+				ownedPrimBuffers.push_back(allRadBuf);
+				for (u_int s = 0; s < stepCount; ++s) {
+					float *pd = (float *)allCpBuf.contents + s * cpsPerStep * 3;
+					float *rd = (float *)allRadBuf.contents + s * cpsPerStep;
+					for (size_t i = 0; i < cpsPerStep; ++i) {
+						pd[3 * i + 0] = cpSteps[s][i].x;
+						pd[3 * i + 1] = cpSteps[s][i].y;
+						pd[3 * i + 2] = cpSteps[s][i].z;
+						rd[i] = cpSteps[s][i].radius;
+					}
+				}
 
 				NSMutableArray<MTLMotionKeyframeData *> *cpKeyBufs =
 						[NSMutableArray arrayWithCapacity:stepCount];
@@ -721,11 +735,11 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 				for (u_int s = 0; s < stepCount; ++s) {
 					MTLMotionKeyframeData *kd = [MTLMotionKeyframeData data];
 					kd.buffer = allCpBuf;
-					kd.offset = s * stepBytes;
+					kd.offset = s * cpStepBytes;
 					[cpKeyBufs addObject:kd];
 					MTLMotionKeyframeData *rkd = [MTLMotionKeyframeData data];
-					rkd.buffer = allCpBuf;
-					rkd.offset = s * stepBytes + offsetof(CurveControlPoint, radius);
+					rkd.buffer = allRadBuf;
+					rkd.offset = s * radStepBytes;
 					[radKeyBufs addObject:rkd];
 				}
 				[primRetainBag addObject:cpKeyBufs];
@@ -742,10 +756,10 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 					mcgeo.controlPointBuffers = cpKeyBufs;
 					mcgeo.controlPointCount = cpSteps[0].size();
 					mcgeo.controlPointFormat = MTLAttributeFormatFloat3;
-					mcgeo.controlPointStride = sizeof(CurveControlPoint);
+					mcgeo.controlPointStride = 3 * sizeof(float);
 					mcgeo.radiusBuffers = radKeyBufs;
 					mcgeo.radiusFormat = MTLAttributeFormatFloat;
-					mcgeo.radiusStride = sizeof(CurveControlPoint);
+					mcgeo.radiusStride = sizeof(float);
 					mcgeo.indexBuffer = idxBuf;
 					mcgeo.indexBufferOffset = 0;
 					mcgeo.indexType = MTLIndexTypeUInt32;
@@ -824,15 +838,29 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 				const auto &cps = curveMesh->GetCurveCps();
 				const auto &segs = curveMesh->GetCurveSegIndices();
 
-				// One float4 (xyz + radius) per control point: the radius
-				// view aliases the same buffer at offset .w.
-				id<MTLBuffer> cpBuf = [mtlDev newBufferWithBytes:cps.data()
-						length:cps.size() * sizeof(CurveControlPoint)
+				// Packed layout for the AS: positions float3[] + radii
+				// float[] in separate buffers (matches Cycles' Metal BVH;
+				// aliasing radius into the float4 .w lane relied on
+				// undocumented stride semantics).
+				std::vector<float> posPacked(cps.size() * 3);
+				std::vector<float> radPacked(cps.size());
+				for (size_t i = 0; i < cps.size(); ++i) {
+					posPacked[3 * i + 0] = cps[i].x;
+					posPacked[3 * i + 1] = cps[i].y;
+					posPacked[3 * i + 2] = cps[i].z;
+					radPacked[i] = cps[i].radius;
+				}
+				id<MTLBuffer> cpBuf = [mtlDev newBufferWithBytes:posPacked.data()
+						length:posPacked.size() * sizeof(float)
+						options:MTLResourceStorageModeShared];
+				id<MTLBuffer> radBuf = [mtlDev newBufferWithBytes:radPacked.data()
+						length:radPacked.size() * sizeof(float)
 						options:MTLResourceStorageModeShared];
 				id<MTLBuffer> idxBuf = [mtlDev newBufferWithBytes:segs.data()
 						length:segs.size() * sizeof(u_int)
 						options:MTLResourceStorageModeShared];
 				ownedPrimBuffers.push_back(cpBuf);
+				ownedPrimBuffers.push_back(radBuf);
 				ownedPrimBuffers.push_back(idxBuf);
 
 				if (@available(macOS 14.0, *)) {
@@ -842,11 +870,11 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 					cgeo.controlPointBufferOffset = 0;
 					cgeo.controlPointCount = cps.size();
 					cgeo.controlPointFormat = MTLAttributeFormatFloat3;
-					cgeo.controlPointStride = sizeof(CurveControlPoint);
-					cgeo.radiusBuffer = cpBuf;
-					cgeo.radiusBufferOffset = offsetof(CurveControlPoint, radius);
+					cgeo.controlPointStride = 3 * sizeof(float);
+					cgeo.radiusBuffer = radBuf;
+					cgeo.radiusBufferOffset = 0;
 					cgeo.radiusFormat = MTLAttributeFormatFloat;
-					cgeo.radiusStride = sizeof(CurveControlPoint);
+					cgeo.radiusStride = sizeof(float);
 					cgeo.indexBuffer = idxBuf;
 					cgeo.indexBufferOffset = 0;
 					cgeo.indexType = MTLIndexTypeUInt32;
@@ -1152,6 +1180,16 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 		u_int rc = rayCount;
 		[enc setBytes:&rc length:sizeof(rc) atIndex:2];
 		[enc setAccelerationStructure:instanceAS atBufferIndex:3];
+		// setAccelerationStructure only covers the top-level instance AS:
+		// the primitive structures it references are reached transitively
+		// during traversal, so each must be made resident explicitly.
+		// Without this the driver can page a primitive AS out under memory
+		// pressure and every instance referencing it silently misses
+		// (non-deterministic energy loss on many-instance scenes).
+		if (!primitiveAS.empty())
+			[enc useResources:(const id<MTLResource> *)primitiveAS.data()
+					count:(NSUInteger)primitiveAS.size()
+					usage:MTLResourceUsageRead];
 
 		const MTLSize grid = MTLSizeMake(rayCount, 1, 1);
 		const MTLSize tg = MTLSizeMake(workGroupSize, 1, 1);
