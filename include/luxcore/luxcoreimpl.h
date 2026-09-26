@@ -360,6 +360,9 @@ public:
 	void SetMeshVertexMotion(const std::string &meshName,
 		const float *times, const size_t timesCount,
 		const float *verts, const size_t vertsCount) override;
+	void SetStrandsVertexMotion(const std::string &meshName,
+		const float *times, const size_t timesCount,
+		const float *points, const size_t pointsCount) override;
 
 	void SaveMesh(const std::string &meshName, const std::string &fileName);
 	void DefineStrands(

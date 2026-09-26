@@ -1078,6 +1078,27 @@ public:
 		const unsigned int solidSideCount, const bool solidCapBottom, const bool solidCapTop,
 		const bool useCameraPosition) = 0;
 	/*!
+	 * \brief Set deformation motion blur for a strands-defined mesh: a
+	 * series of shutter-time samples, each holding the flat xyz
+	 * control-point positions of every strand (same strand layout and
+	 * point counts as the DefineStrands input — constant topology).
+	 * Each step is re-tessellated internally into a vertex-motion series,
+	 * so both CPU/software and GPU backends see the animated hair.
+	 * Strand radii and shading attributes stay the base pose's.
+	 * NOTE: the arrays can be freed after the call.
+	 *
+	 * \param meshName is the name of a mesh defined by DefineStrands.
+	 * \param times is a pointer to an array of shutter times.
+	 * \param timesCount is the number of time samples (must be >= 2).
+	 * \param points is a pointer to timesCount * controlPointCount * 3
+	 * floats in step-major order, where controlPointCount is the total
+	 * number of strand control points passed to DefineStrands.
+	 * \param pointsCount is the number of floats in points.
+	 */
+	virtual void SetStrandsVertexMotion(const std::string &meshName,
+		const float *times, const size_t timesCount,
+		const float *points, const size_t pointsCount) = 0;
+	/*!
 	 * \brief Check if a mesh with the given name has been defined.
 	 *
 	 * \param meshName is the name to check.

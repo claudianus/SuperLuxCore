@@ -1642,6 +1642,43 @@ static void Scene_SetMeshVertexMotion(
       t.data(0), timesCount, flatVerts.data(), flatVerts.size());
 }
 
+// Strand deformation motion (E9 phase 5b): `times` is a (S,) float
+// array, `pointsPerStep` a list of S (P,3) float arrays of strand
+// control-point positions — same strand layout/point counts as the
+// DefineStrands input. Steps are re-tessellated inside the scene.
+static void Scene_SetStrandsVertexMotion(
+    const SceneImplPtr & scene,
+    const std::string &meshName,
+    const py_float_array times,
+    const std::vector<py_float_array> &pointsPerStep
+) {
+  auto t = times.unchecked<1>();
+  const size_t timesCount = t.shape(0);
+  if (pointsPerStep.size() != timesCount)
+    throw std::runtime_error("Scene.SetStrandsVertexMotion(): number of "
+        "point steps differs from number of times");
+
+  std::vector<float> flatPoints;
+  size_t nPoints = 0;
+  for (size_t s = 0; s < timesCount; ++s) {
+    auto v = pointsPerStep[s].unchecked<2>();
+    if (v.shape(1) != 3)
+      throw std::runtime_error("Scene.SetStrandsVertexMotion(): point step "
+          + luxrays::ToString(s) + " must have shape [P,3]");
+    if (s == 0)
+      nPoints = v.shape(0);
+    else if ((size_t)v.shape(0) != nPoints)
+      throw std::runtime_error("Scene.SetStrandsVertexMotion(): point steps "
+          "have different control-point counts");
+
+    const float *src = v.data(0, 0);
+    flatPoints.insert(flatPoints.end(), src, src + (size_t)v.shape(0) * 3);
+  }
+
+  scene->SetStrandsVertexMotion(meshName,
+      t.data(0), timesCount, flatPoints.data(), flatPoints.size());
+}
+
 static void Scene_DefineStrands(
     const SceneImplPtr & scene,
     const std::string &shapeName,
@@ -2601,6 +2638,7 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("SetMeshVertexAOV", &Scene_SetMeshVertexAOV)
     .def("SetMeshTriangleAOV", &Scene_SetMeshTriangleAOV)
     .def("SetMeshVertexMotion", &Scene_SetMeshVertexMotion)
+    .def("SetStrandsVertexMotion", &Scene_SetStrandsVertexMotion)
     .def("SetMeshAppliedTransformation", &Scene_SetMeshAppliedTransformation)
     .def("SaveMesh", &luxcore::detail::SceneImpl::SaveMesh)
     .def("DefineStrands", &Scene_DefineStrands)

@@ -412,6 +412,16 @@ void ExtTriangleMesh::ApplyTransform(const Transform &trans) {
 			cp.z = p.z;
 			cp.radius *= rScale;
 		}
+		// Per-step curve control points share the same object space.
+		for (auto &stepCps : curveCpsMotionSteps) {
+			for (auto &cp : stepCps) {
+				const Point p = trans * Point(cp.x, cp.y, cp.z);
+				cp.x = p.x;
+				cp.y = p.y;
+				cp.z = p.z;
+				cp.radius *= rScale;
+			}
+		}
 	}
 
 	// Vertex-motion steps are object-space positions like `vertices`
@@ -516,6 +526,19 @@ ExtTriangleMeshUPtr ExtTriangleMesh::CopyExt(
 		}
 		m->SetVertexMotion(std::vector<float>(motionVertTimes), std::move(steps));
 	}
+
+	// The strand re-tessellation recipe survives copies (it describes the
+	// source strand data, not the vertex buffers); it is dropped when the
+	// vertex set is overridden since point counts would no longer match.
+	if (!meshVertices.has_value())
+		m->strandMotionRecipe = strandMotionRecipe;
+
+	// Per-step curve control points share the vertex-motion series times
+	// and the same CP layout as the base — valid only when the vertex
+	// set is carried over unchanged.
+	if (!meshVertices.has_value() && HasCurveMotion())
+		m->SetCurveMotion(
+				std::vector<std::vector<CurveControlPoint>>(curveCpsMotionSteps));
 
 	// Copy AOV too
 	CopyAOV(*m);

@@ -413,6 +413,17 @@ public:
 	const std::vector<u_int> &GetCurveSegIndices() const { return curveSegIndices; }
 	const std::vector<CurveCpAttr> &GetCurveCpAttrs() const { return curveCpAttrs; }
 
+	// Per-step curve control points, parallel to the vertex-motion series
+	// (SetStrandsVertexMotion populates both). Step s has the same CP
+	// layout as curveCps — segment indices and CP attributes are shared.
+	void SetCurveMotion(std::vector<std::vector<CurveControlPoint>> &&steps) {
+		curveCpsMotionSteps = std::move(steps);
+	}
+	bool HasCurveMotion() const { return !curveCpsMotionSteps.empty(); }
+	const std::vector<std::vector<CurveControlPoint>> &GetCurveMotionSteps() const {
+		return curveCpsMotionSteps;
+	}
+
 	// Per-vertex deformation motion blur (see
 	// dev-tools/deformation-motion-blur-design.md): a series of
 	// shutter-time samples, each a full vertex-position buffer with the
@@ -428,6 +439,7 @@ public:
 	void ClearVertexMotion() {
 		motionVertTimes.clear();
 		motionVertSteps.clear();
+		curveCpsMotionSteps.clear();
 		cachedBBoxValid = false;
 	}
 	bool HasVertexMotion() const { return !motionVertSteps.empty(); }
@@ -435,6 +447,46 @@ public:
 	const std::vector<float> &GetVertexMotionTimes() const { return motionVertTimes; }
 	const VertexBuffer &GetVertexMotionStep(const u_int step) const { return motionVertSteps[step]; }
 	Point GetVertexAtTime(const u_int vertIndex, const float time) const;
+
+	// E9 phase 5b (hair deformation motion): when this mesh was produced
+	// by tessellating strands, the shape stores a StrandMotionRecipe so
+	// the scene can re-tessellate per-step control points into a vertex
+	// series. Plain data, not serialized — a mesh deserialized from disk
+	// has no recipe and stays static.
+	struct StrandMotionRecipe {
+		u_int tesselType;         // slg::StrendsShape::TessellationType
+		u_int adaptiveMaxDepth;
+		float adaptiveError;
+		u_int solidSideCount;
+		bool solidCapBottom, solidCapTop, useCameraPosition;
+		// Control points per strand (segments + 1), flat point count is
+		// the sum — a step supplies exactly that many xyz positions.
+		std::vector<u_int> strandPointCounts;
+		// Per-control-point radius (half thickness), flat over all points.
+		std::vector<float> pointSizes;
+		// Optional source-point gather map (E9 5b): Blender strand
+		// bindings filter input points (invalid/zero-length points are
+		// dropped) before building the cyHairFile. When set,
+		// sourcePointIndices[i] is the input-array index of control
+		// point i and motion steps are supplied in the raw input layout
+		// (sourcePointCount points per step). Empty means the recipe
+		// layout is the input layout.
+		std::vector<u_int> sourcePointIndices;
+		u_int sourcePointCount = 0;
+		u_int GetTotalPointCount() const {
+			u_int n = 0;
+			for (const u_int c : strandPointCounts)
+				n += c;
+			return n;
+		}
+	};
+	void SetStrandMotionRecipe(std::shared_ptr<StrandMotionRecipe> recipe) {
+		strandMotionRecipe = std::move(recipe);
+	}
+	bool HasStrandMotionRecipe() const { return bool(strandMotionRecipe); }
+	const std::shared_ptr<StrandMotionRecipe> &GetStrandMotionRecipe() const {
+		return strandMotionRecipe;
+	}
 
 	// Swept bounds: with a vertex-motion series the bounding box spans the
 	// union of the base vertices and every motion step, so it is
@@ -700,6 +752,7 @@ public:
 		curveCps.clear();
 		curveSegIndices.clear();
 		curveCpAttrs.clear();
+		curveCpsMotionSteps.clear();
 		motionVertTimes.clear();
 		motionVertSteps.clear();
 
@@ -729,12 +782,23 @@ public:
 	std::vector<u_int> curveSegIndices;
 	std::vector<CurveCpAttr> curveCpAttrs;
 
+	// Per-step curve control points for native curve primitives (Metal
+	// HWRT), parallel to the vertex-motion series (same step times).
+	// curveCpsMotionSteps[s] has the same CP layout as curveCps; segment
+	// indices and CP shading attributes are shared across steps — only
+	// positions/radii move. Not serialized, like the base curve data.
+	std::vector<std::vector<CurveControlPoint>> curveCpsMotionSteps;
+
 	// Per-vertex deformation motion blur time series (see
 	// SetVertexMotion). motionVertSteps[s][v] is the object-space
 	// position of vertex v at motionVertTimes[s]. Not serialized —
 	// loaded meshes fall back to static geometry, like curve data.
 	std::vector<float> motionVertTimes;
 	std::vector<VertexBuffer> motionVertSteps;
+
+	// Strand re-tessellation recipe for per-step hair deformation (E9
+	// phase 5b); shared between copies, not serialized.
+	std::shared_ptr<StrandMotionRecipe> strandMotionRecipe;
 
 	BevelCylinder *bevelCylinders;
 	BevelBoundingCylinder *bevelBoundingCylinders;

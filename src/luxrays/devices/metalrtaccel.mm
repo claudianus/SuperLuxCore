@@ -673,20 +673,97 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 			// strands meshes carry Catmull-Rom curve data next to their
 			// triangle tessellation. Plain and instanced ExtTriangleMesh
 			// leaves can use it (the instance transform is applied at the
-			// instance AS level, same as for triangles); motion leaves keep
-			// the triangle path (curve data has no deformation keyframes).
+			// instance AS level, same as for triangles). A motion leaf
+			// keeps the curve path only when per-step control points are
+			// present (E9 5b); otherwise the tessellated triangle motion
+			// path wins — a static curve over animated triangles would be
+			// wrong.
 			const ExtTriangleMesh *curveMesh = nullptr;
-			if (useCurveData && !vmMesh) {
+			if (useCurveData) {
 				curveMesh = baseMesh;
 				if (curveMesh && !curveMesh->HasCurveData())
 					curveMesh = nullptr;
 			}
+			const bool curveHasMotion = curveMesh && vmMesh &&
+					curveMesh->HasCurveMotion() &&
+					(u_int)curveMesh->GetCurveMotionSteps().size() ==
+							vmMesh->GetVertexMotionStepCount();
+			if (curveMesh && vmMesh && !curveHasMotion)
+				curveMesh = nullptr;
 
 			MTLAccelerationStructureGeometryDescriptor *geo = nil;
 			u_int motionKeyframes = 0;
 			float motionStart = 0.f, motionEnd = 0.f;
 
-			if (vmMesh) {
+			if (vmMesh && curveMesh) {
+				// Motion curve descriptor (E9 5b): per-step control-point
+				// keyframes packed into one buffer; segment indices and
+				// per-cp shading attributes are shared across steps.
+				const u_int stepCount = vmMesh->GetVertexMotionStepCount();
+				const auto &times = vmMesh->GetVertexMotionTimes();
+				const auto &cpSteps = curveMesh->GetCurveMotionSteps();
+				const auto &segs = curveMesh->GetCurveSegIndices();
+				const size_t stepBytes =
+						cpSteps[0].size() * sizeof(CurveControlPoint);
+
+				id<MTLBuffer> allCpBuf = [mtlDev
+						newBufferWithLength:stepBytes * stepCount
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(allCpBuf);
+				for (u_int s = 0; s < stepCount; ++s)
+					memcpy((char *)allCpBuf.contents + s * stepBytes,
+							cpSteps[s].data(), stepBytes);
+
+				NSMutableArray<MTLMotionKeyframeData *> *cpKeyBufs =
+						[NSMutableArray arrayWithCapacity:stepCount];
+				NSMutableArray<MTLMotionKeyframeData *> *radKeyBufs =
+						[NSMutableArray arrayWithCapacity:stepCount];
+				for (u_int s = 0; s < stepCount; ++s) {
+					MTLMotionKeyframeData *kd = [MTLMotionKeyframeData data];
+					kd.buffer = allCpBuf;
+					kd.offset = s * stepBytes;
+					[cpKeyBufs addObject:kd];
+					MTLMotionKeyframeData *rkd = [MTLMotionKeyframeData data];
+					rkd.buffer = allCpBuf;
+					rkd.offset = s * stepBytes + offsetof(CurveControlPoint, radius);
+					[radKeyBufs addObject:rkd];
+				}
+				[primRetainBag addObject:cpKeyBufs];
+				[primRetainBag addObject:radKeyBufs];
+
+				id<MTLBuffer> idxBuf = [mtlDev newBufferWithBytes:segs.data()
+						length:segs.size() * sizeof(u_int)
+						options:MTLResourceStorageModeShared];
+				ownedPrimBuffers.push_back(idxBuf);
+
+				if (@available(macOS 14.0, *)) {
+					MTLAccelerationStructureMotionCurveGeometryDescriptor *mcgeo =
+							[MTLAccelerationStructureMotionCurveGeometryDescriptor descriptor];
+					mcgeo.controlPointBuffers = cpKeyBufs;
+					mcgeo.controlPointCount = cpSteps[0].size();
+					mcgeo.controlPointFormat = MTLAttributeFormatFloat3;
+					mcgeo.controlPointStride = sizeof(CurveControlPoint);
+					mcgeo.radiusBuffers = radKeyBufs;
+					mcgeo.radiusFormat = MTLAttributeFormatFloat;
+					mcgeo.radiusStride = sizeof(CurveControlPoint);
+					mcgeo.indexBuffer = idxBuf;
+					mcgeo.indexBufferOffset = 0;
+					mcgeo.indexType = MTLIndexTypeUInt32;
+					mcgeo.segmentCount = segs.size();
+					mcgeo.segmentControlPointCount = 4;
+					mcgeo.curveType = MTLCurveTypeRound;
+					mcgeo.curveBasis = MTLCurveBasisCatmullRom;
+					mcgeo.curveEndCaps = MTLCurveEndCapsNone;
+					mcgeo.opaque = YES;
+					mcgeo.allowDuplicateIntersectionFunctionInvocation = NO;
+					geo = mcgeo;
+					motionKeyframes = stepCount;
+					motionStart = times.front();
+					motionEnd = times.back();
+					hasVertexMotionGeometry = true;
+				}
+			}
+			if (vmMesh && !geo) {
 				// All keyframes packed into one MTLBuffer, each
 				// MTLMotionKeyframeData referencing its own slice; the
 				// shared index buffer comes from the constant topology.
@@ -740,7 +817,10 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 				}
 			}
 
-			if (curveMesh) {
+			// Static curve descriptor — only when no descriptor was
+			// already built (a motion-curve or motion-triangle descriptor
+			// takes precedence).
+			if (curveMesh && !geo) {
 				const auto &cps = curveMesh->GetCurveCps();
 				const auto &segs = curveMesh->GetCurveSegIndices();
 

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "luxrays/usings.h"
+#include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/utils/cyhair/cyHairFile.h"
 
 #include "slg/shapes/shape.h"
@@ -57,6 +58,26 @@ public:
 	virtual ~StrendsShape();
 
 	virtual ShapeType GetType() const override { return STRANDS; }
+
+	// Per-strand motion blur (E9 phase 5b): re-run the same tessellation
+	// on a shutter-step's control points, filling `meshVerts` with the
+	// tessellated vertex stream. `points` is a flat xyz array holding
+	// exactly the recipe's total control-point count. When `stepCurveCps`
+	// is non-null it also receives the step's padded Catmull-Rom control
+	// points (same layout as the base mesh's GetCurveCps()) so native
+	// curve backends can keyframe them. Returns false when the step
+	// produces a different vertex count than the base mesh (adaptive
+	// tessellation can subdivide differently per pose) — the caller then
+	// keeps the mesh static.
+	static bool TessellateMotionStep(SceneConstRef scene,
+			const luxrays::ExtTriangleMesh::StrandMotionRecipe &recipe,
+			const float *points, std::vector<luxrays::Point> &meshVerts,
+			std::vector<luxrays::CurveControlPoint> *stepCurveCps = nullptr);
+
+	// Params-only construction used by TessellateMotionStep — no
+	// tessellation work is done.
+	explicit StrendsShape(
+			const luxrays::ExtTriangleMesh::StrandMotionRecipe &recipe);
 
 protected:
 	virtual luxrays::ExtTriangleMeshUPtr RefineImpl(SceneConstRef scene) override;

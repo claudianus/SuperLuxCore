@@ -1114,6 +1114,52 @@ void SceneImpl::SetMeshVertexMotion(const std::string &meshName,
 	API_END();
 }
 
+void SceneImpl::SetStrandsVertexMotion(const std::string &meshName,
+		const float *times, const size_t timesCount,
+		const float *points, const size_t pointsCount) {
+	API_BEGIN("{}, {}, {}, {}, {}", ToArgString(meshName), timesCount,
+			(const void *)times, pointsCount, (const void *)points);
+
+	// Invalidate the scene properties cache
+	scenePropertiesCache->Clear();
+
+	auto &slgScene = GetSlgScene();
+	if (!slgScene.IsMeshDefined(meshName))
+		throw std::runtime_error("Unknown mesh " + meshName + " in Scene::SetStrandsVertexMotion()");
+
+	if (!times || !timesCount || !points || !pointsCount)
+		throw std::runtime_error("Empty data in Scene::SetStrandsVertexMotion(" + meshName + ")");
+
+	// The flat array is step-major: timesCount slices of
+	// controlPointCount * 3 floats (control points, not tessellated
+	// vertices — re-tessellation happens inside the scene).
+	const auto *extMesh = luxrays::ExtTriangleMesh::FromMesh(
+			&slgScene.GetExtMeshes().GetExtMesh(meshName));
+	const auto recipe = extMesh ? extMesh->GetStrandMotionRecipe() : nullptr;
+	if (!recipe)
+		throw std::runtime_error("Mesh " + meshName +
+			" is not a strands shape in Scene::SetStrandsVertexMotion()");
+	// When the strand binding recorded a source-point map (Blender
+	// strand filtering), steps arrive in the raw input layout.
+	const u_int pointCount = recipe->sourcePointIndices.empty() ?
+			recipe->GetTotalPointCount() : recipe->sourcePointCount;
+	if (pointsCount != (size_t)timesCount * pointCount * 3)
+		throw std::runtime_error("Wrong strands motion data size in "
+			"Scene::SetStrandsVertexMotion(" + meshName + "): expected "
+			+ ToString(timesCount * pointCount * 3) + " floats, got " + ToString(pointsCount));
+
+	std::vector<float> stepTimes(times, times + timesCount);
+	std::vector<std::vector<float>> stepPoints;
+	stepPoints.reserve(timesCount);
+	for (size_t s = 0; s < timesCount; ++s)
+		stepPoints.emplace_back(points + s * pointCount * 3,
+				points + (s + 1) * pointCount * 3);
+
+	slgScene.SetStrandsVertexMotion(meshName, std::move(stepTimes), std::move(stepPoints));
+
+	API_END();
+}
+
 void SceneImpl::SaveMesh(const string &meshName, const string &fileName) {
 	API_BEGIN("{}, {}", ToArgString(meshName), ToArgString(fileName));
 

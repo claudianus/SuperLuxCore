@@ -1,14 +1,55 @@
 # Deformation (vertex) motion blur — E9 design
 
-Status: **Phase 1 (plumbing) + Phase 2 (Metal HWRT backend) +
-Phase 3 (swept-bound software path) implemented.**
+Status: **Phases 1–5 implemented, including Phase 5b strand/hair
+motion.**
 Roadmap item E9 — engine-level per-vertex motion blur for meshes and
 curves. Adapter-side prerequisites (A5 step-collection infra) are done.
 On Metal, meshes carrying a vertex series now render true deformation
 blur via `MTLAccelerationStructureMotionTriangleGeometryDescriptor`;
 all other backends route through the software MBVH path (swept bounds +
 per-ray vertex interpolation). Embree uses native multi-timestep
-geometry (Phase 4).
+geometry (Phase 4). Strand meshes additionally carry a per-step
+control-point series that is re-tessellated into the vertex series —
+and, on Metal HWRT, into native motion curve geometry (Phase 5b).
+
+Phase-5b surface (implemented):
+
+- `ExtTriangleMesh::StrandMotionRecipe` — stored on strand meshes at
+  `DefineStrands` time (runtime-only, not serialized). Records the
+  tessellation parameters plus the raw-input → filtered control-point
+  source-index map that the Blender bindings build while dropping
+  invalid/zero-length points. `SetStrandsVertexMotion()` accepts steps
+  in the *raw* input layout (one (P,3) buffer per shutter time) and
+  re-filters them through the recipe, so adapter code never needs to
+  reproduce LuxCore's filtering decisions.
+- `StrendsShape::TessellateMotionStep()` re-runs the export-time
+  tessellation for one control-point pose and returns both the
+  tessellated vertex buffer and the Catmull-Rom control points —
+  feeding `motionVerts` (all backends) and `curveCpsMotionSteps`
+  (Metal HWRT) through the same code paths as regular vertex motion.
+  Step poses whose tessellated vertex count or curve CP count differ
+  from the base mesh are rejected (static fallback).
+- `Scene::SetStrandsVertexMotion()` / `Scene.SetStrandsVertexMotion()`
+  binding; `Scene_DefineBlenderStrands`/`Scene_DefineBlenderCurveStrands`
+  attach the recipe + source map automatically.
+- Metal HWRT: `MTLAccelerationStructureMotionCurveGeometryDescriptor`
+  for strands carrying curve motion (packed control-point + radius
+  keyframe buffers, same `MTLMotionKeyframeData` slicing as mesh
+  motion); falls back to the motion-triangle descriptor on macOS < 14
+  or when the mesh takes the vertex-motion path anyway.
+- BlendLuxCore: `ExportedObject.strand_recs` records the strand mesh
+  name, raw layout signature and storage-space transform per strand
+  system (hair curves and particle hair); `motion_blur` collects
+  per-step raw control points inside the existing shutter loop and
+  calls `SetStrandsVertexMotion`. Particle hair with motion-blur
+  opt-in now exports unbaked (transform on the LuxCore object) like
+  the curves path, so object motion and strand deformation compose.
+- Validation: `dev-tools/e9_strand_motion_test.py` (12 asserts: wrong
+  count/non-strand rejection, static vs sweep vs mid-shutter poses,
+  raw-layout acceptance + wrong-count rejection, HWRT=CPU parity)
+  and BlendLuxCore `dev-tools/e9_strand_motion_e2e_test.py`
+  (shape-keyed hair comb, Metal OCL: smeared band vs sharp comb,
+  non-opt-in stays sharp) — all passing.
 
 Phase-5 surface (implemented, BlendLuxCore repo):
 
@@ -240,9 +281,10 @@ control points get the same treatment — `curveCPs` becomes
 4. ~~Embree timestep path (CPU parity).~~ **Done** — see the Phase-4
    surface list above.
 5. ~~BlendLuxCore mesh export.~~ **Done** — see the Phase-5 surface list
-   above. Hair/strand export is still open: strands go through
-   `DefineBlenderStrands` (curve control points, not triangle vertices)
-   and need a core curve-point motion series first.
+   above. ~~Hair/strand export~~ **Done** — Phase-5b surface list above:
+   `SetStrandsVertexMotion` re-tessellates raw-layout step buffers
+   through the recorded recipe; hair curves and particle hair are both
+   sampled by the adapter.
 6. Validation scenes: animated character mesh, GN-deformed geometry,
    armature-driven hair — A/B vs static, plus a divergence-stress scene.
 

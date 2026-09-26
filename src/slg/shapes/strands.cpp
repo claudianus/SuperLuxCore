@@ -344,6 +344,19 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 		vector<CurveControlPoint> curveCps;
 		vector<u_int> curveSegIndices;
 		vector<CurveCpAttr> curveCpAttrs;
+
+		// E9 phase 5b: record the per-strand control-point layout so a
+		// motion step can re-run this exact tessellation on new point
+		// positions (see StrendsShape::TessellateMotionStep).
+		auto strandRecipe = std::make_shared<ExtTriangleMesh::StrandMotionRecipe>();
+		strandRecipe->tesselType = tesselType;
+		strandRecipe->adaptiveMaxDepth = adaptiveMaxDepth;
+		strandRecipe->adaptiveError = adaptiveError;
+		strandRecipe->solidSideCount = solidSideCount;
+		strandRecipe->solidCapBottom = solidCapBottom;
+		strandRecipe->solidCapTop = solidCapTop;
+		strandRecipe->useCameraPosition = useCameraPosition;
+
 		for (u_int i = 0; i < header.hair_count; ++i) {
 			// segmentSize must be signed
 			const auto segmentSize = not segments.empty() ? segments[i] : header.d_segments;
@@ -391,6 +404,11 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 			randHash ^= randHash >> 13;
 			const float strandRand = (randHash & 0x00FFFFFFu) / float(0x01000000u);
 			const u_int vertsBefore = meshVerts.size();
+
+			// Only strands that actually emit geometry join the recipe.
+			strandRecipe->strandPointCounts.push_back((u_int)hairPoints.size());
+			strandRecipe->pointSizes.insert(strandRecipe->pointSizes.end(),
+					hairSizes.begin(), hairSizes.end());
 
 			switch (tesselType) {
 				case TESSEL_RIBBON:
@@ -515,6 +533,7 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 		if (!curveSegIndices.empty())
 			mesh->SetCurveData(std::move(curveCps), std::move(curveSegIndices),
 					std::move(curveCpAttrs));
+		mesh->SetStrandMotionRecipe(strandRecipe);
 		SLG_LOG("Strands curve data: " << mesh->GetCurveSegCount() << " segments, "
 				<< mesh->GetCurveCpCount() << " control points");
 
@@ -555,6 +574,98 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 
 	const float dt = WallClockTime() - start;
 	SLG_LOG("Refining time: " << std::setprecision(3) << dt << " secs");
+}
+
+StrendsShape::StrendsShape(
+		const ExtTriangleMesh::StrandMotionRecipe &recipe) {
+	adaptiveMaxDepth = recipe.adaptiveMaxDepth;
+	adaptiveError = recipe.adaptiveError;
+	solidSideCount = recipe.solidSideCount;
+	solidCapBottom = recipe.solidCapBottom;
+	solidCapTop = recipe.solidCapTop;
+	useCameraPosition = recipe.useCameraPosition;
+}
+
+bool StrendsShape::TessellateMotionStep(SceneConstRef scene,
+		const ExtTriangleMesh::StrandMotionRecipe &recipe,
+		const float *points, vector<Point> &meshVerts,
+		vector<CurveControlPoint> *stepCurveCps) {
+	StrendsShape shape(recipe);
+
+	// Attribute inputs are required by the Tessellate*() signatures but
+	// only positions feed `meshVerts` — shading attributes stay the base
+	// pose's, recorded once at construction.
+	const Spectrum white(1.f);
+	u_int pointIndex = 0;
+	const u_int totalPoints = recipe.GetTotalPointCount();
+
+	// These accumulate across strands exactly like the constructor's —
+	// Tessellate*() index them globally (baseOffset + vertex), so they
+	// must live outside the per-strand loop.
+	vector<Normal> meshNorms;
+	vector<Triangle> meshTris;
+	vector<UV> meshUVs;
+	vector<Spectrum> meshCols;
+	vector<float> meshTransps;
+	vector<Vector> meshTangents;
+	vector<float> meshStrandUs;
+
+	for (const u_int pointCount : recipe.strandPointCounts) {
+		if (pointIndex + pointCount > totalPoints)
+			return false;
+
+		vector<Point> hairPoints;
+		hairPoints.reserve(pointCount);
+		for (u_int j = 0; j < pointCount; ++j) {
+			const u_int p = pointIndex + j;
+			hairPoints.push_back(Point(points[p * 3], points[p * 3 + 1], points[p * 3 + 2]));
+		}
+		const vector<float> hairSizes(recipe.pointSizes.begin() + pointIndex,
+				recipe.pointSizes.begin() + pointIndex + pointCount);
+		vector<Spectrum> hairCols(pointCount, white);
+		vector<float> hairTransps(pointCount, 1.f);
+		vector<UV> hairUVs;
+		hairUVs.reserve(pointCount);
+		for (u_int j = 0; j < pointCount; ++j)
+			hairUVs.push_back(UV(0.f, (pointCount > 1) ? j / float(pointCount - 1) : 0.f));
+
+		switch ((TessellationType)recipe.tesselType) {
+			case TESSEL_RIBBON:
+				shape.TessellateRibbon(scene, hairPoints, hairSizes, hairCols, hairUVs,
+						hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
+						meshCols, meshTransps, meshTangents, meshStrandUs);
+				break;
+			case TESSEL_RIBBON_ADAPTIVE:
+				shape.TessellateAdaptive(scene, false, hairPoints, hairSizes, hairCols, hairUVs,
+						hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
+						meshCols, meshTransps, meshTangents, meshStrandUs);
+				break;
+			case TESSEL_SOLID:
+				shape.TessellateSolid(scene, hairPoints, hairSizes, hairCols, hairUVs,
+						hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
+						meshCols, meshTransps, meshTangents, meshStrandUs);
+				break;
+			case TESSEL_SOLID_ADAPTIVE:
+				shape.TessellateAdaptive(scene, true, hairPoints, hairSizes, hairCols, hairUVs,
+						hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
+						meshCols, meshTransps, meshTangents, meshStrandUs);
+				break;
+			default:
+				return false;
+		}
+
+		// Same padded Catmull-Rom layout the constructor emits for the
+		// native curve path: per strand, [p0, p0, p1, ..., pn-1, pn-1].
+		if (stepCurveCps && pointCount >= 2) {
+			for (u_int k = 0; k < pointCount + 2; ++k) {
+				const u_int p = Min(Max((int)k - 1, 0), (int)pointCount - 1);
+				stepCurveCps->push_back({ hairPoints[p].x, hairPoints[p].y,
+						hairPoints[p].z, hairSizes[p] });
+			}
+		}
+		pointIndex += pointCount;
+	}
+	return pointIndex == totalPoints;
 }
 
 void StrendsShape::TessellateRibbon(SceneConstRef scene,

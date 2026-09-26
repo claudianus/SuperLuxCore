@@ -414,6 +414,92 @@ Scene::DefineStrands(const string &shapeName, const slg::cyHairFile &strandsFile
 	return DefineMesh(std::move(mesh));
 }
 
+void Scene::SetStrandsVertexMotion(const string &meshName,
+		std::vector<float> &&stepTimes,
+		std::vector<std::vector<float>> &&stepPoints) {
+	if (stepTimes.size() != stepPoints.size())
+		throw runtime_error("Strands vertex motion: times/point series size mismatch on mesh " + meshName);
+	if (stepTimes.empty())
+		throw runtime_error("Strands vertex motion: empty step series on mesh " + meshName);
+
+	ExtMesh &mesh = extMeshCache.GetExtMesh(meshName);
+	if (mesh.GetType() != TYPE_EXT_TRIANGLE)
+		throw runtime_error("Strands vertex motion: mesh " + meshName +
+				" is not a plain extended triangle mesh");
+	ExtTriangleMesh &extMesh = static_cast<ExtTriangleMesh &>(mesh);
+	const auto recipe = extMesh.GetStrandMotionRecipe();
+	if (!recipe)
+		throw runtime_error("Strands vertex motion: mesh " + meshName +
+				" was not built by a strands shape (no motion recipe)");
+
+	const u_int totalPoints = recipe->GetTotalPointCount();
+	const u_int baseVertCount = extMesh.GetTotalVertexCount();
+	const u_int baseCpCount = extMesh.GetCurveCpCount();
+
+	// Blender strand bindings filter input points before building the
+	// cyHairFile; when a source map is recorded the motion steps use the
+	// raw input layout and are gathered down to recipe space here.
+	const bool hasSrcMap = !recipe->sourcePointIndices.empty();
+	if (hasSrcMap &&
+			recipe->sourcePointIndices.size() != size_t(totalPoints))
+		throw runtime_error("Strands vertex motion: inconsistent source "
+				"point map on mesh " + meshName);
+	const u_int stepPointCount = hasSrcMap ? recipe->sourcePointCount : totalPoints;
+
+	std::vector<VertexBuffer> stepVerts;
+	std::vector<std::vector<CurveControlPoint>> stepCps;
+	stepVerts.reserve(stepPoints.size());
+	stepCps.reserve(stepPoints.size());
+	for (size_t s = 0; s < stepPoints.size(); ++s) {
+		if (stepPoints[s].size() != size_t(stepPointCount) * 3)
+			throw runtime_error("Strands vertex motion: step " + ToString(s) +
+					" on mesh " + meshName + " has " +
+					ToString(stepPoints[s].size() / 3) + " control points, expected " +
+					ToString(stepPointCount));
+
+		// Gather raw input positions into the recipe's (filtered)
+		// control-point layout.
+		std::vector<float> gathered;
+		const float *stepData = stepPoints[s].data();
+		if (hasSrcMap) {
+			gathered.resize(size_t(totalPoints) * 3);
+			for (u_int i = 0; i < totalPoints; ++i) {
+				const u_int src = recipe->sourcePointIndices[i];
+				if (src >= stepPointCount)
+					throw runtime_error("Strands vertex motion: source index "
+							"out of range on mesh " + meshName);
+				for (u_int c = 0; c < 3; ++c)
+					gathered[i * 3 + c] = stepData[src * 3 + c];
+			}
+			stepData = gathered.data();
+		}
+
+		std::vector<Point> verts;
+		std::vector<CurveControlPoint> cps;
+		verts.reserve(baseVertCount);
+		if (!StrendsShape::TessellateMotionStep(*this, *recipe,
+				stepData, verts, &cps) || verts.size() != baseVertCount)
+			throw runtime_error("Strands vertex motion: step " + ToString(s) +
+					" on mesh " + meshName + " tessellates to a different vertex count "
+					"(adaptive tessellation is pose-dependent; use a fixed tessellation "
+					"or keep the hair static)");
+		if (cps.size() != baseCpCount)
+			throw runtime_error("Strands vertex motion: step " + ToString(s) +
+					" on mesh " + meshName + " produces a different curve "
+					"control-point count");
+
+		VertexBuffer vb(verts.size());
+		vb.Set(std::span<const Point>(verts));
+		stepVerts.push_back(std::move(vb));
+		stepCps.push_back(std::move(cps));
+	}
+
+	extMeshCache.SetMeshVertexMotion(meshName, std::move(stepTimes), std::move(stepVerts));
+	if (extMesh.HasCurveData())
+		extMesh.SetCurveMotion(std::move(stepCps));
+	editActions.AddAction(GEOMETRY_EDIT);
+}
+
 bool Scene::IsTextureDefined(const string &texName) const {
 	return texDefs.IsTextureDefined(texName);
 }

@@ -201,6 +201,15 @@ public:
 		const u_int solidSideCount, const bool solidCapBottom, const bool solidCapTop,
 		const bool useCameraPosition);
 
+	// E9 phase 5b: install a strand motion series on a mesh produced by
+	// DefineStrands(). Each entry of stepPoints is a flat xyz array with
+	// exactly the shape's recorded control-point count; every step is
+	// re-tessellated into a vertex-motion buffer. Throws on size
+	// mismatches or when a step would produce a different vertex count.
+	void SetStrandsVertexMotion(const std::string &meshName,
+		std::vector<float> &&stepTimes,
+		std::vector<std::vector<float>> &&stepPoints);
+
 	bool IsTextureDefined(const std::string &texName) const;
 	bool IsMaterialDefined(const std::string &matName) const;
 	bool IsMeshDefined(const std::string &meshName) const;

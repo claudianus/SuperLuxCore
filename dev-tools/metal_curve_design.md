@@ -85,6 +85,16 @@ For a curve hit on segment `s` at parameter `u` (cp indices `s0..s0+3`):
   `curveType = Round`, `curveBasis = CatmullRom`, `curveEndCaps = None`.
 - Instance AS unchanged (mixed triangle/curve primitive ASs are supported).
 - `LUXRAYS_METAL_CURVES=0` opt-out mirrors `LUXRAYS_METAL_HWRT`.
+- **Motion (E9 Ph5b)**: strand meshes carrying `curveCpsMotionSteps`
+  build a `MTLAccelerationStructureMotionCurveGeometryDescriptor`
+  instead — `controlPointBuffers`/`radiusBuffers` are packed into one
+  `MTLMotionKeyframeData` buffer per leaf (same slicing scheme as the
+  motion-triangle path), `controlPointCount`/`segmentCount` shared
+  across keyframes by construction (the recipe rejects step poses that
+  change them). On macOS < 14 or when the mesh also takes the
+  motion-triangle path, strands fall back to tessellated motion
+  triangles. Validated by `dev-tools/e9_strand_motion_test.py` (HWRT
+  motion sweep matches the CPU MBVH render pixel-for-pixel).
 
 ## Limitations / notes
 

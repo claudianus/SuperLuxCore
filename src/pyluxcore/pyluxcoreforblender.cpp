@@ -376,8 +376,15 @@ bool Scene_DefineBlenderStrands(
   const float* uvPtr = uvsStartPtr;
   const float* colorPtr = colorsStartPtr;
 
+  // E9 5b: track which raw input points survive the filter so a later
+  // SetStrandsVertexMotion can accept steps in the raw input layout.
+  vector<u_int> keptSourceIndices;
+  keptSourceIndices.reserve(inputPointCount);
+
   while (pointPtr < (pointsStartPtr + pointArraySize)) {
     u_short validPointCount = 0;
+    const u_int strandBase =
+      u_int((pointPtr - pointsStartPtr) / pointStride);
 
     // We only have uv and color information for the first point of each strand
     float u = 0.f, v = 0.f, r = 1.f, g = 1.f, b = 1.f;
@@ -424,6 +431,7 @@ bool Scene_DefineBlenderStrands(
         filteredPoints.push_back(lastPoint.y);
         filteredPoints.push_back(lastPoint.z);
         validPointCount++;
+        keptSourceIndices.push_back(strandBase + step - 1);
 
         // The root point of a strand always uses the rootWidth
         if (useThicknessArray) {
@@ -463,6 +471,7 @@ bool Scene_DefineBlenderStrands(
       filteredPoints.push_back(currPoint.y);
       filteredPoints.push_back(currPoint.z);
       validPointCount++;
+      keptSourceIndices.push_back(strandBase + step);
 
       if (useThicknessArray) {
         const float widthOffsetSteps = widthOffset * (pointsPerStrand - 1);
@@ -519,6 +528,7 @@ bool Scene_DefineBlenderStrands(
       // Can't make a segment with only one point, rollback
       for (int i = 0; i < pointStride; ++i)
         filteredPoints.pop_back();
+      keptSourceIndices.pop_back();
 
       if (useThicknessArray)
         thickness.pop_back();
@@ -614,6 +624,19 @@ bool Scene_DefineBlenderStrands(
     tessellationType, adaptiveMaxDepth, adaptiveError,
     solidSideCount, solidCapBottom, solidCapTop,
     useCameraPosition);
+
+  // Record the raw-input -> filtered control-point mapping on the
+  // mesh's strand motion recipe so SetStrandsVertexMotion() accepts
+  // steps in the raw input layout.
+  auto &mesh = static_cast<ExtMesh &>(
+      scene->GetSlgScene().GetExtMeshes().GetExtMesh(shapeName));
+  if (mesh.GetType() == TYPE_EXT_TRIANGLE) {
+    auto recipe = static_cast<ExtTriangleMesh &>(mesh).GetStrandMotionRecipe();
+    if (recipe) {
+      recipe->sourcePointIndices = std::move(keptSourceIndices);
+      recipe->sourcePointCount = inputPointCount;
+    }
+  }
 
   return true;
 }
@@ -827,10 +850,17 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
   const float* uvPtr = uvsStartPtr;
   const float* colorPtr = colorsStartPtr;
 
+  // E9 5b: track which raw input points survive the filter so a later
+  // SetStrandsVertexMotion can accept steps in the raw input layout.
+  vector<u_int> keptSourceIndices;
+  keptSourceIndices.reserve(inputPointCount);
+
   int segment_count = 0;
 
   for (u_int strand = 0; strand < strandCount; ++strand) {
     u_short validPointCount = 0;
+    const u_int strandBase =
+      u_int((pointPtr - pointsStartPtr) / pointStride);
 
     // We only have uv and color information for the first point of each strand
     float u = 0.f, v = 0.f, r = 1.f, g = 1.f, b = 1.f;
@@ -879,6 +909,7 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
         filteredPoints.push_back(lastPoint.y);
         filteredPoints.push_back(lastPoint.z);
         validPointCount++;
+        keptSourceIndices.push_back(strandBase + step - 1);
 
         // The root point of a strand always uses the rootWidth
         if (useThicknessArray) {
@@ -920,6 +951,7 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
       filteredPoints.push_back(currPoint.z);
 
       validPointCount++;
+      keptSourceIndices.push_back(strandBase + step);
       /*
       if (useThicknessArray) {
         const float widthOffsetSteps = widthOffset * (pointsperStrand[strand] - 1);
@@ -977,6 +1009,7 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
       // Can't make a segment with only one point, rollback
       for (int i = 0; i < pointStride; ++i)
         filteredPoints.pop_back();
+      keptSourceIndices.pop_back();
 /*
       if (useThicknessArray)
         thickness.pop_back();
@@ -1002,10 +1035,6 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
   }
 
   const size_t pointCount = filteredPoints.size() / pointStride;
-
-  if (pointCount != inputPointCount) {
-    SLG_LOG("Removed " << (inputPointCount - pointCount) << " invalid points");
-  }
 
   const bool allSegmentsEqual = std::adjacent_find(segments.begin(), segments.end(),
     std::not_equal_to<u_short>()) == segments.end();
@@ -1073,6 +1102,19 @@ bool Scene_DefineBlenderCurveStrands(luxcore::detail::SceneImpl* scene,
     tessellationType, adaptiveMaxDepth, adaptiveError,
     solidSideCount, solidCapBottom, solidCapTop,
     useCameraPosition);
+
+  // Record the raw-input -> filtered control-point mapping on the
+  // mesh's strand motion recipe so SetStrandsVertexMotion() accepts
+  // steps in the raw input layout.
+  auto &mesh = static_cast<ExtMesh &>(
+      scene->GetSlgScene().GetExtMeshes().GetExtMesh(shapeName));
+  if (mesh.GetType() == TYPE_EXT_TRIANGLE) {
+    auto recipe = static_cast<ExtTriangleMesh &>(mesh).GetStrandMotionRecipe();
+    if (recipe) {
+      recipe->sourcePointIndices = std::move(keptSourceIndices);
+      recipe->sourcePointCount = inputPointCount;
+    }
+  }
 
   return true;
 }
