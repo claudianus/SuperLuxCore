@@ -19,6 +19,7 @@
 #ifndef _SLG_RTPATHCPU_H
 #define	_SLG_RTPATHCPU_H
 
+#include <atomic>
 #include <condition_variable>
 #include <barrier>
 
@@ -105,10 +106,15 @@ protected:
 
 	virtual void UpdateFilmLockLess();
 
+	// Runtime resolution reduction: maps onto the zoomphase decimation
+	// factor (the CPU-side equivalent of the GPU rtpath runtime
+	// reduction - same zero-bias full-coverage semantics).
+	virtual void SetRuntimeResolutionReduction(const u_int reduction) override;
+
 	void PauseThreads();
 	void ResumeThreads();
 
-	u_int zoomFactor;
+	std::atomic<u_int> zoomFactor;
 	float zoomWeight;
 
 	std::mutex firstFrameMutex;

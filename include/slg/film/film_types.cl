@@ -70,6 +70,8 @@ typedef struct {
 	int hasChannelAvgShadingNormal;
 	int hasChannelNoise;
 	int hasChannelUserImportance;
+	int hasChannelVariance;
+	int hasChannelMotionVector;
 } Film;
 
 //------------------------------------------------------------------------------
@@ -147,6 +149,8 @@ typedef struct {
 	, __global float *filmAvgShadingNormal \
 	, __global float *filmNoise \
 	, __global float *filmUserImportance \
+	, __global float *filmVariance \
+	, __global float *filmMotionVector \
 	FILM_DENOISER_PARAM_DECL
 
 #define FILM_PARAM \
@@ -193,6 +197,8 @@ typedef struct {
 	, filmAvgShadingNormal \
 	, filmNoise \
 	, filmUserImportance \
+	, filmVariance \
+	, filmMotionVector \
 	FILM_DENOISER_PARAM
 
 #endif

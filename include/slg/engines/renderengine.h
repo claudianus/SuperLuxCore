@@ -81,6 +81,15 @@ public:
 	virtual bool HasDone() const = 0;
 	virtual void WaitForDone() const = 0;
 
+	// Runtime resolution-reduction override for interactive viewports
+	// (RTPATHOCL and RTPATHCPU, other engines ignore it). 0 restores the
+	// configured rtpath.resolutionreduction. The reduction only selects
+	// which pixels a pass covers - never sample weights - so it can be
+	// changed at the next frame boundary without a film reset.
+	virtual void SetRuntimeResolutionReduction(const u_int reduction) {
+		(void)reduction;
+	}
+
 	void UpdateFilm();
 	virtual void WaitNewFrame() { }
 

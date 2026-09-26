@@ -2012,6 +2012,14 @@ bool RenderSessionImpl::IsInPause() const {
 	return result;
 }
 
+void RenderSessionImpl::SetRuntimeResolutionReduction(const unsigned int reduction) {
+	API_BEGIN("{}", reduction);
+
+	renderSession->SetRuntimeResolutionReduction(reduction);
+
+	API_END();
+}
+
 bool RenderSessionImpl::HasDone() const {
 	API_BEGIN_NOARGS();
 

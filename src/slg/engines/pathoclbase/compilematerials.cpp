@@ -24,6 +24,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string.hpp>
 
+#include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
 
@@ -580,6 +581,12 @@ void CompiledScene::CompileMaterials() {
 
 	mats.resize(materialsCount);
 	volMajorants.clear();
+	// Directional emission map distributions live in their own section of
+	// the device envLightDistribution buffer (before the env light ones).
+	// A changed section shifts the light distribution offsets, so lights
+	// must be recompiled whenever this section was or becomes non-empty
+	const bool hadEmissionDists = !emissionFuncDistributions.empty();
+	emissionFuncDistributions.clear();
 
 	// Point-ish light positions for equiangular distance sampling
 	// (collected by Scene::Preprocess into scene.equiangularLightPoints)
@@ -630,6 +637,27 @@ void CompiledScene::CompileMaterials() {
 			mat->emitTexIndex = NULL_INDEX;
 		ASSIGN_SPECTRUM(mat->emittedFactor, m.GetEmittedFactor());
 		mat->emittedCosThetaMax = m.GetEmittedCosThetaMax();
+
+		// Directional emission map (IES): upload the spherical-function
+		// sampling distribution so the device Emit() can light-trace
+		// triangle emitters carrying a directional map
+		const auto &emissionFunc = m.GetEmissionFunc();
+		if (emissionFunc && emissionFunc->GetDistribution2D()) {
+			auto [dist, distributionSize] =
+					CompileDistribution2D(*emissionFunc->GetDistribution2D());
+			const u_int size = emissionFuncDistributions.size();
+			emissionFuncDistributions.resize(size + distributionSize / sizeof(float));
+			std::copy_n(dist.begin(), distributionSize / sizeof(float),
+					emissionFuncDistributions.begin() + size);
+			mat->emissionFuncDistOffset = size;
+			mat->emissionFuncAverage = emissionFunc->Average();
+			mat->emissionFuncImageMapIndex =
+					scene.GetImageMaps().GetImageMapIndex(m.GetEmissionMap());
+		} else {
+			mat->emissionFuncDistOffset = NULL_INDEX;
+			mat->emissionFuncAverage = 1.f;
+			mat->emissionFuncImageMapIndex = NULL_INDEX;
+		}
 		mat->usePrimitiveArea = m.IsUsingPrimitiveArea();
 
 		// Material bump mapping
@@ -1097,6 +1125,11 @@ void CompiledScene::CompileMaterials() {
 				throw runtime_error("Unknown material in CompiledScene::CompileMaterials(): " + ToString(m.GetType()));
 		}
 	}
+
+	// A changed emission-map distribution section shifts the absolute
+	// offsets stored in lightDefs, so it forces a light recompile
+	wasEmissionDistsCompiled =
+			hadEmissionDists || !emissionFuncDistributions.empty();
 
 	//--------------------------------------------------------------------------
 	// Material evaluation ops

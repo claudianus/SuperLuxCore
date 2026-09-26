@@ -609,6 +609,113 @@ OPENCL_FORCE_NOT_INLINE float3 WireFrameTexture_ConstEvaluateSpectrum(__global c
 }
 
 //------------------------------------------------------------------------------
+// Bevel texture
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_NOT_INLINE float3 BevelTexture_Bump(__global const HitPoint *hitPoint,
+		const float radius
+		TEXTURES_PARAM_DECL) {
+	const float3 shadeN = VLOAD3F(&hitPoint->shadeN.x);
+
+	const uint meshIndex = hitPoint->meshIndex;
+	if (meshIndex == NULL_INDEX)
+		return shadeN;
+
+	const uint triIndex = hitPoint->triangleIndex;
+	// Curve-primitive hits (RAYHIT_CURVE_FLAG) carry a segment index, not a
+	// triangle index: the triangle arrays below would be read out of bounds.
+	if (triIndex & RAYHIT_CURVE_FLAG)
+		return shadeN;
+
+	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
+	// The per-edge angles (written by the edgedetectoraov shape) are required
+	if ((meshDesc->triAOVOffset[0] == NULL_INDEX) ||
+			(meshDesc->triAOVOffset[1] == NULL_INDEX) ||
+			(meshDesc->triAOVOffset[2] == NULL_INDEX))
+		return shadeN;
+
+	__global const Point* restrict iVertices = &vertices[meshDesc->vertsOffset];
+	__global const Triangle* restrict iTriangles = &triangles[meshDesc->trisOffset];
+
+	__global const Triangle* restrict tri = &iTriangles[triIndex];
+	const uint vi0 = tri->v[0];
+	const uint vi1 = tri->v[1];
+	const uint vi2 = tri->v[2];
+
+	float3 v0 = VLOAD3F(&iVertices[vi0].x);
+	float3 v1 = VLOAD3F(&iVertices[vi1].x);
+	float3 v2 = VLOAD3F(&iVertices[vi2].x);
+	if (meshDesc->type != TYPE_EXT_TRIANGLE) {
+		// Transform to global coordinates
+		v0 = Transform_ApplyPoint(&hitPoint->localToWorld, v0);
+		v1 = Transform_ApplyPoint(&hitPoint->localToWorld, v1);
+		v2 = Transform_ApplyPoint(&hitPoint->localToWorld, v2);
+	}
+
+	const float3 e0 = v1 - v0;
+	const float3 e1 = v2 - v1;
+	const float3 e2 = v0 - v2;
+
+	const float e0len = length(e0);
+	const float e1len = length(e1);
+	const float e2len = length(e2);
+
+	const float3 p = VLOAD3F(&hitPoint->p.x);
+	const float b0 = length(p - v0);
+	const float b1 = length(p - v1);
+	const float b2 = length(p - v2);
+
+	const float dist0 = TriangleHeight(e0len, b1, b0);
+	const float dist1 = TriangleHeight(e1len, b2, b1);
+	const float dist2 = TriangleHeight(e2len, b0, b2);
+
+	const float theta0 = ExtMesh_GetTriAOV(meshIndex, triIndex, 0 EXTMESH_PARAM);
+	const float theta1 = ExtMesh_GetTriAOV(meshIndex, triIndex, 1 EXTMESH_PARAM);
+	const float theta2 = ExtMesh_GetTriAOV(meshIndex, triIndex, 2 EXTMESH_PARAM);
+
+	const float3 normal = VLOAD3F(&hitPoint->geometryN.x);
+
+	float3 bevelN = (float3)(0.f, 0.f, 0.f);
+	bool hasBevel = false;
+
+	// Rotate the normal around each edge by an angle linearly interpolated
+	// between the edge angle and 0 (Rodrigues' rotation, equivalent to the
+	// quaternion rotation used by the CPU implementation)
+	if ((dist0 < radius) && (theta0 != 0.f)) {
+		const float k0 = dist0 / radius;
+		const float theta = theta0 * (1.f - k0);
+		const float3 axis = e0 / e0len;
+		const float c = cos(theta);
+		const float s = sin(theta);
+		bevelN += (1.f - k0) * (normal * c + cross(axis, normal) * s +
+				axis * dot(axis, normal) * (1.f - c));
+		hasBevel = true;
+	}
+	if ((dist1 < radius) && (theta1 != 0.f)) {
+		const float k1 = dist1 / radius;
+		const float theta = theta1 * (1.f - k1);
+		const float3 axis = e1 / e1len;
+		const float c = cos(theta);
+		const float s = sin(theta);
+		bevelN += (1.f - k1) * (normal * c + cross(axis, normal) * s +
+				axis * dot(axis, normal) * (1.f - c));
+		hasBevel = true;
+	}
+	if ((dist2 < radius) && (theta2 != 0.f)) {
+		const float k2 = dist2 / radius;
+		const float theta = theta2 * (1.f - k2);
+		const float3 axis = e2 / e2len;
+		const float c = cos(theta);
+		const float s = sin(theta);
+		bevelN += (1.f - k2) * (normal * c + cross(axis, normal) * s +
+				axis * dot(axis, normal) * (1.f - c));
+		hasBevel = true;
+	}
+
+	return hasBevel ? normalize(bevelN) : shadeN;
+}
+
+//------------------------------------------------------------------------------
 // Divide texture
 //------------------------------------------------------------------------------
 

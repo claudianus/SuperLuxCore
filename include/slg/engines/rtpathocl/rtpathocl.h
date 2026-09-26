@@ -85,6 +85,13 @@ public:
 
 	virtual void WaitNewFrame();
 
+	// Runtime resolution-reduction override (see RenderEngine). Just an
+	// atomic store: render threads pick it up at the next frame boundary
+	// and re-upload their taskConfig buffer.
+	virtual void SetRuntimeResolutionReduction(const u_int reduction) {
+		runtimeResolutionReduction = reduction;
+	}
+
 	//--------------------------------------------------------------------------
 	// Static methods used by RenderEngineRegistry
 	//--------------------------------------------------------------------------
@@ -100,6 +107,11 @@ public:
 	// Must be a power of 2
 	u_int previewResolutionReduction, previewResolutionReductionStep;
 	u_int resolutionReduction;
+
+	// Requested runtime override of resolutionReduction; 0 means "use the
+	// configured value". Only ever set from the host thread, only ever
+	// read by render threads at frame boundaries.
+	std::atomic<u_int> runtimeResolutionReduction;
 
     struct completion_t {
         void operator()() noexcept { }

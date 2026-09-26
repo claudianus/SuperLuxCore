@@ -68,6 +68,7 @@ void CompiledScene::Recompile(const EditActionList &editActions) {
 	wasLightsCompiled = false;
 	wasImageMapsCompiled = false;
 	wasPhotonGICompiled = false;
+	wasEmissionDistsCompiled = false;
 
 	if (editActions.Has(CAMERA_EDIT))
 		CompileCamera();
@@ -82,8 +83,12 @@ void CompiledScene::Recompile(const EditActionList &editActions) {
 		CompileSceneObjects();
 	// GEOMETRY_EDIT and GEOMETRY_TRANS_EDIT are included here because a triangle
 	// area light may have been edited
+	// wasEmissionDistsCompiled: a changed material emission map rebuilds
+	// emissionFuncDistributions, shifting the absolute offsets stored in
+	// lightDefs, so lights must be recompiled too
 	if (editActions.Has(GEOMETRY_EDIT) || editActions.Has(GEOMETRY_TRANS_EDIT) ||
-			editActions.Has(LIGHTS_EDIT) || editActions.Has(LIGHT_TYPES_EDIT))
+			editActions.Has(LIGHTS_EDIT) || editActions.Has(LIGHT_TYPES_EDIT) ||
+			wasEmissionDistsCompiled)
 		CompileLights();
 	if (editActions.Has(IMAGEMAPS_EDIT))
 		CompileImageMaps();

@@ -29,7 +29,7 @@ namespace slg {
 
 class BevelTexture : public Texture {
 public:
-	BevelTexture(TextureConstRef t, const float radius);
+	BevelTexture(TextureConstPtr t, const float radius);
 	virtual ~BevelTexture();
 
 	virtual TextureType GetType() const { return BEVEL_TEX; }

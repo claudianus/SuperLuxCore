@@ -58,6 +58,16 @@ void RTPathCPURenderEngine::StopLockLess() {
 	PathCPURenderEngine::StopLockLess();
 }
 
+void RTPathCPURenderEngine::SetRuntimeResolutionReduction(const u_int reduction) {
+	// The decimation factor is read live by the samplers on both the
+	// first-frame coarse pass and the normal path
+	zoomFactor = Max(1u, reduction);
+	// Keep the shared-data copy in sync so the next Reset() rebuilds the
+	// coarse first-frame sequence with the new factor
+	if (auto *sd = dynamic_cast<RTPathCPUSamplerSharedData *>(samplerSharedData.get()))
+		sd->SetZoomFactor(reduction);
+}
+
 void RTPathCPURenderEngine::WaitNewFrame() {
 	if (!firstFrameDone && !pauseMode && !editMode) {
 		// Wait for the signal from all the rendering threads

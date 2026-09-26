@@ -317,7 +317,9 @@ public:
 		OUTPUT_AVG_SHADING_NORMAL,
 		OUTPUT_NOISE,
 		OUTPUT_USER_IMPORTANCE,
-		OUTPUT_CAUSTIC
+		OUTPUT_CAUSTIC,
+		OUTPUT_VARIANCE,
+		OUTPUT_MOTION_VECTOR
 	} FilmOutputType;
 
 	/*!
@@ -1644,6 +1646,23 @@ public:
 	 * \return a Properties container with the statistics.
 	 */
 	virtual const std::unique_ptr<luxrays::Properties> & GetStats() const = 0;
+
+	/*!
+	 * \brief Runtime override of the RT path tracer resolution reduction
+	 * (RTPATHOCL only; other engines ignore it). The reduction only
+	 * selects which pixels each pass covers - never sample weights - so
+	 * it applies at the next frame boundary without a film reset or
+	 * session restart. Designed for interactive viewports: raise it while
+	 * the user drags the camera, restore it when interaction settles.
+	 *
+	 * \param reduction is the reduction factor to use (rounded up to a
+	 * power of 2, capped at 64), or 0 to restore the configured
+	 * rtpath.resolutionreduction value. Values below the configured
+	 * reduction are clamped to it: task buffers were sized for the
+	 * configured density, so denser-than-configured sampling is not
+	 * supported at runtime.
+	 */
+	virtual void SetRuntimeResolutionReduction(const unsigned int reduction) = 0;
 
 	/*!
 	 * \brief Dynamic edit the definition of RenderConfig properties.

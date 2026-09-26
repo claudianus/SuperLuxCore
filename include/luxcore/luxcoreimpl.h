@@ -639,6 +639,8 @@ public:
 	void Resume() override;
 	bool IsInPause() const override;
 
+	void SetRuntimeResolutionReduction(const unsigned int reduction) override;
+
 	bool HasDone() const override;
 	void WaitForDone() const override;
 	void WaitNewFrame() override;

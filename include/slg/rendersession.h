@@ -51,6 +51,13 @@ public:
 	void Pause();
 	void Resume();
 
+	// Runtime resolution-reduction override (RTPATHOCL only, other
+	// engines ignore it). 0 restores the configured value; the new
+	// reduction applies at the next frame boundary, no film reset needed.
+	void SetRuntimeResolutionReduction(const u_int reduction) {
+		renderEngine->SetRuntimeResolutionReduction(reduction);
+	}
+
 	void SaveFilmOutputs();
 	void SaveFilm(const std::string &fileName);
 	void SaveResumeFile(const std::string &fileName);

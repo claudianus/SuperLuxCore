@@ -58,6 +58,30 @@ bool Camera::ProjectToImage(luxrays::Ray *ray, float *filmX, float *filmY) const
 	return false;
 }
 
+bool Camera::ProjectPointToFilm(const luxrays::Point &p, const float time,
+		float *filmX, float *filmY) const {
+	if (type == ENVIRONMENT)
+		return false;
+
+	// Camera motion: move the world point into the reference frame where
+	// the camera sits at its static pose
+	Point pr = p;
+	if (motionSystem)
+		pr *= motionSystem->SampleInverse(time);
+
+	// World -> camera space; reject points behind a perspective camera
+	pr = Inverse(GetCameraToWorld()) * pr;
+	if (((type == PERSPECTIVE) || (type == STEREO)) && (pr.z <= clipHither))
+		return false;
+
+	// Camera -> raster space (the projective divide is part of Transform)
+	pr = Inverse(GetRasterToCamera()) * pr;
+	*filmX = pr.x;
+	*filmY = filmHeight - 1.f - pr.y;
+
+	return true;
+}
+
 void Camera::Update(const u_int width, const u_int height, const u_int *subRegion) {
 	filmWidth = width;
 	filmHeight = height;

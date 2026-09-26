@@ -44,6 +44,7 @@ RTPathOCLRenderEngine::RTPathOCLRenderEngine(RenderConfigRef rcfg) :
 	else
 		frameBarrier = nullptr;
 
+	runtimeResolutionReduction = 0;
 	frameTime = 0.f;
 }
 

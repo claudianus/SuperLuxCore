@@ -28,7 +28,7 @@ using namespace slg;
 // Bevel texture
 //------------------------------------------------------------------------------
 
-BevelTexture::BevelTexture(TextureConstRef t, const float r) : tex(&t), radius(r) {
+BevelTexture::BevelTexture(TextureConstPtr t, const float r) : tex(t), radius(r) {
 }
 
 BevelTexture::~BevelTexture() {
@@ -132,7 +132,7 @@ PropertiesUPtr BevelTexture::ToProperties(const ImageMapCache &imgMapCache, cons
 	const string name = GetName();
 	props->Set(Property("scene.textures." + name + ".type")("bevel"));
 	if (tex)
-		props->Set(Property("scene.textures." + name + ".texture")(tex->GetSDLValue()));
+		props->Set(Property("scene.textures." + name + ".bumptex")(tex->GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".radius")(radius));
 
 	return props;

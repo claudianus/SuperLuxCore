@@ -707,13 +707,15 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		const float width = props.Get(Property(propName + ".width")(0.0)).Get<double>();
 
 		tex = std::make_unique<WireFrameTexture>(width, borderTex, insideTex);
-	/*} else if (texType == "bevel") {
-		auto bumpTex = props.IsDefined(propName + ".bumptex") ?
-			GetTexture(props.Get(Property(propName + ".bumptex")(1.f))) : nullptr;
-		
+	} else if (texType == "bevel") {
+		// The additional bump texture is optional
+		TextureConstPtr bumpTex = props.IsDefined(propName + ".bumptex") ?
+			TextureConstPtr(&GetTexture(props.Get(Property(propName + ".bumptex")(1.f)))) :
+			nullptr;
+
 		const float radius = props.Get(Property(propName + ".radius")(.0250)).Get<double>();
 
-		tex = std::make_unique<BevelTexture(bumpTex, radius);*/
+		tex = std::make_unique<BevelTexture>(bumpTex, radius);
 	} else if (texType == "distort") {
 		auto& texture = GetTexture(props.Get(Property(propName + ".texture")(0.f)));
 		auto& offset = GetTexture(props.Get(Property(propName + ".offset")(0.f)));

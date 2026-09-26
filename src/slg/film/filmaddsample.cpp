@@ -196,6 +196,19 @@ void Film::AddSampleResultColor(const u_int x, const u_int y,
 		// Faster than HasChannel(AVG_SHADING_NORMAL)
 		if (channel_AVG_SHADING_NORMAL && sampleResult.HasChannel(AVG_SHADING_NORMAL))
 			channel_AVG_SHADING_NORMAL->AddIfValidWeightedPixel(x, y, &sampleResult.shadingNormal.x, weight);
+
+		// Faster than HasChannel(VARIANCE): accumulates the second moment
+		// of the merged radiance; the variance (E[x^2] - E[x]^2) is derived
+		// at output time
+		if (channel_VARIANCE && sampleResult.HasChannel(VARIANCE) &&
+				(channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size() > 0) &&
+				sampleResult.HasChannel(RADIANCE_PER_PIXEL_NORMALIZED)) {
+			Spectrum c;
+			for (u_int i = 0; i < Min<u_int>(sampleResult.radiance.Size(), channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size()); ++i)
+				c += sampleResult.radiance[i];
+			const Spectrum c2 = c * c;
+			channel_VARIANCE->AddIfValidWeightedPixel(x, y, c2.c, weight);
+		}
 	}
 }
 
@@ -232,6 +245,10 @@ void Film::AddSampleResultData(const u_int x, const u_int y,
 		if (channel_OBJECT_ID && sampleResult.HasChannel(OBJECT_ID) &&
 				(sampleResult.objectID != std::numeric_limits<u_int>::max()))
 			channel_OBJECT_ID->SetPixel(x, y, &sampleResult.objectID);
+
+		// Faster than HasChannel(MOTION_VECTOR)
+		if (channel_MOTION_VECTOR && sampleResult.HasChannel(MOTION_VECTOR))
+			channel_MOTION_VECTOR->SetPixel(x, y, sampleResult.motionVector);
 	}
 
 	if (channel_RAYCOUNT && sampleResult.HasChannel(RAYCOUNT))
@@ -413,6 +430,19 @@ void Film::AtomicAddSampleResultColor(const u_int x, const u_int y,
 		// Faster than HasChannel(AVG_SHADING_NORMAL)
 		if (channel_AVG_SHADING_NORMAL && sampleResult.HasChannel(AVG_SHADING_NORMAL))
 			channel_AVG_SHADING_NORMAL->AtomicAddIfValidWeightedPixel(x, y, &sampleResult.shadingNormal.x, weight);
+
+		// Faster than HasChannel(VARIANCE): accumulates the second moment
+		// of the merged radiance; the variance (E[x^2] - E[x]^2) is derived
+		// at output time
+		if (channel_VARIANCE && sampleResult.HasChannel(VARIANCE) &&
+				(channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size() > 0) &&
+				sampleResult.HasChannel(RADIANCE_PER_PIXEL_NORMALIZED)) {
+			Spectrum c;
+			for (u_int i = 0; i < Min<u_int>(sampleResult.radiance.Size(), channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size()); ++i)
+				c += sampleResult.radiance[i];
+			const Spectrum c2 = c * c;
+			channel_VARIANCE->AtomicAddIfValidWeightedPixel(x, y, c2.c, weight);
+		}
 	}
 }
 
@@ -449,6 +479,10 @@ void Film::AtomicAddSampleResultData(const u_int x, const u_int y,
 		if (channel_OBJECT_ID && sampleResult.HasChannel(OBJECT_ID) &&
 				(sampleResult.objectID != std::numeric_limits<u_int>::max()))
 			channel_OBJECT_ID->SetPixel(x, y, &sampleResult.objectID);
+
+		// Faster than HasChannel(MOTION_VECTOR)
+		if (channel_MOTION_VECTOR && sampleResult.HasChannel(MOTION_VECTOR))
+			channel_MOTION_VECTOR->SetPixel(x, y, sampleResult.motionVector);
 	}
 
 	if (channel_RAYCOUNT && sampleResult.HasChannel(RAYCOUNT))

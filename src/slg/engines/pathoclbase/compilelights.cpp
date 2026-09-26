@@ -216,11 +216,6 @@ void CompiledScene::CompileLightStrategy() {
 				bool supported;
 				switch (l.GetType()) {
 					case TYPE_TRIANGLE:
-						// Materials with a directional emission map (IES)
-						// need SampleableSphericalFunction, not on device
-						supported = (static_cast<const TriangleLight&>(l).
-								lightMaterial->GetEmissionFunc() == nullptr);
-						break;
 					case TYPE_POINT:
 					case TYPE_SPOT:
 					case TYPE_DISTANT:
@@ -230,6 +225,10 @@ void CompiledScene::CompileLightStrategy() {
 					case TYPE_IL:
 					case TYPE_IL_CONSTANT:
 					case TYPE_LASER:
+					case TYPE_SPHERE:
+					case TYPE_MAPSPHERE:
+					case TYPE_PROJECTION:
+					case TYPE_MAPPOINT:
 						supported = true;
 						break;
 					default:
@@ -375,6 +374,10 @@ void CompiledScene::CompileLights() {
 	lightDefs.resize(lightCount);
 	envLightIndices.clear();
 	envLightDistributions.clear();
+	// The device distribution buffer starts with the material emission
+	// map section (compiled by CompileMaterials), so light offsets are
+	// relative to emissionFuncDistributions.size()
+	const u_int distBase = emissionFuncDistributions.size();
 
 	CompileELVC(EnvLightVisibilityCacheRPtr(nullptr));
 
@@ -466,7 +469,7 @@ void CompiledScene::CompileLights() {
 					infiniteLightDistribution.begin(),
 					distributionSize4,
 					envLightDistributions.begin() + size);
-				oclLight->notIntersectable.infinite.distributionOffset = size;
+				oclLight->notIntersectable.infinite.distributionOffset = distBase + size;
 				break;
 			}
 			case TYPE_IL_SKY2: {
@@ -527,7 +530,7 @@ void CompiledScene::CompileLights() {
 					distributionSize4,
 					envLightDistributions.begin() + size
 				);
-				oclLight->notIntersectable.sky2.distributionOffset = size;
+				oclLight->notIntersectable.sky2.distributionOffset = distBase + size;
 				break;
 			}
 			case TYPE_SUN: {
@@ -594,6 +597,19 @@ void CompiledScene::CompileLights() {
 					&funcData);
 				oclLight->notIntersectable.mapPoint.average = funcData->Average();
 				oclLight->notIntersectable.mapPoint.imageMapIndex = scene.GetImageMaps().GetImageMapIndex(*mpl.imageMap);
+
+				// The spherical-function (IES map) sampling distribution,
+				// used by the device Emit() for light tracing
+				if (funcData->GetDistribution2D()) {
+					auto [dist, distributionSize] =
+							CompileDistribution2D(*funcData->GetDistribution2D());
+					const u_int size = envLightDistributions.size();
+					envLightDistributions.resize(size + distributionSize / sizeof(float));
+					std::copy_n(dist.begin(), distributionSize / sizeof(float),
+							envLightDistributions.begin() + size);
+					oclLight->notIntersectable.mapPoint.distributionOffset = distBase + size;
+				} else
+					oclLight->notIntersectable.mapPoint.distributionOffset = NULL_INDEX;
 				break;
 			}
 			case TYPE_SPOT: {
@@ -649,10 +665,13 @@ void CompiledScene::CompileLights() {
 					&oclLight->notIntersectable.projection.screenY1,
 					&alignedWorld2Light, &lightProjection);
 
+				oclLight->notIntersectable.projection.area = pl.GetArea();
+
 				memcpy(&oclLight->notIntersectable.light2World.m, &alignedWorld2Light->m, sizeof(float[4][4]));
 				memcpy(&oclLight->notIntersectable.light2World.mInv, &alignedWorld2Light->mInv, sizeof(float[4][4]));
 
 				memcpy(&oclLight->notIntersectable.projection.lightProjection.m, &lightProjection->m, sizeof(float[4][4]));
+				memcpy(&oclLight->notIntersectable.projection.lightProjectionInv.m, &lightProjection->mInv, sizeof(float[4][4]));
 				break;
 			}
 			case TYPE_IL_CONSTANT: {
@@ -805,6 +824,13 @@ void CompiledScene::CompileLights() {
 	lightIndexByTriIndex = scene.GetLightSources().GetLightIndexByTriIndex();
 
 	CompileLightStrategy();
+
+	// The device buffer layout is
+	// [emissionFuncDistributions | envLightDistributions]: prepend the
+	// material emission map section so distribution offsets (absolute,
+	// based on emissionFuncDistributions.size()) index the merged buffer
+	envLightDistributions.insert(envLightDistributions.begin(),
+			emissionFuncDistributions.begin(), emissionFuncDistributions.end());
 
 	const double tEnd = WallClockTime();
 	SLG_LOG("Lights compilation time: " << int((tEnd - tStart) * 1000.0) << "ms");

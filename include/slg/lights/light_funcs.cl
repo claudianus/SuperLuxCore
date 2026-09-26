@@ -685,6 +685,39 @@ OPENCL_FORCE_INLINE float3 SphereLight_Illuminate(__global const LightSource *sp
 	}
 }
 
+// Port of SphereLight::Emit(): uniform point on the sphere surface plus a
+// cosine-weighted direction in the surface frame
+OPENCL_FORCE_INLINE float3 SphereLight_Emit(
+		__global const LightSource *sphereLight,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW) {
+	const float3 absolutePos = VLOAD3F(&sphereLight->notIntersectable.sphere.absolutePos.x);
+	const float radius = sphereLight->notIntersectable.sphere.radius;
+	const float invArea = 1.f / (4.f * M_PI_F * radius * radius);
+
+	const float3 normal = UniformSampleSphere(u0, u1);
+	const float3 rayOrig = absolutePos + radius * normal;
+
+	Frame localFrame;
+	Frame_SetFromZ_Private(&localFrame, normal);
+
+	float pdf;
+	float3 localDirOut = CosineSampleHemisphereWithPdf(u2, u3, &pdf);
+	// Cannot really not emit the particle, so just bias it to the correct
+	// angle (same clamp as CPU SphereLight::Emit)
+	localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
+
+	*emissionPdfW = pdf * invArea;
+
+	const float3 rayDir = Frame_ToWorld_Private(&localFrame, localDirOut);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	return VLOAD3F(sphereLight->notIntersectable.sphere.emittedFactor.c) *
+			invArea * fabs(localDirOut.z) * M_1_PI_F;
+}
+
 //------------------------------------------------------------------------------
 // MapPointLight
 //------------------------------------------------------------------------------
@@ -719,6 +752,50 @@ OPENCL_FORCE_INLINE float3 MapPointLight_Illuminate(__global const LightSource *
 	return VLOAD3F(mapPointLight->notIntersectable.mapPoint.emittedFactor.c) * emissionColor;
 }
 
+// Port of MapPointLight::Emit(): sample the spherical-function (IES map)
+// distribution for the outgoing direction
+OPENCL_FORCE_INLINE float3 MapPointLight_Emit(
+		__global const LightSource *mapPointLight,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW
+		LIGHTS_PARAM_DECL) {
+	const uint distOffset = mapPointLight->notIntersectable.mapPoint.distributionOffset;
+	if (distOffset == NULL_INDEX)
+		return BLACK;
+
+	__global const float* restrict dist = &envLightDistribution[distOffset];
+
+	float2 uv;
+	float distPdf;
+	Distribution2D_SampleContinuous(dist, u0, u1, &uv, &distPdf);
+	if (distPdf == 0.f)
+		return BLACK;
+
+	// uv -> direction on the unit sphere (SampleableSphericalFunction::Sample)
+	const float theta = uv.y * M_PI_F;
+	const float phi = uv.x * 2.f * M_PI_F;
+	const float sinTheta = sin(theta);
+	if (sinTheta <= 0.f)
+		return BLACK;
+	const float3 localFromLight = SphericalDirection(sinTheta, cos(theta), phi);
+
+	// pdf w.r.t. solid angle
+	*emissionPdfW = distPdf / (2.f * M_PI_F * M_PI_F * sinTheta);
+
+	// light2World is the true lightToWorld transform for map point lights
+	const float3 rayDir = normalize(Transform_ApplyVector(
+			&mapPointLight->notIntersectable.light2World, localFromLight));
+	const float3 rayOrig = VLOAD3F(&mapPointLight->notIntersectable.mapPoint.absolutePos.x);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	__global const ImageMap *imageMap = &imageMapDescs[mapPointLight->notIntersectable.mapPoint.imageMapIndex];
+	const float3 eval = ImageMap_GetSpectrum(imageMap, uv.x, uv.y IMAGEMAPS_PARAM);
+
+	return VLOAD3F(mapPointLight->notIntersectable.mapPoint.emittedFactor.c) *
+			eval / (4.f * M_PI_F * mapPointLight->notIntersectable.mapPoint.average);
+}
+
 //------------------------------------------------------------------------------
 // MapSphereLight
 //------------------------------------------------------------------------------
@@ -736,6 +813,35 @@ OPENCL_FORCE_INLINE float3 MapSphereLight_Illuminate(__global const LightSource 
 	const float3 localFromLight = normalize(Transform_InvApplyVector(
 			&mapSphereLight->notIntersectable.light2World, -VLOAD3F(&shadowRay->d.x)));
 	const float2 uv = MAKE_FLOAT2(SphericalPhi(localFromLight) * (1.f / (2.f * M_PI_F)), SphericalTheta(localFromLight) * M_1_PI_F);
+	const float3 emissionColor = ImageMap_GetSpectrum(
+			imageMap,
+			uv.x, uv.y
+			IMAGEMAPS_PARAM) * (1.f / mapSphereLight->notIntersectable.mapSphere.average);
+
+	return result * emissionColor;
+}
+
+// Port of MapSphereLight::Emit(): sphere-surface sampling (the map would
+// have to reject half of the samples below the surface) times the map
+// value at the outgoing direction
+OPENCL_FORCE_INLINE float3 MapSphereLight_Emit(
+		__global const LightSource *mapSphereLight,
+		const float time, const float u0, const float u1,
+		const float u2, const float u3,
+		__global Ray *ray, float *emissionPdfW
+		IMAGEMAPS_PARAM_DECL) {
+	const float3 result = SphereLight_Emit(mapSphereLight,
+			time, u0, u1, u2, u3,
+			ray, emissionPdfW);
+	if (Spectrum_IsBlack(result))
+		return BLACK;
+
+	__global const ImageMap *imageMap = &imageMapDescs[mapSphereLight->notIntersectable.mapSphere.imageMapIndex];
+
+	const float3 localFromLight = normalize(Transform_InvApplyVector(
+			&mapSphereLight->notIntersectable.light2World, VLOAD3F(&ray->d.x)));
+	const float2 uv = MAKE_FLOAT2(SphericalPhi(localFromLight) * (1.f / (2.f * M_PI_F)),
+			SphericalTheta(localFromLight) * M_1_PI_F);
 	const float3 emissionColor = ImageMap_GetSpectrum(
 			imageMap,
 			uv.x, uv.y
@@ -841,6 +947,48 @@ OPENCL_FORCE_INLINE float3 ProjectionLight_Illuminate(__global const LightSource
 				imageMap,
 				u, v
 				IMAGEMAPS_PARAM);
+	}
+
+	return c;
+}
+
+// Port of ProjectionLight::Emit(): uniform sample on the image plane
+// projected through the light projection matrix
+OPENCL_FORCE_INLINE float3 ProjectionLight_Emit(
+		__global const LightSource *projectionLight,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW
+		IMAGEMAPS_PARAM_DECL) {
+	const float screenX0 = projectionLight->notIntersectable.projection.screenX0;
+	const float screenX1 = projectionLight->notIntersectable.projection.screenX1;
+	const float screenY0 = projectionLight->notIntersectable.projection.screenY0;
+	const float screenY1 = projectionLight->notIntersectable.projection.screenY1;
+
+	const float3 ps = Matrix4x4_ApplyPoint(
+			&projectionLight->notIntersectable.projection.lightProjectionInv,
+			MAKE_FLOAT3(u0 * (screenX1 - screenX0) + screenX0,
+					u1 * (screenY1 - screenY0) + screenY0, 0.f));
+
+	// light2World stores the aligned light->world rotation
+	const float3 rayDir = normalize(Transform_ApplyVector(
+			&projectionLight->notIntersectable.light2World, ps));
+	const float3 rayOrig = VLOAD3F(&projectionLight->notIntersectable.projection.absolutePos.x);
+
+	const float cos = dot(rayDir,
+			VLOAD3F(&projectionLight->notIntersectable.projection.lightNormal.x));
+	const float cos2 = cos * cos;
+	if (cos <= 0.f)
+		return BLACK;
+	*emissionPdfW = 1.f / (projectionLight->notIntersectable.projection.area * cos2 * cos);
+
+	Ray_Init2(ray, rayOrig, rayDir, time);
+
+	float3 c = VLOAD3F(projectionLight->notIntersectable.projection.emittedFactor.c);
+
+	const uint imageMapIndex = projectionLight->notIntersectable.projection.imageMapIndex;
+	if (imageMapIndex != NULL_INDEX) {
+		__global const ImageMap *imageMap = &imageMapDescs[imageMapIndex];
+		c *= ImageMap_GetSpectrum(imageMap, u0, u1 IMAGEMAPS_PARAM);
 	}
 
 	return c;
@@ -1406,7 +1554,7 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 		const float u2, const float u3, const float passThroughEvent,
 		__global HitPoint *tmpHitPoint,
 		__global Ray *ray, float *emissionPdfW
-		MATERIALS_PARAM_DECL) {
+		LIGHTS_PARAM_DECL) {
 	// A safety check to avoid NaN/Inf
 	if ((triLight->triangle.invTriangleArea == 0.f) || (triLight->triangle.invMeshArea == 0.f))
 		return BLACK;
@@ -1415,28 +1563,56 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 	const uint triangleIndex = triLight->triangle.triangleIndex;
 	const uint materialIndex = sceneObjs[meshIndex].materialIndex;
 
-	// Sample the emission direction in the light local frame. The host
-	// excludes materials with a directional emission map (IES) from the
-	// emit distribution, so only the theta-cone cases remain here.
+	// Sample the emission direction in the light local frame
 	float3 localDirOut;
 	float dirPdfW;
-	const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex MATERIALS_PARAM);
-	if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC) {
-		// emittedTheta == 0: pure forward emission
-		localDirOut = MAKE_FLOAT3(0.f, 0.f, 1.f);
-		dirPdfW = 1.f;
-	} else if (cosThetaMax > 0.f) {
-		localDirOut = UniformSampleCone(u2, u3, cosThetaMax,
-					MAKE_FLOAT3(1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 1.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 1.f));
-		dirPdfW = UniformConePdf(cosThetaMax);
+	float3 emissionFuncColor = WHITE;
+
+	__global const Material *material = &mats[materialIndex];
+	if (material->emissionFuncDistOffset != NULL_INDEX) {
+		// Directional emission map (IES): sample the spherical-function
+		// distribution, then evaluate the map at the sampled direction
+		// (SampleableSphericalFunction::Sample)
+		__global const float* restrict dist =
+				&envLightDistribution[material->emissionFuncDistOffset];
+		float2 uv;
+		float distPdf;
+		Distribution2D_SampleContinuous(dist, u2, u3, &uv, &distPdf);
+		if (distPdf == 0.f)
+			return BLACK;
+
+		const float theta = uv.y * M_PI_F;
+		const float phi = uv.x * 2.f * M_PI_F;
+		const float sinTheta = sin(theta);
+		if (sinTheta <= 0.f)
+			return BLACK;
+		localDirOut = SphericalDirection(sinTheta, cos(theta), phi);
+		dirPdfW = distPdf / (2.f * M_PI_F * M_PI_F * sinTheta);
+
+		__global const ImageMap *imgMap =
+				&imageMapDescs[material->emissionFuncImageMapIndex];
+		emissionFuncColor = ImageMap_GetSpectrum(imgMap, uv.x, uv.y
+				IMAGEMAPS_PARAM) * (1.f / material->emissionFuncAverage);
 	} else {
-		float pdf;
-		localDirOut = CosineSampleHemisphereWithPdf(u2, u3, &pdf);
-		dirPdfW = pdf;
+		const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex MATERIALS_PARAM);
+		if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC) {
+			// emittedTheta == 0: pure forward emission
+			localDirOut = MAKE_FLOAT3(0.f, 0.f, 1.f);
+			dirPdfW = 1.f;
+		} else if (cosThetaMax > 0.f) {
+			localDirOut = UniformSampleCone(u2, u3, cosThetaMax,
+						MAKE_FLOAT3(1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 1.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 1.f));
+			dirPdfW = UniformConePdf(cosThetaMax);
+		} else {
+			float pdf;
+			localDirOut = CosineSampleHemisphereWithPdf(u2, u3, &pdf);
+			dirPdfW = pdf;
+		}
+		// Cannot really not emit the particle, so just bias it to the
+		// correct angle (same clamp as CPU TriangleLight::Emit; a
+		// directional map may emit backward so it is not clamped)
+		localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
 	}
-	// Cannot really not emit the particle, so just bias it to the correct
-	// angle (same clamp as CPU TriangleLight::Emit)
-	localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
 
 	if (dirPdfW == 0.f)
 		return BLACK;
@@ -1481,7 +1657,7 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 
 	return Material_GetEmittedRadiance(materialIndex,
 			tmpHitPoint, triLight->triangle.invMeshArea
-			MATERIALS_PARAM) * fabs(localDirOut.z);
+			MATERIALS_PARAM) * emissionFuncColor * fabs(localDirOut.z);
 }
 
 OPENCL_FORCE_INLINE float3 Light_Emit(
@@ -1547,7 +1723,7 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1, u2, u3, passThroughEvent,
 					tmpHitPoint,
 					ray, emissionPdfW
-					MATERIALS_PARAM);
+					LIGHTS_PARAM);
 			break;
 		case TYPE_POINT:
 			flux = PointLight_Emit(
@@ -1563,6 +1739,29 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 			flux = LaserLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW);
+			break;
+		case TYPE_SPHERE:
+			flux = SphereLight_Emit(
+					light, time, u0, u1, u2, u3,
+					ray, emissionPdfW);
+			break;
+		case TYPE_MAPSPHERE:
+			flux = MapSphereLight_Emit(
+					light, time, u0, u1, u2, u3,
+					ray, emissionPdfW
+					IMAGEMAPS_PARAM);
+			break;
+		case TYPE_MAPPOINT:
+			flux = MapPointLight_Emit(
+					light, time, u0, u1,
+					ray, emissionPdfW
+					LIGHTS_PARAM);
+			break;
+		case TYPE_PROJECTION:
+			flux = ProjectionLight_Emit(
+					light, time, u0, u1,
+					ray, emissionPdfW
+					IMAGEMAPS_PARAM);
 			break;
 		default:
 			// Unsupported types are never picked: the host zeroes their

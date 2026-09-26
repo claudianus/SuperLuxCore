@@ -727,6 +727,106 @@ OPENCL_FORCE_NOT_INLINE bool Camera_GetSamplePosition(
 	}
 }
 
+// MOTION_VECTOR channel: projects a world-space point to film
+// coordinates at the given scene time (camera motion applied, no film
+// subregion clamping). Mirrors Camera::ProjectPointToFilm().
+OPENCL_FORCE_INLINE bool Camera_ProjectWorldPointToFilm(
+		__global const Camera* restrict camera,
+		const float3 worldP, const float time,
+		const uint filmHeight,
+		float *filmX, float *filmY) {
+	const __global CameraBase* restrict cameraBase = &camera->base;
+
+	if (camera->type == ENVIRONMENT)
+		return false;
+
+	float3 p = worldP;
+	if (cameraBase->motionSystem.interpolatedInverseTransformFirstIndex != NULL_INDEX) {
+		Matrix4x4 m;
+		MotionSystem_SampleInverse(&cameraBase->motionSystem, time,
+				cameraBase->interpolatedTransforms, &m);
+		p = Matrix4x4_ApplyPoint_Private(&m, p);
+	}
+
+	// World -> camera space; reject points behind a perspective camera
+	p = Transform_InvApplyPoint(&cameraBase->cameraToWorld, p);
+	if (((camera->type == PERSPECTIVE) || (camera->type == STEREO)) &&
+			(p.z <= cameraBase->hither))
+		return false;
+
+	// Camera -> raster space (the projective divide is part of the
+	// transform)
+	p = Transform_InvApplyPoint(&cameraBase->rasterToCamera, p);
+	*filmX = p.x;
+	*filmY = filmHeight - 1.f - p.y;
+
+	return true;
+}
+
+// MOTION_VECTOR channel: finite-differences the film position of the
+// first camera-visible surface point over the shutter interval and
+// returns the velocity in pixels per frame. Mirrors the CPU
+// ComputeFirstHitMotionVector() in pathtracer.cpp.
+//
+// NOTE: per-vertex deformation motion is not available here - the MBVH
+// vertex-motion buffers are local to the intersection device and are
+// not passed to path kernels. GPU falls back to the transform
+// component for deforming meshes (documented CPU/GPU difference).
+OPENCL_FORCE_INLINE void PathOCL_ComputeFirstHitMotionVector(
+		__global const Camera* restrict camera,
+		__global const ExtMesh* restrict meshDescs,
+		__global const InterpolatedTransform* restrict interpolatedTransforms,
+		__global const HitPoint *hitPoint,
+		const float rayTime,
+		const uint filmHeight,
+		__global float *mv) {
+	const uint meshIndex = hitPoint->meshIndex;
+	if (meshIndex == NULL_INDEX)
+		return;
+	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
+
+	const bool objMotion = (meshDesc->type == TYPE_EXT_TRIANGLE_MOTION);
+	mv[3] = objMotion ? 1.f : 0.f;
+
+	const bool camMotion =
+			(camera->base.motionSystem.interpolatedInverseTransformFirstIndex != NULL_INDEX);
+	if (!objMotion && !camMotion) {
+		mv[2] = 1.f;
+		return;
+	}
+
+	const float dt = fmax((camera->base.shutterClose - camera->base.shutterOpen) * .5f, 1e-4f);
+	const float ta = rayTime - dt;
+	const float tb = rayTime + dt;
+
+	float3 pWa = VLOAD3F(&hitPoint->p.x);
+	float3 pWb = pWa;
+	if (objMotion) {
+		// Static local-space position recovered through the hit
+		// transform, re-transformed at the two sample times
+		const float3 pLocal = Transform_InvApplyPoint(&hitPoint->localToWorld,
+				VLOAD3F(&hitPoint->p.x));
+
+		Matrix4x4 m;
+		MotionSystem_SampleInverse(&meshDesc->motion.motionSystem, ta,
+				interpolatedTransforms, &m);
+		pWa = Matrix4x4_ApplyPoint_Private(&m, pLocal);
+		MotionSystem_SampleInverse(&meshDesc->motion.motionSystem, tb,
+				interpolatedTransforms, &m);
+		pWb = Matrix4x4_ApplyPoint_Private(&m, pLocal);
+	}
+
+	float xa, ya, xb, yb;
+	if (!Camera_ProjectWorldPointToFilm(camera, pWa, ta, filmHeight, &xa, &ya) ||
+			!Camera_ProjectWorldPointToFilm(camera, pWb, tb, filmHeight, &xb, &yb))
+		return;
+
+	const float invDt = 1.f / (tb - ta);
+	mv[0] = (xb - xa) * invDt;
+	mv[1] = (yb - ya) * invDt;
+	mv[2] = 1.f;
+}
+
 OPENCL_FORCE_INLINE void PerspectiveCamera_GetPDF(
 		__global const Camera* restrict camera,
 		__global const Ray *eyeRay, const float eyeDistance,

@@ -87,7 +87,8 @@ const Film::FilmChannels PathTracer::eyeSampleResultsChannels({
 	Film::INDIRECT_SPECULAR, Film::INDIRECT_SPECULAR_REFLECT, Film::INDIRECT_SPECULAR_TRANSMIT,
 	Film::DIRECT_SHADOW_MASK, Film::INDIRECT_SHADOW_MASK, Film::UV, Film::RAYCOUNT,
 	Film::IRRADIANCE, Film::OBJECT_ID, Film::SAMPLECOUNT, Film::CONVERGENCE,
-	Film::MATERIAL_ID_COLOR, Film::ALBEDO, Film::AVG_SHADING_NORMAL, Film::NOISE
+	Film::MATERIAL_ID_COLOR, Film::ALBEDO, Film::AVG_SHADING_NORMAL, Film::NOISE,
+	Film::VARIANCE, Film::MOTION_VECTOR
 });
 
 const Film::FilmChannels PathTracer::lightSampleResultsChannels({
@@ -249,6 +250,10 @@ void PathTracer::ResetEyeSampleResults(vector<SampleResult> &sampleResults) {
 	sampleResult.irradiance = Spectrum();
 	sampleResult.albedo = Spectrum();
 	sampleResult.isHoldout = false;
+	sampleResult.motionVector[0] = 0.f;
+	sampleResult.motionVector[1] = 0.f;
+	sampleResult.motionVector[2] = 0.f;
+	sampleResult.motionVector[3] = 0.f;
 
 	sampleResult.rayCount = 0.f;
 }
@@ -773,6 +778,71 @@ void PathTracer::GenerateEyeRay(CameraConstRef camera, FilmConstRef film, Ray &e
 // RenderEyePath methods
 //------------------------------------------------------------------------------
 
+namespace {
+
+// MOTION_VECTOR channel: finite-differences the film position of the
+// first camera-visible surface point over the shutter interval and
+// returns the velocity in pixels per frame (motion times are expressed
+// in frames relative to the current one). Fills
+// mv = {vx, vy, valid, objectMotion}: camera/object/deformation motion
+// are all supported.
+void ComputeFirstHitMotionVector(SceneConstRef scene, const float rayTime,
+		const HitPoint &hitPoint, float *mv) {
+	const Camera &camera = scene.GetCamera();
+	ExtMeshConstPtr mesh = hitPoint.mesh;
+	if (!mesh)
+		return;
+
+	const ExtTriangleMesh *extTri = ExtTriangleMesh::FromMesh(mesh);
+	const bool objMotion = (mesh->GetType() == TYPE_EXT_TRIANGLE_MOTION) ||
+			(extTri && extTri->HasVertexMotion());
+	mv[3] = objMotion ? 1.f : 0.f;
+
+	// Early out for fully static geometry and camera
+	if (!objMotion && !camera.motionSystem) {
+		mv[2] = 1.f;
+		return;
+	}
+
+	// Finite-difference half window inside the shutter interval
+	const float dt = Max((camera.shutterClose - camera.shutterOpen) * .5f, 1e-4f);
+	const float ta = rayTime - dt;
+	const float tb = rayTime + dt;
+
+	// Local-space position of the surface point at time t: for meshes
+	// with per-vertex deformation the vertex motion series is
+	// barycentrically interpolated at t, otherwise the (static) local
+	// position is recovered through the hit transform
+	auto localPosAt = [&](const float t) {
+		if (extTri && extTri->HasVertexMotion()) {
+			const Triangle &tri = mesh->GetTriangles()[hitPoint.triangleIndex];
+			const float b0 = 1.f - hitPoint.triangleBariCoord1 - hitPoint.triangleBariCoord2;
+			return b0 * extTri->GetVertexAtTime(tri.v[0], t) +
+				hitPoint.triangleBariCoord1 * extTri->GetVertexAtTime(tri.v[1], t) +
+				hitPoint.triangleBariCoord2 * extTri->GetVertexAtTime(tri.v[2], t);
+		} else
+			return Inverse(hitPoint.localToWorld) * hitPoint.p;
+	};
+
+	auto worldPosAt = [&](const float t) {
+		Transform local2World;
+		mesh->GetLocal2World(t, local2World);
+		return local2World * localPosAt(t);
+	};
+
+	float xa, ya, xb, yb;
+	if (!camera.ProjectPointToFilm(worldPosAt(ta), ta, &xa, &ya) ||
+			!camera.ProjectPointToFilm(worldPosAt(tb), tb, &xb, &yb))
+		return;
+
+	const float invDt = 1.f / (tb - ta);
+	mv[0] = (xb - xa) * invDt;
+	mv[1] = (yb - ya) * invDt;
+	mv[2] = 1.f;
+}
+
+}
+
 void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		SceneConstRef scene, Sampler& sampler, EyePathInfo &pathInfo,
 		Ray &eyeRay,  const luxrays::Spectrum &eyeTroughput,
@@ -886,6 +956,9 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			sampleResult.objectID = bsdf.GetObjectID();
 			sampleResult.uv = bsdf.hitPoint.GetUV(0);
 			sampleResult.isHoldout = bsdf.IsHoldout();
+			if (sampleResult.HasChannel(Film::MOTION_VECTOR))
+				ComputeFirstHitMotionVector(scene, eyeRay.time,
+						bsdf.hitPoint, sampleResult.motionVector);
 		}
 		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes());
 
@@ -2559,8 +2632,9 @@ void PathTracer::ParseOptions(
 	else
 		mneeSeeds.reset();
 
-	// Path guiding (P1-3 M1 CPU; M2b GPU samples a frozen table file)
-	// (path.guiding.tablefile, empty = train inline (CPU) / unguided (GPU))
+	// Path guiding (M1 CPU SD-tree/vMF; M2b-2 GPU trains a coarse table via
+	// the record drain loop into the shared PathGuidingCache)
+	// (path.guiding.tablefile, empty = train inline on both CPU and GPU)
 	guidingEnable = cfg.Get(defaultProps.Get("path.guiding.enable")).Get<bool>();
 	guidingTableFile = cfg.Get(defaultProps.Get("path.guiding.tablefile")).Get<string>();
 

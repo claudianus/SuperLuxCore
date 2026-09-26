@@ -65,6 +65,11 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 		// Set the LuxRays DataSet
 		ctx.SetDataSet(dataSet);
 
+		// Devices are stopped and the old data set was replaced:
+		// objects parked in the trash bin are no longer referenced by
+		// anything and can be released for real.
+		emptyTrash();
+
 		// Restart all intersection devices
 		ctx.Start();
 	} else if(editActions.Has(GEOMETRY_TRANS_EDIT)) {

@@ -86,6 +86,8 @@ void CompiledScene::CompileFilm(const Film &film, slg::ocl::Film &oclFilm) {
 	oclFilm.hasChannelAvgShadingNormal = film.HasChannel(Film::AVG_SHADING_NORMAL);
 	oclFilm.hasChannelNoise = film.HasChannel(Film::NOISE);
 	oclFilm.hasChannelUserImportance = film.HasChannel(Film::USER_IMPORTANCE);
+	oclFilm.hasChannelVariance = film.HasChannel(Film::VARIANCE);
+	oclFilm.hasChannelMotionVector = film.HasChannel(Film::MOTION_VECTOR);
 }
 
 #endif

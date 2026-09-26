@@ -382,6 +382,13 @@ typedef struct {
 	float bumpSampleDistance;
 	Spectrum emittedFactor;
 	float emittedCosThetaMax;
+	// Directional emission map (e.g. IES) for light tracing: the
+	// SampleableSphericalFunction sampling distribution (offset into
+	// envLightDistribution), its spherical average and the source map.
+	// emissionFuncDistOffset == NULL_INDEX means no directional map.
+	unsigned int emissionFuncDistOffset;
+	float emissionFuncAverage;
+	unsigned int emissionFuncImageMapIndex;
 	int usePrimitiveArea;
 	unsigned int frontTranspTexIndex, backTranspTexIndex;
 	Spectrum passThroughShadowTransparency;

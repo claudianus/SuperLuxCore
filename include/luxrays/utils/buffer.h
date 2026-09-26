@@ -56,6 +56,14 @@ public:
 	explicit Buffer(std::span<const TYPE>);
 	explicit Buffer(std::span<const SUBTYPE>);
 
+	// Wrap externally owned memory without copying it. `keeper` is a
+	// shared owner held by the buffer for its whole lifetime (e.g. a
+	// reference to the Python array owning the memory): it is released
+	// when the buffer is freed or reallocated. External memory carries
+	// no trailing pad, so GetPad() returns the compile-time pad value.
+	static Buffer Adopt(void *ptr, std::size_t byteSize,
+			std::shared_ptr<void> keeper);
+
 	// Move is ok
 	inline Buffer(Buffer&&) = default;
 	inline Buffer& operator=(Buffer&&) = default;
@@ -102,9 +110,13 @@ public:
 
 
 private:
-	// Underlying storage
-	std::unique_ptr<std::byte[]> data;
+	// Underlying storage. shared_ptr so adopted external memory can
+	// carry its keeper in the control block (aliasing constructor).
+	std::shared_ptr<std::byte[]> data;
 	static constexpr std::array pad{PAD};
+	// True when `data` wraps memory owned elsewhere: no trailing pad
+	// exists in the allocation.
+	bool external = false;
 
 	// Sizes (in bytes)
 	size_t totalSize = 0;

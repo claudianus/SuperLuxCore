@@ -88,8 +88,20 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 	eyeTaskCount = taskCount;
 	lightTaskCount = 0;
 	auto& cfg = renderConfig.GetConfig();
-	const bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
+	bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
 			Get("path.lighttracing.enable")).Get<bool>();
+	// Same promotion as PathOCLRenderEngine::UpdateTaskCount: hybrid
+	// without native threads has no compensating light pass, so serve it
+	// from the GPU light population (RTPATHOCL only; TILEPATHOCL cannot
+	// light-trace and drops the suppression in StartLockLess instead).
+	if (!lightTracingEnable && (GetType() == RTPATHOCL) &&
+			(nativeRenderThreadCount == 0) &&
+			cfg.Get(PathTracer::GetDefaultProps()->
+			Get("path.hybridbackforward.enable")).Get<bool>()) {
+		lightTracingEnable = true;
+		SLG_LOG("WARNING: path.hybridbackforward without native threads has "
+				"no light pass; enabling GPU light tracing");
+	}
 	if (lightTracingEnable && (GetType() == RTPATHOCL)) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
 		const std::string samplerType = cfg.Get(Property("sampler.type")("SOBOL")).Get<std::string>();
@@ -106,8 +118,11 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 				lightTaskCount = taskCount;
 				eyeTaskCount = 0;
 			} else {
-				const float f = Clamp(cfg.Get(PathTracer::GetDefaultProps()->
-						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+				const float f = cfg.IsDefined("path.lighttracing.taskfraction") ?
+						Clamp(cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9) :
+						Clamp(1.0 - cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.hybridbackforward.partition")).Get<double>(), 0.0, 0.9);
 				lightTaskCount = Min(taskCount - 8192u,
 						RoundUp<u_int>((u_int)(taskCount * f), 8192u));
 				eyeTaskCount = taskCount - lightTaskCount;
@@ -192,6 +207,27 @@ void TilePathOCLRenderEngine::StartLockLess() {
 	// pathTracer must be configured here because it is then used
 	// to set tileRepository->varianceClamping, etc.
 	pathTracer.ParseOptions(cfg, *defaultProps);
+
+	// Mirror of the InitTaskCount() handling for hybrid-without-light-
+	// pass (no native threads to run the CPU light pass):
+	//  - RTPATHOCL: promoted to GPU light tracing in InitTaskCount, so
+	//    mark the parsed configuration the same way.
+	//  - TILEPATHOCL: cannot light-trace at all, so drop the eye-side
+	//    caustic suppression instead - noisy caustics, but unbiased.
+	if (pathTracer.hybridBackForwardEnable && !pathTracer.lightTracingEnable &&
+			(nativeRenderThreadCount == 0)) {
+		if (GetType() == RTPATHOCL) {
+			pathTracer.lightTracingEnable = true;
+			if (!cfg.IsDefined("path.lighttracing.taskfraction"))
+				pathTracer.lightTracingTaskFraction = Clamp(
+						1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
+		} else {
+			pathTracer.hybridBackForwardEnable = false;
+			SLG_LOG("WARNING: path.hybridbackforward without native threads "
+					"has no light pass on TILEPATHOCL; disabling caustic "
+					"suppression");
+		}
+	}
 
 	//--------------------------------------------------------------------------
 	// Restore render state if there is one

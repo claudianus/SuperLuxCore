@@ -1844,6 +1844,30 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// BEVEL_TEX
+		//----------------------------------------------------------------------
+		case BEVEL_TEX: {
+			switch (evalType) {
+				case EVAL_FLOAT:
+					EvalStack_PushFloat(0.f);
+					break;
+				case EVAL_SPECTRUM:
+					EvalStack_PushFloat3(BLACK);
+					break;
+				case EVAL_BUMP: {
+					const float3 shadeN = BevelTexture_Bump(hitPoint,
+							texture->bevelTex.radius
+							TEXTURES_PARAM);
+					EvalStack_PushFloat3(shadeN);
+					break;
+				}
+				default:
+					// Something wrong here
+					break;
+			}
+			break;
+		}
+		//----------------------------------------------------------------------
 		// TRIPLANAR_TEX
 		//----------------------------------------------------------------------
 		case TRIPLANAR_TEX:

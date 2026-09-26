@@ -106,6 +106,18 @@ void PathOCLRenderEngine::StartLockLess() {
 	auto defaultProps = PathOCLRenderEngine::GetDefaultProps();
 	pathTracer.ParseOptions(cfg, *defaultProps);
 
+	// Mirror of the UpdateTaskCount() promotion: hybrid without native
+	// threads was promoted to GPU light tracing there, so mark the parsed
+	// configuration the same way (compilepathtracer.cpp forwards
+	// lightTracingEnable into taskConfig->pathTracer.lightTracing.enabled).
+	if (pathTracer.hybridBackForwardEnable && !pathTracer.lightTracingEnable &&
+			(nativeRenderThreadCount == 0)) {
+		pathTracer.lightTracingEnable = true;
+		if (!cfg.IsDefined("path.lighttracing.taskfraction"))
+			pathTracer.lightTracingTaskFraction = Clamp(
+					1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
+	}
+
 	//--------------------------------------------------------------------------
 	// Restore render state if there is one
 	//--------------------------------------------------------------------------
@@ -254,8 +266,22 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 	eyeTaskCount = taskCount;
 	lightTaskCount = 0;
 	// pathTracer is parsed after this call: read the property directly
-	const bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
+	bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
 			Get("path.lighttracing.enable")).Get<bool>();
+	// hybrid without any light pass would suppress eye-side caustics with
+	// nothing to compensate: native threads run the CPU Metropolis light
+	// pass, but with no native threads the only compensating path is the
+	// GPU light population. Promote the request to GPU light tracing and
+	// use the hybrid light share (1 - partition) when the user did not set
+	// an explicit task fraction. StartLockLess() mirrors this promotion on
+	// pathTracer so the compiled taskConfig agrees with the split here.
+	if (!lightTracingEnable && (nativeRenderThreadCount == 0) &&
+			cfg.Get(PathTracer::GetDefaultProps()->
+			Get("path.hybridbackforward.enable")).Get<bool>()) {
+		lightTracingEnable = true;
+		SLG_LOG("WARNING: path.hybridbackforward without native threads has "
+				"no light pass; enabling GPU light tracing");
+	}
 	if (lightTracingEnable) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
 		// Light tasks run their own sample sequence; Metropolis light
@@ -277,8 +303,11 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 				lightTaskCount = taskCount;
 				eyeTaskCount = 0;
 			} else {
-				const float f = Clamp(cfg.Get(PathTracer::GetDefaultProps()->
-						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9);
+				const float f = cfg.IsDefined("path.lighttracing.taskfraction") ?
+						Clamp(cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9) :
+						Clamp(1.0 - cfg.Get(PathTracer::GetDefaultProps()->
+						Get("path.hybridbackforward.partition")).Get<double>(), 0.0, 0.9);
 				lightTaskCount = Min(taskCount - 8192u,
 						RoundUp<u_int>((u_int)(taskCount * f), 8192u));
 				eyeTaskCount = taskCount - lightTaskCount;

@@ -1550,6 +1550,51 @@ using triangle_underlying_type = std::remove_all_extents<decltype(luxrays::Trian
 
 using py_float_array= py::array_t<float, py::array::c_style>;
 
+// Keeps a reference to a numpy array so the memory it owns stays valid
+// for as long as a LuxCore buffer adopts it. The reference is dropped
+// under the GIL because scene buffers can be released from non-Python
+// threads (trash bin, device teardown, session destruction).
+static std::shared_ptr<void> numpyKeeper(const py::object &arr) {
+	auto *ref = new py::object(py::reinterpret_borrow<py::object>(arr));
+	return std::shared_ptr<void>(ref, [](void *p) {
+		if (Py_IsInitialized()) {
+			py::gil_scoped_acquire gil;
+			delete static_cast<py::object*>(p);
+		}
+		// else: interpreter already finalized — leak the reference
+		// rather than decref on a dead interpreter
+	});
+}
+
+// Variant of dataCopyBuffer that adopts the numpy memory in place
+// instead of copying it, removing the transient 2x memory peak of the
+// export path. Falls back to a copy when the array is not writable
+// (LuxCore may transform vertices in place).
+template< typename S,  size_t stride, typename O >
+O dataAdoptBuffer(
+	py::array_t<S, py::array::c_style> src,
+	const std::string& meshName,
+	const std::string& propertyName
+) {
+	auto src_stride = src.shape(1);
+
+	if (src_stride != stride) {
+		std::string errorMsg = std::string("Scene.DefineMeshExt: Error - ")
+			+ "Mesh '" + meshName + "' / "
+			+ "Property '" + std::string(propertyName) + "' - "
+			+ "Shape must be [N,"
+			+ std::to_string(stride)
+			+ "]";
+		throw std::runtime_error(errorMsg);
+	}
+
+	if (!src.shape(0)) return O();
+	if (!src.writeable())
+		return dataCopyBuffer<S, stride, O>(src, meshName, propertyName);
+
+	return O::Adopt(src.mutable_data(), src.nbytes(), numpyKeeper(src));
+}
+
 template<typename T, size_t N>
 static std::optional<luxrays::ExtMeshProp<T>> propCopy(
 	const std::optional<std::vector<py_float_array>>& layers,
@@ -1575,11 +1620,26 @@ static std::optional<luxrays::ExtMeshProp<T>> propCopy(
 			pybind11::array::ShapeContainer new_shape({layer.shape(0), 1,});
 			layer = layer.reshape(new_shape);
 		}
-		constexpr auto allocator = [](size_t n) { return std::make_shared<T[]>(n); };
-		auto [data, numData] = dataCopy<float, T, &AllocBuffer, N>(
-			layer, meshName, objname
-		);
-		out.SetLayer(i, std::shared_ptr<T[]>(std::move(data)), numData);
+		if (layer.shape(1) != N) {
+			throw std::runtime_error(
+				std::string("Scene.DefineMeshExt: Error - Mesh '")
+				+ meshName + "' / Property '" + objname
+				+ "' - Shape must be [N," + std::to_string(N) + "]"
+			);
+		}
+		if (layer.writeable() && layer.shape(0)) {
+			// Zero-copy: the LuxCore layer adopts the numpy memory and
+			// keeps the array alive through a keeper reference.
+			auto keeper = numpyKeeper(layer);
+			std::shared_ptr<T[]> sp(keeper,
+					reinterpret_cast<T*>(layer.mutable_data()));
+			out.SetLayer(i, sp, layer.shape(0));
+		} else {
+			auto [data, numData] = dataCopy<float, T, &AllocBuffer, N>(
+				layer, meshName, objname
+			);
+			out.SetLayer(i, std::shared_ptr<T[]>(std::move(data)), numData);
+		}
 	}
 	return out;
 
@@ -1601,18 +1661,18 @@ static void Scene_DefineMeshExt3(
 	// TODO Release GIL when possible
 
 	// Points
-	auto points = dataCopyBuffer< float, 3, luxrays::VertexBuffer > (
+	auto points = dataAdoptBuffer< float, 3, luxrays::VertexBuffer > (
 		p, meshName, "Points"
 	);
 
 	// Triangles
-	auto triangles = dataCopyBuffer< luxrays::Triangle::subtype_t, 3, luxrays::TriangleBuffer> (
+	auto triangles = dataAdoptBuffer< luxrays::Triangle::subtype_t, 3, luxrays::TriangleBuffer> (
 		tri, meshName, "Triangles"
 	);
 
   // Normals
-  auto normals = n ? 
-    dataCopyBuffer< float, 3, luxrays::NormalBuffer > (n.value(), meshName, "Normals") :
+  auto normals = n ?
+    dataAdoptBuffer< float, 3, luxrays::NormalBuffer > (n.value(), meshName, "Normals") :
     luxrays::NormalBuffer();
 
 
@@ -2621,6 +2681,8 @@ PYBIND11_MODULE(pyluxcore, m) {
     .value("NOISE", Film::OUTPUT_NOISE)
     .value("USER_IMPORTANCE", Film::OUTPUT_USER_IMPORTANCE)
     .value("CAUSTIC", Film::OUTPUT_CAUSTIC)
+    .value("VARIANCE", Film::OUTPUT_VARIANCE)
+    .value("MOTION_VECTOR", Film::OUTPUT_MOTION_VECTOR)
     .def_property_readonly_static("names", [](py::object self){
         return self.attr("__members__");
     })
@@ -2893,6 +2955,10 @@ PYBIND11_MODULE(pyluxcore, m) {
     .def("Resume", &luxcore::detail::RenderSessionImpl::Resume,
          py::call_guard<py::gil_scoped_release>())
     .def("IsInPause", &luxcore::detail::RenderSessionImpl::IsInPause)
+    .def("SetRuntimeResolutionReduction",
+         &luxcore::detail::RenderSessionImpl::SetRuntimeResolutionReduction,
+         "Runtime override of the RTPATHOCL resolution reduction (0 restores "
+         "the configured value; applies at the next frame boundary, no film reset)")
     .def("GetFilm", &luxcore::detail::RenderSessionImpl::GetFilmPtr)
     .def("UpdateStats", &luxcore::detail::RenderSessionImpl::UpdateStats,
          py::call_guard<py::gil_scoped_release>())

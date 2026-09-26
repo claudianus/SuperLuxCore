@@ -495,6 +495,27 @@ void Film::ParseOutputs(const Properties &props) {
 					throw runtime_error("Caustic image can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case FilmOutputs::VARIANCE: {
+				if (hdrImage) {
+					if (!initialized)
+						AddChannel(Film::VARIANCE);
+					filmOutputs.Add(FilmOutputs::VARIANCE, fileName);
+				} else
+					throw runtime_error("Variance image can be saved only in HDR formats: " + outputName);
+				break;
+			}
+			case FilmOutputs::MOTION_VECTOR: {
+				if (hdrImage) {
+					if (!initialized) {
+						// The motion vector is depth-gated like POSITION
+						AddChannel(Film::DEPTH);
+						AddChannel(Film::MOTION_VECTOR);
+					}
+					filmOutputs.Add(FilmOutputs::MOTION_VECTOR, fileName);
+				} else
+					throw runtime_error("Motion vector image can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown type in film output: " + type);
 		}

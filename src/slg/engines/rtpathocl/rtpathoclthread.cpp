@@ -194,6 +194,11 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
         u_int frameCounter = 0;
         tileWork.Reset();
         slg::ocl::TilePathSamplerSharedData samplerData;
+        // Runtime resolution override last uploaded to this thread's
+        // taskConfigBuff (per-thread: rtCfg is shared engine state, so
+        // comparing against it would let thread 0's write mask the
+        // upload thread 1..n still owes its own device buffer).
+        u_int appliedReductionOverride = engine->runtimeResolutionReduction.load();
 
         while (!stop_token.stop_requested()) {
                 //------------------------------------------------------------------
@@ -236,6 +241,45 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                 if (frameBarrier)
                         frameBarrier->arrive_and_wait();
                 //------------------------------------------------------------------
+
+                // Runtime resolution-reduction override (viewport
+                // interactivity): the reduction only selects which
+                // pixels a pass covers - never sample weights - so it
+                // can change mid-accumulation without a film reset.
+                // taskConfigBuff is per-device constant data: every
+                // thread re-uploads its own copy when the request
+                // changed since last frame.
+                {
+                        const u_int req = engine->runtimeResolutionReduction.load();
+                        if (req != appliedReductionOverride) {
+                                appliedReductionOverride = req;
+
+                                // Clamp at the configured reduction:
+                                // task buffers were sized for it
+                                // (taskCount = pixels / R^2), so a denser
+                                // override would leave part of the film
+                                // unsampled. Coarser is always safe -
+                                // the extra tasks just early-out in
+                                // TilePathSampler_Init.
+                                const u_int target = (req == 0) ?
+                                        engine->resolutionReduction :
+                                        Max(engine->resolutionReduction,
+                                                RoundUpPow2(Min<u_int>(req, 64u)));
+
+                                // Blocking write: the source is a stack
+                                // copy, so an async upload would outlive
+                                // it. One drain per override change is
+                                // cheap (this is not a per-frame path).
+                                slg::ocl::pathoclbase::GPUTaskConfiguration cfg =
+                                        engine->taskConfig;
+                                cfg.renderEngine.rtpathocl.resolutionReduction = target;
+                                cfg.renderEngine.rtpathocl.previewResolutionReduction =
+                                        Max(target, engine->previewResolutionReduction);
+                                intersectionDevice.EnqueueWriteBuffer(
+                                        taskConfigBuff, true,
+                                        sizeof(cfg), &cfg);
+                        }
+                }
 
                 if (threadIndex == 0) {
                         //--------------------------------------------------------------

@@ -37,6 +37,11 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	else
 		radiance.Resize(0);
 
+	motionVector[0] = 0.f;
+	motionVector[1] = 0.f;
+	motionVector[2] = 0.f;
+	motionVector[3] = 0.f;
+
 	firstPathVertexEvent = NONE;
 	firstPathVertex = true;
 	// lastPathVertex can not be really initialized here without knowing

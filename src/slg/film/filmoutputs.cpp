@@ -360,6 +360,20 @@ PropertiesUPtr FilmOutputs::ToProperties(const Properties &cfg) {
 					throw runtime_error("Caustic image can be saved only in HDR formats: " + outputName);
 				break;
 			}
+			case VARIANCE: {
+				if (hdrImage)
+					*props << type << fileName;
+				else
+					throw runtime_error("Variance image can be saved only in HDR formats: " + outputName);
+				break;
+			}
+			case MOTION_VECTOR: {
+				if (hdrImage)
+					*props << type << fileName;
+				else
+					throw runtime_error("Motion vector image can be saved only in HDR formats: " + outputName);
+				break;
+			}
 			default:
 				throw runtime_error("Unknown film output type: " + type.Get<string>());
 		}
@@ -461,6 +475,10 @@ FilmOutputs::FilmOutputType FilmOutputs::String2FilmOutputType(const string &typ
 		return USER_IMPORTANCE;
 	else if (type == "CAUSTIC")
 		return CAUSTIC;
+	else if (type == "VARIANCE")
+		return VARIANCE;
+	else if (type == "MOTION_VECTOR")
+		return MOTION_VECTOR;
 	else
 		throw runtime_error("Unknown film output type: " + type);
 }
@@ -559,6 +577,10 @@ const string FilmOutputs::FilmOutputType2String(const FilmOutputs::FilmOutputTyp
 			return "USER_IMPORTANCE";
 		case CAUSTIC:
 			return "CAUSTIC";
+		case VARIANCE:
+			return "VARIANCE";
+		case MOTION_VECTOR:
+			return "MOTION_VECTOR";
 		default:
 			throw runtime_error("Unknown film output type: " + ToString(type));
 	}

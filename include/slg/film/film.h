@@ -152,7 +152,14 @@ public:
 		ALBEDO,
 		AVG_SHADING_NORMAL,
 		NOISE,
-		USER_IMPORTANCE
+		USER_IMPORTANCE,
+		// Per-pixel variance of the merged radiance estimate (E[x^2] - E[x]^2
+		// at output). Feeds external denoisers (Arnold noice-style) and the
+		// temporal accumulation confidence weighting.
+		VARIANCE,
+		// Screen-space velocity of the first camera-visible surface point in
+		// pixels per scene time unit (forward in time). (vx, vy, valid, objMotion)
+		MOTION_VECTOR
 	} FilmChannelType;
 
 	typedef std::unordered_set<FilmChannelType, std::hash<int> > FilmChannels;
@@ -459,6 +466,8 @@ public:
 	std::unique_ptr<GenericFrameBuffer<4, 1, float>> channel_ALBEDO;
 	std::unique_ptr<GenericFrameBuffer<1, 0, float>> channel_NOISE;
 	std::unique_ptr<GenericFrameBuffer<1, 0, float>> channel_USER_IMPORTANCE;
+	std::unique_ptr<GenericFrameBuffer<4, 1, float>> channel_VARIANCE;
+	std::unique_ptr<GenericFrameBuffer<4, 1, float>> channel_MOTION_VECTOR;
 
 	// Per-pixel luminance first and second moments (2 floats per pixel,
 	// full film indexing) used by the samplers' second-moment adaptive
@@ -595,7 +604,7 @@ template<> void Film::GetOutput<u_int>(const FilmOutputs::FilmOutputType type, u
 
 }
 
-BOOST_CLASS_VERSION(slg::Film, 27)
+BOOST_CLASS_VERSION(slg::Film, 28)
 BOOST_CLASS_VERSION(slg::FilmSamplesCounts, 1)
 
 BOOST_CLASS_EXPORT_KEY(slg::Film)

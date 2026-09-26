@@ -102,6 +102,8 @@ template<class Archive> void Film::load(Archive &ar, const u_int version) {
 	ar & channel_ALBEDO;
 	ar & channel_NOISE;
 	ar & channel_USER_IMPORTANCE;
+	ar & channel_VARIANCE;
+	ar & channel_MOTION_VECTOR;
 
 	ar & channels;
 	ar & width;
@@ -192,6 +194,8 @@ template<class Archive> void Film::save(Archive &ar, const u_int version) const 
 	ar & channel_ALBEDO;
 	ar & channel_NOISE;
 	ar & channel_USER_IMPORTANCE;
+	ar & channel_VARIANCE;
+	ar & channel_MOTION_VECTOR;
 
 	ar & channels;
 	ar & width;

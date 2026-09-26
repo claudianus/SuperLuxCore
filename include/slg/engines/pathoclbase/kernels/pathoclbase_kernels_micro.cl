@@ -295,6 +295,10 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		sampleResult->objectID = BSDF_GetObjectID(bsdf, sceneObjs);
 		sampleResult->uv = bsdf->hitPoint.defaultUV;
 		sampleResult->isHoldout = isHoldout;
+		if (taskConfig->film.hasChannelMotionVector)
+			PathOCL_ComputeFirstHitMotionVector(camera, meshDescs,
+					interpolatedTransforms, &bsdf->hitPoint,
+					rays[gid].time, filmHeight, sampleResult->motionVector);
 	}
 
 	//----------------------------------------------------------------------

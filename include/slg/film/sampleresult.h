@@ -97,6 +97,11 @@ public:
 	luxrays::Spectrum irradiancePathThroughput;
 	luxrays::Spectrum albedo;
 
+	// MOTION_VECTOR channel payload: screen-space velocity of the first
+	// camera-visible surface point in pixels per scene time unit
+	// (forward in time), plus flags: {vx, vy, valid, objectMotion}.
+	float motionVector[4];
+
 	BSDFEvent firstPathVertexEvent;
 	bool isHoldout;
 	// isCaustic is used only for RADIANCE_PER_SCREEN_NORMALIZED samples

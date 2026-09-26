@@ -47,6 +47,27 @@ Buffer<TYPE, SUBTYPE, PAD>::Buffer(std::span<SUBTYPE const> subobjs) {
 	std::copy(subobjs.begin(), subobjs.end(), asSubType.begin());
 }
 
+// Adopt externally owned memory (no copy, no trailing pad)
+template< typename TYPE, typename SUBTYPE, std::array PAD >
+Buffer<TYPE, SUBTYPE, PAD> Buffer<TYPE, SUBTYPE, PAD>::Adopt(
+		void *ptr, std::size_t byteSize, std::shared_ptr<void> keeper) {
+	assert(byteSize % sizeof(TYPE) == 0);
+
+	Buffer b;
+	b.effectiveSize = byteSize;
+	b.totalSize = byteSize;
+	b.external = true;
+	// Aliasing constructor: the buffer shares keeper's ownership while
+	// get() points at the foreign memory.
+	b.data = std::shared_ptr<std::byte[]>(std::move(keeper),
+			reinterpret_cast<std::byte*>(ptr));
+	b.asType = std::span<TYPE>(reinterpret_cast<TYPE*>(ptr),
+			byteSize / sizeof(TYPE));
+	b.asSubType = std::span<SUBTYPE>(reinterpret_cast<SUBTYPE*>(ptr),
+			byteSize / sizeof(SUBTYPE));
+	return b;
+}
+
 // Allocator
 template< typename TYPE, typename SUBTYPE, std::array PAD >
 void Buffer<TYPE, SUBTYPE, PAD>::Allocate(size_t count) {
@@ -56,7 +77,8 @@ void Buffer<TYPE, SUBTYPE, PAD>::Allocate(size_t count) {
 	totalSize = effectiveSize + padSize;
 
 	// Allocate buffer
-	data = std::make_unique<std::byte[]>(totalSize);
+	data = std::make_shared<std::byte[]>(totalSize);
+	external = false;
 
 	// Add padding
 	// Embree requires a padding field at the end
@@ -107,6 +129,9 @@ std::span<std::byte> Buffer<TYPE, SUBTYPE, PAD>::GetBytes(bool withPad) const {
 
 template< typename TYPE, typename SUBTYPE, std::array PAD >
 std::span<const std::byte> Buffer<TYPE, SUBTYPE, PAD>::GetPad() const {
+	// Adopted memory has no trailing pad in the allocation itself
+	if (external)
+		return std::span<const std::byte>(pad);
 	return GetBytes(true).subspan(effectiveSize);
 }
 

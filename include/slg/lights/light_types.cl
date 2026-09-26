@@ -64,6 +64,9 @@ typedef struct {
 	Spectrum emittedFactor;
 	float average;
 	unsigned int imageMapIndex;
+	// Offset into envLightDistribution: the spherical-function (IES map)
+	// sampling distribution used by Emit()
+	unsigned int distributionOffset;
 } MapPointLightParam;
 
 typedef struct {
@@ -76,7 +79,11 @@ typedef struct {
 	Vector absolutePos, lightNormal;
 	Spectrum emittedFactor;
 	Matrix4x4 lightProjection;
+	// Inverse of lightProjection, used by Emit() to turn screen-plane
+	// samples into world directions
+	Matrix4x4 lightProjectionInv;
 	float screenX0, screenX1, screenY0, screenY1;
+	float area;
 	unsigned int imageMapIndex;
 } ProjectionLightParam;
 

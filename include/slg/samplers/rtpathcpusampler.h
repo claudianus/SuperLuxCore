@@ -19,6 +19,7 @@
 #ifndef _SLG_RTPATHCPU_SAMPLER_H
 #define	_SLG_RTPATHCPU_SAMPLER_H
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,11 @@ public:
 
 	void Reset(FilmPtr flm);
 
+	// Runtime update of the decimation factor: stored immediately and the
+	// coarse sequence is rebuilt lazily at the next Reset() (a thread-safe
+	// point in the RT flow).
+	void SetZoomFactor(const u_int zf) { zoomFactor = luxrays::Max(1u, zf); }
+
 	static std::unique_ptr<SamplerSharedData> FromProperties(
 		const luxrays::Properties &cfg,
 		const luxrays::RandomGeneratorUPtr &  rndGen, FilmPtr film);
@@ -61,7 +67,11 @@ public:
 	// Coarse first-frame pixels (zoomFactor-spaced, subregion-local coords)
 	// in shuffled order: the preview pass covers the whole image at once
 	// instead of filling rows bottom-to-top.
-	u_int zoomFactor;
+	std::atomic<u_int> zoomFactor;
+	// Factor the sequences were last built with; Reset() rebuilds when it
+	// differs from zoomFactor so a runtime change takes effect on the next
+	// reset without racing the in-flight first frame.
+	u_int builtZoomFactor;
 	std::vector<PixelCoord> firstFrameSequence;
 };
 

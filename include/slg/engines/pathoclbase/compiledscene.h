@@ -92,8 +92,14 @@ public:
 	// Additional light related information
 	std::vector<u_int> envLightIndices;
 	std::vector<u_int> lightIndexOffsetByMeshIndex, lightIndexByTriIndex;
-	// Env. light Distribution2Ds
+	// Env. light Distribution2Ds. The device buffer is
+	// [emissionFuncDistributions | envLightDistributions]: material
+	// emission distributions come first so their absolute offsets stay
+	// valid when lights are recompiled without materials
 	std::vector<float> envLightDistributions;
+	// Material directional emission map (SampleableSphericalFunction)
+	// Distribution2Ds, indexed by Material::emissionFuncDistOffset
+	std::vector<float> emissionFuncDistributions;
 	// Compiled light sampling strategy
 	std::vector<float> lightsDistribution;
 	u_int lightsDistributionSize;
@@ -162,7 +168,7 @@ public:
 	// Elements compiled during the last call to Compile()/Recompile()
 	bool wasCameraCompiled, wasSceneObjectsCompiled, wasGeometryCompiled, 
 		wasMaterialsCompiled, wasLightsCompiled, wasImageMapsCompiled,
-		wasPhotonGICompiled;
+		wasPhotonGICompiled, wasEmissionDistsCompiled;
 
 private:
 	void AddToImageMapMem(slg::ocl::ImageMap &im, const void *data, const size_t memSize);

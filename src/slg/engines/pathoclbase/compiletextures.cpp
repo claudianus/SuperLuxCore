@@ -29,6 +29,7 @@
 #include "slg/kernels/kernels.h"
 
 #include "slg/textures/band.h"
+#include "slg/textures/bevel.h"
 #include "slg/textures/bilerp.h"
 #include "slg/textures/blackbody.h"
 #include "slg/textures/blackbodylut.h"
@@ -1146,6 +1147,20 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
 					break;
 				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::BEVEL_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+					evalOpStackSize += 1;
+					break;
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM:
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP:
+					evalOpStackSize += 3;
+					break;
 				default:
 					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
 			}
@@ -2433,6 +2448,15 @@ void CompiledScene::CompileTextures() {
 
 				auto& insideTex = wft.GetInsideTex();
 				tex->wireFrameTex.insideTexIndex = scene.GetTextures().GetTextureIndex(insideTex);
+				break;
+			}
+			case BEVEL_TEX: {
+				auto& bt = dynamic_cast<const BevelTexture &>(t);
+
+				tex->type = slg::ocl::BEVEL_TEX;
+				tex->bevelTex.radius = bt.GetRadius();
+				tex->bevelTex.texIndex = bt.HasTexture() ?
+						scene.GetTextures().GetTextureIndex(bt.GetTexture()) : NULL_INDEX;
 				break;
 			}
 			case DISTORT_TEX: {

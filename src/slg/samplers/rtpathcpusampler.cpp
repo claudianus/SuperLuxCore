@@ -41,6 +41,7 @@ RTPathCPUSamplerSharedData::RTPathCPUSamplerSharedData(FilmPtr film,
 	filmSubRegionWidth =  0;
 	filmSubRegionHeight = 0;
 	zoomFactor = Max(1u, zf);
+	builtZoomFactor = 0;  // force the sequence build in Reset()
 
 	Reset(film);
 }
@@ -53,9 +54,13 @@ void RTPathCPUSamplerSharedData::Reset(FilmPtr film) {
 void RTPathCPUSamplerSharedData::Reset() {
 	const u_int *subRegion = engineFilm->GetSubRegion();
 
-	// Check if something has changed
-	if ((filmSubRegion[0] != subRegion[0]) || (filmSubRegion[1] != subRegion[1]) ||
+	// Check if something has changed (a runtime zoomFactor change also
+	// rebuilds the sequences: Reset() runs at a thread-safe point)
+	const bool zoomChanged = (builtZoomFactor != zoomFactor);
+	if (zoomChanged ||
+			(filmSubRegion[0] != subRegion[0]) || (filmSubRegion[1] != subRegion[1]) ||
 			(filmSubRegion[2] != subRegion[2]) || (filmSubRegion[3] != subRegion[3])) {
+		builtZoomFactor = zoomFactor;
 		filmSubRegion[0] = subRegion[0];
 		filmSubRegion[1] = subRegion[1];
 		filmSubRegion[2] = subRegion[2];
@@ -87,7 +92,7 @@ void RTPathCPUSamplerSharedData::Reset() {
 		// zoomFactor x zoomFactor block) and shuffle it: a scattered order
 		// covers the whole frame with the first pass, so the user sees a
 		// dithered full image instead of a row band filling bottom-to-top.
-		const u_int zf = Max(1u, zoomFactor);
+		const u_int zf = Max(1u, zoomFactor.load());
 		const u_int cw = (filmSubRegionWidth + zf - 1) / zf;
 		const u_int ch = (filmSubRegionHeight + zf - 1) / zf;
 		const u_int coarseCount = cw * ch;

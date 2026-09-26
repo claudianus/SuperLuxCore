@@ -172,6 +172,10 @@ u_int Film::GetChannelCount(const FilmChannelType type) const {
 			return channel_NOISE ? 1 : 0;
 		case USER_IMPORTANCE:
 			return channel_USER_IMPORTANCE ? 1 : 0;
+		case VARIANCE:
+			return channel_VARIANCE ? 1 : 0;
+		case MOTION_VECTOR:
+			return channel_MOTION_VECTOR ? 1 : 0;
 		default:
 			throw runtime_error("Unknown FilmChannelType in Film::GetChannelCount(): " + ToString(type));
 	}
@@ -267,6 +271,10 @@ template<> float *Film::GetChannel<float>(const FilmChannelType type,
 			return channel_NOISE->GetPixels();
 		case USER_IMPORTANCE:
 			return channel_USER_IMPORTANCE->GetPixels();
+		case VARIANCE:
+			return channel_VARIANCE->GetPixels();
+		case MOTION_VECTOR:
+			return channel_MOTION_VECTOR->GetPixels();
 		default:
 			throw runtime_error("Unknown FilmChannelType in Film::GetChannel<float>(): " + ToString(type));
 	}
@@ -535,6 +543,10 @@ Film::FilmChannelType Film::String2FilmChannelType(const string &type) {
 		return NOISE;
 	else if (type == "USER_IMPORTANCE")
 		return USER_IMPORTANCE;
+	else if (type == "VARIANCE")
+		return VARIANCE;
+	else if (type == "MOTION_VECTOR")
+		return MOTION_VECTOR;
 	else
 		throw runtime_error("Unknown film output type in Film::String2FilmChannelType(): " + type);
 }
@@ -623,6 +635,10 @@ const string Film::FilmChannelType2String(const Film::FilmChannelType type) {
 			return "NOISE";
 		case Film::USER_IMPORTANCE:
 			return "USER_IMPORTANCE";
+		case Film::VARIANCE:
+			return "VARIANCE";
+		case Film::MOTION_VECTOR:
+			return "MOTION_VECTOR";
 		default:
 			throw runtime_error("Unknown film output type in Film::FilmChannelType2String(): " + ToString(type));
 	}

@@ -143,6 +143,8 @@ public:
 		luxrays::HardwareDeviceBuffer *channel_AVG_SHADING_NORMAL_Buff;
 		luxrays::HardwareDeviceBuffer *channel_NOISE_Buff;
 		luxrays::HardwareDeviceBuffer *channel_USER_IMPORTANCE_Buff;
+		luxrays::HardwareDeviceBuffer *channel_VARIANCE_Buff;
+		luxrays::HardwareDeviceBuffer *channel_MOTION_VECTOR_Buff;
 		
 		// Denoiser sample accumulator buffers
 		luxrays::HardwareDeviceBuffer *denoiser_NbOfSamplesImage_Buff;

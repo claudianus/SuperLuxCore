@@ -160,6 +160,10 @@ void RenderEngine::Stop() {
 		if (ctx->IsRunning())
 			ctx->Stop();
 
+		// All intersection devices are down: release objects that were
+		// parked in the trash bin by scene edits.
+		renderConfig.GetScene().emptyTrash();
+
 		UpdateFilmLockLess();
 	}
 

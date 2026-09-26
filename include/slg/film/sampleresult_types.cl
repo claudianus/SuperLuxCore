@@ -52,6 +52,10 @@ typedef struct {
 	Spectrum irradiance, irradiancePathThroughput;
 	Spectrum albedo;
 
+	// MOTION_VECTOR channel payload: {vx, vy, valid, objectMotion} in
+	// pixels per frame (see slg::SampleResult::motionVector)
+	float motionVector[4];
+
 	BSDFEvent firstPathVertexEvent;
 	int isHoldout;
 

@@ -99,6 +99,12 @@ public:
 	virtual bool GetSamplePosition(const luxrays::Point &p,
 		float *filmX, float *filmY) const;
 	virtual bool ProjectToImage(luxrays::Ray *ray, float *filmX, float *filmY) const;
+	// Projects a world-space point to film coordinates at the given scene
+	// time (camera motion applied, no film subregion clamping - used by
+	// the MOTION_VECTOR film channel). Returns false when the point can
+	// not be projected (behind a perspective camera, environment camera).
+	bool ProjectPointToFilm(const luxrays::Point &p, const float time,
+		float *filmX, float *filmY) const;
 	virtual bool SampleLens(const float time, const float u1, const float u2,
 		luxrays::Point *lensPoint) const = 0;
 	virtual void GetPDF(const luxrays::Ray &eyeRay, const float eyeDistance,

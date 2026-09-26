@@ -89,6 +89,8 @@ PathOCLBaseOCLRenderThread::ThreadFilm::ThreadFilm(PathOCLBaseOCLRenderThread *t
 	channel_AVG_SHADING_NORMAL_Buff = NULL;
 	channel_NOISE_Buff = NULL;
 	channel_USER_IMPORTANCE_Buff = NULL;
+	channel_VARIANCE_Buff = NULL;
+	channel_MOTION_VECTOR_Buff = NULL;
 	
 	// Denoiser sample accumulator buffers
 	denoiser_NbOfSamplesImage_Buff = NULL;
@@ -363,6 +365,16 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 		renderThread->intersectionDevice.AllocBuffer(&channel_USER_IMPORTANCE_Buff, memTypeFlags, nullptr, sizeof(float) * filmPixelCount, "USER_IMPORTANCE");
 	else
 		renderThread->intersectionDevice.FreeBuffer(&channel_USER_IMPORTANCE_Buff);
+	//--------------------------------------------------------------------------
+	if (film->HasChannel(Film::VARIANCE))
+		renderThread->intersectionDevice.AllocBuffer(&channel_VARIANCE_Buff, memTypeFlags, nullptr, sizeof(float[4]) * filmPixelCount, "VARIANCE");
+	else
+		renderThread->intersectionDevice.FreeBuffer(&channel_VARIANCE_Buff);
+	//--------------------------------------------------------------------------
+	if (film->HasChannel(Film::MOTION_VECTOR))
+		renderThread->intersectionDevice.AllocBuffer(&channel_MOTION_VECTOR_Buff, memTypeFlags, nullptr, sizeof(float[4]) * filmPixelCount, "MOTION_VECTOR");
+	else
+		renderThread->intersectionDevice.FreeBuffer(&channel_MOTION_VECTOR_Buff);
 
 	//--------------------------------------------------------------------------
 	// Film denoiser sample accumulator buffers
@@ -436,6 +448,8 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::FreeAllOCLBuffers() {
 	renderThread->intersectionDevice.FreeBuffer(&channel_AVG_SHADING_NORMAL_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_NOISE_Buff);
 	renderThread->intersectionDevice.FreeBuffer(&channel_USER_IMPORTANCE_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&channel_VARIANCE_Buff);
+	renderThread->intersectionDevice.FreeBuffer(&channel_MOTION_VECTOR_Buff);
 
 	// Film denoiser sample accumulator buffers
 	renderThread->intersectionDevice.FreeBuffer(&denoiser_NbOfSamplesImage_Buff);
@@ -504,6 +518,8 @@ u_int PathOCLBaseOCLRenderThread::ThreadFilm::SetFilmKernelArgs(HardwareIntersec
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_AVG_SHADING_NORMAL_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_NOISE_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_USER_IMPORTANCE_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_VARIANCE_Buff);
+	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_MOTION_VECTOR_Buff);
 
 	// Film denoiser sample accumulator parameters
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -865,6 +881,20 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 			channel_USER_IMPORTANCE_Buff->GetSize(),
 			engineFilm->channel_USER_IMPORTANCE->GetPixels());
 	}
+	if (channel_VARIANCE_Buff) {
+		intersectionDevice.EnqueueReadBuffer(
+			channel_VARIANCE_Buff,
+			CL_FALSE,
+			channel_VARIANCE_Buff->GetSize(),
+			film->channel_VARIANCE->GetPixels());
+	}
+	if (channel_MOTION_VECTOR_Buff) {
+		intersectionDevice.EnqueueReadBuffer(
+			channel_MOTION_VECTOR_Buff,
+			CL_FALSE,
+			channel_MOTION_VECTOR_Buff->GetSize(),
+			film->channel_MOTION_VECTOR->GetPixels());
+	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers
 	FilmDenoiser &denoiser = film->GetDenoiser();
@@ -1199,6 +1229,20 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDevice
 			CL_FALSE,
 			channel_USER_IMPORTANCE_Buff->GetSize(),
 			engineFilm->channel_USER_IMPORTANCE->GetPixels());
+	}
+	if (channel_VARIANCE_Buff) {
+		intersectionDevice.EnqueueWriteBuffer(
+			channel_VARIANCE_Buff,
+			CL_FALSE,
+			channel_VARIANCE_Buff->GetSize(),
+			film->channel_VARIANCE->GetPixels());
+	}
+	if (channel_MOTION_VECTOR_Buff) {
+		intersectionDevice.EnqueueWriteBuffer(
+			channel_MOTION_VECTOR_Buff,
+			CL_FALSE,
+			channel_MOTION_VECTOR_Buff->GetSize(),
+			film->channel_MOTION_VECTOR->GetPixels());
 	}
 
 	// Async. transfer of the Film denoiser sample accumulator buffers

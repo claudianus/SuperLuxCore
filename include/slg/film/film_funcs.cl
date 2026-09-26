@@ -262,6 +262,15 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultColor(const uint x, const uint y,
 		Film_AddIfValidWeightedPixel4(usePixelAtomics, &filmAlbedo[index4], sampleResult->albedo.c, weight);
 	if (film->hasChannelAvgShadingNormal)
 		Film_AddIfValidWeightedPixel4(usePixelAtomics, &filmAvgShadingNormal[index4], &sampleResult->shadingNormal.x, weight);
+
+	if (film->hasChannelVariance) {
+		// Accumulates the second moment of the merged radiance; the
+		// variance (E[x^2] - E[x]^2) is derived at output time
+		float3 c = BLACK;
+		for (uint i = 0; i < film->radianceGroupCount; ++i)
+			c += VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c);
+		Film_AddIfValidWeightedPixel4Val(usePixelAtomics, &filmVariance[index4], c * c, weight);
+	}
 }
 
 OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
@@ -292,6 +301,14 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
 			const uint objectID = sampleResult->objectID;
 			if (objectID != NULL_INDEX)
 				filmObjectID[index1] = sampleResult->objectID;
+		}
+		if (film->hasChannelMotionVector) {
+			// Raw {vx, vy, valid, objectMotion}, not weight-normalized
+			__global float *dst = &filmMotionVector[index1 * 4];
+			dst[0] = sampleResult->motionVector[0];
+			dst[1] = sampleResult->motionVector[1];
+			dst[2] = sampleResult->motionVector[2];
+			dst[3] = sampleResult->motionVector[3];
 		}
 	}
 
@@ -526,6 +543,8 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		, __global float *filmAvgShadingNormal \
 		, __global float *filmNoise \
 		, __global float *filmUserImportance \
+		, __global float *filmVariance \
+		, __global float *filmMotionVector \
 		KERNEL_ARGS_FILM_DENOISER
 
 //------------------------------------------------------------------------------
@@ -714,6 +733,20 @@ __kernel void Film_Clear(
 
 	if (filmUserImportance)
 		filmUserImportance[gid] = 1.f;
+
+	if (filmVariance) {
+		filmVariance[gid * 4] = 0.f;
+		filmVariance[gid * 4 + 1] = 0.f;
+		filmVariance[gid * 4 + 2] = 0.f;
+		filmVariance[gid * 4 + 3] = 0.f;
+	}
+
+	if (filmMotionVector) {
+		filmMotionVector[gid * 4] = 0.f;
+		filmMotionVector[gid * 4 + 1] = 0.f;
+		filmMotionVector[gid * 4 + 2] = 0.f;
+		filmMotionVector[gid * 4 + 3] = 0.f;
+	}
 
 	//--------------------------------------------------------------------------
 	// Film denoiser buffers

@@ -139,6 +139,10 @@ size_t Film::GetOutputSize(const FilmOutputs::FilmOutputType type) const {
 			return pixelCount;
 		case FilmOutputs::CAUSTIC:
 			return 3 * pixelCount;
+		case FilmOutputs::VARIANCE:
+			return 3 * pixelCount;
+		case FilmOutputs::MOTION_VECTOR:
+			return 4 * pixelCount;
 		default:
 			throw runtime_error("Unknown FilmOutputType in Film::GetOutputSize(): " + ToString(type));
 	}
@@ -240,6 +244,10 @@ bool Film::HasOutput(const FilmOutputs::FilmOutputType type) const {
 			// Caustic has not dedicated channel but is RADIANCE_PER_SCREEN_NORMALIZED
 			// when doing hybrid rendering
 			return HasChannel(RADIANCE_PER_SCREEN_NORMALIZED);
+		case FilmOutputs::VARIANCE:
+			return HasChannel(VARIANCE);
+		case FilmOutputs::MOTION_VECTOR:
+			return HasChannel(MOTION_VECTOR);
 		default:
 			throw runtime_error("Unknown film output type in Film::HasOutput(): " + ToString(type));
 	}
@@ -548,6 +556,18 @@ void Film::Output(
 			if (!HasChannel(RADIANCE_PER_SCREEN_NORMALIZED))
 				return;
 			break;
+		case FilmOutputs::VARIANCE:
+			// Requires the second-moment channel plus the merged radiance to
+			// derive E[x]^2
+			if (!HasChannel(VARIANCE) ||
+					(!HasChannel(RADIANCE_PER_PIXEL_NORMALIZED) && !HasChannel(RADIANCE_PER_SCREEN_NORMALIZED)))
+				return;
+			break;
+		case FilmOutputs::MOTION_VECTOR:
+			if (!HasChannel(MOTION_VECTOR))
+				return;
+			channelCount = 4;
+			break;
 		default:
 			throw runtime_error("Unknown film output type in Film::Output(): " + ToString(type));
 	}
@@ -821,10 +841,33 @@ void Film::Output(
 					break;
 				}
 				case FilmOutputs::CAUSTIC: {
-					// Accumulate all light groups			
+					// Accumulate all light groups
 					GetPixelFromMergedSampleBuffers(0, false, true,
 							RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
 							x, y, pixel);
+					break;
+				}
+				case FilmOutputs::VARIANCE: {
+					// VARIANCE channel stores the weighted second moment
+					// E[x^2]; derive Var[x] = max(E[x^2] - E[x]^2, 0)
+					channel_VARIANCE->GetWeightedPixel(x, y, pixel);
+
+					float mean[3] = { 0.f, 0.f, 0.f };
+					GetPixelFromMergedSampleBuffers(0,
+							RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
+							x, y, mean);
+					for (u_int i = 0; i < 3; ++i)
+						pixel[i] = Max(pixel[i] - mean[i] * mean[i], 0.f);
+					break;
+				}
+				case FilmOutputs::MOTION_VECTOR: {
+					// Raw channel: {vx, vy, valid, objectMotion}, not
+					// weight-normalized
+					const float *src = channel_MOTION_VECTOR->GetPixel(x, y);
+					pixel[0] = src[0];
+					pixel[1] = src[1];
+					pixel[2] = src[2];
+					pixel[3] = src[3];
 					break;
 				}
 				default:
@@ -1138,6 +1181,27 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 						i, &buffer[i * 3]);
 			break;
 		}
+		case FilmOutputs::VARIANCE: {
+			// VARIANCE channel stores the weighted second moment E[x^2];
+			// derive Var[x] = max(E[x^2] - E[x]^2, 0)
+			const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
+
+			for (u_int i = 0; i < pixelCount; ++i) {
+				float *dst = &buffer[i * 3];
+				channel_VARIANCE->GetWeightedPixel(i, dst);
+
+				float mean[3] = { 0.f, 0.f, 0.f };
+				GetPixelFromMergedSampleBuffers(0,
+						RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
+						i, mean);
+				for (u_int c = 0; c < 3; ++c)
+					dst[c] = Max(dst[c] - mean[c] * mean[c], 0.f);
+			}
+			break;
+		}
+		case FilmOutputs::MOTION_VECTOR:
+			copy(channel_MOTION_VECTOR->GetPixels(), channel_MOTION_VECTOR->GetPixels() + pixelCount * 4, buffer);
+			break;
 		default:
 			throw runtime_error("Unknown film output type in Film::GetOutput<float>(): " + ToString(type));
 	}

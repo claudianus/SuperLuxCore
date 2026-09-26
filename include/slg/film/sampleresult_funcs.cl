@@ -54,6 +54,10 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 	sampleResult->rayCount = 0.f;
 	VSTORE3F(BLACK, sampleResult->irradiance.c);
 	VSTORE3F(BLACK, sampleResult->albedo.c);
+	sampleResult->motionVector[0] = 0.f;
+	sampleResult->motionVector[1] = 0.f;
+	sampleResult->motionVector[2] = 0.f;
+	sampleResult->motionVector[3] = 0.f;
 
 	sampleResult->firstPathVertexEvent = NONE;
 	sampleResult->firstPathVertex = true;

@@ -97,6 +97,8 @@ Film::Film() {
 	channel_AVG_SHADING_NORMAL = nullptr;
 	channel_NOISE = nullptr;
 	channel_USER_IMPORTANCE = nullptr;
+	channel_VARIANCE = nullptr;
+	channel_MOTION_VECTOR = nullptr;
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
@@ -170,6 +172,8 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 	channel_AVG_SHADING_NORMAL = nullptr;
 	channel_NOISE = nullptr;
 	channel_USER_IMPORTANCE = nullptr;
+	channel_VARIANCE = nullptr;
+	channel_MOTION_VECTOR = nullptr;
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
@@ -605,6 +609,16 @@ void Film::Resize(const u_int w, const u_int h) {
 		channel_USER_IMPORTANCE->Clear(1.f);
 		hasDataChannel = true;
 	}
+	if (HasChannel(VARIANCE)) {
+		channel_VARIANCE = std::make_unique<GenericFrameBuffer<4, 1, float>>(width, height);
+		channel_VARIANCE->Clear();
+		hasComposingChannel = true;
+	}
+	if (HasChannel(MOTION_VECTOR)) {
+		channel_MOTION_VECTOR = std::make_unique<GenericFrameBuffer<4, 1, float>>(width, height);
+		channel_MOTION_VECTOR->Clear();
+		hasDataChannel = true;
+	}
 
 	// Per-pixel luminance moments for the samplers' second-moment
 	// adaptive convergence estimate (2 floats per pixel; not cleared by
@@ -713,6 +727,10 @@ void Film::Clear() {
 		channel_ALBEDO->Clear();
 	if (HasChannel(AVG_SHADING_NORMAL))
 		channel_AVG_SHADING_NORMAL->Clear();
+	if (HasChannel(VARIANCE))
+		channel_VARIANCE->Clear();
+	if (HasChannel(MOTION_VECTOR))
+		channel_MOTION_VECTOR->Clear();
 
 	// denoiser is not cleared otherwise the collected data would be lost
 
@@ -1272,6 +1290,39 @@ void Film::AddFilmImpl(const Film &film,
 					channel_AVG_SHADING_NORMAL->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
 				else
 					channel_AVG_SHADING_NORMAL->AddPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+			}
+		}
+	}
+
+	if (HasChannel(VARIANCE) && film.HasChannel(VARIANCE)) {
+		for (u_int y = 0; y < srcHeight; ++y) {
+			for (u_int x = 0; x < srcWidth; ++x) {
+				const float *srcPixel = film.channel_VARIANCE->GetPixel(srcOffsetX + x, srcOffsetY + y);
+				if (overwrite)
+					channel_VARIANCE->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+				else
+					channel_VARIANCE->AddPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+			}
+		}
+	}
+
+	if (HasChannel(MOTION_VECTOR) && film.HasChannel(MOTION_VECTOR)) {
+		if (HasChannel(DEPTH) && film.HasChannel(DEPTH) && !overwrite) {
+			// Used DEPTH information to merge Films
+			for (u_int y = 0; y < srcHeight; ++y) {
+				for (u_int x = 0; x < srcWidth; ++x) {
+					if (film.channel_DEPTH->GetPixel(srcOffsetX + x, srcOffsetY + y)[0] < channel_DEPTH->GetPixel(dstOffsetX + x, dstOffsetY + y)[0]) {
+						const float *srcPixel = film.channel_MOTION_VECTOR->GetPixel(srcOffsetX + x, srcOffsetY + y);
+						channel_MOTION_VECTOR->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+					}
+				}
+			}
+		} else {
+			for (u_int y = 0; y < srcHeight; ++y) {
+				for (u_int x = 0; x < srcWidth; ++x) {
+					const float *srcPixel = film.channel_MOTION_VECTOR->GetPixel(srcOffsetX + x, srcOffsetY + y);
+					channel_MOTION_VECTOR->SetPixel(dstOffsetX + x, dstOffsetY + y, srcPixel);
+				}
 			}
 		}
 	}
