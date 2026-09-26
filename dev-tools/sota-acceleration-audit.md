@@ -1,9 +1,9 @@
 # SuperLuxCore 렌더 가속 기능 — SOTA 프로덕션 렌더러 대비 감사 보고서
 
-작성일: 2026-09-25 · 기준 트리: `feature/wavefront-queues` (HEAD `d4a5282f3bb85d8f1e95782f1ab8b14eb1e73e1f`)
+작성일: 2026-09-25 · 기준 트리: `feature/wavefront-queues` (HEAD `d4a5282f3`)
 비교 기준: Cycles 4.x/5.x, Arnold 7.x, V-Ray 7, RenderMan 27/XPU, Hyperion,
 MoonRay, Redshift/Octane 및 2024–2026 공개 연구(SG/EG/HPGR) 수준.
-**갱신(같은 날 후반, HEAD `cea50ae844aabf74fde19968c5678b70c622f2be`)**: §0/§2/§4/§5에 Cryptomatte·LPE·
+**갱신(같은 날 후반, HEAD `cea50ae84`)**: §0/§2/§4/§5에 Cryptomatte·LPE·
 light linking·P5 guiding·wavefront M3a·Vulkan M3 랜딩을 반영.
 
 ## 0. 요약 판정
@@ -45,7 +45,7 @@ wavefront 기본 활성화(추가 workload 검증 필요), Vulkan 네이티브
 |---|---|---|---|---|
 | Path guiding (SD-tree + vMF) | `pathguiding.cpp` (1191줄), `pathguiding.h` | ✅ | ✅ | **초과(GPU)/동등(CPU)** — OpenPGL 채택 렌더러(Cycles·V-Ray·Karma·Hyperion)는 CPU만. SuperLuxCore는 flattened SD-tree+vMF를 GPU 커널에서 평가. variance-aware target(Rath'20), flux-fraction split, pending radiance records, peak/count 기반 mixture weight까지 구현 |
 | RIS product guiding (M4b) | `pathtracer.cpp` risZhat 경로 | ✅ | ⚠️ 부분 | **초과** — BSDF×L̂ product resampling은 최신 연구 수준, OpenPGL에도 없음 |
-| Portal guiding (M5) | `pathtracer.cpp` portal 경로, BLC 라이트 포털 오브젝트 | ✅ | ✅ | 동등+ — GPU 포털 랜딩(`c92c2f3407e9eb55fa6e4c649a3c49b409fa867a`, MK_HIT_OBJECT 게이트+`portal_*` 커널, portal_slit 4/4 PASS). adaptive share는 field 기반으로 단순 portal보다 진보 |
+| Portal guiding (M5) | `pathtracer.cpp` portal 경로, BLC 라이트 포털 오브젝트 | ✅ | ✅ | 동등+ — GPU 포털 랜딩(`c92c2f340`, MK_HIT_OBJECT 게이트+`portal_*` 커널, portal_slit 4/4 PASS). adaptive share는 field 기반으로 단순 portal보다 진보 |
 | ReSTIR GI (G1/G2) | `restirgi.cpp` + `MK_RT_GI_*` 커널 | ✅ | ✅ | **초과** — first-bounce reservoir + spatial reuse. 오프라인 렌더러에 ReSTIR GI는 없음 |
 
 ### 1-C. 커스틱스 / SDS 경로
@@ -94,8 +94,8 @@ wavefront 기본 활성화(추가 workload 검증 필요), Vulkan 네이티브
 | Metal HWRT (native AS) | `metalrtaccel.mm`, `metalintersectiondevice.mm` | **동등** — MTLAccelerationStructure 삼각형+네이티브 커브+모션블러 AS+인스턴스 리핏. Cycles MetalRT와 동일 계열 |
 | 커브 HW 프리미티브 | `strands.cpp` + curve AS | 동등(MetalRT curve) |
 | Micro-kernel 스테이트 머신 | 16개 `MK_*` 커널 | 기반 완료 |
-| Wavefront 큐 (M1/M2/M3a) | `BuildQueues`, `QueuePrefix`, λ-segment | **↘M3a 랜딩**(`37cc04b4baa4b492334e8391a2fd2b0a4534e815`) — 디바이스 prefix, cornell ~2.5x. 잔여: M3b-e 옵션+기본 활성화 판단. Hyperion·XPU·Cycles GPU는 full wavefront |
-| Vulkan 백엔드 | `vkdevice.cpp`, clspv 파이프라인, HWRT | 실험 단계 → **M3 본질 완료**(`ef7a4ca6054e3ab2403e5261865748c866570f44` BLAS/TLAS+ray_query, `bfc37876b0ce54827d49746a13cb94107860a3b8` 캐시, 21/21 커널+720p 렌더 PASS) — 네이티브 드라이버/콜드컴파일 잔여 |
+| Wavefront 큐 (M1/M2/M3a) | `BuildQueues`, `QueuePrefix`, λ-segment | **↘M3a 랜딩**(`37cc04b4b`) — 디바이스 prefix, cornell ~2.5x. 잔여: M3b-e 옵션+기본 활성화 판단. Hyperion·XPU·Cycles GPU는 full wavefront |
+| Vulkan 백엔드 | `vkdevice.cpp`, clspv 파이프라인, HWRT | 실험 단계 → **M3 본질 완료**(`ef7a4ca60` BLAS/TLAS+ray_query, `bfc37876b` 캐시, 21/21 커널+720p 렌더 PASS) — 네이티브 드라이버/콜드컴파일 잔여 |
 
 ### 1-G. 디노이즈 / 후처리
 
@@ -193,11 +193,11 @@ wavefront 기본 활성화(추가 workload 검증 필요), Vulkan 네이티브
 
 | 우선 | 갭 | 영향 | 난이도 |
 |---|---|---|---|
-| 1 | ~~**Full wavefront M3**~~ → **M3a 랜딩**(`37cc04b4baa4b492334e8391a2fd2b0a4534e815`). 잔여: 추가 workload 재측정 → 기본 활성화 판단, M3b-e 옵션 | GPU 대형씬 스루풋 | 중 |
-| 2 | ~~**Cryptomatte**~~ → ✅ 랜딩(`aabfdb3e5fbe98e75617309a30920ca27f0b8f7a`). 잔여: asset-level | 합성 파이프라인 필수 AOV | 저 |
-| 3 | ~~**Light linking**~~ → ✅ 랜딩(`8d05a4ef1793ca9ccc98549dae78af2156bbe078`/`8d05a4ef1793ca9ccc98549dae78af2156bbe078`). 잔여: shadow linking | 아티스트 제어 | 중 |
-| 4 | ~~**LPE**~~ → ✅ 랜딩(`7a1622a86dfefb044b17c7d4f3f332bee69b668f`). 잔여: BIDIR/LT 범위, 표현력 확장 | 합성 유연성 | 중~고 |
-| 5 | ~~**Path guiding CPU 성숙도**~~ → ✅ P5 랜딩(`00804937b0f880ff2421a497591a27a6e2a531ba`): `path.guiding.*` 정식화+BIC-K+계층 폴백+.bcf 영속. 잔여: OpenPGL 트레이너 비교는 선택 사항 | 간접광 수렴 | 중 |
+| 1 | ~~**Full wavefront M3**~~ → **M3a 랜딩**(`37cc04b4b`). 잔여: 추가 workload 재측정 → 기본 활성화 판단, M3b-e 옵션 | GPU 대형씬 스루풋 | 중 |
+| 2 | ~~**Cryptomatte**~~ → ✅ 랜딩(`aabfdb3e5`). 잔여: asset-level | 합성 파이프라인 필수 AOV | 저 |
+| 3 | ~~**Light linking**~~ → ✅ 랜딩(`8d05a4ef1`/`8d05a4ef1`). 잔여: shadow linking | 아티스트 제어 | 중 |
+| 4 | ~~**LPE**~~ → ✅ 랜딩(`7a1622a86`). 잔여: BIDIR/LT 범위, 표현력 확장 | 합성 유연성 | 중~고 |
+| 5 | ~~**Path guiding CPU 성숙도**~~ → ✅ P5 랜딩(`00804937b`): `path.guiding.*` 정식화+BIC-K+계층 폴백+.bcf 영속. 잔여: OpenPGL 트레이너 비교는 선택 사항 | 간접광 수렴 | 중 |
 | 6 | **Deep EXR** | VFX 합성 | 중 |
 | 7 | **스펙트럴 심화** — 4빈, n/k DB, λ범위 확장, 형광 | 스펙트럴 충실도 (P0-3) | 중 |
 | 8 | **USD/Hydra delegate** | 파이프라인 채택 | 고 |
@@ -222,7 +222,7 @@ wavefront 기본 활성화(추가 workload 검증 필요), Vulkan 네이티브
 - **Vertex merging bias** — VCM merge는 본질적으로 consistent-biased
   (progressive shrinkage 미구현). BIDIRVMCPU 레퍼런스와의
   장기 수렴 게이트가 필요.
-- ~~**포털 가이딩 GPU 부재**~~ — `c92c2f3407e9eb55fa6e4c649a3c49b409fa867a`로 GPU 포털 랜딩
+- ~~**포털 가이딩 GPU 부재**~~ — `c92c2f340`로 GPU 포털 랜딩
   (portal_slit 4/4 PASS, Metal+OpenCL). 해소됨.
 - **Metropolis 경로** — `metropolis.cpp` 샘플러는 존재하나 MLT
   통합 엔진으로의 승격 상태는 미검증.

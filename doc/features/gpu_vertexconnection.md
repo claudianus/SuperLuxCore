@@ -296,7 +296,7 @@ exhausted before the eye path bounces. `WAVEFRONT_NUM_STATES` is 18.
   after the full shadow walk) was applied on every segment. A ray
   crossing N shadow-transparent panes compounded `(1/vcMisWeight)^N`
   (~1e4..1e5 per pane — GenmaB's multi-layer facade rendered a uniform
-  white field, ~760k anomalous NEE deposits). Fix `345431a45c794de4d25b19bc67f2d78458d8ef3d` gates the
+  white field, ~760k anomalous NEE deposits). Fix `345431a45` gates the
   lift on `!continueToTrace` (terminating segment only, matching CPU).
   The test stacks 4 archglass panes between an emissive ceiling and a
   matte receiver: GPU median luminance finite/bounded, within 3x of

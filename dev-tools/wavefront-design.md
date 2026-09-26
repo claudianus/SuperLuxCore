@@ -267,7 +267,7 @@ default needs an A/B benchmark pass first (M2 scope).
   dominated by one λ) is a possible follow-up, as is reusing the
   same histogram→prefix→place pipeline for M3 material buckets.
 
-## M3a status (implemented 2026-09-25, `37cc04b4baa4b492334e8391a2fd2b0a4534e815`)
+## M3a status (implemented 2026-09-25, `37cc04b4b`)
 
 The dominant deficit identified in the M2 benchmark — the per-iteration
 blocking host sync pair (read histogram → host prefix → upload bases) —

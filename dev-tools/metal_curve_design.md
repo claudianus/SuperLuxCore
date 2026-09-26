@@ -1,6 +1,6 @@
 # Metal Native Curve Primitives (E7) — Design
 
-Status: **implemented v1** (`4a90e7057573da31442615f36fa213c53ec3d9bd` + residency/packing fixes — see
+Status: **implemented v1** (`4a90e7057` + residency/packing fixes — see
 post-fix measurements at bottom). Roadmap item E7/A3 — native
 `MTLAccelerationStructure` curve primitives for hair/fur, replacing the
 triangle tessellation path on Metal HWRT (~29% gap vs dense-mesh hair).

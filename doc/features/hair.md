@@ -88,8 +88,8 @@ Implementation notes:
   via the node reader.
 - `cyHairFile` out-of-bounds read fixed.
 - Hair geometry: native Metal Catmull-Rom curve primitives landed
-  (`4a90e7057573da31442615f36fa213c53ec3d9bd`, E7) on the Metal HWRT path; tessellation remains the
-  fallback. Emissive strands force the tessellated path (`fe11c2ee900d1c19119e488f8f6ea0f865b5cc39`)
+  (`4a90e7057`, E7) on the Metal HWRT path; tessellation remains the
+  fallback. Emissive strands force the tessellated path (`fe11c2ee9`)
   so sampling geometry matches intersection geometry.
 - SuperBlendLuxCore: native Hair material node (`model`, `roughness`,
   `aspectratio`, lobe scales, all colorization modes) and Cycles Principled

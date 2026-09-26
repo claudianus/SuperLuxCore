@@ -1,8 +1,8 @@
 # Render pass (AOV) audit + temporal animation denoising plan
 
-Status: D0 + D1 implemented (commits `a7c3ae282f0eea9ba80c3191e1175da34c28b7b9`, `17b020b312e0c2aaf92c119dab53ef1c6073acbf`, `17b020b312e0c2aaf92c119dab53ef1c6073acbf`,
-`17b020b312e0c2aaf92c119dab53ef1c6073acbf`); Cryptomatte + LPE + adaptive clamping landed 2026-09-25
-(`aabfdb3e5fbe98e75617309a30920ca27f0b8f7a`, `7a1622a86dfefb044b17c7d4f3f332bee69b668f`, `8d05a4ef1793ca9ccc98549dae78af2156bbe078`). Updated 2026-09-25.
+Status: D0 + D1 implemented (commits `a7c3ae282`, `17b020b31`, `17b020b31`,
+`17b020b31`); Cryptomatte + LPE + adaptive clamping landed 2026-09-25
+(`aabfdb3e5`, `7a1622a86`, `8d05a4ef1`). Updated 2026-09-25.
 
 ## Part 1 — AOV audit vs production baseline
 
@@ -25,17 +25,17 @@ vs. what production pipelines expect (Cycles/Arnold/RenderMan/V-Ray).
 
 ### Gaps, ordered by production impact
 
-1. **`MOTION_VECTOR` — ✅ landed** (`a7c3ae282f0eea9ba80c3191e1175da34c28b7b9`, see D0 notes below).
+1. **`MOTION_VECTOR` — ✅ landed** (`a7c3ae282`, see D0 notes below).
    `{vx, vy, valid, objectMotion}` forward flow at the first visible hit,
    CPU+GPU parity. Transform motion only on GPU (vertex-motion buffers not
    plumbed into path kernels); env-miss uses a 1e6 projection point.
-2. **`VARIANCE` — ✅ landed** (`a7c3ae282f0eea9ba80c3191e1175da34c28b7b9`). `GenericFrameBuffer<4,1,float>`
+2. **`VARIANCE` — ✅ landed** (`a7c3ae282`). `GenericFrameBuffer<4,1,float>`
    accumulates E[x²]; output = `max(E[x²]−E[x]², 0)`, HDR-only.
 3. **`VOLUME` split — missing.** Volume scattering folds into the
    diffuse/glossy component channels. `bsdf.IsVolume()` is already tracked
    in the path tracer (`pathtracer.cpp`), so DIRECT_VOLUME/INDIRECT_VOLUME
    channels are a small plumbing change. Needed for volumetric relight/comp.
-4. **`CRYPTOMATTE` — ✅ landed 2026-09-25** (`aabfdb3e5fbe98e75617309a30920ca27f0b8f7a`):
+4. **`CRYPTOMATTE` — ✅ landed 2026-09-25** (`aabfdb3e5`):
    `film.outputs.*.type = CRYPTOMATTE_OBJECT` / `CRYPTOMATTE_MATERIAL`,
    coverage-ranking accumulation + MurmurHash3 manifest in EXR metadata.
    Remaining: asset-level mattes, per-sample rank depth tuning.
@@ -169,7 +169,7 @@ noise → flicker.
   ~1e-6 relative). GPU does NOT support per-vertex deformation (vertex
   motion buffers are not passed to path kernels - transform component
   only). CPU/GPU parity validated (max |vx| differs <0.1%).
-- Pre-existing bug found and fixed (`17b020b312e0c2aaf92c119dab53ef1c6073acbf`): default object IDs came
+- Pre-existing bug found and fixed (`17b020b31`): default object IDs came
   from a process-global counter `defaultObjectIDIndex` → shifted every
   session → per-frame OID instability. Now FNV-1a(name) & 0xffffff.
   Required by both the temporal validator and compositing matte

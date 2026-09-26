@@ -5,7 +5,7 @@
 
 ## Cryptomatte (`CRYPTOMATTE_OBJECT` / `CRYPTOMATTE_MATERIAL`)
 
-Hashed-ID matte AOVs (`aabfdb3e5fbe98e75617309a30920ca27f0b8f7a`). Per-pixel (id, coverage) pairs keyed
+Hashed-ID matte AOVs (`aabfdb3e5`). Per-pixel (id, coverage) pairs keyed
 on the FIRST camera-visible surface's murmur3-float id
 (`include/luxrays/utils/murmurhash.h` — `hash_to_float` keeps the sign
 bit, clamps only the exponent off 0/255 per the Cryptomatte spec).
