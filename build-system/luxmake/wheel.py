@@ -75,9 +75,9 @@ def _compute_platform_tag():
             return "win_arm64"
         return "win_amd64"
     if system == "Darwin" and machine == "x86_64":
-        return "macosx_13_0"
+        return "macosx_13_0_x86_64"
     if system == "Darwin" and machine == "arm64":
-        return "macosx_14_2"
+        return "macosx_14_0_arm64"
 
     # Failed:
     return fail("Unknown platform/system: '%s' / '%s'", platform, machine)
@@ -198,16 +198,30 @@ def make_wheel(args):
 
         # Export METADATA file
         with open(dist_info / "METADATA", "w", encoding="utf-8") as f:
-            nvrtc_version = get_dep_version("nvrtc")
-            logger.info("NVRTC version: %s", nvrtc_version)
-            major = int(nvrtc_version.split(".")[0])
-            requirement = (
-                f"nvidia-cuda-nvrtc-cu{major}=={nvrtc_version}"
-                if major <= 12
-                else f"nvidia-cuda-nvrtc=={nvrtc_version}"
-            )
+            # NVRTC is only a dependency of CUDA builds (not shipped on
+            # macOS); emit the Requires-Dist entry only when nvrtc is
+            # actually part of the dependency set.
+            try:
+                nvrtc_version = get_dep_version("nvrtc")
+            except (ValueError, SystemExit):
+                nvrtc_version = None
+            if nvrtc_version:
+                logger.info("NVRTC version: %s", nvrtc_version)
+                major = int(nvrtc_version.split(".")[0])
+                requirement = (
+                    f"nvidia-cuda-nvrtc-cu{major}=={nvrtc_version}"
+                    if major <= 12
+                    else f"nvidia-cuda-nvrtc=={nvrtc_version}"
+                )
+                metadata = _METADATA_SNIPPET.format(version, requirement)
+            else:
+                metadata = re.sub(
+                    r"Requires-Dist:.*\n",
+                    "",
+                    _METADATA_SNIPPET.format(version, ""),
+                )
 
-            f.write(_METADATA_SNIPPET.format(version, requirement))
+            f.write(metadata)
 
         # Export entry_points.txt file
         with open(dist_info / "entry_points.txt", "w", encoding="utf-8") as f:

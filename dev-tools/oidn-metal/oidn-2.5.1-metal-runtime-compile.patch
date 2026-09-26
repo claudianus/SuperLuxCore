@@ -1,0 +1,155 @@
+diff --git a/cmake/oidn_metal.cmake b/cmake/oidn_metal.cmake
+index e361e36..2c90b57 100644
+--- a/cmake/oidn_metal.cmake
++++ b/cmake/oidn_metal.cmake
+@@ -13,68 +13,58 @@ if(OIDN_APPLE_SDK_VERSION VERSION_LESS OIDN_APPLE_SDK_VERSION_MAX)
+   message(FATAL_ERROR "Building with Metal support requires Apple SDK version ${OIDN_APPLE_SDK_VERSION_MAX} or newer")
+ endif()
+ 
+-# Builds a Metal library from the given Metal shader sources and
+-# adds C++ sources generated from the Metal library blob to the specified target
+-function(metallib_target_add_sources target metallib)
+-	set(options INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS)
+-  cmake_parse_arguments(PARSE_ARGV 2 METAL "" "" "${options}")
++# LuxCore fork: embed the Metal shader *source* (preprocessed into a single
++# self-contained MSL file by cmake/metal_source.py) and compile it at runtime
++# with -[MTLDevice newLibraryWithSource:]. This replaces the Xcode-only
++# `xcrun metal`/`metallib` toolchain so the device module builds with only the
++# Command Line Tools, matching how LuxCore compiles its own Metal kernels.
++# The blob symbol keeps the source file stem, so the engine still references
++# blobs::<src_name> and includes the generated <src_name>.h.
++function(metallib_target_add_sources target blob)
++  set(multiValueArgs INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS)
++  cmake_parse_arguments(PARSE_ARGV 2 METAL "" "" "${multiValueArgs}")
+ 
+-  set(include_dirs "")
+-  foreach(inc ${METAL_INCLUDE_DIRECTORIES})
+-    file(TO_NATIVE_PATH "${inc}" inc_native_path)
+-    list(APPEND include_dirs "-I${inc_native_path}")
+-  endforeach()
+-
+-  set(compile_defs "")
+-  foreach(def ${METAL_COMPILE_DEFINITIONS})
+-    list(APPEND compile_defs "-D${def}")
+-  endforeach()
+-
+-  # Compile each Metal shader to an AIR (Apple Intermediate Representation) file
+-  set(air_files "")
+ 
++  set(cpp_files "")
+   foreach(src ${METAL_UNPARSED_ARGUMENTS})
+     get_filename_component(src_file ${src} ABSOLUTE)
+     get_filename_component(src_name ${src} NAME_WE)
+-    get_filename_component(src_dir  ${src_file} DIRECTORY)
+-
+-    oidn_get_build_path(out_dir ${src_dir})
+-    set(air_file ${out_dir}/CMakeFiles/${target}.dir/${src_name}.air)
+-    file(RELATIVE_PATH air_file_rel ${CMAKE_BINARY_DIR} ${air_file})
++    # Keep the original file stem: the generated header (<src_name>.h) and blob
++    # symbol (blobs::<src_name>) are referenced by name in the engine sources.
++    set(pre_file ${CMAKE_CURRENT_BINARY_DIR}/${src_name}.metal)
+ 
++    # Preprocess the .metal source into a self-contained MSL file
+     add_custom_command(
+-      OUTPUT ${air_file}
+-      COMMAND xcrun --sdk ${OIDN_APPLE_SDK} metal
+-                -c ${src_file}
+-                ${include_dirs}
+-                ${compile_defs}
+-                ${METAL_COMPILE_OPTIONS}
+-                -MD -MT ${air_file} -MF ${air_file}.d
+-                -o ${air_file}
++      OUTPUT ${pre_file}
++      COMMAND ${Python_EXECUTABLE} ${OIDN_ROOT_SOURCE_DIR}/cmake/metal_source.py
++              ${pre_file} ${src_file}
++              ${PROJECT_SOURCE_DIR}
++              ${PROJECT_SOURCE_DIR}/devices/gpu
++              ${METAL_INCLUDE_DIRECTORIES}
+       DEPENDS ${src_file}
+-      DEPFILE ${air_file}.d
+-      COMMENT "Building Metal AIR file ${air_file_rel}"
++      COMMENT "Preprocessing Metal source ${src} for runtime compilation"
++      VERBATIM
+     )
+ 
+-    list(APPEND air_files ${air_file})
++    # Embed the preprocessed source as a binary blob. We cannot use
++    # oidn_generate_cpp_from_blob here because it maps input paths via
++    # oidn_get_build_path(), which assumes the input lives in the source tree
++    # and returns an empty build path for build-tree inputs.
++    set(out_cpp ${CMAKE_CURRENT_BINARY_DIR}/${src_name}.cpp)
++    set(out_hpp ${CMAKE_CURRENT_BINARY_DIR}/${src_name}.h)
++    add_custom_command(
++      OUTPUT ${out_cpp} ${out_hpp}
++      COMMAND ${Python_EXECUTABLE} ${OIDN_ROOT_SOURCE_DIR}/scripts/blob_to_cpp.py
++              ${pre_file} -o ${out_cpp} -H ${out_hpp} -n "${OIDN_NAMESPACE}::blobs"
++      DEPENDS ${pre_file} ${OIDN_ROOT_SOURCE_DIR}/scripts/blob_to_cpp.py
++      COMMENT "Embedding Metal source ${pre_file}"
++      VERBATIM
++    )
++    list(APPEND cpp_files ${out_cpp} ${out_hpp})
+   endforeach()
+ 
+-  # Create the Metal library by linking the AIR files
+-  set(metallib_file ${out_dir}/${metallib}.metallib)
+-  file(RELATIVE_PATH metallib_file_rel ${CMAKE_BINARY_DIR} ${metallib_file})
+-
+-  add_custom_command(
+-    OUTPUT ${metallib_file}
+-    COMMAND xcrun --sdk ${OIDN_APPLE_SDK} metallib ${air_files} -o ${metallib_file}
+-    DEPENDS ${air_files}
+-    COMMENT "Linking Metal library ${metallib_file_rel}"
+-  )
+-
+-  # Generate C++ code from the Metal library blob
+-  oidn_generate_cpp_from_blob(cpp_files "${OIDN_NAMESPACE}::blobs" ${metallib_file})
+-
+   # Add the generated C++ files to the target
+   get_property(target_sources TARGET ${target} PROPERTY SOURCES)
+   list(APPEND target_sources ${cpp_files})
+   set_target_properties(${target} PROPERTIES SOURCES "${target_sources}")
+-endfunction()
+\ No newline at end of file
++endfunction()
+diff --git a/devices/metal/metal_engine.mm b/devices/metal/metal_engine.mm
+index 9052c1e..34dfb7d 100644
+--- a/devices/metal/metal_engine.mm
++++ b/devices/metal/metal_engine.mm
+@@ -27,17 +27,31 @@
+         throw std::runtime_error("could not create Metal command queue");
+     }
+ 
+-    dispatch_data_t libraryData = dispatch_data_create(blobs::metal_kernels, sizeof(blobs::metal_kernels),
+-                                                       nil, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
++    // LuxCore fork: the embedded blob is the Metal shader *source* (not a
++    // precompiled .metallib), so compile it at runtime. This removes the
++    // build-time dependency on `xcrun metal`/`metallib` (full Xcode), letting
++    // the device build with only the Command Line Tools.
++    NSString* source = [[NSString alloc] initWithBytes: blobs::metal_kernels
++                                                length: sizeof(blobs::metal_kernels)
++                                              encoding: NSUTF8StringEncoding];
++    MTLCompileOptions* compileOptions = [[MTLCompileOptions alloc] init];
++    compileOptions.fastMathEnabled = NO;  // matches upstream -fno-fast-math
++    // matches upstream -std=metal3.0; on older systems the default version is
++    // used and source compilation fails, which LuxCore handles via CPU fallback
++    if (@available(macOS 13.0, *))
++      compileOptions.languageVersion = MTLLanguageVersion3_0;
+ 
+     NSError* error = nullptr;
+-    library = [device->getMTLDevice() newLibraryWithData: libraryData
+-                                                   error: &error];
++    library = [device->getMTLDevice() newLibraryWithSource: source
++                                                   options: compileOptions
++                                                     error: &error];
+ 
+-    dispatch_release(libraryData);
++    [compileOptions release];
++    [source release];
+ 
+     if (!library)
+-      throw std::runtime_error("could not create Metal library");
++      throw std::runtime_error(std::string("could not create Metal library: ") +
++                               (error ? [[error localizedDescription] UTF8String] : "unknown error"));
+   }
+ 
+   MetalEngine::~MetalEngine()
