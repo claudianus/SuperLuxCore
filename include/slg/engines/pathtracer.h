@@ -195,6 +195,12 @@ public:
 	// draws 3 stratified wavelengths and Spectrum channels carry spectral
 	// bins instead of RGB primaries. CPU path engines only.
 	bool spectralEnable;
+	// RGB->SPD upsampling model (path.spectral.upsampling): false = Smits
+	// basis (default, zero regression), true = Jakob-Hanika 2019 sigmoid
+	// model (rgb2spec coefficient table). GPU backends read the flag to
+	// upload the JH2019 table buffer; kernels switch on the buffer
+	// pointer itself.
+	bool spectralUpsamplingJH2019;
 
 	// MNEE (Manifold Next Event Estimation) direct light sampling through
 	// delta specular surfaces (Hanika et al. 2015, single specular vertex;

@@ -784,7 +784,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 		const SceneRayType rayType, PathVolumeInfo *volInfo,
 		const float initialPassThrough, Ray *ray, RayHit *rayHit, BSDF *bsdf,
 		Spectrum *connectionThroughput, const Spectrum *pathThroughput,
-		SampleResult *sampleResult, const bool backTracing) const {
+		SampleResult *sampleResult, const bool backTracing,
+		PathDepthInfo *rayDepthInfo, const BSDFEvent rayEvent) const {
 	*connectionThroughput = Spectrum(1.f);
 
 	// I need a sequence of pseudo-random numbers starting form a floating point
@@ -823,6 +824,9 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				passThrough,
 				volInfo
 			);
+			// Fill the context of the ray that produced this hit point
+			// (used by the "rayinfo" texture)
+			bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo, rayHit->t);
 			rayVolume = bsdf->hitPoint.intoObject ?
 				bsdf->hitPoint.exteriorVolume : bsdf->hitPoint.interiorVolume;
 
@@ -882,6 +886,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 					t,
 					passThrough
 				);
+				bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo, t);
 				volInfo->SetScatteredStart(true);
 
 				return true;
@@ -903,16 +908,23 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				if (!transp.Black()) {
 					*connectionThroughput *= transp;
 					continueToTrace = true;
+					// Account the crossed transparent surface for the
+					// "rayinfo" texture (Cycles LightPath "Transparent
+					// Depth")
+					if (rayDepthInfo)
+						++(rayDepthInfo->transparentDepth);
 				}
 			}
 
 			if (!continueToTrace && shadowRay) {
 				const Spectrum &shadowTransparency = bsdf->GetPassThroughShadowTransparency();
-				
+
 				if (!shadowTransparency.Black()) {
 					*connectionThroughput *= shadowTransparency;
 					throughShadowTransparency = true;
 					continueToTrace = true;
+					if (rayDepthInfo)
+						++(rayDepthInfo->transparentDepth);
 				}
 			}
 

@@ -27,6 +27,8 @@ OPENCL_FORCE_INLINE void PathDepthInfo_Init(__global PathDepthInfo *depthInfo) {
 	depthInfo->diffuseDepth = 0;
 	depthInfo->glossyDepth = 0;
 	depthInfo->specularDepth = 0;
+	depthInfo->transmitDepth = 0;
+	depthInfo->transparentDepth = 0;
 }
 
 OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthInfo, const BSDFEvent event) {
@@ -37,6 +39,8 @@ OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthIn
 		++(depthInfo->glossyDepth);
 	if (event & SPECULAR)
 		++(depthInfo->specularDepth);
+	if (event & TRANSMIT)
+		++(depthInfo->transmitDepth);
 }
 
 OPENCL_FORCE_INLINE bool PathDepthInfo_IsLastPathVertex(__global PathDepthInfo *depthInfo,

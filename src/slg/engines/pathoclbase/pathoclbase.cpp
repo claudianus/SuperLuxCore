@@ -273,6 +273,13 @@ string PathOCLBaseRenderEngine::GetCachedKernelsHash(const RenderConfig &renderC
 	const bool useGPUs = cfg.Get(GetDefaultProps()->Get("opencl.gpu.use")).Get<bool>();
 	const string oclDeviceConfig = cfg.Get(GetDefaultProps()->Get("opencl.devices.select")).Get<string>();
 	const bool spectralEnable = cfg.Get(PathTracer::GetDefaultProps()->Get("path.spectral.enable")).Get<bool>();
+	// The JH2019 upsampling model only changes a runtime kernel argument
+	// (the table buffer pointer), not the program source, so a cached
+	// binary would still be correct -- but include it in the hash anyway
+	// so a model switch never reuses a stale cache entry.
+	const string spectralUpsampling = cfg.IsDefined("spectral.upsampling") ?
+			cfg.Get("spectral.upsampling").Get<string>() :
+			cfg.Get(PathTracer::GetDefaultProps()->Get("path.spectral.upsampling")).Get<string>();
 
 	stringstream ssParams;
 	ssParams.precision(6);
@@ -283,7 +290,8 @@ string PathOCLBaseRenderEngine::GetCachedKernelsHash(const RenderConfig &renderC
 			useCPUs << "##" <<
 			useGPUs << "##" <<
 			oclDeviceConfig << "##" <<
-			spectralEnable;
+			spectralEnable << "##" <<
+			spectralUpsampling;
 
 	const string kernelSource = PathOCLBaseOCLRenderThread::GetKernelSources();
 

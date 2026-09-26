@@ -179,9 +179,20 @@ bool RestirGI::ResampleFirstBounce(
 		RayHit rayHit;
 		BSDF x2bsdf;
 		Spectrum connectionThroughput;
+		// The candidate vertex sits one bounce (of the sampled event)
+		// past the current path vertex
+		PathDepthInfo candDepthInfo;
+		candDepthInfo.depth = bsdf.hitPoint.rayDepth;
+		candDepthInfo.diffuseDepth = bsdf.hitPoint.rayDiffuseDepth;
+		candDepthInfo.glossyDepth = bsdf.hitPoint.rayGlossyDepth;
+		candDepthInfo.specularDepth = bsdf.hitPoint.raySpecularDepth;
+		candDepthInfo.transmitDepth = bsdf.hitPoint.rayTransmissionDepth;
+		candDepthInfo.transparentDepth = bsdf.hitPoint.rayTransparentDepth;
+		candDepthInfo.IncDepths(events[i]);
 		if (scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | INDIRECT_RAY, &rayVolInfo,
 				GIRandom(seed, 0x03u), &ray, &rayHit, &x2bsdf,
-				&connectionThroughput)) {
+				&connectionThroughput, nullptr, nullptr, false,
+				&candDepthInfo, events[i])) {
 			x2s[i] = x2bsdf.hitPoint.p;
 			x2ns[i] = x2bsdf.hitPoint.geometryN;
 			lHats[i] = GI_ProxyHitRadiance(device, scene, time,

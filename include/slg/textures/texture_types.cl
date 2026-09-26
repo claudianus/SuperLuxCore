@@ -84,8 +84,29 @@ typedef enum {
 	// Generic math-function texture (trig/exp/log)
 	MATHFUNC_TEX,
 	// Sparse Gabor convolution noise
-	GABORNOISE_TEX
+	GABORNOISE_TEX,
+	// Ray context information (Cycles LightPath equivalent)
+	RAYINFO_TEX
 } TextureType;
+
+// Note: keep aligned with the copy in rayinfo.h
+typedef enum {
+	RAYINFO_IS_CAMERA_RAY,
+	RAYINFO_IS_SHADOW_RAY,
+	RAYINFO_IS_DIFFUSE_RAY,
+	RAYINFO_IS_GLOSSY_RAY,
+	RAYINFO_IS_SINGULAR_RAY,
+	RAYINFO_IS_REFLECTION_RAY,
+	RAYINFO_IS_TRANSMISSION_RAY,
+	RAYINFO_IS_VOLUME_SCATTER_RAY,
+	RAYINFO_RAY_LENGTH,
+	RAYINFO_RAY_DEPTH,
+	RAYINFO_DIFFUSE_DEPTH,
+	RAYINFO_GLOSSY_DEPTH,
+	RAYINFO_SPECULAR_DEPTH,
+	RAYINFO_TRANSMISSION_DEPTH,
+	RAYINFO_TRANSPARENT_DEPTH
+} RayInfoChannel;
 
 typedef struct {
 	float value;
@@ -501,6 +522,10 @@ typedef struct {
 } WhiteNoiseTexParam;
 
 typedef struct {
+	unsigned int channel; // slg::RayInfoChannel
+} RayInfoTexParam;
+
+typedef struct {
 	unsigned int vecTexIndex;
 	float scale, frequency, isotropy, orientation;
 	unsigned int output; // slg::GaborOutput
@@ -599,6 +624,7 @@ typedef struct {
 		WireFrameTexParam wireFrameTex;
 		DistortTexParam distortTex;
 		BombingTexParam bombingTex;
+		RayInfoTexParam rayInfoTex;
 	};
 } Texture;
 
@@ -613,13 +639,19 @@ typedef struct {
 	, __global const TextureEvalOp* restrict texEvalOps \
 	, __global float *texEvalStacks \
 	, const uint maxTextureEvalStackSize \
-	IMAGEMAPS_PARAM_DECL SCENE_PARAM_DECL
+	IMAGEMAPS_PARAM_DECL SCENE_PARAM_DECL \
+	/* JH2019 (rgb2spec) spectral upsampling table: [scale[res]|coeffs] \
+	 * packed floats uploaded by the host when \
+	 * path.spectral.upsampling=jh2019; NULL keeps the default Smits \
+	 * basis. Only dereferenced under SLG_SPECTRAL. */ \
+	, __global const float* restrict spectralUpsamplingTable
 #define TEXTURES_PARAM \
 	, texs \
 	, texEvalOps \
 	, texEvalStacks \
 	, maxTextureEvalStackSize \
-	IMAGEMAPS_PARAM SCENE_PARAM
+	IMAGEMAPS_PARAM SCENE_PARAM \
+	, spectralUpsamplingTable
 
 #endif
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -18,6 +18,20 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+// Neutral ray context: no event, no flags, depth/length 0.
+// Scene_Intersect() overwrites these with the real ray context.
+OPENCL_FORCE_INLINE void HitPoint_InitRayContext(__global HitPoint *hitPoint) {
+	hitPoint->rayEvent = NONE;
+	hitPoint->rayFlags = 0u;
+	hitPoint->rayDepth = 0u;
+	hitPoint->rayDiffuseDepth = 0u;
+	hitPoint->rayGlossyDepth = 0u;
+	hitPoint->raySpecularDepth = 0u;
+	hitPoint->rayTransmissionDepth = 0u;
+	hitPoint->rayTransparentDepth = 0u;
+	hitPoint->rayLength = 0.f;
+}
+
 // Used when hitting a surface
 OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool throughShadowTransp,
 		const uint meshIndex, const uint triIndex,
@@ -27,6 +41,9 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 		MATERIALS_PARAM_DECL) {
 	hitPoint->throughShadowTransparency = throughShadowTransp;
 	hitPoint->passThroughEvent = passThroughEvnt;
+
+	// The ray context is set later by Scene_Intersect()
+	HitPoint_InitRayContext(hitPoint);
 
 	VSTORE3F(pnt, &hitPoint->p.x);
 	VSTORE3F(fixedDir, &hitPoint->fixedDir.x);
@@ -145,6 +162,7 @@ OPENCL_FORCE_INLINE void HitPoint_InitDefault(__global HitPoint *hitPoint) {
 	hitPoint->exteriorIorTexIndex = NULL_INDEX;
 
 	HitPoint_InitSpectral(hitPoint);
+	HitPoint_InitRayContext(hitPoint);
 }
 
 OPENCL_FORCE_INLINE void HitPoint_GetFrame(__global const HitPoint *hitPoint, Frame *frame) {

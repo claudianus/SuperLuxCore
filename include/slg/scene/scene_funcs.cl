@@ -18,9 +18,32 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+// Sets the context of the ray that generated an hit point (read by the
+// "rayinfo" texture). A NULL depthInfo means all depths are 0.
+OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
+		const uint rayType, const BSDFEvent event,
+		__global const PathDepthInfo *depthInfo, const float length) {
+	hitPoint->rayEvent = event;
+	hitPoint->rayFlags = rayType;
+	hitPoint->rayDepth = depthInfo ? depthInfo->depth : 0u;
+	hitPoint->rayDiffuseDepth = depthInfo ? depthInfo->diffuseDepth : 0u;
+	hitPoint->rayGlossyDepth = depthInfo ? depthInfo->glossyDepth : 0u;
+	hitPoint->raySpecularDepth = depthInfo ? depthInfo->specularDepth : 0u;
+	hitPoint->rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0u;
+	hitPoint->rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0u;
+	hitPoint->rayLength = length;
+}
+
 OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		const SceneRayType rayType,
+		// The context of the incoming ray (used to fill BSDF->hitPoint ray
+		// context fields, read by the "rayinfo" texture). A NULL
+		// rayDepthInfo means all depths are 0. When not NULL, the
+		// transparentDepth counter is updated while stepping through
+		// pass-through materials (so it accumulates along the path).
+		__global PathDepthInfo *rayDepthInfo,
+		const BSDFEvent rayEvent,
 		int *throughShadowTransparency,
 		__global PathVolumeInfo *volInfo,
 		__global HitPoint *tmpHitPoint,
@@ -62,6 +85,10 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 				volInfo
 				MATERIALS_PARAM
 				);
+		// Fill the context of the ray that produced this hit point
+		// (used by the "rayinfo" texture)
+		HitPoint_SetRayContext(&bsdf->hitPoint, rayType, rayEvent,
+				rayDepthInfo, rayHit->t);
 
 #if defined(SLG_SPECTRAL)
 		if (sampleResult) {
@@ -110,6 +137,8 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			rayHit->meshIndex = 0xfffffffeu;
 
 			BSDF_InitVolume(bsdf, *throughShadowTransparency, mats, ray, rayVolumeIndex, t, passThrough);
+			HitPoint_SetRayContext(&bsdf->hitPoint, rayType, rayEvent,
+					rayDepthInfo, t);
 			volInfo->scatteredStart = true;
 
 #if defined(SLG_SPECTRAL)
@@ -142,6 +171,10 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 
 				// It is a pass through point, continue to trace the ray
 				continueToTrace = true;
+				// Account the crossed transparent surface for the
+				// "rayinfo" texture (Cycles LightPath "Transparent Depth")
+				if (rayDepthInfo)
+					++(rayDepthInfo->transparentDepth);
 			}
 		}
 
@@ -153,6 +186,8 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 				*connectionThroughput *= shadowTransparency;
 				*throughShadowTransparency = true;
 				continueToTrace = true;
+				if (rayDepthInfo)
+					++(rayDepthInfo->transparentDepth);
 			}
 		}
 

@@ -1159,6 +1159,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// RAYINFO_TEX
+		//----------------------------------------------------------------------
+		case RAYINFO_TEX:
+			RayInfoTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
+					hitPoint, sampleDistance TEXTURES_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		// SPLIT_FLOAT3
 		//----------------------------------------------------------------------
 		case SPLIT_FLOAT3: {

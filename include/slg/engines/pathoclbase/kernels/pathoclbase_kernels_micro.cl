@@ -78,6 +78,7 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 	int throughShadowTransparency = taskState->throughShadowTransparency;
 	const bool continueToTrace = Scene_Intersect(taskConfig,
 			EYE_RAY | ((pathInfo->depth.depth == 0) ? CAMERA_RAY : INDIRECT_RAY),
+			&pathInfo->depth, pathInfo->lastBSDFEvent,
 			&throughShadowTransparency,
 			&pathInfo->volume,
 			&tasks[gid].tmpHitPoint,
@@ -493,6 +494,13 @@ __kernel void AdvancePaths_MK_RT_DL(
 	const bool continueToTrace =
 		Scene_Intersect(taskConfig,
 			EYE_RAY | SHADOW_RAY,
+			// Shadow rays have no generating bounce event. The task's
+			// tmpPathDepthInfo is the depthInfo copy made by
+			// DirectLight_BSDFSampling() (eye path depth + 1 bounce):
+			// using it (instead of &eyePathInfos[gid].depth) also keeps
+			// the eye path transparentDepth accumulation untouched by
+			// shadow ray pass-throughs.
+			&task->tmpPathDepthInfo, NONE,
 			&throughShadowTransparency,
 			&directLightVolInfos[gid],
 			&task->tmpHitPoint,
@@ -772,6 +780,7 @@ __kernel void AdvancePaths_MK_RT_GI_BOUNCE(
 			&directLightVolInfos[gid],
 			pathInfo,
 			&task->tmpHitPoint,
+			&task->tmpPathDepthInfo,
 			candRays, candHits, candData,
 			giResult,
 			(__global RestirGIReservoir *)(restirReservoirs +

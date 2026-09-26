@@ -16,6 +16,13 @@ render (`batch.haltspp = 8`, 128x128) and have closed-form expected values.
   quad it collects environment light, so this is a pure intersection-leak
   detector. **Expected centre pixel: `(0, 0, 0)`** on every backend.
 
+- `rayinfo-camera.scn` / `.cfg` — the `rayinfo` texture (Cycles LightPath
+  equivalent) gating a quad's emission by `iscameraray`: the quad emits
+  `(4,0,0)` to camera rays but nothing to light-source/GI rays, so the matte
+  floor under a white environment must stay grey (a broken ray context would
+  leak red GI). **Expected centre pixel: `(4, 0, 0)`** on every backend;
+  floor pixels `(1, 1, 1)` (env only, no red channel excess).
+
 ## Running
 
 ```

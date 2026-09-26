@@ -26,6 +26,7 @@
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/core/geometry/frame.h"
 #include "luxrays/core/exttrianglemesh.h"
+#include "slg/bsdf/bsdfevents.h"
 #include "slg/usings.h"
 
 namespace slg {
@@ -43,6 +44,7 @@ using luxrays::ocl::Spectrum;
 
 class Volume;
 class Scene;
+class PathDepthInfo;
 
 typedef struct HitPoint_t {
 	// The incoming direction. It is the eyeDir when fromLight = false and
@@ -76,6 +78,30 @@ typedef struct HitPoint_t {
 	// If I got here going trough a shadow transparency. It can be used to disable MIS.
 	bool throughShadowTransparency;
 
+	// The context of the ray that generated this hit point. It is read by
+	// the "rayinfo" texture to implement ray-dependent shading (i.e. the
+	// Cycles LightPath node). Scene::Intersect() fills it for every BSDF
+	// it creates; HitPoints initialized outside of a ray-traced path
+	// (light source sampling, volume internals, utilities, ...) keep the
+	// zero defaults, which decode as a ray with no event, depth 0 and
+	// length 0.
+	BSDFEvent rayEvent;
+	// The SceneRayType bits of the incoming ray (i.e. CAMERA_RAY,
+	// SHADOW_RAY, ...). 0 when the context is unknown.
+	u_int rayFlags;
+	// The number of bounces before the ray and the per-event counters
+	u_int rayDepth;
+	u_int rayDiffuseDepth;
+	u_int rayGlossyDepth;
+	u_int raySpecularDepth;
+	// Number of transmission events and of transparent surfaces crossed
+	// along the path before this hit (Cycles LightPath "Transmission
+	// Depth" and "Transparent Depth")
+	u_int rayTransmissionDepth;
+	u_int rayTransparentDepth;
+	// The length of the incoming ray segment
+	float rayLength;
+
 	// Used when hitting a surface
 	//
 	// Note: very important, this method assume localToWorld file has been _already_
@@ -90,6 +116,11 @@ typedef struct HitPoint_t {
 
 	// Initialize all fields (without a constructor)
 	void Init();
+
+	// Sets the ray context fields (called by Scene::Intersect()). A NULL
+	// depthInfo means all depths are set to 0.
+	void SetRayContext(const u_int rayType, const BSDFEvent event,
+		const PathDepthInfo *depthInfo, const float length);
 
 	luxrays::Frame GetFrame() const { return luxrays::Frame(dpdu, dpdv, shadeN); }
 	luxrays::Normal GetLandingGeometryN() const { return (intoObject ? 1.f : -1.f) * geometryN; }

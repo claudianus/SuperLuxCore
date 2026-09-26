@@ -121,6 +121,7 @@ void BiDirCPURenderThread::AOVWarmUp(
 
 		Spectrum pathThroughput(1.f);
 		u_int depth = 0;
+		BSDFEvent lastBSDFEvent = SPECULAR;
 		BSDF bsdf;
 		while (depth < engine->maxEyePathDepth) {
 			sampleResult.firstPathVertex = (depth == 0);
@@ -131,11 +132,17 @@ void BiDirCPURenderThread::AOVWarmUp(
 			// not in any other place)
 			RayHit eyeRayHit;
 			Spectrum connectionThroughput;
+			PathDepthInfo depthInfo;
+			depthInfo.depth = depth;
+			depthInfo.diffuseDepth = 0;
+			depthInfo.glossyDepth = 0;
+			depthInfo.specularDepth = 0;
 			const bool hit = scene.Intersect(IntersectionDevicePtr(&device),
 					EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
 					&volInfo, sampler.GetSample(sampleOffset),
 					&eyeRay, &eyeRayHit, &bsdf,
-					&connectionThroughput, &pathThroughput, &sampleResult);
+					&connectionThroughput, &pathThroughput, &sampleResult,
+					false, &depthInfo, lastBSDFEvent);
 			pathThroughput *= connectionThroughput;
 
 			if (!hit) {
@@ -164,7 +171,6 @@ void BiDirCPURenderThread::AOVWarmUp(
 
 			Vector sampledDir;
 			float cosSampledDir, lastPdfW;
-			BSDFEvent lastBSDFEvent;
 			const Spectrum bsdfSample = bsdf.Sample(&sampledDir,
 						sampler.GetSample(sampleOffset + 1),
 						sampler.GetSample(sampleOffset + 2),
@@ -648,17 +654,25 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 		lightVertex.dVM = lightVertex.dVC * misVcWeightFactor;
 
 		lightVertex.depth = 1;
+		// The emitted ray has no generating bounce event
+		lightVertex.bsdfEvent = NONE;
 		while (lightVertex.depth <= engine->maxLightPathDepth) {
 			const u_int sampleOffset = sampleBootSize + (lightVertex.depth - 1) * sampleLightStepSize;
 
 			RayHit nextEventRayHit;
 			Spectrum connectionThroughput;
+			PathDepthInfo depthInfo;
+			depthInfo.depth = lightVertex.depth - 1;
+			depthInfo.diffuseDepth = 0;
+			depthInfo.glossyDepth = 0;
+			depthInfo.specularDepth = 0;
 			const bool hit = scene.Intersect(
 					luxrays::make_observer(device),
 					LIGHT_RAY | INDIRECT_RAY,
 					&lightVertex.volInfo, sampler->GetSample(sampleOffset),
 					&lightRay, &nextEventRayHit, &lightVertex.bsdf,
-					&connectionThroughput);
+					&connectionThroughput, nullptr, nullptr, false,
+					&depthInfo, lightVertex.bsdfEvent);
 
 			if (hit) {
 				// Something was hit
@@ -892,6 +906,8 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 			eyeVertex.dVM = 0.f;
 
 			eyeVertex.depth = 1;
+			// The camera ray has no generating bounce event
+			eyeVertex.bsdfEvent = NONE;
 			bool albedoToDo = true;
 			eyeSampleResult.albedo = Spectrum(); // Just in case albedoToDo is never true
 			eyeSampleResult.shadingNormal = Normal();
@@ -908,12 +924,18 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 				// not in any other place)
 				RayHit eyeRayHit;
 				Spectrum connectionThroughput;
+				PathDepthInfo depthInfo;
+				depthInfo.depth = eyeVertex.depth - 1;
+				depthInfo.diffuseDepth = 0;
+				depthInfo.glossyDepth = 0;
+				depthInfo.specularDepth = 0;
 				const bool hit = scene.Intersect(
 						luxrays::make_observer(device),
 						EYE_RAY | (eyeSampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
 						&eyeVertex.volInfo, sampler->GetSample(sampleOffset),
 						&eyeRay, &eyeRayHit, &eyeVertex.bsdf,
-						&connectionThroughput, &eyeVertex.throughput, &eyeSampleResult);
+						&connectionThroughput, &eyeVertex.throughput, &eyeSampleResult,
+						false, &depthInfo, eyeVertex.bsdfEvent);
 
 				if (!hit) {
 					// Nothing was hit, look for infinitelight

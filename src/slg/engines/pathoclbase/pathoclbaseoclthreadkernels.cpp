@@ -547,6 +547,11 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, (u_int)renderEngine->taskCount);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, queueState);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, wavefrontQueues ? 1u : 0u);
+
+	// JH2019 spectral upsampling table (NULL unless
+	// path.spectral.upsampling=jh2019; TEXTURES_PARAM tail)
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
+			spectralUpsamplingTableBuff);
 }
 
 // Mirror of the PathState enum in

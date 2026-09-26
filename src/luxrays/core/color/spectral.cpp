@@ -23,11 +23,13 @@
 #include "luxrays/core/color/spectrumwavelengths.h"
 #include "luxrays/core/color/spds/data/rgbE_32.h"
 #include "luxrays/core/color/spds/data/rgbD65_32.h"
+#include "luxrays/core/color/spds/data/jh2019_32.h"
 
 using namespace luxrays;
 
 namespace {
 	bool g_enabled = false;
+	Spectral::UpsamplingModel g_upsampling = Spectral::UPSAMPLING_SMITS;
 	thread_local PathWavelengths g_sw;
 	thread_local bool g_hasSW = false;
 
@@ -129,10 +131,142 @@ namespace {
 
 		return out;
 	}
+
+	// ---------------------------------------------------------------------
+	// Jakob-Hanika 2019 sigmoid upsampling
+	// ("A Low-Dimensional Function Space for Efficient Spectral
+	// Upsampling", W. Jakob & J. Hanika, EGSR 2019).
+	//
+	// Port of rgb2spec_fetch()/rgb2spec_eval_precise() from
+	// https://github.com/mitsuba-renderer/rgb2spec (BSD-3-Clause,
+	// (c) 2020 Wenzel Jakob, commit 721145dedf2491851bd46ab8fd165955cb38ddaf)
+	// against the embedded jh2019_32.h table. Keep in sync with the
+	// identical device code in include/slg/spectral_funcs.cl.
+
+	// Largest index i in [0, res-2] with scale[i] <= x (scale is the
+	// ascending smoothstep^2 dominant-channel grid).
+	inline u_int JH2019FindInterval(const float x) {
+		u_int left = 0, size = jh2019::res - 2;
+		while (size > 0) {
+			const u_int half = size >> 1;
+			const u_int middle = left + half + 1;
+			if (jh2019::scale[middle] <= x) {
+				left = middle;
+				size -= half + 1;
+			} else
+				size = half;
+		}
+		return std::min(left, jh2019::res - 2);
+	}
+
+	// Dominant-channel trilinear coefficient lookup for an RGB triplet
+	// already clamped to [0,1]^3 (rgb2spec_fetch).
+	inline void JH2019Fetch(const float rgb[3], float out[3]) {
+		const float r = rgb[0], g = rgb[1], b = rgb[2];
+
+		// Monochromatic input: closed-form coefficient reproducing the
+		// flat spectrum v (black/white saturate the sigmoid to 0/1).
+		if (r == g && g == b) {
+			out[0] = out[1] = 0.f;
+			out[2] = (r <= 0.f) ? -8192.f :
+				((r >= 1.f) ? 8192.f : (r - .5f) / sqrtf(r * (1.f - r)));
+			return;
+		}
+
+		u_int i = 0;
+		if (g >= r) i = 1;
+		if (b >= rgb[i]) i = 2;
+
+		const float z = rgb[i];
+		if (z <= 0.f) {
+			// Unreachable after the [0,1] clamp (a non-monochromatic
+			// triplet has a positive max); kept as a guard, same as
+			// rgb2spec_fetch returning the first node.
+			for (u_int j = 0; j < 3; ++j)
+				out[j] = jh2019::coeffs[j];
+			return;
+		}
+
+		const float invZ = (jh2019::res - 1) / z;
+		const float x = rgb[(i + 1) % 3] * invZ;
+		const float y = rgb[(i + 2) % 3] * invZ;
+
+		const u_int res = jh2019::res;
+		const u_int xi = std::min((u_int)x, res - 2);
+		const u_int yi = std::min((u_int)y, res - 2);
+		const u_int zi = JH2019FindInterval(z);
+		const u_int offset = (((i * res + zi) * res + yi) * res + xi) * 3;
+		const u_int dx = 3, dy = 3 * res, dz = 3 * res * res;
+
+		const float x1 = x - xi, x0 = 1.f - x1;
+		const float y1 = y - yi, y0 = 1.f - y1;
+		const float z1 = (z - jh2019::scale[zi]) /
+			(jh2019::scale[zi + 1] - jh2019::scale[zi]);
+		const float z0 = 1.f - z1;
+
+		const float *data = jh2019::coeffs;
+		u_int o = offset;
+		for (u_int j = 0; j < 3; ++j, ++o) {
+			out[j] = ((data[o] * x0 + data[o + dx] * x1) * y0 +
+					(data[o + dy] * x0 + data[o + dy + dx] * x1) * y1) * z0 +
+				((data[o + dz] * x0 + data[o + dz + dx] * x1) * y0 +
+					(data[o + dz + dy] * x0 + data[o + dz + dy + dx] * x1) * y1) * z1;
+		}
+	}
+
+	// sigmoid((c0*l + c1)*l + c2), l in nm (rgb2spec_eval_precise).
+	inline float JH2019Eval(const float coeff[3], const float lambda) {
+		const float x = (coeff[0] * lambda + coeff[1]) * lambda + coeff[2];
+		return .5f * x / sqrtf(1.f + x * x) + .5f;
+	}
+
+	// JH2019 upsample over the drawn wavelength set. The sigmoid keeps
+	// every bin in [0,1] by construction (energy conservation for
+	// reflectance); out-of-gamut inputs are scaled to unit max before
+	// the [0,1] fetch so the returned bins exceed 1 exactly like the
+	// input RGB does. No luminance renorm: the table is optimized to
+	// reproduce the input RGB under CIE E, and rescaling could push a
+	// reflectance bin above 1.
+	Spectrum UpsampleJH2019(const Spectrum &rgb, const PathWavelengths &sw) {
+		float cn[3] = { rgb.c[0], rgb.c[1], rgb.c[2] };
+		const float vmax = std::max(cn[0], std::max(cn[1], cn[2]));
+		// !(vmax > 0) also catches NaN (NaN comparisons are false)
+		if (!(vmax > 0.f))
+			return Spectrum(0.f);
+		const float norm = (vmax > 1.f) ? 1.f / vmax : 1.f;
+		for (u_int j = 0; j < 3; ++j) {
+			// NaN/negative -> 0, >1 -> 1. std::min/max alone would
+			// propagate a single-channel NaN into the table index
+			// (undefined); comparisons with NaN are false, so this form
+			// always produces a clean [0,1] coordinate.
+			const float cj = cn[j] * norm;
+			cn[j] = (cj >= 0.f) ? std::min(cj, 1.f) : 0.f;
+		}
+
+		float coeff[3];
+		JH2019Fetch(cn, coeff);
+		const float outScale = 1.f / norm;
+
+		Spectrum out;
+		for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+			const float v = JH2019Eval(coeff, sw.w[i]) * outScale;
+			out.c[i] = (sw.aliveMask & (1U << i)) ? v : 0.f;
+		}
+		return out;
+	}
 }
 
 void Spectral::SetEnabled(const bool enabled) { g_enabled = enabled; }
 bool Spectral::IsEnabled() { return g_enabled; }
+
+void Spectral::SetUpsamplingModel(const UpsamplingModel model) {
+	g_upsampling = model;
+}
+Spectral::UpsamplingModel Spectral::GetUpsamplingModel() { return g_upsampling; }
+
+u_int Spectral::JH2019TableRes() { return jh2019::res; }
+const float *Spectral::JH2019TableScale() { return jh2019::scale; }
+const float *Spectral::JH2019TableCoeffs() { return jh2019::coeffs; }
 
 void Spectral::SetPathWavelengths(const PathWavelengths &sw) {
 	g_sw = sw;
@@ -164,10 +298,12 @@ Spectrum Spectral::Emission(const Spectrum &rgb) {
 	return sw ? Emission(rgb, *sw) : rgb;
 }
 Spectrum Spectral::Reflectance(const Spectrum &rgb, const PathWavelengths &sw) {
-	return Upsample(rgb, sw, reflBasis, rgb.Y());
+	return (g_upsampling == UPSAMPLING_JH2019) ?
+		UpsampleJH2019(rgb, sw) : Upsample(rgb, sw, reflBasis, rgb.Y());
 }
 Spectrum Spectral::Emission(const Spectrum &rgb, const PathWavelengths &sw) {
-	return Upsample(rgb, sw, illumBasis, rgb.Y());
+	return (g_upsampling == UPSAMPLING_JH2019) ?
+		UpsampleJH2019(rgb, sw) : Upsample(rgb, sw, illumBasis, rgb.Y());
 }
 
 Spectrum Spectral::EvaluateSPD(const SPD &spd) {

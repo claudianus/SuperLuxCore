@@ -134,6 +134,8 @@ void BSDF::Init(
 	hitPoint.fromLight = fixedFromLight;
 	hitPoint.throughShadowTransparency = throughShadowTransparency;
 	hitPoint.passThroughEvent = passThroughEvent;
+	// The ray context is set later by Scene::Intersect()
+	hitPoint.SetRayContext(0, NONE, nullptr, 0.f);
 
 	hitPoint.p = ray(t);
 	hitPoint.fixedDir = -ray.d;

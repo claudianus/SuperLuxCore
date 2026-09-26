@@ -66,6 +66,34 @@ namespace Spectral {
 void SetEnabled(const bool enabled);
 bool IsEnabled();
 
+// RGB->SPD upsampling model for leaf RGB triplets (texture constants,
+// imagemap pixels, light colors). UPSAMPLING_SMITS is the classic
+// white+secondary+primary basis decomposition (Smits 1999 style,
+// spds/data/rgbE_32.h reflectance / rgbD65_32.h illuminant) and stays the
+// default. UPSAMPLING_JH2019 is the Jakob-Hanika 2019 sigmoid model
+// ("A Low-Dimensional Function Space for Efficient Spectral Upsampling",
+// EGSR 2019; canonical rgb2spec implementation) applied to both
+// reflectance and emission colors: the table is optimized for the
+// LuxCore gamut under the flat CIE E illuminant, so an emitted SPD
+// reproduces its RGB exactly. Selected by the opt-in
+// path.spectral.upsampling = jh2019 property.
+enum UpsamplingModel {
+	UPSAMPLING_SMITS,
+	UPSAMPLING_JH2019
+};
+void SetUpsamplingModel(const UpsamplingModel model);
+UpsamplingModel GetUpsamplingModel();
+
+// Read access to the embedded JH2019 coefficient table
+// (spds/data/jh2019_32.h): res is the lookup grid resolution, scale[res]
+// the non-linear dominant-channel node positions, coeffs[9*res^3] the
+// sigmoid polynomial coefficients laid out [dominant][z][y][x][3]. The
+// GPU backends upload the same data as a device buffer so CPU and GPU
+// upsample identically.
+u_int JH2019TableRes();
+const float *JH2019TableScale();
+const float *JH2019TableCoeffs();
+
 void SetPathWavelengths(const PathWavelengths &sw);
 void ClearPathWavelengths();
 const PathWavelengths *Current();
@@ -113,9 +141,10 @@ private:
 	bool active;
 };
 
-// Evaluate the Smits-style RGB->SPD basis (reflectance or illuminant variant)
-// at the given wavelengths. Returns `rgb` unchanged when spectral transport is
-// not active on this thread.
+// Evaluate the RGB->SPD upsampling basis selected by GetUpsamplingModel()
+// (Smits-style reflectance/illuminant bases by default, the JH2019 sigmoid
+// table when UPSAMPLING_JH2019) at the given wavelengths. Returns `rgb`
+// unchanged when spectral transport is not active on this thread.
 Spectrum Reflectance(const Spectrum &rgb);
 Spectrum Emission(const Spectrum &rgb);
 Spectrum Reflectance(const Spectrum &rgb, const PathWavelengths &sw);

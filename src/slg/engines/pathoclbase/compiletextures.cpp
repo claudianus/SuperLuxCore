@@ -57,6 +57,7 @@
 #include "slg/textures/hitpoint/hitpointaov.h"
 #include "slg/textures/hitpoint/hitpointcolor.h"
 #include "slg/textures/hitpoint/position.h"
+#include "slg/textures/hitpoint/rayinfo.h"
 #include "slg/textures/hitpoint/shadingnormal.h"
 #include "slg/textures/hsv.h"
 #include "slg/textures/imagemaptex.h"
@@ -404,6 +405,7 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		case slg::ocl::DENSITYGRID_TEX:
 		case slg::ocl::SHADING_NORMAL_TEX:
 		case slg::ocl::POSITION_TEX:
+		case slg::ocl::RAYINFO_TEX:
 		case slg::ocl::BLENDER_BLEND:
 		case slg::ocl::BLENDER_CLOUDS:
 		case slg::ocl::BLENDER_DISTORTED_NOISE:
@@ -2334,6 +2336,13 @@ void CompiledScene::CompileTextures() {
 			}
 			case POSITION_TEX: {
 				tex->type = slg::ocl::POSITION_TEX;
+				break;
+			}
+			case RAYINFO_TEX: {
+				auto& rit = dynamic_cast<const RayInfoTexture &>(t);
+
+				tex->type = slg::ocl::RAYINFO_TEX;
+				tex->rayInfoTex.channel = (u_int)rit.GetChannel();
 				break;
 			}
 			case SPLIT_FLOAT3: {

@@ -195,7 +195,8 @@ void SceneVisibility<T>::TraceVisibilityThread::RenderFunc(std::stop_token stop_
 						EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : GENERIC_RAY),
 						&volInfo, sampler.GetSample(sampleOffset),
 						&eyeRay, &eyeRayHit, &bsdf, &connectionThroughput,
-						&pathThroughput, &sampleResult);
+						&pathThroughput, &sampleResult, false,
+						&depthInfo, lastBSDFEvent);
 				pathThroughput *= connectionThroughput;
 				// Note: pass-through check is done inside Scene::Intersect()
 

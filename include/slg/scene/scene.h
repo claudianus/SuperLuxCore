@@ -109,7 +109,13 @@ public:
 	bool Intersect(luxrays::IntersectionDevicePtr device, const SceneRayType rayType, PathVolumeInfo *volInfo,
 		const float passThrough, luxrays::Ray *ray, luxrays::RayHit *rayHit, BSDF *bsdf,
 		luxrays::Spectrum *connectionThroughput, const luxrays::Spectrum *pathThroughput = nullptr,
-		SampleResult *sampleResult = nullptr, const bool backTracing = false) const;
+		SampleResult *sampleResult = nullptr, const bool backTracing = false,
+		// The context of the incoming ray (used to fill BSDF::hitPoint ray
+		// context fields, read by the "rayinfo" texture). A NULL
+		// rayDepthInfo means all depths are 0. When not NULL, the
+		// transparentDepth counter is updated while stepping through
+		// pass-through materials (so it accumulates along the path).
+		PathDepthInfo *rayDepthInfo = nullptr, const BSDFEvent rayEvent = NONE) const;
 
 	void PreprocessCamera(const u_int filmWidth, const u_int filmHeight, const u_int *filmSubRegion);
 	void Preprocess(luxrays::Context & ctx,

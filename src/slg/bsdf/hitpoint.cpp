@@ -18,6 +18,7 @@
 
 #include "slg/bsdf/hitpoint.h"
 #include "slg/scene/scene.h"
+#include "slg/utils/pathdepthinfo.h"
 
 using namespace luxrays;
 using namespace slg;
@@ -70,6 +71,9 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 	// Note: I'm not initializing volume related information here
 	interiorVolume = nullptr;
 	exteriorVolume = nullptr;
+
+	// The ray context is set later by Scene::Intersect()
+	SetRayContext(0, NONE, nullptr, 0.f);
 }
 
 // Initialize all fields (i.e. the one missing a default constructor)
@@ -83,5 +87,20 @@ void HitPoint::Init() {
 	fromLight = false;
 	intoObject = true;
 	throughShadowTransparency = false;
+
+	SetRayContext(0, NONE, nullptr, 0.f);
+}
+
+void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
+		const PathDepthInfo *depthInfo, const float length) {
+	rayEvent = event;
+	rayFlags = rayType;
+	rayDepth = depthInfo ? depthInfo->depth : 0;
+	rayDiffuseDepth = depthInfo ? depthInfo->diffuseDepth : 0;
+	rayGlossyDepth = depthInfo ? depthInfo->glossyDepth : 0;
+	raySpecularDepth = depthInfo ? depthInfo->specularDepth : 0;
+	rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0;
+	rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0;
+	rayLength = length;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

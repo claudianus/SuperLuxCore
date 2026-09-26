@@ -105,6 +105,8 @@ OPENCL_FORCE_INLINE void BSDF_InitVolume(
 		const uint volumeIndex, const float t, const float passThroughEvent) {
 	bsdf->hitPoint.throughShadowTransparency = throughShadowTransparency;
 	bsdf->hitPoint.passThroughEvent = passThroughEvent;
+	// The ray context is set later by Scene_Intersect()
+	HitPoint_InitRayContext(&bsdf->hitPoint);
 
 	const float3 rayOrig = VLOAD3F(&ray->o.x);
 	const float3 rayDir = VLOAD3F(&ray->d.x);

@@ -24,6 +24,7 @@
 
 #include "luxcore/cfg.h"
 #include "luxrays/core/geometry/transform.h"
+#include "luxrays/core/color/spectral.h"
 #include "luxrays/utils/ocl.h"
 #include "luxrays/devices/ocldevice.h"
 #include "luxrays/kernels/kernels.h"
@@ -210,6 +211,26 @@ void PathOCLBaseOCLRenderThread::InitTextures() {
 	intersectionDevice.AllocBufferRW(&textureEvalStackBuff, 
 			nullptr, sizeof(float) * renderEngine->compiledScene->maxTextureEvalStackSize *
 			taskCount, "Texture evaluation stacks");
+
+	// JH2019 spectral upsampling table (path.spectral.upsampling=jh2019):
+	// upload the embedded coefficient table as a packed
+	// [scale[res] | coeffs[9*res^3]] float buffer. The kernel pointer
+	// doubles as the model switch (NULL = Smits basis). ~1.15 MB at
+	// res=32 -- too large for __constant program scope, hence a
+	// read-only __global buffer.
+	if (renderEngine->pathTracer.spectralEnable &&
+			renderEngine->pathTracer.spectralUpsamplingJH2019) {
+		const u_int res = Spectral::JH2019TableRes();
+		const u_int tableFloats = res + 9 * res * res * res;
+		std::vector<float> table(tableFloats);
+		std::copy_n(Spectral::JH2019TableScale(), res, table.begin());
+		std::copy_n(Spectral::JH2019TableCoeffs(), 9 * res * res * res,
+				table.begin() + res);
+		intersectionDevice.AllocBufferRO(&spectralUpsamplingTableBuff,
+				table.data(), tableFloats * sizeof(float),
+				"JH2019 spectral upsampling table");
+	} else
+		intersectionDevice.FreeBuffer(&spectralUpsamplingTableBuff);
 }
 
 void PathOCLBaseOCLRenderThread::InitLights() {

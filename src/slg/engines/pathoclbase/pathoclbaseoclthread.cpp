@@ -99,6 +99,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	lightIndexOffsetByMeshIndexBuff = nullptr;
 	lightIndexByTriIndexBuff = nullptr;
 	imageMapDescsBuff = nullptr;
+	spectralUpsamplingTableBuff = nullptr;
 	pgicRadiancePhotonsBuff = nullptr;
 	pgicRadiancePhotonsValuesBuff = nullptr;
 	pgicRadiancePhotonsBVHNodesBuff = nullptr;
@@ -283,6 +284,7 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&elvcTileDistributionOffsetsBuff);
 	intersectionDevice.FreeBuffer(&elvcBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&imageMapDescsBuff);
+	intersectionDevice.FreeBuffer(&spectralUpsamplingTableBuff);
 	for (HardwareDeviceBuffer *&b : imageMapsBuff)
 		intersectionDevice.FreeBuffer(&b);
 	imageMapsBuff.clear();

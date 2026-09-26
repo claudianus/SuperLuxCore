@@ -1129,7 +1129,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 	// spectral bins via Material_GetEmittedRadiance.
 	if (light->type != TYPE_TRIANGLE)
 		radiance = Spectral_Upsample(radiance, bsdf->hitPoint.spectralW,
-				bsdf->hitPoint.spectralHeroAlive, true);
+				bsdf->hitPoint.spectralHeroAlive, true,
+				spectralUpsamplingTable);
 #endif
 	return radiance;
 }

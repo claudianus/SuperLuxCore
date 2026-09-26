@@ -337,6 +337,107 @@ OPENCL_FORCE_NOT_INLINE void HitPointTriangleAOVTexture_EvalOp(
 }
 
 //------------------------------------------------------------------------------
+// RayInfo texture
+//
+// Evaluates to information about the ray that generated the current hit
+// point (stored in HitPoint by Scene_Intersect()). It is the equivalent of
+// the Cycles "Light Path" node. Hit points evaluated outside of a
+// ray-traced path carry the zero defaults: all "is*ray" channels return 0
+// and the depth/length channels return 0.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float RayInfoTexture_ConstEvaluateFloat(__global const HitPoint *hitPoint,
+		const uint channel) {
+	const uint rayFlags = hitPoint->rayFlags;
+
+	// The stored bounce event is only meaningful for indirect path
+	// continuations: camera rays have no generating bounce and shadow rays
+	// are spawned for light transport queries
+	const int rayEvent = (rayFlags & (CAMERA_RAY | SHADOW_RAY)) ? NONE : hitPoint->rayEvent;
+
+	switch (channel) {
+		case RAYINFO_IS_CAMERA_RAY:
+			return (rayFlags & CAMERA_RAY) ? 1.f : 0.f;
+		case RAYINFO_IS_SHADOW_RAY:
+			return (rayFlags & SHADOW_RAY) ? 1.f : 0.f;
+		case RAYINFO_IS_DIFFUSE_RAY:
+			return (rayEvent & DIFFUSE) ? 1.f : 0.f;
+		case RAYINFO_IS_GLOSSY_RAY:
+			return (rayEvent & GLOSSY) ? 1.f : 0.f;
+		case RAYINFO_IS_SINGULAR_RAY:
+			return (rayEvent & SPECULAR) ? 1.f : 0.f;
+		case RAYINFO_IS_REFLECTION_RAY:
+			return (rayEvent & REFLECT) ? 1.f : 0.f;
+		case RAYINFO_IS_TRANSMISSION_RAY:
+			return (rayEvent & TRANSMIT) ? 1.f : 0.f;
+		case RAYINFO_IS_VOLUME_SCATTER_RAY:
+			// Volume scatter events produce a BSDF on a hit point with no
+			// mesh; the rayFlags check excludes uninitialized contexts
+			return ((hitPoint->meshIndex == NULL_INDEX) && (rayFlags != 0u)) ? 1.f : 0.f;
+		case RAYINFO_RAY_LENGTH:
+			return hitPoint->rayLength;
+		case RAYINFO_RAY_DEPTH:
+			return (float)hitPoint->rayDepth;
+		case RAYINFO_DIFFUSE_DEPTH:
+			return (float)hitPoint->rayDiffuseDepth;
+		case RAYINFO_GLOSSY_DEPTH:
+			return (float)hitPoint->rayGlossyDepth;
+		case RAYINFO_SPECULAR_DEPTH:
+			return (float)hitPoint->raySpecularDepth;
+		case RAYINFO_TRANSMISSION_DEPTH:
+			return (float)hitPoint->rayTransmissionDepth;
+		case RAYINFO_TRANSPARENT_DEPTH:
+			return (float)hitPoint->rayTransparentDepth;
+		default:
+			return 0.f;
+	}
+}
+
+OPENCL_FORCE_INLINE float3 RayInfoTexture_ConstEvaluateSpectrum(__global const HitPoint *hitPoint,
+		const uint channel) {
+	return TO_FLOAT3(RayInfoTexture_ConstEvaluateFloat(hitPoint, channel));
+}
+
+OPENCL_FORCE_NOT_INLINE void RayInfoTexture_EvalOp(
+		__global const Texture* restrict texture,
+		const TextureEvalOpType evalType,
+		__global float *evalStack,
+		uint *evalStackOffset,
+		__global const HitPoint *hitPoint,
+		const float sampleDistance
+		TEXTURES_PARAM_DECL) {
+	switch (evalType) {
+		case EVAL_FLOAT: {
+			const float eval = RayInfoTexture_ConstEvaluateFloat(hitPoint,
+					texture->rayInfoTex.channel);
+			EvalStack_PushFloat(eval);
+			break;
+		}
+		case EVAL_SPECTRUM: {
+			const float3 eval = RayInfoTexture_ConstEvaluateSpectrum(hitPoint,
+					texture->rayInfoTex.channel);
+			EvalStack_PushFloat3(eval);
+			break;
+		}
+		case EVAL_BUMP_GENERIC_OFFSET_U:
+			Texture_EvalOpGenericBumpOffsetU(evalStack, evalStackOffset,
+					hitPoint, sampleDistance);
+			break;
+		case EVAL_BUMP_GENERIC_OFFSET_V:
+			Texture_EvalOpGenericBumpOffsetV(evalStack, evalStackOffset,
+					hitPoint, sampleDistance);
+			break;
+		case EVAL_BUMP:
+			Texture_EvalOpGenericBump(evalStack, evalStackOffset,
+					hitPoint, sampleDistance);
+			break;
+		default:
+			// Something wrong here
+			break;
+	}
+}
+
+//------------------------------------------------------------------------------
 // Shading Normal texture
 //------------------------------------------------------------------------------
 

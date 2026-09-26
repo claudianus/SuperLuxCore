@@ -1,0 +1,58 @@
+diff --git a/rgb2spec_opt.cpp b/rgb2spec_opt.cpp
+index 227b135..140c28e 100644
+--- a/rgb2spec_opt.cpp
++++ b/rgb2spec_opt.cpp
+@@ -52,6 +52,7 @@ enum Gamut {
+     REC2020,
+     ERGB,
+     XYZ,
++    LUXCORE,
+     NO_GAMUT,
+ };
+ 
+@@ -104,6 +105,20 @@ void cie_lab(Float *p) {
+  * The accumulation is done in double precision (reference data is double) and
+  * the results are stored into the single-precision working tables.
+  */
++/* LuxCoreRender ColorSystem::DefaultColorSystem (SMPTE primaries
++   xR=.63 yR=.34 xG=.31 yG=.595 xB=.155 yB=.07, white xW=.314275 yW=.329411),
++   matrices replicated from ColorSystem::ColorSystem(). */
++const double luxcore_to_xyz[3][3] = {
++    { 0.400063121, 0.363759246, 0.190228956 },
++    { 0.215907081, 0.698183068, 0.085909851 },
++    { 0.019050625, 0.111474608, 0.951144779 }
++};
++const double xyz_to_luxcore[3][3] = {
++    {  3.448669745, -1.711339995, -0.535161304 },
++    { -1.073452456,  1.985928110,  0.035316339 },
++    {  0.056735188, -0.198475000,  1.057944389 }
++};
++
+ void init_tables(Gamut gamut) {
+     memset(rgb_tbl, 0, sizeof(rgb_tbl));
+ 
+@@ -119,6 +134,7 @@ void init_tables(Gamut gamut) {
+         case ProPhotoRGB: illuminant = cie_d50; to_rgb = xyz_to_prophoto_rgb;  to_xyz = prophoto_rgb_to_xyz;  break;
+         case ACES2065_1:  illuminant = cie_d60; to_rgb = xyz_to_aces2065_1;    to_xyz = aces2065_1_to_xyz;    break;
+         case REC2020:     illuminant = cie_d65; to_rgb = xyz_to_rec2020;       to_xyz = rec2020_to_xyz;       break;
++        case LUXCORE:     illuminant = cie_e;   to_rgb = xyz_to_luxcore;       to_xyz = luxcore_to_xyz;       break;
+         default: throw std::runtime_error("init_gamut(): invalid/unsupported gamut.");
+     }
+ 
+@@ -378,13 +394,15 @@ static Gamut parse_gamut(const char *str) {
+         return ACES2065_1;
+     if (!strcasecmp(str, "REC2020"))
+         return REC2020;
++    if (!strcasecmp(str, "LUXCORE"))
++        return LUXCORE;
+     return NO_GAMUT;
+ }
+ 
+ int main(int argc, char **argv) {
+     if (argc < 3) {
+         printf("Syntax: rgb2spec_opt <resolution> <output> [<gamut>]\n"
+-               "where <gamut> is one of sRGB,eRGB,XYZ,ProPhotoRGB,ACES2065_1,REC2020\n");
++               "where <gamut> is one of sRGB,eRGB,XYZ,ProPhotoRGB,ACES2065_1,REC2020,LUXCORE\n");
+         exit(-1);
+     }
+     Gamut gamut = SRGB;

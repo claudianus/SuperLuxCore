@@ -178,6 +178,8 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 			eyeVertex.dVM = 1.f;
 
 			eyeVertex.depth = 1;
+			// The camera ray has no generating bounce event
+			eyeVertex.bsdfEvent = NONE;
 			while (eyeVertex.depth <= engine->maxEyePathDepth) {
 				eyeSampleResult.firstPathVertex = (eyeVertex.depth == 1);
 				eyeSampleResult.lastPathVertex = (eyeVertex.depth == engine->maxEyePathDepth);
@@ -189,13 +191,19 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 				// not in any other place)
 				RayHit eyeRayHit;
 				Spectrum connectionThroughput, connectEmission;
+				PathDepthInfo depthInfo;
+				depthInfo.depth = eyeVertex.depth - 1;
+				depthInfo.diffuseDepth = 0;
+				depthInfo.glossyDepth = 0;
+				depthInfo.specularDepth = 0;
 				const bool hit = scene.Intersect(
 					IntersectionDevicePtr(&device),
 					EYE_RAY | (eyeSampleResult.firstPathVertex ? CAMERA_RAY : GENERIC_RAY),
 					&eyeVertex.volInfo,
 					sampler->GetSample(sampleOffset),
 					&eyeRay, &eyeRayHit, &eyeVertex.bsdf,
-					&connectionThroughput, &eyeVertex.throughput, &eyeSampleResult
+					&connectionThroughput, &eyeVertex.throughput, &eyeSampleResult,
+					false, &depthInfo, eyeVertex.bsdfEvent
 				);
 
 				if (!hit) {

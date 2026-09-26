@@ -75,7 +75,9 @@ typedef enum {
 	// Generic math-function texture (trig/exp/log)
 	MATHFUNC_TEX,
 	// Sparse Gabor convolution noise
-	GABORNOISE_TEX
+	GABORNOISE_TEX,
+	// Ray context information (Cycles LightPath equivalent)
+	RAYINFO_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

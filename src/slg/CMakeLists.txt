@@ -459,6 +459,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/hitpointaov.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/hitpointcolor.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/position.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/rayinfo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/shadingnormal.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hsv.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/imagemaptex.cpp

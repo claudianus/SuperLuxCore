@@ -82,6 +82,7 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		photonGICache(nullptr), pathGuidingCache(nullptr),
 		guidingEnable(false), spectralEnable(false),
+		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true) {
 }
@@ -274,7 +275,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					// Check if the light source is visible
 					if (!scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | SHADOW_RAY, &volInfo, u4, &shadowRay,
 							&shadowRayHit, &shadowBsdf, &connectionThroughput, nullptr,
-							nullptr, true)) {
+							nullptr, true, &directLightDepthInfo, NONE)) {
 						// Add the light contribution only if it is not a shadow catcher
 						// (because, if the light is visible, the material will be
 						// transparent in the case of a shadow catcher).
@@ -570,7 +571,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
 				&pathInfo.volume, passThrough,
 				&eyeRay, &eyeRayHit, &bsdf, &connectionThroughput,
-				&pathThroughput, &sampleResult);
+				&pathThroughput, &sampleResult, false,
+				&pathInfo.depth, pathInfo.lastBSDFEvent);
 		pathThroughput *= connectionThroughput;
 		// Note: pass-through check is done inside Scene::Intersect()
 
@@ -1163,11 +1165,17 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 			Spectrum connectionThroughput;
 			// Create a new PathVolumeInfo for the path to the light source
 			PathVolumeInfo volInfo = pathInfo.volume;
+			// Copy of the light path depth info: the connection ray may
+			// cross transparent surfaces (transparentDepth is updated by
+			// Scene::Intersect()) but the change must not leak into the
+			// light path state
+			PathDepthInfo connDepthInfo = pathInfo.depth;
 			if (!scene.Intersect(
 					luxrays::make_observer<IntersectionDevice>(device),
 					LIGHT_RAY | CAMERA_RAY,
 					&volInfo, u0, &traceRay, &traceRayHit, &bsdfConn,
-					&connectionThroughput)) {
+					&connectionThroughput, nullptr, nullptr, false,
+					&connDepthInfo, NONE)) {
 				// Nothing was hit, the light path vertex is visible
 
 				float fluxToRadianceFactor;
@@ -1263,7 +1271,8 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 				LIGHT_RAY | INDIRECT_RAY,
 				&pathInfo.volume, sampler.GetSample(sampleOffset),
 				&nextEventRay, &nextEventRayHit, &bsdf,
-				&connectionThroughput
+				&connectionThroughput, nullptr, nullptr, false,
+				&pathInfo.depth, pathInfo.lastBSDFEvent
 			);
 			if (!hit) {
 				// Ray lost in space...
@@ -1503,6 +1512,27 @@ void PathTracer::ParseOptions(
 	spectralEnable = cfg.Get(defaultProps.Get("path.spectral.enable")).Get<bool>();
 	Spectral::SetEnabled(spectralEnable);
 
+	// RGB->SPD upsampling model: "smits" (default, zero regression) or
+	// "jh2019" (Jakob-Hanika 2019 sigmoid basis, opt-in; see
+	// doc/features/spectral.md). Canonical name follows the existing
+	// path.spectral.* convention; the bare "spectral.upsampling" alias
+	// is accepted too and takes precedence when set.
+	const string upsamplingModel = cfg.IsDefined("spectral.upsampling") ?
+		cfg.Get("spectral.upsampling").Get<string>() :
+		cfg.Get(defaultProps.Get("path.spectral.upsampling")).Get<string>();
+	if (upsamplingModel == "jh2019")
+		spectralUpsamplingJH2019 = true;
+	else if (upsamplingModel == "smits")
+		spectralUpsamplingJH2019 = false;
+	else
+		throw runtime_error("Unknown path.spectral.upsampling value "
+			"(expected \"smits\" or \"jh2019\"): " + upsamplingModel);
+	Spectral::SetUpsamplingModel(spectralUpsamplingJH2019 ?
+			Spectral::UPSAMPLING_JH2019 : Spectral::UPSAMPLING_SMITS);
+	if (spectralUpsamplingJH2019 && !spectralEnable)
+		SLG_LOG("WARNING: path.spectral.upsampling=jh2019 has no effect "
+			"without path.spectral.enable=1");
+
 	// ReSTIR GI (G1, CPU): per-pixel first-bounce reservoir. The store
 	// itself is engine-owned; only the toggles live here.
 	restirGIEnable = cfg.Get(defaultProps.Get("path.restir.gi.enable")).Get<bool>();
@@ -1567,6 +1597,12 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.temporal.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.spatial.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.spectral.enable")) <<
+			// Emit the effective value: the "spectral.upsampling" alias
+			// takes precedence over the canonical name when set
+			Property("path.spectral.upsampling")(
+				cfg.IsDefined("spectral.upsampling") ?
+					cfg.Get("spectral.upsampling").Get<string>() :
+					cfg.Get(GetDefaultProps()->Get("path.spectral.upsampling")).Get<string>()) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.depth")) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.cap")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.variance.maxvalue")) <<
@@ -1595,6 +1631,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.restir.gi.temporal.enable")(true) <<
 			Property("path.restir.gi.spatial.enable")(true) <<
 			Property("path.spectral.enable")(false) <<
+			Property("path.spectral.upsampling")("smits") <<
 			Property("path.pathdepth.total")(6) <<
 			Property("path.pathdepth.diffuse")(4) <<
 			Property("path.pathdepth.glossy")(4) <<

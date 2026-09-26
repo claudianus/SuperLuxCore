@@ -42,10 +42,18 @@ public:
 	u_int GetRRDepth() const;
 
 	u_int depth, diffuseDepth, glossyDepth, specularDepth;
+	// Number of transmission (TRANSMIT) events along the path. Not used by
+	// any depth termination rule, it is exposed to shading through the
+	// "rayinfo" texture (Cycles LightPath "Transmission Depth").
+	u_int transmitDepth;
+	// Number of transparent surfaces crossed by the path so far. It is
+	// updated by Scene::Intersect() while stepping through pass-through
+	// materials (Cycles LightPath "Transparent Depth").
+	u_int transparentDepth;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const PathDepthInfo &pdi) {
-	os << "PathDepthInfo[" << pdi.depth << ", " << pdi.diffuseDepth << ", " << pdi.glossyDepth << ", " << pdi.specularDepth << "]";
+	os << "PathDepthInfo[" << pdi.depth << ", " << pdi.diffuseDepth << ", " << pdi.glossyDepth << ", " << pdi.specularDepth << ", " << pdi.transmitDepth << ", " << pdi.transparentDepth << "]";
 	return os;
 }
 

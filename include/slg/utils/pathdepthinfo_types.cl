@@ -20,5 +20,10 @@
 
 typedef struct {
 	unsigned int depth, diffuseDepth, glossyDepth, specularDepth;
+	// Number of transmission (TRANSMIT) events along the path and number
+	// of transparent surfaces crossed so far (updated by Scene_Intersect()
+	// while stepping through pass-through materials). Exposed to shading
+	// through the "rayinfo" texture.
+	unsigned int transmitDepth, transparentDepth;
 } PathDepthInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

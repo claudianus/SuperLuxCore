@@ -95,6 +95,52 @@ nondeterministically corrupts texture evals with multiple child inputs
 runs). TILEPATHOCL and all CPU engines are unaffected; tracked in
 `roadmap.md` / needs a dedicated fix.
 
+## rayinfo texture — Cycles Light Path node support
+
+Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeLightPath` in the
+Blender adapter.
+
+**What/why.** Cycles' Light Path node classifies the *ray that produced the
+current shading point* (camera ray, shadow ray, diffuse/glossy bounce, ray
+depth, ray length). LuxCore textures evaluate context-free from `HitPoint`,
+so a small engine extension carries the needed ray context into `HitPoint`:
+the intersecting ray's type flags, the BSDF event that generated it, the
+`PathDepthInfo` counters, and the ray segment length. Both the CPU
+`Scene::Intersect()` and the OpenCL `Scene_Intersect()` paths populate these
+fields, so the texture evaluates identically on every engine.
+
+**Properties.** `rayinfo.channel` = `iscameraray|isshadowray|isdiffuseray|
+isglossyray|issingularray|isreflectionray|istransmissionray|
+isvolumescatterray|raylength|raydepth|diffusedepth|glossydepth|
+speculardepth|transmissiondepth|transparentdepth`.
+Default channel: `isshadowray`.
+
+- `iscameraray` / `isshadowray` read the ray-type flags recorded on the ray
+  (`CAMERA_RAY` / `SHADOW_RAY` scene ray-type bits).
+- `isdiffuseray` / `isglossyray` / `issingularray` / `isreflectionray` /
+  `istransmissionray` classify the BSDF event that generated the incoming
+  ray (`DIFFUSE`, `GLOSSY`, `SPECULAR`, `REFLECT`, `TRANSMIT` bits of
+  `PathInfo::lastBSDFEvent`). They return 0 on camera and shadow rays, which
+  have no generating bounce.
+- `isvolumescatterray` returns 1 at volume-scatter shading points.
+- `raylength` is the length of the ray segment that produced the hit.
+- `raydepth` / `diffusedepth` / `glossydepth` / `speculardepth` /
+  `transmissiondepth` return the `PathDepthInfo` counters at the hit point
+  (total bounce depth and the per-event-class depths).
+- `transparentdepth` counts `TRANSMIT` pass-through events
+  (`GetPassThroughTransparency`) accumulated while tracing the current ray.
+
+**Hit points without ray context** (light sampling, photon mapping, utility
+intersections, texture evals outside the path) have all context fields
+zeroed, so every channel safely returns 0.
+
+**Validation.** `BlendLuxCore/dev-tools/e23_cycles_compat_e2e_test.py`
+renders a LightPath-driven mix (camera-ray red vs indirect green) through
+the Blender adapter. A standalone scene test renders the same
+`rayinfo`-driven mix on PATHCPU and PATHOCL with identical statistics
+(camera branch 0.162 / indirect branch 0.027 mean contribution), and
+`transparentdepth` was verified through a fully-transparent wall.
+
 ## Platforms
 
 All textures: CPU, OpenCL GPU, Metal GPU (cl2msl-compatible kernel code).

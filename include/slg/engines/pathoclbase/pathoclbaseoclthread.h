@@ -263,6 +263,11 @@ protected:
 	luxrays::HardwareDeviceBuffer *lightIndexByTriIndexBuff;
 	luxrays::HardwareDeviceBuffer *imageMapDescsBuff;
 	std::vector<luxrays::HardwareDeviceBuffer *> imageMapsBuff;
+	// JH2019 (rgb2spec) spectral upsampling table, packed
+	// [scale[res] | coeffs[9*res^3]] floats. Allocated only when
+	// path.spectral.enable=1 and path.spectral.upsampling=jh2019; the
+	// kernel pointer doubles as the model switch (NULL = Smits).
+	luxrays::HardwareDeviceBuffer *spectralUpsamplingTableBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsValuesBuff;
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBVHNodesBuff;

@@ -154,7 +154,7 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		case CONST_FLOAT3: {
 			const float3 v = ConstFloat3Texture_ConstEvaluateSpectrum(tex);
 #if defined(SLG_SPECTRAL)
-			return Spectral_LeafEval(v, hitPoint);
+			return Spectral_LeafEval(v, hitPoint, spectralUpsamplingTable);
 #else
 			return v;
 #endif
@@ -162,7 +162,7 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		case IMAGEMAP: {
 			const float3 v = ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
 #if defined(SLG_SPECTRAL)
-			return Spectral_LeafEval(v, hitPoint);
+			return Spectral_LeafEval(v, hitPoint, spectralUpsamplingTable);
 #else
 			return v;
 #endif

@@ -54,6 +54,7 @@
 #include "slg/textures/hitpoint/hitpointaov.h"
 #include "slg/textures/hitpoint/hitpointcolor.h"
 #include "slg/textures/hitpoint/position.h"
+#include "slg/textures/hitpoint/rayinfo.h"
 #include "slg/textures/hitpoint/shadingnormal.h"
 #include "slg/textures/hsv.h"
 #include "slg/textures/imagemaptex.h"
@@ -629,6 +630,26 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		tex = std::make_unique<ShadingNormalTexture>();
 	} else if (texType == "position") {
 		tex = std::make_unique<PositionTexture>();
+	} else if (texType == "rayinfo") {
+		const string channelStr = props.Get(Property(propName + ".channel")("isshadowray")).Get<string>();
+		const RayInfoChannel channel =
+				channelStr == "iscameraray" ? RAYINFO_IS_CAMERA_RAY :
+				channelStr == "isshadowray" ? RAYINFO_IS_SHADOW_RAY :
+				channelStr == "isdiffuseray" ? RAYINFO_IS_DIFFUSE_RAY :
+				channelStr == "isglossyray" ? RAYINFO_IS_GLOSSY_RAY :
+				channelStr == "issingularray" ? RAYINFO_IS_SINGULAR_RAY :
+				channelStr == "isreflectionray" ? RAYINFO_IS_REFLECTION_RAY :
+				channelStr == "istransmissionray" ? RAYINFO_IS_TRANSMISSION_RAY :
+				channelStr == "isvolumescatterray" ? RAYINFO_IS_VOLUME_SCATTER_RAY :
+				channelStr == "raylength" ? RAYINFO_RAY_LENGTH :
+				channelStr == "raydepth" ? RAYINFO_RAY_DEPTH :
+				channelStr == "diffusedepth" ? RAYINFO_DIFFUSE_DEPTH :
+				channelStr == "glossydepth" ? RAYINFO_GLOSSY_DEPTH :
+				channelStr == "speculardepth" ? RAYINFO_SPECULAR_DEPTH :
+				channelStr == "transmissiondepth" ? RAYINFO_TRANSMISSION_DEPTH :
+				channelStr == "transparentdepth" ? RAYINFO_TRANSPARENT_DEPTH :
+				throw runtime_error("Unknown rayinfo texture channel: " + channelStr);
+		tex = std::make_unique<RayInfoTexture>(channel);
 	} else if (texType == "splitfloat3") {
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));

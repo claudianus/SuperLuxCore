@@ -32,6 +32,8 @@ PathDepthInfo::PathDepthInfo() {
 	diffuseDepth = 0;
 	glossyDepth = 0;
 	specularDepth = 0;
+	transmitDepth = 0;
+	transparentDepth = 0;
 }
 
 void PathDepthInfo::IncDepths(const BSDFEvent event) {
@@ -42,6 +44,8 @@ void PathDepthInfo::IncDepths(const BSDFEvent event) {
 		++glossyDepth;
 	if (event & SPECULAR)
 		++specularDepth;
+	if (event & TRANSMIT)
+		++transmitDepth;
 }
 
 bool PathDepthInfo::IsLastPathVertex(const PathDepthInfo &maxPathDepth, const BSDFEvent possibleEvents) const {

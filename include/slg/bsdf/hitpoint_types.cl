@@ -65,5 +65,29 @@ typedef struct {
 	// being evaluated (Material_GetEmittedRadiance sets it around the
 	// emittedTex eval) so leaf RGB producers pick the illuminant basis.
 	unsigned int spectralEmissionEval;
+
+	// The context of the ray that generated this hit point. It is read by
+	// the "rayinfo" texture to implement ray-dependent shading (i.e. the
+	// Cycles LightPath node). Scene_Intersect() fills it for every BSDF
+	// it creates; HitPoints initialized outside of a ray-traced path
+	// (light source sampling, volume internals, utilities, ...) keep the
+	// zero defaults, which decode as a ray with no event, depth 0 and
+	// length 0.
+	int rayEvent;
+	// The SceneRayType bits of the incoming ray (i.e. CAMERA_RAY,
+	// SHADOW_RAY, ...). 0 when the context is unknown.
+	unsigned int rayFlags;
+	// The number of bounces before the ray and the per-event counters
+	unsigned int rayDepth;
+	unsigned int rayDiffuseDepth;
+	unsigned int rayGlossyDepth;
+	unsigned int raySpecularDepth;
+	// Number of transmission events and of transparent surfaces crossed
+	// along the path before this hit (Cycles LightPath "Transmission
+	// Depth" and "Transparent Depth")
+	unsigned int rayTransmissionDepth;
+	unsigned int rayTransparentDepth;
+	// The length of the incoming ray segment
+	float rayLength;
 } HitPoint;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -1,0 +1,43 @@
+# rayinfo (Cycles LightPath) parity scene.
+#
+# The quad's emission is gated by rayinfo/iscameraray: it is a pure (4,0,0)
+# emitter for camera rays but emits nothing for every other ray class
+# (light-source sampling, GI bounces). Under a white environment the matte
+# floor must therefore show NO red bounce light — if ray context is broken
+# the quad leaks red GI onto the floor.
+#
+# Expected: centre pixel (4,0,0) on every backend; floor pixels stay grey.
+
+scene.camera.type = perspective
+scene.camera.lookat.orig = 0.0 0.0 -2.5
+scene.camera.lookat.target = 0.0 0.0 0.0
+scene.camera.up = 0.0 1.0 0.0
+scene.camera.fieldofview = 50
+
+scene.textures.camray.type = rayinfo
+scene.textures.camray.channel = iscameraray
+scene.textures.emitv.type = constfloat3
+scene.textures.emitv.value = 4.0 0.0 0.0
+scene.textures.emitscaled.type = scale
+scene.textures.emitscaled.texture1 = emitv
+scene.textures.emitscaled.texture2 = camray
+
+scene.materials.emit.type = matte
+scene.materials.emit.kd = 0.0 0.0 0.0
+scene.materials.emit.emission = emitscaled
+
+scene.materials.floor.type = matte
+scene.materials.floor.kd = 0.5 0.5 0.5
+
+scene.objects.quad.ply = scenes/parity/quad.ply
+scene.objects.quad.material = emit
+
+# The same quad rotated flat and scaled up, used as a floor below the
+# emitter (rotate -90deg around X so it lies in the XZ plane, scale x6,
+# translate to y = -1.2)
+scene.objects.floor.ply = scenes/parity/quad.ply
+scene.objects.floor.material = floor
+scene.objects.floor.transformation = 6.0 0.0 0.0 0.0  0.0 0.0 6.0 0.0  0.0 -6.0 0.0 0.0  0.0 -1.2 0.0 1.0
+
+scene.lights.env.type = constantinfinite
+scene.lights.env.gain = 1.0 1.0 1.0

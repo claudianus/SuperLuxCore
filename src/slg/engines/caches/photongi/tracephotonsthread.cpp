@@ -159,7 +159,8 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 				Spectrum connectionThroughput;
 				const bool hit = scene.Intersect(nullptr, LIGHT_RAY | GENERIC_RAY, &pathInfo.volume, samples[sampleOffset],
 						&nextEventRay, &nextEventRayHit, &bsdf,
-						&connectionThroughput);
+						&connectionThroughput, nullptr, nullptr, false,
+						&pathInfo.depth, pathInfo.lastBSDFEvent);
 
 				if (hit) {
 					// Something was hit

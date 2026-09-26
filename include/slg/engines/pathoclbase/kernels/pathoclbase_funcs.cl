@@ -212,7 +212,8 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		// with the illuminant basis at this funnel (bsdf may be a miss
 		// path, so the wavelengths come from the SampleResult).
 		const float3 envRadiance = Spectral_Upsample(envRadianceRGB,
-				sampleResult->spectralW, sampleResult->spectralHeroAlive, true);
+				sampleResult->spectralW, sampleResult->spectralHeroAlive, true,
+				spectralUpsamplingTable);
 #else
 		const float3 envRadiance = envRadianceRGB;
 #endif
@@ -1360,6 +1361,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 		__global PathVolumeInfo *scratchVolInfo,
 		__global const EyePathInfo *pathInfo,
 		__global HitPoint *tmpHitPoint,
+		__global PathDepthInfo *tmpPathDepthInfo,
 		__global Ray *candRays,
 		__global const RayHit *candHits,
 		__global RestirGICandidate *candData,
@@ -1404,6 +1406,12 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 				RestirGI_Hash(baseSeed ^ (i * 0x9E3779B9u), 0x03u),
 				scratchVolInfo
 				MATERIALS_PARAM);
+		// The candidate vertex sits one bounce (of the sampled event)
+		// past the current path vertex
+		*tmpPathDepthInfo = pathInfo->depth;
+		PathDepthInfo_IncDepths(tmpPathDepthInfo, rec->event);
+		HitPoint_SetRayContext(&tmpBsdf->hitPoint, EYE_RAY | INDIRECT_RAY,
+				rec->event, tmpPathDepthInfo, candHits[i].t);
 		VSTORE3F(VLOAD3F(&tmpBsdf->hitPoint.geometryN.x), &rec->x2nX);
 
 		float directPdfA;
@@ -3461,6 +3469,9 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 	float3 connectionThroughput;
 	const bool continueToTrace = Scene_Intersect(taskConfig,
 			EYE_RAY | INDIRECT_RAY,
+			// Manifold-walk rays have no path depth/event context (same
+			// defaults as the CPU MNEE code)
+			NULL, NONE,
 			&throughShadowTransparency, dlVolInfo, &task->tmpHitPoint,
 			.5f, ray, rayHit, &taskDirectLight->mneeBsdf, &connectionThroughput,
 			WHITE, sampleResult, false
@@ -4036,6 +4047,9 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 	const bool seg2Phase = (mnee->phase == MNEE_PHASE_SEG2_TRACE);
 	const bool continueToTrace = Scene_Intersect(taskConfig,
 			EYE_RAY | (seg2Phase ? SHADOW_RAY : INDIRECT_RAY),
+			// Manifold-walk rays have no path depth/event context (same
+			// defaults as the CPU MNEE code)
+			NULL, NONE,
 			&throughShadowTransparency, dlVolInfo, &task->tmpHitPoint,
 			seg2Phase ? mnee->seg2PassThrough : .5f,
 			ray, rayHit, &taskDirectLight->mneeBsdf, &connectionThroughput,
@@ -4408,7 +4422,10 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		, __global const uint* restrict taskQueueCount \
 		, const uint taskQueueStride \
 		, const uint taskQueueState \
-		, const uint wavefrontEnable
+		, const uint wavefrontEnable \
+		/* JH2019 spectral upsampling table (TEXTURES_PARAM tail): \
+		 * NULL unless path.spectral.upsampling=jh2019 */ \
+		, __global const float* restrict spectralUpsamplingTable
 
 // Wavefront lane -> task index mapping. Under wavefrontEnable, lane
 // gid indexes this kernel's state queue; otherwise the dense mapping

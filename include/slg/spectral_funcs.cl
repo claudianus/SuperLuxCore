@@ -463,11 +463,137 @@ OPENCL_FORCE_INLINE uint Spectral_SampleWavelengths(const float u1, float *w) {
 	return hero;
 }
 
+// ---------------------------------------------------------------------
+// JH2019 (Jakob-Hanika 2019 / rgb2spec) upsampling, opt-in via
+// path.spectral.upsampling=jh2019. The host uploads the coefficient table
+// of include/luxrays/core/color/spds/data/jh2019_32.h packed as
+// [scale[res] | coeffs[9*res^3]] floats; the pointer doubles as the model
+// switch inside Spectral_Upsample (NULL = Smits).
+// Device port of JH2019Fetch/JH2019Eval in src/luxrays/core/color/
+// spectral.cpp, itself a port of rgb2spec_fetch()/rgb2spec_eval_precise()
+// (https://github.com/mitsuba-renderer/rgb2spec, BSD-3-Clause,
+// (c) 2020 Wenzel Jakob). Must stay in sync bit-for-bit.
+#define SLG_SPECTRAL_JH2019_RES 32u
+
+OPENCL_FORCE_INLINE uint Spectral_JH2019FindInterval(
+		__global const float *scale, const float x) {
+	uint left = 0u, size = SLG_SPECTRAL_JH2019_RES - 2u;
+	while (size > 0u) {
+		const uint hsz = size >> 1u;
+		const uint middle = left + hsz + 1u;
+		if (scale[middle] <= x) {
+			left = middle;
+			size -= hsz + 1u;
+		} else
+			size = hsz;
+	}
+	return min(left, SLG_SPECTRAL_JH2019_RES - 2u);
+}
+
+OPENCL_FORCE_INLINE void Spectral_JH2019Fetch(__global const float *table,
+		const float *c, float *out) {
+	__global const float *scale = table;
+	__global const float *coeffs = table + SLG_SPECTRAL_JH2019_RES;
+	const float r = c[0], g = c[1], b = c[2];
+
+	// Monochromatic input: closed-form flat spectrum (see spectral.cpp)
+	if (r == g && g == b) {
+		out[0] = 0.f; out[1] = 0.f;
+		out[2] = (r <= 0.f) ? -8192.f :
+			((r >= 1.f) ? 8192.f : (r - .5f) / sqrt(r * (1.f - r)));
+		return;
+	}
+
+	uint i = 0u;
+	if (g >= r) i = 1u;
+	if (b >= c[i]) i = 2u;
+
+	const float z = c[i];
+	if (z <= 0.f) {
+		for (uint j = 0u; j < 3u; ++j)
+			out[j] = coeffs[j];
+		return;
+	}
+
+	const float invZ = (SLG_SPECTRAL_JH2019_RES - 1.f) / z;
+	const float x = c[(i + 1u) % 3u] * invZ;
+	const float y = c[(i + 2u) % 3u] * invZ;
+
+	const uint xi = min((uint)x, SLG_SPECTRAL_JH2019_RES - 2u);
+	const uint yi = min((uint)y, SLG_SPECTRAL_JH2019_RES - 2u);
+	const uint zi = Spectral_JH2019FindInterval(scale, z);
+	const uint offset =
+		(((i * SLG_SPECTRAL_JH2019_RES + zi) * SLG_SPECTRAL_JH2019_RES + yi) *
+			SLG_SPECTRAL_JH2019_RES + xi) * 3u;
+	const uint dx = 3u, dy = 3u * SLG_SPECTRAL_JH2019_RES,
+		dz = 3u * SLG_SPECTRAL_JH2019_RES * SLG_SPECTRAL_JH2019_RES;
+
+	const float x1 = x - xi, x0 = 1.f - x1;
+	const float y1 = y - yi, y0 = 1.f - y1;
+	const float z1 = (z - scale[zi]) / (scale[zi + 1u] - scale[zi]);
+	const float z0 = 1.f - z1;
+
+	for (uint j = 0u; j < 3u; ++j) {
+		const uint o = offset + j;
+		out[j] = ((coeffs[o] * x0 + coeffs[o + dx] * x1) * y0 +
+				(coeffs[o + dy] * x0 + coeffs[o + dy + dx] * x1) * y1) * z0 +
+			((coeffs[o + dz] * x0 + coeffs[o + dz + dx] * x1) * y0 +
+				(coeffs[o + dz + dy] * x0 + coeffs[o + dz + dy + dx] * x1) * y1) * z1;
+	}
+}
+
+OPENCL_FORCE_INLINE float Spectral_JH2019Eval(const float *coeff,
+		const float lambda) {
+	const float x = (coeff[0] * lambda + coeff[1]) * lambda + coeff[2];
+	return .5f * x / sqrt(1.f + x * x) + .5f;
+}
+
+// JH2019 upsample over the drawn wavelength set; the sigmoid keeps every
+// bin in [0,1] (energy conservation). Out-of-gamut RGB is scaled to unit
+// max before the clamped fetch, same as spectral.cpp UpsampleJH2019().
+OPENCL_FORCE_INLINE float3 Spectral_UpsampleJH2019(const float3 rgb,
+		__global const float *w, const uint aliveMask,
+		__global const float *table) {
+	float cn[3];
+	cn[0] = rgb.x; cn[1] = rgb.y; cn[2] = rgb.z;
+	const float vmax = max(cn[0], max(cn[1], cn[2]));
+	// !(vmax > 0) also catches NaN
+	if (!(vmax > 0.f))
+		return BLACK;
+	const float norm = (vmax > 1.f) ? 1.f / vmax : 1.f;
+	// The clamp builtin sanitizes a single-channel NaN to 0 too (OpenCL
+	// min/max return the non-NaN operand), so table indices stay valid.
+	// NOTE: never put a math-builtin name glued to an open paren inside
+	// a comment -- clang-cpp expands the SHIM's function-like macros
+	// inside comments and the cl2msl translation pass fails.
+	cn[0] = clamp(cn[0] * norm, 0.f, 1.f);
+	cn[1] = clamp(cn[1] * norm, 0.f, 1.f);
+	cn[2] = clamp(cn[2] * norm, 0.f, 1.f);
+
+	float coeff[3];
+	Spectral_JH2019Fetch(table, cn, coeff);
+	const float outScale = 1.f / norm;
+
+	float outv[SLG_SPECTRAL_BINS];
+	for (uint i = 0u; i < SLG_SPECTRAL_BINS; ++i) {
+		const float v = Spectral_JH2019Eval(coeff, w[i]) * outScale;
+		outv[i] = (aliveMask & (1u << i)) ? v : 0.f;
+	}
+	return MAKE_FLOAT3(outv[0], outv[1], outv[2]);
+}
+
 // Same Smits decomposition as spectral.cpp Upsample(): luminance matched over
-// the full drawn wavelength set, writes masked by aliveMask.
+// the full drawn wavelength set, writes masked by aliveMask. When the host
+// has uploaded the JH2019 table (spectralUpsamplingTable != NULL) the
+// sigmoid model runs instead and `emission` is unused (the table is
+// optimized for illuminant E and is used for both reflectance and
+// emission colors).
 OPENCL_FORCE_INLINE float3 Spectral_Upsample(const float3 rgb,
-		__global const float *w, const uint heroAlive, const bool emission) {
+		__global const float *w, const uint heroAlive, const bool emission,
+		__global const float *spectralTable) {
 	const uint aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
+	if (spectralTable)
+		return Spectral_UpsampleJH2019(rgb, w, aliveMask, spectralTable);
 	const float r = rgb.x, g = rgb.y, b = rgb.z;
 
 	float outv[SLG_SPECTRAL_BINS];
@@ -628,11 +754,15 @@ OPENCL_FORCE_INLINE float Spectral_CollapseToHero(__global uint *heroAlive) {
 // Leaf-RGB upsampling for texture eval sites. Called at the leaf producers
 // (constfloat3, imagemap, hitpointcolor, ...) inside Texture_GetSpectrumValue
 // and the eval-op machine. The emission bit selects the Smits illuminant
-// basis for emission-context evals (Material_GetEmittedRadiance scope).
+// basis for emission-context evals (Material_GetEmittedRadiance scope);
+// ignored under JH2019. `spectralUpsamplingTable` comes from
+// TEXTURES_PARAM_DECL scope at every expansion site.
 OPENCL_FORCE_INLINE float3 Spectral_LeafEval(const float3 rgb,
-		__global const HitPoint *hitPoint) {
+		__global const HitPoint *hitPoint,
+		__global const float *spectralTable) {
 	return Spectral_Upsample(rgb, hitPoint->spectralW,
-			hitPoint->spectralHeroAlive, hitPoint->spectralEmissionEval != 0u);
+			hitPoint->spectralHeroAlive, hitPoint->spectralEmissionEval != 0u,
+			spectralTable);
 }
 
 // Spectral leaf-RGB upsample for EVAL_SPECTRUM producers. Inside an
@@ -641,7 +771,7 @@ OPENCL_FORCE_INLINE float3 Spectral_LeafEval(const float3 rgb,
 // Spectral::ScopePause. `spectralRawDepth` must be in scope (a uint* for
 // Texture_EvalOp, a uint for the per-texture EvalOp delegates).
 #if defined(SLG_SPECTRAL)
-#define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) 		(((d) == 0u) ? Spectral_LeafEval((v), hitPoint) : (v))
+#define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) 		(((d) == 0u) ? Spectral_LeafEval((v), hitPoint, spectralUpsamplingTable) : (v))
 #define SLG_SPECTRAL_LEAF_EVAL(v) SLG_SPECTRAL_LEAF_EVAL_DEPTH((v), *spectralRawDepth)
 #else
 #define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) (v)
