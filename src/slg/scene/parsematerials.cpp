@@ -782,9 +782,11 @@ MaterialUPtr Scene::CreateMaterial(
 		// wins over the transmission medium when both are active - the
 		// refracted ray then also scatters, matching the OpenPBR model
 		// where the interior medium IS the subsurface medium.
-		//   SSS:        mfp = radius*scale, sigma_t = 1/mfp,
-		//               sigma_s = sss_color*sigma_t, sigma_a = rest (albedo
-		//               driven - a Christensen-Burley inversion is S2 work)
+		//   SSS:        albedo-parametrized volume - the volume inverts
+		//               subsurface_color + mfp (= radius*radiusscale) to
+		//               sigma_a/sigma_s internally (d'Eon, "A Hitchhiker's
+		//               Guide to Multiple Scattering" Eq. 53.7), so
+		//               subsurface_color reads as the diffuse surface albedo.
 		//   Transmiss.: sigma_a = (1-transmission_color)/depth,
 		//               sigma_s = transmission_scatter/depth
 		// Skipped when the user sets an explicit volume.interior.
@@ -810,20 +812,17 @@ MaterialUPtr Scene::CreateMaterial(
 				return defineTex(std::make_unique<SubtractTexture>(
 						*constC(oneSpectrum), *a));
 			};
-			auto rcp = [&](TexturePtr a) {
-				return defineTex(std::make_unique<DivideTexture>(
-						*constC(oneSpectrum), *a));
-			};
 			auto div = [&](TexturePtr a, TexturePtr b) {
 				return defineTex(std::make_unique<DivideTexture>(*a, *b));
 			};
 
 			TexturePtr sigmaA, sigmaS, g;
+			TextureConstPtr sssAlbedo = nullptr, sssMfp = nullptr;
 			if (wantSSSVol) {
-				// mfp = subsurfaceradius * subsurfaceradiusscale
-				auto sigmaT = rcp(mul(sssRadius, sssRadiusScale));
-				sigmaS = mul(sssColor, sigmaT);
-				sigmaA = mul(sub1(sssColor), sigmaT);
+				sigmaA = constC(zeroSpectrum);
+				sigmaS = constC(zeroSpectrum);
+				sssAlbedo = sssColor;
+				sssMfp = mul(sssRadius, sssRadiusScale);
 				g = sssAniso;
 			} else {
 				sigmaA = div(sub1(transColor), transDepth);
@@ -833,7 +832,8 @@ MaterialUPtr Scene::CreateMaterial(
 
 			auto vol = std::make_unique<HomogeneousVolume>(
 				*specIor, nullptr, *sigmaA, *sigmaS, *g,
-				true /* multiScattering */, true /* HG phase */);
+				true /* multiScattering */, true /* HG phase */,
+				true /* equiangular */, sssAlbedo, sssMfp);
 			vol->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolume"));
 			auto [volRef, oldVol] = matDefs.DefineMaterial(std::move(vol));
 			moveToTrash(std::move(oldVol));

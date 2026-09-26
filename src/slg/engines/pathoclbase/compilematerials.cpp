@@ -1117,6 +1117,10 @@ void CompiledScene::CompileMaterials() {
 						mat->volume.homogenous.multiScattering = hv.IsMultiScattering();
 						mat->volume.homogenous.phaseFunc = hv.IsHGPhase() ? 1 : 0;
 						mat->volume.homogenous.distanceSampling = hv.IsEquiangularEnabled() ? 1 : 0;
+						mat->volume.homogenous.sssAlbedoTexIndex = hv.IsSSSParametrized() ?
+								scene.GetTextures().GetTextureIndex(hv.GetSSSAlbedoTexture()) : NULL_INDEX;
+						mat->volume.homogenous.sssMfpTexIndex = hv.IsSSSParametrized() ?
+								scene.GetTextures().GetTextureIndex(hv.GetSSSMfpTexture()) : NULL_INDEX;
 						break;
 					}
 					case HETEROGENEOUS_VOL: {

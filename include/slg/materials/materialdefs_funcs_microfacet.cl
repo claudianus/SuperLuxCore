@@ -379,6 +379,10 @@ OPENCL_FORCE_INLINE float Microfacet_FresnelDielectricModulated(const float cosI
 	const float etam1 = etaTI - 1.f;
 	if (etam1 * etam1 < 1e-7f)
 		return 0.f;
+	// Total internal reflection is independent of specular_weight: beyond
+	// the critical angle the interface reflects fully (sinI > n_t/n_i).
+	if (etaTI < 1.f && (1.f - cosI * cosI) > etaTI * etaTI)
+		return 1.f;
 	if (weight != 1.f) {
 		const float F0 = etam1 * etam1 / Sqr(1.f + etaTI);
 		const float eps = ((etam1 >= 0.f) ? 1.f : -1.f) *

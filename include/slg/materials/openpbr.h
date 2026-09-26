@@ -161,6 +161,11 @@ private:
 	// with the spec's TIR-preserving ratio flip.
 	float EtaS(const Params &p, const float cauchyB) const;
 
+	// Interior medium IOR as seen by a ray inside the object: the interior
+	// volume's when one is set (the parser's implicit SSS/transmission
+	// volume carries specular_ior), else the substrate ior itself.
+	float InteriorIor(const HitPoint &hitPoint, const Params &p) const;
+
 	// Lobe weights + probabilities at outgoing direction wo.
 	void ComputeWeights(const HitPoint &hitPoint, const Params &p,
 			const luxrays::Vector &wo,

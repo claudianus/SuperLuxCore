@@ -22,16 +22,62 @@
 // HomogeneousVol material
 //------------------------------------------------------------------------------
 
+// SSS albedo parametrization: maps the diffuse surface albedo A and the
+// scattering mean free path d to the extinction sigma_t and the physical
+// single-scatter albedo alpha (d'Eon, "A Hitchhiker's Guide to Multiple
+// Scattering" v0.3.2, Eq. 53.7 — Cycles' "van de Hulst" random-walk
+// remap). Mirrors volume_funcs.cl HomogeneousVolume_SSSCoeffs.
+OPENCL_FORCE_INLINE void HomogeneousVolMaterial_SSSCoeffs(
+		__global const Material* restrict material,
+		__global const HitPoint *hitPoint, float3 *sigmaT, float3 *alpha
+		MATERIALS_PARAM_DECL) {
+	const float3 A = clamp(Texture_GetSpectrumValue(
+			material->volume.homogenous.sssAlbedoTexIndex, hitPoint
+			TEXTURES_PARAM), 0.f, 1.f);
+	const float3 mfp = Texture_GetSpectrumValue(
+			material->volume.homogenous.sssMfpTexIndex, hitPoint
+			TEXTURES_PARAM);
+	const float3 g = clamp(Texture_GetSpectrumValue(
+			material->volume.homogenous.gTexIndex, hitPoint
+			TEXTURES_PARAM), -0.99f, 0.99f);
+
+	const float3 x = 4.20863f * A + 4.09712f -
+			sqrt(9.59217f + 41.6808f * A + 17.7126f * A * A);
+	const float3 s2 = x * x;
+	*alpha = clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
+}
+
+// sigma_s/sigma_a, honoring the SSS albedo parametrization when present.
+OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Coeffs(
+		__global const Material* restrict material,
+		__global const HitPoint *hitPoint, float3 *sigmaS, float3 *sigmaA
+		MATERIALS_PARAM_DECL) {
+	if (material->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
+		float3 sigmaT, alpha;
+		HomogeneousVolMaterial_SSSCoeffs(material, hitPoint, &sigmaT, &alpha
+				MATERIALS_PARAM);
+		*sigmaS = alpha * sigmaT;
+		*sigmaA = (WHITE - alpha) * sigmaT;
+	} else {
+		*sigmaS = clamp(Texture_GetSpectrumValue(
+				material->volume.homogenous.sigmaSTexIndex, hitPoint
+				TEXTURES_PARAM), 0.f, INFINITY);
+		*sigmaA = clamp(Texture_GetSpectrumValue(
+				material->volume.homogenous.sigmaATexIndex, hitPoint
+				TEXTURES_PARAM), 0.f, INFINITY);
+	}
+}
+
 OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Albedo(__global const Material* restrict material,
 		__global const HitPoint *hitPoint,
 		__global float *evalStack, uint *evalStackOffset
 		MATERIALS_PARAM_DECL) {
-	const float3 sigmaS = Texture_GetSpectrumValue(material->volume.homogenous.sigmaSTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 sigmaA = Texture_GetSpectrumValue(material->volume.homogenous.sigmaATexIndex, hitPoint TEXTURES_PARAM);
+	float3 sigmaS, sigmaA;
+	HomogeneousVolMaterial_Coeffs(material, hitPoint, &sigmaS, &sigmaA
+			MATERIALS_PARAM);
 
-    const float3 albedo = SchlickScatter_Albedo(
-			clamp(sigmaS, 0.f, INFINITY),
-			clamp(sigmaA, 0.f, INFINITY));
+	const float3 albedo = SchlickScatter_Albedo(sigmaS, sigmaA);
 
 	EvalStack_PushFloat3(albedo);
 }
@@ -72,8 +118,9 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Evaluate(__global const Material
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
-	const float3 sigmaSTexVal = Texture_GetSpectrumValue(material->volume.homogenous.sigmaSTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 sigmaATexVal = Texture_GetSpectrumValue(material->volume.homogenous.sigmaATexIndex, hitPoint TEXTURES_PARAM);
+	float3 sigmaS, sigmaA;
+	HomogeneousVolMaterial_Coeffs(material, hitPoint, &sigmaS, &sigmaA
+			MATERIALS_PARAM);
 	const float3 gTexVal = Texture_GetSpectrumValue(material->volume.homogenous.gTexIndex, hitPoint TEXTURES_PARAM);
 
 	BSDFEvent event;
@@ -81,7 +128,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Evaluate(__global const Material
 	const float3 result = SchlickScatter_Evaluate(
 			hitPoint, eyeDir, lightDir,
 			&event, &directPdfW,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			sigmaS, sigmaA, gTexVal,
 			material->volume.homogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);
@@ -100,8 +147,9 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Sample(__global const Material* 
 	float3 fixedDir;
 	EvalStack_PopFloat3(fixedDir);
 
-	const float3 sigmaSTexVal = Texture_GetSpectrumValue(material->volume.homogenous.sigmaSTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 sigmaATexVal = Texture_GetSpectrumValue(material->volume.homogenous.sigmaATexIndex, hitPoint TEXTURES_PARAM);
+	float3 sigmaS, sigmaA;
+	HomogeneousVolMaterial_Coeffs(material, hitPoint, &sigmaS, &sigmaA
+			MATERIALS_PARAM);
 	const float3 gTexVal = Texture_GetSpectrumValue(material->volume.homogenous.gTexIndex, hitPoint TEXTURES_PARAM);
 
 	float3 sampledDir;
@@ -112,7 +160,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Sample(__global const Material* 
 			u0, u1,
 			passThroughEvent,
 			&pdfW, &event,
-			clamp(sigmaSTexVal, 0.f, INFINITY), clamp(sigmaATexVal, 0.f, INFINITY), gTexVal,
+			sigmaS, sigmaA, gTexVal,
 			material->volume.homogenous.phaseFunc);
 
 	EvalStack_PushFloat3(result);

@@ -19,6 +19,7 @@
 #include "luxrays/core/color/spectral.h"
 #include "slg/materials/openpbr.h"
 #include "slg/materials/microfacet.h"
+#include "slg/volumes/homogenous.h"
 
 using namespace std;
 using namespace luxrays;
@@ -134,6 +135,11 @@ float OpenPBRMaterial::EtaS(const Params &p, const float cauchyB) const {
 	return Lerp(p.coatWeight, nS / p.extIor, coatTerm);
 }
 
+float OpenPBRMaterial::InteriorIor(const HitPoint &hitPoint, const Params &p) const {
+	return hitPoint.interiorVolume ? hitPoint.interiorVolume->GetIOR(hitPoint) :
+			DispersiveIOR(p.specIor, p.dispersion);
+}
+
 //------------------------------------------------------------------------------
 // Thin film: single-wavelength Airy reflectance (complex arithmetic, 6-step
 // summation per the OpenPBR reference implementation)
@@ -231,26 +237,32 @@ Spectrum OpenPBRMaterial::EvalGlossyRefl(const HitPoint &hitPoint, const Params 
 	const float aniso = coat ? p.coatAniso : p.specAniso;
 
 	const float cosA = cosf(-rot * 2.f * M_PI), sinA = sinf(-rot * 2.f * M_PI);
-	const Vector wor = RotateXY(wo, cosA, sinA);
-	const Vector wir = RotateXY(wi, cosA, sinA);
+	// Reflection is symmetric under a global flip: evaluate the microfacet
+	// math with both directions in the canonical (+z) hemisphere, like the
+	// sampler's wFl. Without this the half vector lands below z = 0 for
+	// interior rays and the backfacing test kills every reflection.
+	const bool woAbove = (wo.z > 0.f);
+	const Vector wor = RotateXY(woAbove ? wo : -wo, cosA, sinA);
+	const Vector wir = RotateXY((wi.z > 0.f) ? wi : -wi, cosA, sinA);
 
 	float alphaT, alphaB;
 	OpenPBRAnisoAlphas(alpha, aniso, alphaT, alphaB);
 
-	const Vector wh = Normalize(wor + wir);
-	if (Dot(wor, wh) * wor.z < 0.f || Dot(wir, wh) * wir.z < 0.f)
+	const Vector wh = Normalize(wor + wir); // wh.z > 0
+	if (Dot(wor, wh) <= 0.f || Dot(wir, wh) <= 0.f)
 		return Spectrum(0.f); // backfacing microfacet
 
 	const float D = GgxD(wh, alphaT, alphaB);
 	pdf = GgxVNDFReflectionPdf(wor, wh, alphaT, alphaB);
 
 	// eta_ti = n(far side) / n(wo side). Front: coat -> coat_ior, spec ->
-	// coat-blended substrate ratio (specular_ior_ratio). Back face: the
-	// bounding medium (interiorVolume slot) with no coat blend.
-	const float nFar = (wor.z > 0.f) ?
+	// coat-blended substrate ratio (specular_ior_ratio). Back face: the wo
+	// side is the interior volume, the far side is the exterior medium.
+	const float nNear = woAbove ? p.extIor : InteriorIor(hitPoint, p);
+	const float nFar = woAbove ?
 			(coat ? p.coatIor : DispersiveIOR(p.specIor, p.dispersion)) :
-			ExtractInteriorIors(hitPoint, nullptr);
-	const float etaTI = (wor.z > 0.f && !coat) ? EtaS(p, p.dispersion) : nFar / p.extIor;
+			p.extIor;
+	const float etaTI = (woAbove && !coat) ? EtaS(p, p.dispersion) : nFar / nNear;
 	if (fabsf(etaTI - 1.f) < 1e-4f)
 		return Spectrum(0.f); // index-matched interface: no reflection
 
@@ -278,8 +290,8 @@ Spectrum OpenPBRMaterial::EvalMetal(const HitPoint &hitPoint, const Params &p,
 		const Vector &wo, const Vector &wi, float &pdf) const {
 	const float cosA = cosf(-p.specRotation * 2.f * M_PI);
 	const float sinA = sinf(-p.specRotation * 2.f * M_PI);
-	const Vector wor = RotateXY(wo, cosA, sinA);
-	const Vector wir = RotateXY(wi, cosA, sinA);
+	const Vector wor = RotateXY((wo.z > 0.f) ? wo : -wo, cosA, sinA);
+	const Vector wir = RotateXY((wi.z > 0.f) ? wi : -wi, cosA, sinA);
 
 	float alphaT, alphaB;
 	OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
@@ -312,23 +324,49 @@ Spectrum OpenPBRMaterial::EvalMetal(const HitPoint &hitPoint, const Params &p,
 // LuxCore refraction convention: eta = n(wi side)/n(wo side), wh ∝ eta*wi + wo.
 Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 		const Vector &wo, const Vector &wi, float &pdf) const {
-	if (wo.z * wi.z > 0.f)
-		return Spectrum(0.f);
+	pdf = 0.f;
 
-	// eta = n(wi side) / n(wo side). wo side is always the ray's medium
-	// (hitPoint.exteriorVolume). Above the surface the far side is the
-	// material interior (specular_ior, dispersed); below it the far side is
-	// whatever medium bounds the surface (hitPoint.interiorVolume).
-	const float nWo = p.extIor;
+	// eta = n(wi side) / n(wo side). Above the surface wo sits in the
+	// exterior medium and wi refracts into the material interior
+	// (specular_ior, dispersed); below the surface wo sits in the interior
+	// volume and wi exits into the exterior medium.
+	const float nWo = (wo.z > 0.f) ? p.extIor : InteriorIor(hitPoint, p);
 	const float nWi = (wo.z > 0.f) ? DispersiveIOR(p.specIor, p.dispersion) :
-			ExtractInteriorIors(hitPoint, nullptr);
+			p.extIor;
 	const float eta = nWi / nWo;
 	const float eta2 = eta * eta;
+
+	// Index-matched interface: the lobe degenerates to a straight
+	// pass-through delta (handled in Sample); there is no glossy
+	// transmission to evaluate (wh = eta*wi + wo would vanish anyway).
+	if (fabsf(eta - 1.f) < 1e-4f)
+		return Spectrum(0.f);
 
 	const float cosA = cosf(-p.specRotation * 2.f * M_PI);
 	const float sinA = sinf(-p.specRotation * 2.f * M_PI);
 	const Vector wor = RotateXY(wo, cosA, sinA);
 	const Vector wir = RotateXY(wi, cosA, sinA);
+
+	float alphaT, alphaB;
+	OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
+
+	if (wo.z * wi.z > 0.f) {
+		// Same hemisphere: this lobe still reaches reflection directions
+		// when the sampled microfacet cannot refract (TIR). The sample
+		// side falls back to reflection with the VNDF density of wh, so
+		// the direction's pdf is the reflection pdf; f is carried by the
+		// specular lobe (Fresnel = 1 at TIR).
+		const Vector worf = (wor.z > 0.f) ? wor : -wor;
+		const Vector wirf = (wir.z > 0.f) ? wir : -wir;
+		const Vector wh = Normalize(worf + wirf); // wh.z > 0
+		if (Dot(worf, wh) <= 0.f || Dot(wirf, wh) <= 0.f)
+			return Spectrum(0.f);
+		const float c = Dot(worf, wh);
+		const float sinT2 = Sqr(nWo / nWi) * (1.f - c * c);
+		if (sinT2 >= 1.f)
+			pdf = GgxVNDFReflectionPdf(worf, wh, alphaT, alphaB);
+		return Spectrum(0.f);
+	}
 
 	Vector wh = eta * wir + wor;
 	const float lengthSquared = wh.LengthSquared();
@@ -337,9 +375,6 @@ Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 	wh /= sqrtf(lengthSquared);
 	if (wh.z < 0.f)
 		wh = -wh;
-
-	float alphaT, alphaB;
-	OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
 
 	const float D = GgxD(wh, alphaT, alphaB);
 	const float woH = fabsf(Dot(wor, wh));
@@ -355,7 +390,11 @@ Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 	const float T = Clamp(1.f - F, 0.f, 1.f);
 
 	const float G2 = GgxG2(wir, wor, alphaT, alphaB);
-	return Spectrum(T) * (fabsf(wiH) * woH * D * G2 * fabsf(wir.z) /
+	// f*cosI per the Walter dielectric refraction lobe; the |wi.h|*eta^2/|wh_u|^2
+	// Jacobian lives in the pdf, so the sampled weight reduces to
+	// T * G2 / (G1 * eta^2) — the (n_i/n_t)^2 radiance scaling matches the
+	// specular glass convention (same as roughglass).
+	return Spectrum(T) * (fabsf(wiH) * woH * D * G2 /
 			Max(fabsf(wor.z) * lengthSquared, 1e-7f));
 }
 
@@ -405,8 +444,17 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	// interior volume (auto-created by the parser) realizes their media.
 	// OpenPBR: depth > 0 -> the volume absorbs, the surface tint is white.
 	const Spectrum transTint = (p.transDepth > 0.f) ? Spectrum(1.f) : p.transColor;
+	// An albedo-parametrized SSS volume already reproduces subsurface_color
+	// as its diffuse reflectance, so the interface tint stays white to
+	// avoid double-counting (same convention as transmission depth > 0).
+	bool sssAlbedoMedium = false;
+	if (const VolumeConstPtr iv = GetInteriorVolume()) {
+		const HomogeneousVolume *hv = dynamic_cast<const HomogeneousVolume *>(&*iv);
+		sssAlbedoMedium = hv && hv->IsSSSParametrized();
+	}
+	const Spectrum sssTint = sssAlbedoMedium ? Spectrum(1.f) : p.sssColor;
 	const Spectrum refrTint = p.transWeight * transTint +
-			(1.f - p.transWeight) * p.sssWeight * p.sssColor;
+			(1.f - p.transWeight) * p.sssWeight * sssTint;
 	weights[LOBE_BTDF] = Spectrum(wDiel) * darkening * refrTint;
 	const float impBtdf = weights[LOBE_BTDF].Filter() * (1.f - Fspec);
 
@@ -500,11 +548,22 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 			pdfF += probs[LOBE_METAL] * LobePdf(hitPoint, p, LOBE_METAL, wFixed, wSmp);
 			ev = BSDFEvent(ev | GLOSSY | REFLECT);
 		}
-		if (probs[LOBE_SPEC] > 0.f) {
+		if (weights[LOBE_SPEC].Filter() > 0.f) {
+			// Evaluate even when probs[LOBE_SPEC] == 0 (specular_weight = 0):
+			// the modulated Fresnel still reaches 1 at TIR directions, which
+			// the BTDF sampler can produce via its reflection fallback.
 			float pdf;
 			result += weights[LOBE_SPEC] * EvalGlossyRefl(hitPoint, p, false, wo, wi, pdf);
 			pdfF += probs[LOBE_SPEC] * LobePdf(hitPoint, p, LOBE_SPEC, wFixed, wSmp);
 			ev = BSDFEvent(ev | GLOSSY | REFLECT);
+		}
+		if (probs[LOBE_BTDF] > 0.f) {
+			// BTDF sampling can also land here via its TIR reflection
+			// fallback; EvalBtdf reports the reflection pdf for those
+			// directions (f is contributed by the specular lobe above).
+			float pdf;
+			EvalBtdf(hitPoint, p, wo, wi, pdf);
+			pdfF += probs[LOBE_BTDF] * pdf;
 		}
 		if (frontSide && probs[LOBE_DIFF] > 0.f) {
 			// Diffuse is attenuated crossing the dielectric interface twice
@@ -543,6 +602,8 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 				pdfR += rProbs[LOBE_METAL] * LobePdf(hitPoint, p, LOBE_METAL, wSmp, wFixed);
 			if (rProbs[LOBE_SPEC] > 0.f)
 				pdfR += rProbs[LOBE_SPEC] * LobePdf(hitPoint, p, LOBE_SPEC, wSmp, wFixed);
+			if (rProbs[LOBE_BTDF] > 0.f)
+				pdfR += rProbs[LOBE_BTDF] * LobePdf(hitPoint, p, LOBE_BTDF, wSmp, wFixed);
 			if (frontSide && rProbs[LOBE_DIFF] > 0.f)
 				pdfR += rProbs[LOBE_DIFF] * LobePdf(hitPoint, p, LOBE_DIFF, wSmp, wFixed);
 		}
@@ -616,7 +677,7 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 			const Vector wor = RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			OpenPBRAnisoAlphas(alpha, aniso, alphaT, alphaB);
-			Vector wh = GgxSampleVNDF(wor, u0, u1, alphaT, alphaB);
+			Vector wh = GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
 			const Vector wir = 2.f * Dot(wor, wh) * wh - wor;
@@ -632,18 +693,36 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 			const Vector wor = RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
-			Vector wh = GgxSampleVNDF(wor, u0, u1, alphaT, alphaB);
+			Vector wh = GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
 			// eta' = n(fixed side)/n(sampled side) = 1/eta of EvalBtdf
-			const float nWo = p.extIor;
-			const float nWi = (wo.z > 0.f) ? DispersiveIOR(p.specIor, p.dispersion) :
-					ExtractInteriorIors(hitPoint, nullptr);
+			const float nWo = (wo.z > 0.f) ? p.extIor : InteriorIor(hitPoint, p);
+			const float nWi = (wo.z > 0.f) ?
+					DispersiveIOR(p.specIor, p.dispersion) : p.extIor;
 			const float eta = nWo / nWi;
+			if (fabsf(eta - 1.f) < 1e-4f) {
+				// Index-matched interface: straight pass-through delta
+				// (Fresnel is identically 0; the specular lobe has no
+				// energy either). Weighted by the lobe's mixture share.
+				*localSampledDir = -wo;
+				*pdfW = probs[lobe];
+				*event = SPECULAR | TRANSMIT;
+				return weights[lobe] / probs[lobe];
+			}
 			const float c = Dot(wor, wh);
 			const float sinT2 = eta * eta * Max(0.f, 1.f - c * c);
-			if (sinT2 >= 1.f)
-				return Spectrum(); // TIR
+			if (sinT2 >= 1.f) {
+				// Total internal reflection: reflect off the microfacet
+				// instead of transmitting. The direction is scored by the
+				// specular lobe of the mixture (Fresnel = 1 at TIR) and its
+				// pdf is counted by EvalBtdf's same-hemisphere branch.
+				const Vector wirR = 2.f * c * wh - wor;
+				*localSampledDir = RotateXY(wirR, cosA, -sinA);
+				if (wo.z < 0.f)
+					*localSampledDir = -*localSampledDir;
+				break;
+			}
 			float cosT = sqrtf(1.f - sinT2);
 			if (wor.z > 0.f)
 				cosT = -cosT;
@@ -700,10 +779,12 @@ Spectrum OpenPBRMaterial::Albedo(const HitPoint &hitPoint) const {
 
 	const Spectrum diffuse = p.baseColor * (p.baseWeight * (1.f - p.metalness) *
 			(1.f - p.transWeight) * (1.f - p.sssWeight));
+	const Spectrum sss = p.sssColor * (p.baseWeight * (1.f - p.metalness) *
+			(1.f - p.transWeight) * p.sssWeight);
 	const Spectrum metal = (p.specWeight * p.baseWeight * p.baseColor).Clamp(0.f, 1.f) *
 			p.metalness;
 	const Spectrum fuzz = p.fuzzColor * p.fuzzWeight;
-	return (diffuse + metal + fuzz + p.coatWeight * p.coatColor).Clamp(0.f, 1.f);
+	return (diffuse + sss + metal + fuzz + p.coatWeight * p.coatColor).Clamp(0.f, 1.f);
 }
 
 void OpenPBRMaterial::AddReferencedTextures(std::unordered_set<const Texture *> &referencedTexs) const {

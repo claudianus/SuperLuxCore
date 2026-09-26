@@ -35,15 +35,44 @@ HomogeneousVolume::HomogeneousVolume(
 	TextureConstRef iorTex,
 	TextureConstPtr emiTex,
 	TextureConstRef a, TextureConstRef s, TextureConstRef g,
-	const bool multiScat, const bool useHG, const bool equiang
+	const bool multiScat, const bool useHG, const bool equiang,
+	TextureConstPtr sssAlbedo, TextureConstPtr sssMfp
 ) :
 	Volume(iorTex, emiTex),
 	schlickScatter(*this, g, useHG),
 	multiScattering(multiScat),
 	equiangular(equiang),
 	sigmaA(a),
-	sigmaS(s)
+	sigmaS(s),
+	sssAlbedoTex(sssAlbedo),
+	sssMfpTex(sssMfp)
 {}
+
+// SSS albedo parametrization: maps the diffuse surface albedo A and the
+// scattering mean free path d to the extinction sigma_t and the physical
+// single-scatter albedo alpha of the medium. Uses the closed-form
+// inversion of d'Eon, "A Hitchhiker's Guide to Multiple Scattering"
+// v0.3.2, Eq. 53.7 (Cycles' "van de Hulst" random-walk SSS remap), which
+// folds the phase anisotropy g into alpha.
+static void SSSRemap(const float A, const float d, const float g,
+		float &sigmaT, float &alpha) {
+	const float x = 4.20863f * A + 4.09712f -
+			sqrtf(9.59217f + 41.6808f * A + 17.7126f * A * A);
+	const float s2 = x * x;
+	alpha = Clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+	sigmaT = 1.f / Max(d, 1e-6f);
+}
+
+Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
+		Spectrum &alpha) const {
+	const Spectrum A = sssAlbedoTex->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
+	const Spectrum mfp = sssMfpTex->GetSpectrumValue(hitPoint).Clamp();
+	const Spectrum g = GetG().GetSpectrumValue(hitPoint).Clamp(-0.99f, 0.99f);
+	Spectrum sigmaT;
+	for (u_int i = 0; i < COLOR_SAMPLES; ++i)
+		SSSRemap(A.c[i], mfp.c[i], g.c[i], sigmaT.c[i], alpha.c[i]);
+	return sigmaT;
+}
 
 float HomogeneousVolume::Scatter(const float u,
 		const bool scatterAllowed, const float segmentLength,
@@ -100,10 +129,20 @@ float HomogeneousVolume::Scatter(const float u,
 }
 
 Spectrum HomogeneousVolume::SigmaA(const HitPoint &hitPoint) const {
+	if (sssAlbedoTex) {
+		Spectrum alpha;
+		const Spectrum sigmaT = SSSCoeffs(hitPoint, alpha);
+		return (Spectrum(1.f) - alpha) * sigmaT;
+	}
 	return GetSigmaA().GetSpectrumValue(hitPoint).Clamp();
 }
 
 Spectrum HomogeneousVolume::SigmaS(const HitPoint &hitPoint) const {
+	if (sssAlbedoTex) {
+		Spectrum alpha;
+		const Spectrum sigmaT = SSSCoeffs(hitPoint, alpha);
+		return alpha * sigmaT;
+	}
 	return GetSigmaS().GetSpectrumValue(hitPoint).Clamp();
 }
 
@@ -313,6 +352,10 @@ void HomogeneousVolume::AddReferencedTextures(std::unordered_set<const Texture *
 	GetSigmaA().AddReferencedTextures(referencedTexs);
 	GetSigmaS().AddReferencedTextures(referencedTexs);
 	schlickScatter.GetG().AddReferencedTextures(referencedTexs);
+	if (sssAlbedoTex)
+		sssAlbedoTex->AddReferencedTextures(referencedTexs);
+	if (sssMfpTex)
+		sssMfpTex->AddReferencedTextures(referencedTexs);
 }
 
 void HomogeneousVolume::UpdateTextureReferences(
@@ -324,6 +367,10 @@ void HomogeneousVolume::UpdateTextureReferences(
 	updtex(sigmaS, oldTex, newTex);
 	if (&schlickScatter.GetG() == &oldTex)
 		schlickScatter.SetG(newTex);
+	if (sssAlbedoTex == std::addressof(oldTex))
+		sssAlbedoTex = std::addressof(newTex);
+	if (sssMfpTex == std::addressof(oldTex))
+		sssMfpTex = std::addressof(newTex);
 }
 
 PropertiesUPtr HomogeneousVolume::ToProperties() const {
@@ -334,6 +381,10 @@ PropertiesUPtr HomogeneousVolume::ToProperties() const {
 	props->Set(Property("scene.volumes." + name + ".absorption")(GetSigmaA().GetSDLValue()));
 	props->Set(Property("scene.volumes." + name + ".scattering")(GetSigmaS().GetSDLValue()));
 	props->Set(Property("scene.volumes." + name + ".asymmetry")(schlickScatter.GetG().GetSDLValue()));
+	if (sssAlbedoTex) {
+		props->Set(Property("scene.volumes." + name + ".sssalbedo")(sssAlbedoTex->GetSDLValue()));
+		props->Set(Property("scene.volumes." + name + ".sssmfp")(sssMfpTex->GetSDLValue()));
+	}
 	props->Set(Property("scene.volumes." + name + ".multiscattering")(multiScattering));
 	props->Set(Property("scene.volumes." + name + ".phase")(schlickScatter.IsHGPhase() ? "hg" : "schlick"));
 	props->Set(Property("scene.volumes." + name + ".distancesampling")(equiangular ? "equiangular" : "transmittance"));

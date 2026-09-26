@@ -40,6 +40,10 @@ typedef struct {
 	float fuzzWeight, fuzzRoughness;
 	float filmWeight, filmThickness, filmIor;
 	float extIor;
+	// Non-zero when the material's interior volume is a homogeneous
+	// albedo-parametrized SSS medium (its albedo already reproduces
+	// subsurface_color, so the interface tint must stay white).
+	int sssAlbedoMedium;
 } OpenPBRParams;
 
 OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* restrict material,
@@ -88,6 +92,11 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->filmIor = fmax(Texture_GetFloatValue(material->openpbr.filmIorTexIndex, hitPoint TEXTURES_PARAM), 1.f);
 
 	p->extIor = ExtractExteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+
+	const uint ivIdx = material->interiorVolumeIndex;
+	p->sssAlbedoMedium = (ivIdx != NULL_INDEX) &&
+			(mats[ivIdx].type == HOMOGENEOUS_VOL) &&
+			(mats[ivIdx].volume.homogenous.sssAlbedoTexIndex != NULL_INDEX);
 }
 
 // specular_ior/exterior ratio blended toward the coat interface IOR by the
@@ -220,6 +229,21 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_FilmFresnel(__global const HitPoint *hitPo
 // Lobe evaluation (all return f * |cosI|)
 //------------------------------------------------------------------------------
 
+// Interior medium IOR as seen by a ray inside the object: the interior
+// volume's when set (the implicit SSS/transmission volume carries
+// specular_ior), else the substrate ior itself.
+OPENCL_FORCE_INLINE float OpenPBRMat_InteriorIor(__global const HitPoint *hitPoint,
+		__private const OpenPBRParams *p MATERIALS_PARAM_DECL) {
+	if (hitPoint->interiorIorTexIndex != NULL_INDEX)
+		return Texture_GetFloatValue(hitPoint->interiorIorTexIndex, hitPoint
+				TEXTURES_PARAM);
+#if defined(SLG_SPECTRAL)
+	return Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint);
+#else
+	return p->specIor;
+#endif
+}
+
 OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalGlossyRefl(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const bool coat,
 		const float3 wo, const float3 wi, __private float *pdf
@@ -229,21 +253,27 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalGlossyRefl(__global const HitPoint *hi
 	const float aniso = coat ? p->coatAniso : p->specAniso;
 
 	const float cosA = cos(-rot * 2.f * M_PI_F), sinA = sin(-rot * 2.f * M_PI_F);
-	const float3 wor = Microfacet_RotateXY(wo, cosA, sinA);
-	const float3 wir = Microfacet_RotateXY(wi, cosA, sinA);
+	// Reflection is symmetric under a global flip: evaluate in the
+	// canonical (+z) hemisphere, like the sampler's wFl.
+	const bool woAbove = (wo.z > 0.f);
+	const float3 wor = Microfacet_RotateXY(woAbove ? wo : -wo, cosA, sinA);
+	const float3 wir = Microfacet_RotateXY((wi.z > 0.f) ? wi : -wi, cosA, sinA);
 
 	float alphaT, alphaB;
 	Microfacet_OpenPBRAnisoAlphas(alpha, aniso, &alphaT, &alphaB);
 
-	const float3 wh = normalize(wor + wir);
-	if (dot(wor, wh) * wor.z < 0.f || dot(wir, wh) * wir.z < 0.f)
+	const float3 wh = normalize(wor + wir); // wh.z > 0
+	if (dot(wor, wh) <= 0.f || dot(wir, wh) <= 0.f)
 		return BLACK; // backfacing microfacet
 
 	const float D = Microfacet_GgxD(wh, alphaT, alphaB);
 	*pdf = Microfacet_GgxVNDFReflectionPdf(wor, wh, alphaT, alphaB);
 
-	// eta_ti = n(far side) / n(wo side); front face blends toward coat IOR
-	const float nFar = (wor.z > 0.f) ?
+	// eta_ti = n(far side) / n(wo side); front face blends toward coat IOR.
+	// Back face: wo side is the interior volume, far side the exterior.
+	const float nNear = woAbove ? p->extIor :
+			OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
+	const float nFar = woAbove ?
 			(coat ? p->coatIor :
 #if defined(SLG_SPECTRAL)
 				Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint)
@@ -251,9 +281,9 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalGlossyRefl(__global const HitPoint *hi
 				p->specIor
 #endif
 			) :
-			ExtractInteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
-	const float etaTI = (wor.z > 0.f && !coat) ?
-			OpenPBRMat_EtaS(p, p->dispersion, hitPoint) : nFar / p->extIor;
+			p->extIor;
+	const float etaTI = (woAbove && !coat) ?
+			OpenPBRMat_EtaS(p, p->dispersion, hitPoint) : nFar / nNear;
 	if (fabs(etaTI - 1.f) < 1e-4f)
 		return BLACK;
 
@@ -283,8 +313,8 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalMetal(__global const HitPoint *hitPoin
 		MATERIALS_PARAM_DECL) {
 	const float cosA = cos(-p->specRotation * 2.f * M_PI_F);
 	const float sinA = sin(-p->specRotation * 2.f * M_PI_F);
-	const float3 wor = Microfacet_RotateXY(wo, cosA, sinA);
-	const float3 wir = Microfacet_RotateXY(wi, cosA, sinA);
+	const float3 wor = Microfacet_RotateXY((wo.z > 0.f) ? wo : -wo, cosA, sinA);
+	const float3 wir = Microfacet_RotateXY((wi.z > 0.f) ? wi : -wi, cosA, sinA);
 
 	float alphaT, alphaB;
 	Microfacet_OpenPBRAnisoAlphas(p->specRoughness, p->specAniso, &alphaT, &alphaB);
@@ -318,24 +348,51 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalMetal(__global const HitPoint *hitPoin
 OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const float3 wo, const float3 wi, __private float *pdf
 		MATERIALS_PARAM_DECL) {
-	if (wo.z * wi.z > 0.f)
-		return BLACK;
+	*pdf = 0.f;
 
-	const float nWo = p->extIor;
+	// Above the surface wo sits in the exterior medium and wi refracts into
+	// the interior (specular_ior); below the surface wo sits in the
+	// interior volume and wi exits into the exterior medium.
+	const float nWo = (wo.z > 0.f) ? p->extIor :
+			OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
 	const float nWi = (wo.z > 0.f) ?
 #if defined(SLG_SPECTRAL)
 			Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint) :
 #else
 			p->specIor :
 #endif
-			ExtractInteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+			p->extIor;
 	const float eta = nWi / nWo;
 	const float eta2 = eta * eta;
+
+	// Index-matched interface: the lobe degenerates to a straight
+	// pass-through delta (handled in Sample); there is no glossy
+	// transmission to evaluate (wh = eta*wi + wo would vanish anyway).
+	if (fabs(eta - 1.f) < 1e-4f)
+		return BLACK;
 
 	const float cosA = cos(-p->specRotation * 2.f * M_PI_F);
 	const float sinA = sin(-p->specRotation * 2.f * M_PI_F);
 	const float3 wor = Microfacet_RotateXY(wo, cosA, sinA);
 	const float3 wir = Microfacet_RotateXY(wi, cosA, sinA);
+
+	float alphaT, alphaB;
+	Microfacet_OpenPBRAnisoAlphas(p->specRoughness, p->specAniso, &alphaT, &alphaB);
+
+	if (wo.z * wi.z > 0.f) {
+		// TIR fallback of the sample side reaches reflection directions:
+		// report the reflection pdf; f is carried by the specular lobe.
+		const float3 worf = (wor.z > 0.f) ? wor : -wor;
+		const float3 wirf = (wir.z > 0.f) ? wir : -wir;
+		const float3 whR = normalize(worf + wirf); // whR.z > 0
+		if (dot(worf, whR) <= 0.f || dot(wirf, whR) <= 0.f)
+			return BLACK;
+		const float c = dot(worf, whR);
+		const float sinT2 = (nWo / nWi) * (nWo / nWi) * (1.f - c * c);
+		if (sinT2 >= 1.f)
+			*pdf = Microfacet_GgxVNDFReflectionPdf(worf, whR, alphaT, alphaB);
+		return BLACK;
+	}
 
 	float3 wh = eta * wir + wor;
 	const float lengthSquared = dot(wh, wh);
@@ -344,9 +401,6 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 	wh /= sqrt(lengthSquared);
 	if (wh.z < 0.f)
 		wh = -wh;
-
-	float alphaT, alphaB;
-	Microfacet_OpenPBRAnisoAlphas(p->specRoughness, p->specAniso, &alphaT, &alphaB);
 
 	const float D = Microfacet_GgxD(wh, alphaT, alphaB);
 	const float woH = fabs(dot(wor, wh));
@@ -360,7 +414,11 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 	const float T = clamp(1.f - F, 0.f, 1.f);
 
 	const float G2 = Microfacet_GgxG2(wir, wor, alphaT, alphaB);
-	return T * (fabs(wiH) * woH * D * G2 * fabs(wir.z) /
+	// f*cosI per the Walter dielectric refraction lobe; the |wi.h|*eta^2/|wh_u|^2
+	// Jacobian lives in the pdf, so the sampled weight reduces to
+	// T * G2 / (G1 * eta^2) — the (n_i/n_t)^2 radiance scaling matches the
+	// specular glass convention (same as roughglass).
+	return T * (fabs(wiH) * woH * D * G2 /
 			fmax(fabs(wor.z) * lengthSquared, 1e-7f));
 }
 
@@ -409,8 +467,12 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 
 	// Refraction: transmission + subsurface share the interface
 	const float3 transTint = (p->transDepth > 0.f) ? WHITE : p->transColor;
+	// An albedo-parametrized SSS volume already reproduces subsurface_color
+	// as its diffuse reflectance, so the interface tint stays white to
+	// avoid double-counting (same convention as transmission depth > 0).
+	const float3 sssTint = p->sssAlbedoMedium ? WHITE : p->sssColor;
 	const float3 refrTint = p->transWeight * transTint +
-			(1.f - p->transWeight) * p->sssWeight * p->sssColor;
+			(1.f - p->transWeight) * p->sssWeight * sssTint;
 	weights[OPENPBR_LOBE_BTDF] = wDiel * darkening * refrTint;
 	const float impBtdf = Spectrum_Filter(weights[OPENPBR_LOBE_BTDF]) * (1.f - Fspec);
 
@@ -510,13 +572,23 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitP
 					OPENPBR_LOBE_METAL, wFixed, wSmp MATERIALS_PARAM);
 			ev |= GLOSSY | REFLECT;
 		}
-		if (probs[OPENPBR_LOBE_SPEC] > 0.f) {
+		if (Spectrum_Filter(weights[OPENPBR_LOBE_SPEC]) > 0.f) {
+			// Evaluate even when probs[LOBE_SPEC] == 0 (specular_weight = 0):
+			// the modulated Fresnel still reaches 1 at TIR directions, which
+			// the BTDF sampler can produce via its reflection fallback.
 			float pdf;
 			result += weights[OPENPBR_LOBE_SPEC] * OpenPBRMat_EvalGlossyRefl(
 					hitPoint, p, false, wo, wi, &pdf MATERIALS_PARAM);
 			pdfF += probs[OPENPBR_LOBE_SPEC] * OpenPBRMat_LobePdf(hitPoint, p,
 					OPENPBR_LOBE_SPEC, wFixed, wSmp MATERIALS_PARAM);
 			ev |= GLOSSY | REFLECT;
+		}
+		if (probs[OPENPBR_LOBE_BTDF] > 0.f) {
+			// BTDF sampling also reaches reflection directions via its TIR
+			// fallback; EvalBtdf reports the reflection pdf there.
+			float pdf;
+			OpenPBRMat_EvalBtdf(hitPoint, p, wo, wi, &pdf MATERIALS_PARAM);
+			pdfF += probs[OPENPBR_LOBE_BTDF] * pdf;
 		}
 		if (frontSide && probs[OPENPBR_LOBE_DIFF] > 0.f) {
 			// Diffuse crosses the dielectric interface twice
@@ -557,9 +629,11 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Albedo(__global const Material* restrict mat
 
 	const float3 diffuse = p.baseColor * (p.baseWeight * (1.f - p.metalness) *
 			(1.f - p.transWeight) * (1.f - p.sssWeight));
+	const float3 sss = p.sssColor * (p.baseWeight * (1.f - p.metalness) *
+			(1.f - p.transWeight) * p.sssWeight);
 	const float3 metal = clamp(p.specWeight * p.baseWeight * p.baseColor, BLACK, WHITE) *
 			p.metalness;
-	const float3 albedo = Spectrum_Clamp(diffuse + metal +
+	const float3 albedo = Spectrum_Clamp(diffuse + sss + metal +
 			p.fuzzColor * p.fuzzWeight + p.coatWeight * p.coatColor);
 	EvalStack_PushFloat3(albedo);
 }
@@ -680,7 +754,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 			const float3 wor = Microfacet_RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			Microfacet_OpenPBRAnisoAlphas(alpha, aniso, &alphaT, &alphaB);
-			float3 wh = Microfacet_GgxSampleVNDF(wor, u0, u1, alphaT, alphaB);
+			float3 wh = Microfacet_GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
 			const float3 wir = 2.f * dot(wor, wh) * wh - wor;
@@ -695,23 +769,43 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 			const float3 wor = Microfacet_RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			Microfacet_OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, &alphaT, &alphaB);
-			float3 wh = Microfacet_GgxSampleVNDF(wor, u0, u1, alphaT, alphaB);
+			float3 wh = Microfacet_GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
-			const float nWo = p.extIor;
+			const float nWo = (wo.z > 0.f) ? p.extIor :
+					OpenPBRMat_InteriorIor(hitPoint, &p MATERIALS_PARAM);
 			const float nWi = (wo.z > 0.f) ?
 #if defined(SLG_SPECTRAL)
 					Spectral_DispersiveIOR(p.specIor, p.dispersion, hitPoint) :
 #else
 					p.specIor :
 #endif
-					ExtractInteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+					p.extIor;
 			const float eta = nWo / nWi; // n(fixed)/n(sampled)
+			if (fabs(eta - 1.f) < 1e-4f) {
+				// Index-matched interface: straight pass-through delta
+				// (Fresnel is identically 0). Weighted by the lobe's
+				// mixture share.
+				const float3 result = weights[lobe] / probs[lobe];
+				EvalStack_PushFloat3(result);
+				const float3 dir = -wo;
+				EvalStack_PushFloat3(dir);
+				const float pdfW0 = probs[lobe];
+				EvalStack_PushFloat(pdfW0);
+				const BSDFEvent ev0 = SPECULAR | TRANSMIT;
+				EvalStack_PushBSDFEvent(ev0);
+				return;
+			}
 			const float c = dot(wor, wh);
 			const float sinT2 = eta * eta * fmax(0.f, 1.f - c * c);
 			if (sinT2 >= 1.f) {
-				// Total internal reflection
-				MATERIAL_SAMPLE_RETURN_BLACK;
+				// Total internal reflection: reflect off the microfacet;
+				// the specular lobe of the mixture scores the direction.
+				const float3 wirR = 2.f * c * wh - wor;
+				sampledDir = Microfacet_RotateXY(wirR, cosA, -sinA);
+				if (wo.z < 0.f)
+					sampledDir = -sampledDir;
+				break;
 			}
 			float cosT = sqrt(1.f - sinT2);
 			if (wor.z > 0.f)

@@ -186,8 +186,41 @@ OPENCL_FORCE_INLINE float ClearVolume_Scatter(__global const Volume *vol,
 // HomogeneousVolume scatter
 //------------------------------------------------------------------------------
 
+// SSS albedo parametrization: maps the diffuse surface albedo A and the
+// scattering mean free path d to the extinction sigma_t and the physical
+// single-scatter albedo alpha of the medium. Closed-form inversion of
+// d'Eon, "A Hitchhiker's Guide to Multiple Scattering" v0.3.2, Eq. 53.7
+// (Cycles' "van de Hulst" random-walk SSS remap), folding the phase
+// anisotropy g into alpha. Mirrors HomogeneousVolume::SSSCoeffs.
+OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffs(__global const Volume *vol,
+		__global const HitPoint *hitPoint, float3 *sigmaT, float3 *alpha
+		TEXTURES_PARAM_DECL) {
+	const float3 A = clamp(Texture_GetSpectrumValue(
+			vol->volume.homogenous.sssAlbedoTexIndex, hitPoint
+			TEXTURES_PARAM), 0.f, 1.f);
+	const float3 mfp = Texture_GetSpectrumValue(
+			vol->volume.homogenous.sssMfpTexIndex, hitPoint
+			TEXTURES_PARAM);
+	const float3 g = clamp(Texture_GetSpectrumValue(
+			vol->volume.homogenous.gTexIndex, hitPoint
+			TEXTURES_PARAM), -0.99f, 0.99f);
+
+	const float3 x = 4.20863f * A + 4.09712f -
+			sqrt(9.59217f + 41.6808f * A + 17.7126f * A * A);
+	const float3 s2 = x * x;
+	*alpha = clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
+}
+
 OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaA(__global const Volume *vol, __global const HitPoint *hitPoint
 	TEXTURES_PARAM_DECL) {
+	if (vol->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
+		float3 sigmaT, alpha;
+		HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
+				TEXTURES_PARAM);
+		return (WHITE - alpha) * sigmaT;
+	}
+
 	const float3 sigmaA = Texture_GetSpectrumValue(vol->volume.homogenous.sigmaATexIndex, hitPoint
 		TEXTURES_PARAM);
 			
@@ -196,6 +229,13 @@ OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaA(__global const Volume *vol, 
 
 OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaS(__global const Volume *vol, __global const HitPoint *hitPoint
 	TEXTURES_PARAM_DECL) {
+	if (vol->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
+		float3 sigmaT, alpha;
+		HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
+				TEXTURES_PARAM);
+		return alpha * sigmaT;
+	}
+
 	const float3 sigmaS = Texture_GetSpectrumValue(vol->volume.homogenous.sigmaSTexIndex, hitPoint
 		TEXTURES_PARAM);
 			

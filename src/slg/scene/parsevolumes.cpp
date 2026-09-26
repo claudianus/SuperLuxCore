@@ -158,7 +158,18 @@ VolumeUPtr Scene::CreateVolume(const u_int defaultVolID, const string &volName, 
 		const bool useHG = (props.Get(Property(propName + ".phase")("schlick")).Get<string>() == "hg");
 		const bool useEquiangular = (props.Get(Property(propName + ".distancesampling")("equiangular")).Get<string>() != "transmittance");
 
-		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering, useHG, useEquiangular);
+		// Optional albedo parametrization for random-walk subsurface
+		// scattering: when .sssalbedo is defined, the volume derives
+		// sigma_a/sigma_s per channel from the surface diffuse albedo and
+		// the mean free path .sssmfp (d'Eon inversion inside the volume),
+		// so the parameters read as the artist-facing color and distance.
+		TextureConstPtr sssAlbedo = nullptr, sssMfp = nullptr;
+		if (props.IsDefined(propName + ".sssalbedo")) {
+			sssAlbedo = TextureConstPtr(&GetTexture(props.Get(Property(propName + ".sssalbedo")(1.f, 1.f, 1.f))));
+			sssMfp = TextureConstPtr(&GetTexture(props.Get(Property(propName + ".sssmfp")(1.f, 1.f, 1.f))));
+		}
+
+		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering, useHG, useEquiangular, sssAlbedo, sssMfp);
 	} else if (volType == "heterogeneous") {
 		auto& absorption = GetTexture(props.Get(Property(propName + ".absorption")(0.f, 0.f, 0.f)));
 		auto& scattering = GetTexture(props.Get(Property(propName + ".scattering")(0.f, 0.f, 0.f)));

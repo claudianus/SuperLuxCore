@@ -36,7 +36,9 @@ public:
 		TextureConstRef a, TextureConstRef s,
 		TextureConstRef g, const bool multiScattering,
 		const bool useHG = false,
-		const bool useEquiangular = true);
+		const bool useEquiangular = true,
+		TextureConstPtr sssAlbedo = nullptr,
+		TextureConstPtr sssMfp = nullptr);
 
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
@@ -80,6 +82,12 @@ public:
 	TextureConstRef GetSigmaA() const { return sigmaA; }
 	TextureConstRef GetSigmaS() const { return sigmaS; }
 	TextureConstRef GetG() const { return schlickScatter.GetG(); }
+	// SSS albedo parametrization (random-walk subsurface): when
+	// sssAlbedoTex is set, SigmaA/SigmaS are derived from the diffuse
+	// surface albedo + mean free path instead of the raw coefficients.
+	bool IsSSSParametrized() const { return sssAlbedoTex != nullptr; }
+	TextureConstPtr GetSSSAlbedoTexture() const { return sssAlbedoTex; }
+	TextureConstPtr GetSSSMfpTexture() const { return sssMfpTex; }
 	bool IsMultiScattering() const { return multiScattering; }
 	bool IsHGPhase() const { return schlickScatter.IsHGPhase(); }
 	bool IsEquiangularEnabled() const { return equiangular; }
@@ -94,10 +102,16 @@ protected:
 	virtual luxrays::Spectrum SigmaS(const HitPoint &hitPoint) const;
 
 private:
+	// Evaluates sigma_t and the physical single-scatter albedo under
+	// the SSS albedo parametrization at hitPoint.
+	luxrays::Spectrum SSSCoeffs(const HitPoint &hitPoint,
+			luxrays::Spectrum &alpha) const;
+
 	std::reference_wrapper<const Texture> sigmaA, sigmaS;
 	SchlickScatter schlickScatter;
 	const bool multiScattering;
 	const bool equiangular;
+	TextureConstPtr sssAlbedoTex, sssMfpTex;
 };
 
 }

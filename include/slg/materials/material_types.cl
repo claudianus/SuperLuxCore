@@ -375,6 +375,12 @@ typedef struct {
 	// distance is sampled by a one-sample MIS between the transmittance
 	// and equiangular (Kulla & Fajardo, EGSR 2012) distributions
 	int distanceSampling;
+	// SSS albedo parametrization (random-walk subsurface): when
+	// sssAlbedoTexIndex != NULL_INDEX, sigma_a/sigma_s are derived from the
+	// surface diffuse albedo + mean free path (d'Eon inversion), ignoring
+	// the raw coefficient textures.
+	unsigned int sssAlbedoTexIndex;
+	unsigned int sssMfpTexIndex;
 } HomogenousVolumeParam;
 
 typedef struct {
