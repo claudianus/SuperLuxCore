@@ -33,6 +33,7 @@
 #include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dlfcn.h>
 
 #include "luxrays/devices/vkdevice.h"
 #include "luxrays/kernels/kernels.h"
@@ -60,6 +61,15 @@ static string GetClspvPath() {
 	const char *env = getenv("LUXRAYS_CLSPV");
 	if (env && env[0])
 		return env;
+	// Bundled toolchain (dev-tools/vulkan-tools-install.sh): makes
+	// kernel compilation work for hosts launched without a developer
+	// PATH (GUI Blender, .app bundles, service processes).
+	const char *home = getenv("HOME");
+	if (home && home[0]) {
+		const string bundled = string(home) + "/.luxcore/vktools/bin/clspv";
+		if (access(bundled.c_str(), X_OK) == 0)
+			return bundled;
+	}
 	return "clspv"; // PATH lookup
 }
 
@@ -92,13 +102,51 @@ static string GetOptPath() {
 	return "opt"; // PATH lookup
 }
 
+// When volkInitialize's leaf-name dlopen fails (no Vulkan SDK on PATH,
+// no DYLD_* env), dlopen MoltenVK by absolute path and hand its
+// vkGetInstanceProcAddr to volkInitializeCustom — dyld does not match
+// leaf-name dlopens against images loaded by another path.
+static bool LoadMoltenVKCustom() {
+	vector<string> candidates;
+	const char *env = getenv("LUXRAYS_MOLTENVK");
+	if (env && env[0])
+		candidates.push_back(env);
+#if defined(__APPLE__)
+	const char *home = getenv("HOME");
+	if (home && home[0])
+		candidates.push_back(string(home) +
+				"/.luxcore/vktools/lib/libMoltenVK.dylib");
+	// Next to the module containing this code (wheel/site-packages)
+	Dl_info info;
+	if (dladdr((const void *)&LoadMoltenVKCustom, &info) && info.dli_fname) {
+		const string dir = string(info.dli_fname).substr(0,
+				string(info.dli_fname).find_last_of('/'));
+		candidates.push_back(dir + "/libMoltenVK.dylib");
+		candidates.push_back(dir + "/vulkan/libMoltenVK.dylib");
+	}
+#endif
+	for (const auto &p : candidates) {
+		void *mod = dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL);
+		if (!mod)
+			continue;
+		PFN_vkGetInstanceProcAddr gipa = (PFN_vkGetInstanceProcAddr)
+				dlsym(mod, "vkGetInstanceProcAddr");
+		if (gipa) {
+			volkInitializeCustom(gipa);
+			if (vkCreateInstance)
+				return true;
+		}
+	}
+	return false;
+}
+
 static void InitVulkanLibrary() {
 	if (vulkanInitialized)
 		return;
 	vulkanInitialized = true;
 
 	// volkInitialize dlopens the loader (or libMoltenVK directly).
-	if (volkInitialize() == VK_SUCCESS)
+	if (volkInitialize() == VK_SUCCESS || LoadMoltenVKCustom())
 		vulkanAvailable = true;
 }
 
