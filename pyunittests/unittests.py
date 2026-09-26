@@ -20,7 +20,7 @@ import sys
 # To avoid .pyc files
 sys.dont_write_bytecode = True
 
-from pyluxcoreunittests.main import main
+from pysuperluxcoreunittests.main import main
 
 if __name__ == "__main__":
     main()

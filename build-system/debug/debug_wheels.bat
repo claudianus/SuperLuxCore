@@ -23,5 +23,5 @@ act.exe workflow_dispatch^
   --secret="GITHUB_TOKEN=%TOKEN%"^
   --matrix=os:windows-2022^
   --matrix=python-minor:11^
-  --artifact-server-path=/tmp/pyluxcore^
+  --artifact-server-path=/tmp/pysuperluxcore^
   --rm

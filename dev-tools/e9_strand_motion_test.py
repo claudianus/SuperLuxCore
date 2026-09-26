@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E9 phase 5b: strands (hair) deformation motion blur via pyluxcore.
+"""E9 phase 5b: strands (hair) deformation motion blur via pysuperluxcore.
 
 Defines a strands mesh (two strands, 3 control points each, SOLID
 tessellation), installs a 2-step control-point motion series through
@@ -11,9 +11,9 @@ Scene.SetStrandsVertexMotion and verifies:
     mid-pose (not the full sweep);
   * wrong control-point counts and non-strands meshes raise errors.
 
-Run with the Release pyluxcore:
+Run with the Release pysuperluxcore:
 
-    LUXCORE_PY=/path/to/pyluxcore/dir python3 dev-tools/e9_strand_motion_test.py
+    LUXCORE_PY=/path/to/pysuperluxcore/dir python3 dev-tools/e9_strand_motion_test.py
 """
 
 import os
@@ -32,14 +32,14 @@ sys.path.insert(
             "out",
             "build",
             "src",
-            "pyluxcore",
+            "pysuperluxcore",
             "Release",
         ),
     ),
 )
-import pyluxcore
+import pysuperluxcore
 
-pyluxcore.Init()
+pysuperluxcore.Init()
 
 FAILURES = []
 
@@ -87,30 +87,30 @@ def define_strands(scene, pts):
 
 
 def build_scene(motion, shutter):
-    props = pyluxcore.Properties()
-    props.Set(pyluxcore.Property("scene.materials.mat.type", "matte"))
-    props.Set(pyluxcore.Property("scene.materials.mat.kd", [0.9, 0.2, 0.2]))
-    props.Set(pyluxcore.Property("scene.materials.mat.emission", [3.0, 0.0, 0.0]))
-    props.Set(pyluxcore.Property("scene.materials.bgmat.type", "matte"))
-    props.Set(pyluxcore.Property("scene.materials.bgmat.kd", [0.8, 0.8, 0.8]))
-    props.Set(pyluxcore.Property("scene.objects.bg.material", "bgmat"))
+    props = pysuperluxcore.Properties()
+    props.Set(pysuperluxcore.Property("scene.materials.mat.type", "matte"))
+    props.Set(pysuperluxcore.Property("scene.materials.mat.kd", [0.9, 0.2, 0.2]))
+    props.Set(pysuperluxcore.Property("scene.materials.mat.emission", [3.0, 0.0, 0.0]))
+    props.Set(pysuperluxcore.Property("scene.materials.bgmat.type", "matte"))
+    props.Set(pysuperluxcore.Property("scene.materials.bgmat.kd", [0.8, 0.8, 0.8]))
+    props.Set(pysuperluxcore.Property("scene.objects.bg.material", "bgmat"))
     props.Set(
-        pyluxcore.Property(
+        pysuperluxcore.Property(
             "scene.objects.bg.vertices",
             [-5.0, -1.0, -2.0, 5.0, -1.0, -2.0, 5.0, 1.5, -2.0, -5.0, 1.5, -2.0],
         )
     )
-    props.Set(pyluxcore.Property("scene.objects.bg.faces", [0, 1, 2, 0, 2, 3]))
-    props.Set(pyluxcore.Property("scene.objects.hair.material", "mat"))
-    props.Set(pyluxcore.Property("scene.objects.hair.shape", "hair"))
-    props.Set(pyluxcore.Property("scene.camera.type", "perspective"))
-    props.Set(pyluxcore.Property("scene.camera.lookat.orig", [0.0, 0.3, 3.0]))
-    props.Set(pyluxcore.Property("scene.camera.lookat.target", [0.0, 0.0, 0.0]))
-    props.Set(pyluxcore.Property("scene.camera.fieldofview", [40.0]))
-    props.Set(pyluxcore.Property("scene.camera.shutteropen", [shutter[0]]))
-    props.Set(pyluxcore.Property("scene.camera.shutterclose", [shutter[1]]))
+    props.Set(pysuperluxcore.Property("scene.objects.bg.faces", [0, 1, 2, 0, 2, 3]))
+    props.Set(pysuperluxcore.Property("scene.objects.hair.material", "mat"))
+    props.Set(pysuperluxcore.Property("scene.objects.hair.shape", "hair"))
+    props.Set(pysuperluxcore.Property("scene.camera.type", "perspective"))
+    props.Set(pysuperluxcore.Property("scene.camera.lookat.orig", [0.0, 0.3, 3.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.lookat.target", [0.0, 0.0, 0.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.fieldofview", [40.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.shutteropen", [shutter[0]]))
+    props.Set(pysuperluxcore.Property("scene.camera.shutterclose", [shutter[1]]))
 
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     define_strands(scene, base_points())
     if motion:
         p1 = base_points()
@@ -125,26 +125,26 @@ def build_scene(motion, shutter):
 
 
 def render(scene, engine="PATHCPU", w=128, h=128, spp=48):
-    rcfg = pyluxcore.Properties()
+    rcfg = pysuperluxcore.Properties()
     if engine == "PATHCPU":
-        rcfg.Set(pyluxcore.Property("renderengine.type", "PATHCPU"))
-        rcfg.Set(pyluxcore.Property("sampler.type", "SOBOL"))
+        rcfg.Set(pysuperluxcore.Property("renderengine.type", "PATHCPU"))
+        rcfg.Set(pysuperluxcore.Property("sampler.type", "SOBOL"))
         # The Metal film pipeline crashes during kernel compile in this
         # environment (pre-existing issue, unrelated to motion); keep the
         # film on CPU for the PATHCPU leg.
-        rcfg.Set(pyluxcore.Property("film.hw.enable", [0]))
+        rcfg.Set(pysuperluxcore.Property("film.hw.enable", [0]))
     else:
-        rcfg.Set(pyluxcore.Property("renderengine.type", "TILEPATHOCL"))
-        rcfg.Set(pyluxcore.Property("sampler.type", "TILEPATHSAMPLER"))
-        rcfg.Set(pyluxcore.Property("opencl.devices.select", "01"))
-    rcfg.Set(pyluxcore.Property("opencl.cpu.use", [0]))
-    rcfg.Set(pyluxcore.Property("opencl.gpu.use", [1 if engine != "PATHCPU" else 0]))
-    rcfg.Set(pyluxcore.Property("opencl.native.threads.count", [0]))
-    rcfg.Set(pyluxcore.Property("accelerator.type", "MBVH"))
-    rcfg.Set(pyluxcore.Property("batch.haltspp", [spp]))
-    rcfg.Set(pyluxcore.Property("film.width", [w]))
-    rcfg.Set(pyluxcore.Property("film.height", [h]))
-    session = pyluxcore.RenderSession(pyluxcore.RenderConfig(rcfg, scene))
+        rcfg.Set(pysuperluxcore.Property("renderengine.type", "TILEPATHOCL"))
+        rcfg.Set(pysuperluxcore.Property("sampler.type", "TILEPATHSAMPLER"))
+        rcfg.Set(pysuperluxcore.Property("opencl.devices.select", "01"))
+    rcfg.Set(pysuperluxcore.Property("opencl.cpu.use", [0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.gpu.use", [1 if engine != "PATHCPU" else 0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.native.threads.count", [0]))
+    rcfg.Set(pysuperluxcore.Property("accelerator.type", "MBVH"))
+    rcfg.Set(pysuperluxcore.Property("batch.haltspp", [spp]))
+    rcfg.Set(pysuperluxcore.Property("film.width", [w]))
+    rcfg.Set(pysuperluxcore.Property("film.height", [h]))
+    session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(rcfg, scene))
     session.Start()
     t0 = _t.time()
     while _t.time() - t0 < 120:
@@ -156,7 +156,7 @@ def render(scene, engine="PATHCPU", w=128, h=128, spp=48):
         _t.sleep(0.05)
     session.Pause()
     rgb = np.zeros(w * h * 3, dtype=np.float32)
-    session.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB, rgb)
+    session.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB, rgb)
     session.Stop()
     return rgb.reshape(h, w, 3)
 
@@ -175,7 +175,7 @@ def main():
     w = h = 128
 
     # -- error paths ------------------------------------------------
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     define_strands(scene, base_points())
     try:
         scene.SetStrandsVertexMotion(
@@ -248,14 +248,14 @@ def main():
         ],
         dtype=np.float32,
     )
-    cscene = pyluxcore.Scene()
+    cscene = pysuperluxcore.Scene()
     # DefineBlenderCurveStrands uses camera-facing tessellation
     # internally, so a camera must be parsed first.
-    cprops = pyluxcore.Properties()
-    cprops.Set(pyluxcore.Property("scene.camera.type", "perspective"))
-    cprops.Set(pyluxcore.Property("scene.camera.lookat.orig", [0.0, 0.3, 3.0]))
-    cprops.Set(pyluxcore.Property("scene.camera.lookat.target", [0.0, 0.0, 0.0]))
-    cprops.Set(pyluxcore.Property("scene.camera.fieldofview", [40.0]))
+    cprops = pysuperluxcore.Properties()
+    cprops.Set(pysuperluxcore.Property("scene.camera.type", "perspective"))
+    cprops.Set(pysuperluxcore.Property("scene.camera.lookat.orig", [0.0, 0.3, 3.0]))
+    cprops.Set(pysuperluxcore.Property("scene.camera.lookat.target", [0.0, 0.0, 0.0]))
+    cprops.Set(pysuperluxcore.Property("scene.camera.fieldofview", [40.0]))
     cscene.Parse(cprops)
     ok = cscene.DefineBlenderCurveStrands(
         "chair",

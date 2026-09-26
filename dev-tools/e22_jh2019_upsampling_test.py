@@ -11,7 +11,7 @@
 #      - achromatic inputs produce flat bins
 #      - 3-bin projection round-trip error <= Smits baseline
 #      - the default Smits basis still engages (regression sentinel)
-#   2. Render level (pyluxcore, cornell scene, spectral transport on):
+#   2. Render level (pysuperluxcore, cornell scene, spectral transport on):
 #      - smits-by-default image is bitwise identical to explicit smits
 #        (zero regression for existing scenes)
 #      - jh2019 renders finite and differs sanely from smits
@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
 
 WIDTH, HEIGHT = 160, 120
 SPP = 32
@@ -101,7 +101,7 @@ def unit_check():
 # ----------------------------------------------------------------------
 
 def device_mask(want_type):
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -115,7 +115,7 @@ def device_mask(want_type):
 
 
 def render(engine, upsampling=None, sel=None, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -126,10 +126,10 @@ renderengine.seed = {seed}
 path.spectral.enable = 1
 """)
     if upsampling is not None:
-        cfg.Set(pyluxcore.Property("path.spectral.upsampling", upsampling))
+        cfg.Set(pysuperluxcore.Property("path.spectral.upsampling", upsampling))
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -141,7 +141,7 @@ path.spectral.enable = 1
             raise TimeoutError("render stalled")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3).mean(axis=2)
@@ -155,15 +155,15 @@ def main():
 
     global scene
     try:
-        props = pyluxcore.Properties(str(REPO / "scenes/cornell/cornell.scn"))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(REPO / "scenes/cornell/cornell.scn"))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
     except Exception:
         cwd = os.getcwd()
         os.chdir(str(REPO / "scenes/cornell"))
         try:
-            scene = pyluxcore.Scene()
-            scene.Parse(pyluxcore.Properties("cornell.scn"))
+            scene = pysuperluxcore.Scene()
+            scene.Parse(pysuperluxcore.Properties("cornell.scn"))
         finally:
             os.chdir(cwd)
 
@@ -195,7 +195,7 @@ def main():
     # `spectral.upsampling` alias.
     for prop_name, tag in (("path.spectral.upsampling", "canonical"),
                            ("spectral.upsampling", "alias")):
-        cfg = pyluxcore.Properties()
+        cfg = pysuperluxcore.Properties()
         cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -205,7 +205,7 @@ path.spectral.enable = 1
 {prop_name} = bogus
 """)
         try:
-            ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+            ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
             ses.Start()
             time.sleep(2)
             ses.Stop()
@@ -217,7 +217,7 @@ path.spectral.enable = 1
 
     # The `spectral.upsampling` alias must actually select jh2019, not
     # silently fall back to smits.
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -228,7 +228,7 @@ renderengine.seed = 17
 path.spectral.enable = 1
 spectral.upsampling = jh2019
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -240,7 +240,7 @@ spectral.upsampling = jh2019
             raise TimeoutError("alias render stalled")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     cpu_alias = rgb.reshape(HEIGHT, WIDTH, 3).mean(axis=2)
@@ -272,8 +272,8 @@ spectral.upsampling = jh2019
 
 
 if __name__ == "__main__":
-    import pyluxcore
-    pyluxcore.Init()
+    import pysuperluxcore
+    pysuperluxcore.Init()
     main()
     failed = [n for n, ok in results if not ok]
     print(f"\n{'FAIL ' + str(failed) if failed else 'ALL PASS'} "

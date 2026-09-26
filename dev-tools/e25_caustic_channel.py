@@ -13,8 +13,8 @@ import numpy as np
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 640, 360
 SPP = int(sys.argv[1]) if len(sys.argv) > 1 else 96
@@ -27,8 +27,8 @@ def parse_scene():
     cwd = os.getcwd()
     os.chdir(str(REPO))
     try:
-        props = pyluxcore.Properties(str(SCENE))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(SCENE))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -36,7 +36,7 @@ def parse_scene():
 
 
 def render(scene, tag, extra):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -49,7 +49,7 @@ path.hybridbackforward.enable = 1
 path.hybridbackforward.partition = 0.8
 {extra}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -66,7 +66,7 @@ path.hybridbackforward.partition = 0.8
     film = ses.GetFilm()
     try:
         caustic = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-        film.GetOutputFloat(pyluxcore.FilmOutputType.CAUSTIC, caustic, 0, True)
+        film.GetOutputFloat(pysuperluxcore.FilmOutputType.CAUSTIC, caustic, 0, True)
         caustic = caustic.reshape(HEIGHT, WIDTH, 3).mean(axis=2)
     except Exception as e:
         print(f"{tag}: CAUSTIC channel unavailable: {e}", flush=True)

@@ -43,8 +43,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 160, 120
 SPP = 32
@@ -72,7 +72,7 @@ def record(name, ok, detail):
 
 
 def device_mask(want_type):
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -89,8 +89,8 @@ def parse_scene(rel_path):
     """Scene files mix repo-root-relative and scene-dir-relative asset
     paths; try the repo root first, then the scene directory."""
     try:
-        props = pyluxcore.Properties(str(REPO / rel_path))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(REPO / rel_path))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     except Exception:
@@ -98,8 +98,8 @@ def parse_scene(rel_path):
     cwd = os.getcwd()
     os.chdir(str(REPO / Path(rel_path).parent))
     try:
-        props = pyluxcore.Properties(str(Path(rel_path).name))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(Path(rel_path).name))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -107,7 +107,7 @@ def parse_scene(rel_path):
 
 
 def render(scene, engine, sel=None, spp=SPP, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -118,8 +118,8 @@ renderengine.seed = {seed}
 opencl.task.count = {TASK_COUNT}
 """)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -131,7 +131,7 @@ opencl.task.count = {TASK_COUNT}
             raise TimeoutError(f"render stalled below {spp} spp")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     used = {n.split("stats.renderengine.devices.")[1].rsplit("-", 1)[0]
             for n in ses.GetStats().GetAllNames()
@@ -220,7 +220,7 @@ def main():
 
 
 if __name__ == "__main__":
-    pyluxcore.Init()
+    pysuperluxcore.Init()
     main()
     failed = [n for n, ok in results if not ok]
     print(f"\n{'FAIL ' + str(failed) if failed else 'ALL PASS'} "

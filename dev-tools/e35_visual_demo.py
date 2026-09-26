@@ -3,12 +3,12 @@
 # PATHOCL at 1280x720 for visual parity inspection.
 #
 # Run from the repo root:  python3 dev-tools/e35_visual_demo.py
-# (pyluxcore must be importable; the script prepends the Release module
+# (pysuperluxcore must be importable; the script prepends the Release module
 # dir itself.)
 
 import sys, numpy as np
-sys.path.insert(0, "out/build/src/pyluxcore/Release")
-import pyluxcore
+sys.path.insert(0, "out/build/src/pysuperluxcore/Release")
+import pysuperluxcore
 
 CX, CY, CZ = -2.776, 2.760, 3.279
 R = 0.85
@@ -65,10 +65,10 @@ scene.objects.porc.transformation = {tx(1.72, 0.0, R)}
 """
 
 def render(engine, out, spp):
-    props = pyluxcore.Properties(); props.SetFromString(SCENE)
-    scene = pyluxcore.Scene(); scene.Parse(props)
+    props = pysuperluxcore.Properties(); props.SetFromString(SCENE)
+    scene = pysuperluxcore.Scene(); scene.Parse(props)
     dev = 'opencl.devices.select = "1"' if engine == "PATHOCL" else ""
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = 1280
 film.height = 720
@@ -88,7 +88,7 @@ path.pathdepth.glossy = 16
 path.pathdepth.specular = 16
 {dev}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     import time
     while True:

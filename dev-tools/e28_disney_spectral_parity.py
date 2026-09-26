@@ -7,7 +7,7 @@
 # path.spectral.enable on PATHCPU, PATHOCL(OpenCL) and PATHOCL(Metal) and
 # compares image means and per-pixel luminance ratios.
 #
-# Run from the repo root (after a configure+build of pyluxcore Debug):
+# Run from the repo root (after a configure+build of pysuperluxcore Debug):
 #   python3.13 dev-tools/e28_disney_spectral_parity.py
 
 import os
@@ -18,8 +18,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 240
 SPP = 32
@@ -28,8 +28,8 @@ RENDER_TIMEOUT_S = 300
 
 
 def device_mask(want_type):
-    pyluxcore.Init()  # required: device enumeration is empty before Init
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    pysuperluxcore.Init()  # required: device enumeration is empty before Init
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -44,8 +44,8 @@ def device_mask(want_type):
 
 def parse_scene(rel_path):
     try:
-        props = pyluxcore.Properties(str(REPO / rel_path))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(REPO / rel_path))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     except Exception:
@@ -53,8 +53,8 @@ def parse_scene(rel_path):
     cwd = os.getcwd()
     os.chdir(str(REPO / Path(rel_path).parent))
     try:
-        props = pyluxcore.Properties(str(Path(rel_path).name))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(Path(rel_path).name))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -62,7 +62,7 @@ def parse_scene(rel_path):
 
 
 def render(scene, engine, sel=None, spectral=True, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -74,8 +74,8 @@ opencl.task.count = {TASK_COUNT}
 path.spectral.enable = {1 if spectral else 0}
 """)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -87,7 +87,7 @@ path.spectral.enable = {1 if spectral else 0}
             raise TimeoutError("render stalled")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3).mean(axis=2)

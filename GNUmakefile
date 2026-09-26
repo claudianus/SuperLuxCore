@@ -12,11 +12,11 @@ endif
 
 LUX-CMAKE = $(PYTHON) -m build-system.luxmake
 
-build-targets = pyluxcore luxcoreui luxcoreconsole luxcore doc
+build-targets = pysuperluxcore luxcoreui luxcoreconsole luxcore doc
 
-.PHONY: deps list-presets config luxcore pyluxcore luxcoreui luxcoreconsole install clean clear doc wheel-test
+.PHONY: deps list-presets config luxcore pysuperluxcore luxcoreui luxcoreconsole install clean clear doc wheel-test
 
-all: luxcore pyluxcore luxcoreui luxcoreconsole
+all: luxcore pysuperluxcore luxcoreui luxcoreconsole
 
 deps:
 	$(LUX-CMAKE) deps

@@ -594,7 +594,7 @@ void Scene::Parse(PropertiesRPtr props) {
 	imgSpillEnable = props->Get(Property("scene.spill.images")(true)).Get<bool>();
 	if (geoSpillEnable && geoSpillDir.empty())
 		geoSpillDir = (std::filesystem::temp_directory_path() /
-				"luxcore-geospill").string();
+				"superluxcore-geospill").string();
 }
 
 // Spills every large mesh buffer to geoSpillDir and swaps it for a

@@ -378,9 +378,9 @@ jobs:
             export DYLD_LIBRARY_PATH
             delocate-listdeps -v {wheel}
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_TEST_COMMAND_LINUX: pyluxcoretest
-          CIBW_TEST_COMMAND_WINDOWS: pyluxcoretest
-          CIBW_TEST_COMMAND_MACOS: pyluxcoretest
+          CIBW_TEST_COMMAND_LINUX: pysuperluxcoretest
+          CIBW_TEST_COMMAND_WINDOWS: pysuperluxcoretest
+          CIBW_TEST_COMMAND_MACOS: pysuperluxcoretest
           CIBW_CONTAINER_ENGINE: >
             docker;
             create_args:

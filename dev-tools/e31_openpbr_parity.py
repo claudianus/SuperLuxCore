@@ -18,8 +18,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 240
 SPP = 64
@@ -30,8 +30,8 @@ def parse_scene(rel_path):
     cwd = os.getcwd()
     os.chdir(str(REPO))
     try:
-        props = pyluxcore.Properties(str(REPO / rel_path))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(REPO / rel_path))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -39,7 +39,7 @@ def parse_scene(rel_path):
 
 
 def render(scene, engine, seed=17, extra_cfg=""):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -50,7 +50,7 @@ renderengine.seed = {seed}
 path.pathdepth.total = 8
 {extra_cfg}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -62,7 +62,7 @@ path.pathdepth.total = 8
             raise TimeoutError(f"render stalled ({engine})")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3)
@@ -84,7 +84,7 @@ def main():
           f"p95 {np.percentile(ratio, 95):.4f}, max {ratio.max():.4f}")
 
     # White-furnace energy check: uniform env + diffuse openpbr floor.
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString("""
 scene.camera.lookat.orig = 0 0 3
 scene.camera.lookat.target = 0 0 0
@@ -107,7 +107,7 @@ scene.lights.env.color = 1.0 1.0 1.0
 scene.lights.env.gain = 1.0 1.0 1.0
 """)
     os.chdir(str(REPO))
-    fscene = pyluxcore.Scene()
+    fscene = pysuperluxcore.Scene()
     fscene.Parse(props)
     fur = render(fscene, "PATHCPU")
     fl = fur.mean(axis=2)

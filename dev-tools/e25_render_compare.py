@@ -12,8 +12,8 @@ import numpy as np
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 SPP = int(sys.argv[1]) if len(sys.argv) > 1 else 64
@@ -26,8 +26,8 @@ def parse_scene():
     cwd = os.getcwd()
     os.chdir(str(REPO))
     try:
-        props = pyluxcore.Properties(str(SCENE))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(SCENE))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -35,7 +35,7 @@ def parse_scene():
 
 
 def render(scene, tag, extra):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -48,7 +48,7 @@ path.hybridbackforward.enable = 1
 path.hybridbackforward.partition = 0.8
 {extra}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -64,13 +64,13 @@ path.hybridbackforward.partition = 0.8
     ses.Stop()
     OUT.mkdir(parents=True, exist_ok=True)
     tonemapped = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  tonemapped, 0, True)
     img8 = (np.clip(tonemapped, 0, 1).reshape(HEIGHT, WIDTH, 3) * 255).astype(np.uint8)
     Image.fromarray(img8).save(OUT / f"{tag}.png")
 
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB, rgb, 0, True)
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB, rgb, 0, True)
     lum = rgb.reshape(HEIGHT, WIDTH, 3).mean(axis=2)
     # Caustic patch below the sphere (720p: sphere ~ (640,400))
     patch = lum[360:600, 480:820]

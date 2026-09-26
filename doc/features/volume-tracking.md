@@ -2,7 +2,7 @@
 
 Status: **functional on CPU (`PATHCPU`) and GPU (`PATHOCL`,
 Metal-validated)** — regression coverage in
-`pyunittests/pyluxcoreunittests/tests/materials/testvolumetracking.py`.
+`pyunittests/pysuperluxcoreunittests/tests/materials/testvolumetracking.py`.
 
 ## What and why
 

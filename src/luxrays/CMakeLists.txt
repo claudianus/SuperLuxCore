@@ -305,7 +305,7 @@ target_link_libraries(luxrays_metalobj PRIVATE
   openexr::openexr
   embree::embree)
 set_property(TARGET luxrays_metalobj PROPERTY POSITION_INDEPENDENT_CODE ON)
-# Propagate the Metal archive: every luxrays consumer (pyluxcore,
+# Propagate the Metal archive: every luxrays consumer (pysuperluxcore,
 # samples, tests) links BOTH archives - libluxrays.a references the
 # Metal symbols, libluxrays_metalobj.a defines them.
 target_link_libraries(luxrays PUBLIC luxrays_metalobj)

@@ -35,11 +35,11 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent
 # Prefer the Release build (the GNUmakefile default); fall back to Debug.
 for _cfg in ("Release", "Debug"):
-    _lib = REPO / "out/build/src/pyluxcore" / _cfg
-    if list(_lib.glob("pyluxcore*.so")):
+    _lib = REPO / "out/build/src/pysuperluxcore" / _cfg
+    if list(_lib.glob("pysuperluxcore*.so")):
         sys.path.insert(0, str(_lib))
         break
-import pyluxcore
+import pysuperluxcore
 
 WIDTH = int(os.environ.get("E27_W", "1280"))
 HEIGHT = int(os.environ.get("E27_H", "720"))
@@ -52,14 +52,14 @@ OUT = REPO / "dev-tools/out/e27"
 
 
 def parse_scene(rel_path):
-    props = pyluxcore.Properties(str(REPO / rel_path))
-    scene = pyluxcore.Scene()
+    props = pysuperluxcore.Properties(str(REPO / rel_path))
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return scene
 
 
 def render(scene, guiding, seed):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     table = os.environ.get("E27_TABLE", "")
     table_line = f"path.guiding.tablefile = {table}" if (guiding and table) else ""
     cfg.SetFromString(f"""
@@ -74,7 +74,7 @@ path.guiding.enable = {1 if guiding else 0}
 {os.environ.get("E27_EXTRA_CFG", "")}
 {os.environ.get("E27_GUIDED_CFG", "") if guiding else ""}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -86,7 +86,7 @@ path.guiding.enable = {1 if guiding else 0}
             raise TimeoutError(f"{ENGINE} guiding={guiding} seed={seed} stalled")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3)

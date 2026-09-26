@@ -32,8 +32,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 SPP = 64
@@ -44,14 +44,14 @@ SCENE = "scenes/cornell/pg-indirect.scn"
 
 def parse_scene(rel_path):
     """Asset paths in this scene are repo-root-relative."""
-    props = pyluxcore.Properties(str(REPO / rel_path))
-    scene = pyluxcore.Scene()
+    props = pysuperluxcore.Properties(str(REPO / rel_path))
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return scene
 
 
 def render(scene, engine, guiding, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -61,7 +61,7 @@ batch.haltspp = {SPP}
 renderengine.seed = {seed}
 path.guiding.enable = {1 if guiding else 0}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -73,7 +73,7 @@ path.guiding.enable = {1 if guiding else 0}
             raise TimeoutError(f"{engine} guiding={guiding} stalled")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     img = rgb.reshape(HEIGHT, WIDTH, 3)

@@ -30,11 +30,11 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
 for cfg in ("Release", "Debug"):
-    p = REPO / "out/build/src/pyluxcore" / cfg
-    if (p / "pyluxcore.cpython-313-darwin.so").exists():
+    p = REPO / "out/build/src/pysuperluxcore" / cfg
+    if (p / "pysuperluxcore.cpython-313-darwin.so").exists():
         sys.path.insert(0, str(p))
         break
-import pyluxcore
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 SPP = 48
@@ -139,17 +139,17 @@ def sphere(cx, cy, cz, r, nseg=20, nring=12):
 def build_scene():
     v1, f1 = sphere(-0.8, 0.0, 0.8, 0.8)
     v2, f2 = sphere(1.0, -0.5, 0.55, 0.55)
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString(SCENE_PROPS.format(
         SPHERE1_V=v1, SPHERE1_F=f1, SPHERE2_V=v2, SPHERE2_F=f2))
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return scene
 
 
 def device_mask(want_type):
-    pyluxcore.Init()
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    pysuperluxcore.Init()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -163,7 +163,7 @@ def device_mask(want_type):
 
 
 def render(scene, engine, strategy, sel=None, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -182,8 +182,8 @@ film.outputs.0.type = RGB_IMAGEPIPELINE
 film.outputs.0.index = 0
 """)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -198,7 +198,7 @@ film.outputs.0.index = 0
         time.sleep(0.5)
     buf = np.zeros((HEIGHT, WIDTH, 3), dtype=np.float32)
     ses.GetFilm().GetOutputFloat(
-        pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
+        pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
     ses.Stop()
     return buf
 

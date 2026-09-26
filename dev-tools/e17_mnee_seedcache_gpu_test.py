@@ -45,8 +45,8 @@ Safety: runs with a small task count and a hard per-render deadline
 instead of an infinite wait; run it under an external shell timeout too.
 """
 import sys, os, time
-sys.path.insert(0, "/Users/modumaru/.zcode/workspace/default/LuxCore/out/build/src/pyluxcore/Release")
-import pyluxcore
+sys.path.insert(0, "/Users/modumaru/.zcode/workspace/default/LuxCore/out/build/src/pysuperluxcore/Release")
+import pysuperluxcore
 import numpy as np
 
 # PLY refs inside the .scn are cwd-relative: chdir into the scene dir.
@@ -59,9 +59,9 @@ W, H = 192, 144
 
 
 def render(mnee_enable, seedcache, seed=1):
-    scn = pyluxcore.Properties(SCENE)  # ply refs resolve via chdir(SCENE_DIR)
-    sc = pyluxcore.Scene(); sc.Parse(scn)
-    cfg = pyluxcore.Properties()
+    scn = pysuperluxcore.Properties(SCENE)  # ply refs resolve via chdir(SCENE_DIR)
+    sc = pysuperluxcore.Scene(); sc.Parse(scn)
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {W}
 film.height = {H}
@@ -74,7 +74,7 @@ path.mnee.enable = {mnee_enable}
 path.mnee.seedcache = {seedcache}
 film.imagepipelines.0.0.type = NOP
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, sc))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, sc))
     ses.Start()
     t0 = time.monotonic()
     ok = False
@@ -85,7 +85,7 @@ film.imagepipelines.0.0.type = NOP
             break
         time.sleep(0.5)
     rgb = np.empty(W * H * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
     ses.Stop()
     img = rgb.reshape(H, W, 3)
     if not ok:
@@ -95,7 +95,7 @@ film.imagepipelines.0.0.type = NOP
 
 def main():
     os.chdir(SCENE_DIR)
-    pyluxcore.Init()  # enable SLG_LOG so kernel compile / progress is visible
+    pysuperluxcore.Init()  # enable SLG_LOG so kernel compile / progress is visible
     print(f"MNEE seed cache on GPU ({SCENE}, {W}x{H}, {SPP}spp)", flush=True)
     checks = []
 

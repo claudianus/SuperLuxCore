@@ -36,7 +36,7 @@ Tag: {}
 
 _METADATA_SNIPPET = """\
 Metadata-Version: 2.2
-Name: pyluxcore
+Name: pysuperluxcore
 Version: {}
 Summary: LuxCore Python bindings
 Keywords: raytracing,ray tracing,rendering,pbr,physical based rendering,path tracing
@@ -47,17 +47,17 @@ Requires-Dist: {}; sys_platform != "darwin"
 
 _ENTRYPOINTS_SNIPPET = """\
 [console_scripts]
-pyluxcoretest = pyluxcoretest:main
-pyluxcore-console = pyluxcoretools.console.cmd:main
-pyluxcore-maketx = pyluxcoretools.maketx.cmd:main
-pyluxcore-merge = pyluxcoretools.merge.cmd:main
-pyluxcore-netmenu = pyluxcoretools.netmenu.cmd:main
-pyluxcore-netconsole = pyluxcoretools.netconsole.cmd:main
-pyluxcore-netnode = pyluxcoretools.netnode.cmd:main
+pysuperluxcoretest = pysuperluxcoretest:main
+pysuperluxcore-console = pysuperluxcoretools.console.cmd:main
+pysuperluxcore-maketx = pysuperluxcoretools.maketx.cmd:main
+pysuperluxcore-merge = pysuperluxcoretools.merge.cmd:main
+pysuperluxcore-netmenu = pysuperluxcoretools.netmenu.cmd:main
+pysuperluxcore-netconsole = pysuperluxcoretools.netconsole.cmd:main
+pysuperluxcore-netnode = pysuperluxcoretools.netnode.cmd:main
 
 [gui_scripts]
-pyluxcore-netconsole-ui = pyluxcoretools.netconsole.ui:main
-pyluxcore-netnode-ui = pyluxcoretools.netnode.ui:main
+pysuperluxcore-netconsole-ui = pysuperluxcoretools.netconsole.ui:main
+pysuperluxcore-netnode-ui = pysuperluxcoretools.netnode.ui:main
 """
 
 
@@ -110,8 +110,8 @@ def make_wheel(args):
     # Set default build type to debug
     PARAMS.DEFAULT_BUILD_TYPE = "Debug"
 
-    # Build and install pyluxcore
-    args.target = "pyluxcore"
+    # Build and install pysuperluxcore
+    args.target = "pysuperluxcore"
     config(args)
     build_and_install(args)
 
@@ -156,11 +156,11 @@ def make_wheel(args):
         raw_wheel_dir = Path(raw_wheel)
 
         # Check Python version in extension
-        extension_path = PARAMS.INSTALL_DIR / "pyluxcore"
+        extension_path = PARAMS.INSTALL_DIR / "pysuperluxcore"
         extensions = [
             f.name
             for f in extension_path.iterdir()
-            if f.is_file() and f.name.startswith("pyluxcore")
+            if f.is_file() and f.name.startswith("pysuperluxcore")
         ]
         for extension in extensions:
             break
@@ -189,7 +189,7 @@ def make_wheel(args):
             )
 
         # Create dist-info folder
-        dist_info = wheeltree / f"pyluxcore-{version}.dist-info"
+        dist_info = wheeltree / f"pysuperluxcore-{version}.dist-info"
         dist_info.mkdir(exist_ok=True)
 
         # Export WHEEL file
@@ -229,35 +229,35 @@ def make_wheel(args):
 
         # Copy subfolders into tree
         shutil.copytree(
-            PARAMS.SOURCE_DIR / "python" / "pyluxcore",
-            wheeltree / "pyluxcore",
+            PARAMS.SOURCE_DIR / "python" / "pysuperluxcore",
+            wheeltree / "pysuperluxcore",
             dirs_exist_ok=True,
         )
         shutil.copytree(
-            PARAMS.SOURCE_DIR / "python" / "pyluxcoretest",
-            wheeltree / "pyluxcoretest",
+            PARAMS.SOURCE_DIR / "python" / "pysuperluxcoretest",
+            wheeltree / "pysuperluxcoretest",
             dirs_exist_ok=True,
         )
         shutil.copytree(
-            PARAMS.SOURCE_DIR / "python" / "pyluxcoretools",
-            wheeltree / "pyluxcoretools",
+            PARAMS.SOURCE_DIR / "python" / "pysuperluxcoretools",
+            wheeltree / "pysuperluxcoretools",
             dirs_exist_ok=True,
         )
         shutil.copytree(
-            PARAMS.INSTALL_DIR / "pyluxcore",
-            wheeltree / "pyluxcore",
+            PARAMS.INSTALL_DIR / "pysuperluxcore",
+            wheeltree / "pysuperluxcore",
             dirs_exist_ok=True,
         )
         shutil.copytree(
-            PARAMS.INSTALL_DIR / "pyluxcore.libs",
-            wheeltree / "pyluxcore.libs",
+            PARAMS.INSTALL_DIR / "pysuperluxcore.libs",
+            wheeltree / "pysuperluxcore.libs",
             dirs_exist_ok=True,
         )
 
         # Pack wheel
         logger.info("Packing wheel")
         pack(wheeltree, raw_wheel)
-        wheelname = f"pyluxcore-{version}-{tag}.whl"
+        wheelname = f"pysuperluxcore-{version}-{tag}.whl"
 
         # Then repair
         wheel_lib_dir = PARAMS.INSTALL_DIR / "lib"

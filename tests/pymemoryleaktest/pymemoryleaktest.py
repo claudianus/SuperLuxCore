@@ -24,47 +24,47 @@ import sys
 from array import *
 sys.path.append("./lib")
 
-import pyluxcore
+import pysuperluxcore
 
 def PropertiesOps():
-	prop = pyluxcore.Property("test1.prop1", "aa")
+	prop = pysuperluxcore.Property("test1.prop1", "aa")
 
 	prop.Clear().Add([0, 2]).Add([3])
 	prop.Set(0, 1)
 	prop.Set([3, 2, 1])
 
 	pyvariable = 999
-	prop = pyluxcore.Property("test1.prop1", [True, 1, 2.0, "aa", pyvariable])
+	prop = pysuperluxcore.Property("test1.prop1", [True, 1, 2.0, "aa", pyvariable])
 
-	props = pyluxcore.Properties()
+	props = pysuperluxcore.Properties()
 	props.SetFromString("test1.prop1 = 1 2.0 aa \"quoted\"\ntest2.prop2 = 1 2.0 'quoted' bb\ntest2.prop3 = 1")
 
-	props0 = pyluxcore.Properties()
-	props1 = pyluxcore.Properties() \
-		.Set(pyluxcore.Property("test1.prop1", [True, 1, 2.0, "aa"])) \
-		.Set(pyluxcore.Property("test2.prop1", ["bb"]));
+	props0 = pysuperluxcore.Properties()
+	props1 = pysuperluxcore.Properties() \
+		.Set(pysuperluxcore.Property("test1.prop1", [True, 1, 2.0, "aa"])) \
+		.Set(pysuperluxcore.Property("test2.prop1", ["bb"]));
 
 	props0.Set(props1, "prefix.")
 
 def SceneOps():
-	scene = pyluxcore.Scene("scenes/luxball/luxball-hdr.scn", 1.0)
+	scene = pysuperluxcore.Scene("scenes/luxball/luxball-hdr.scn", 1.0)
 
 def RenderConfigOps():
-	props = pyluxcore.Properties("scenes/luxball/luxball-hdr.cfg")
-	config = pyluxcore.RenderConfig(props)
+	props = pysuperluxcore.Properties("scenes/luxball/luxball-hdr.cfg")
+	config = pysuperluxcore.RenderConfig(props)
 
 def SimpleRender():
 	# Load the configuration from file
-	props = pyluxcore.Properties("scenes/luxball/luxball-hdr.cfg")
+	props = pysuperluxcore.Properties("scenes/luxball/luxball-hdr.cfg")
 
 	# Change the render engine
-	props.Set(pyluxcore.Property("renderengine.type", ["PATHOCL"]))
-	props.Set(pyluxcore.Property("opencl.devices.select", ["01000"]))
-	props.Set(pyluxcore.Property("film.hw.enable", ["0"]))
-	props.Set(pyluxcore.Property("opencl.native.threads.count", [0]))
+	props.Set(pysuperluxcore.Property("renderengine.type", ["PATHOCL"]))
+	props.Set(pysuperluxcore.Property("opencl.devices.select", ["01000"]))
+	props.Set(pysuperluxcore.Property("film.hw.enable", ["0"]))
+	props.Set(pysuperluxcore.Property("opencl.native.threads.count", [0]))
 
-	config = pyluxcore.RenderConfig(props)
-	session = pyluxcore.RenderSession(config)
+	config = pysuperluxcore.RenderConfig(props)
+	session = pysuperluxcore.RenderSession(config)
 
 	session.Start()
 
@@ -168,9 +168,9 @@ def LogHandler(msg):
 	pass
 
 def main():
-	pyluxcore.Init(LogHandler)
+	pysuperluxcore.Init(LogHandler)
 
-	print("LuxCore %s" % pyluxcore.Version())
+	print("LuxCore %s" % pysuperluxcore.Version())
 
 	#PropertiesTest()
 	#SceneTest()

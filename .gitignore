@@ -36,7 +36,7 @@ qrc_*.cxx
 out
 compile_commands.json
 dist
-samples/pyluxcoretool/__pycache__
+samples/pysuperluxcoretool/__pycache__
 release_OSX/
 build-system/make/__pycache__
 *.pyc

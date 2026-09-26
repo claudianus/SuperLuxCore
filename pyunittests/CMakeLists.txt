@@ -24,18 +24,18 @@
 
 add_custom_target(tests
 	COMMAND python3 unittests.py
-	DEPENDS pyluxcore
+	DEPENDS pysuperluxcore
 	WORKING_DIRECTORY .
 )
 
 add_custom_target(tests_resume
 	COMMAND python3 unittests.py --resume
-	DEPENDS pyluxcore
+	DEPENDS pysuperluxcore
 	WORKING_DIRECTORY .
 )
 
 add_custom_target(tests_subset
 	COMMAND python3 unittests.py --subset
-	DEPENDS pyluxcore
+	DEPENDS pysuperluxcore
 	WORKING_DIRECTORY .
 )

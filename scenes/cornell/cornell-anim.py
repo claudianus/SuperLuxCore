@@ -10,9 +10,9 @@ sys.dont_write_bytecode = True
 # For the develop environment and Linux workaround for https://github.com/LuxCoreRender/LuxCore/issues/80
 sys.path.append(".")
 sys.path.append("./lib")
-sys.path.append("./lib/pyluxcoretools.zip")
+sys.path.append("./lib/pysuperluxcoretools.zip")
 
-import pyluxcoretools.pyluxcoreconsole.cmd as consoleCmd
+import pysuperluxcoretools.pysuperluxcoreconsole.cmd as consoleCmd
 
 if __name__ == '__main__':
 	imageWidth = "512"

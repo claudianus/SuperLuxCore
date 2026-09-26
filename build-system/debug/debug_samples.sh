@@ -15,7 +15,7 @@ act workflow_dispatch \
   --workflows ".github/workflows/sample-builder.yml" \
   -s GITHUB_TOKEN="$(gh auth token)" \
   --matrix "os:ubuntu-latest" \
-  --artifact-server-path /tmp/pyluxcore \
+  --artifact-server-path /tmp/pysuperluxcore \
   --rm \
-  | tee /tmp/pyluxcore.log
+  | tee /tmp/pysuperluxcore.log
   #&& unzip -o ${zipfolder}/cibw-wheels-ubuntu-latest-13.zip -d ${zipfolder}

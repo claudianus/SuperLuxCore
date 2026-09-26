@@ -11,7 +11,7 @@ memory.
 
 Spill points (all gated by `scene.spill.enable`, size floor
 `scene.spill.minbytes`, dir `scene.spill.dir` or a per-process
-`luxcore-geospill/<ts>-<ptr>` subdir under TMPDIR):
+`superluxcore-geospill/<ts>-<ptr>` subdir under TMPDIR):
 
 - **Geometry buffers** — `Scene::SpillGeometryBuffers()` runs BEFORE
   DataSet/BVH construction so accelerators (incl. Embree) bind the
@@ -147,7 +147,7 @@ Windows: `SpillToFile`/`MapFileCopyOnWrite` use
   name+transform stub; on load the stub is re-mapped via
   `ExtTriangleMesh::LoadProxy` (missing file → clear runtime_error).
   Meshes whose buffers are NOT file-backed serialize in full as before.
-- `pyluxcore.Scene(props)` single-Properties overload is the
+- `pysuperluxcore.Scene(props)` single-Properties overload is the
   resize-policy ctor (empty scene) — use `Scene()` + `scene.Parse()`.
   `session.Parse()` handles film props only; scene edits go through
   `scene.*` calls inside BeginSceneEdit/EndSceneEdit.
@@ -202,5 +202,5 @@ Windows: `SpillToFile`/`MapFileCopyOnWrite` use
 - `scene.objects.X.transformation` takes 16 values in COLUMN-major
   order (Property::Get<Matrix4x4> reads v0,v4,v8,v12 as row 0). A
   row-major translation string silently lands in the projective row.
-- Ninja multi-config: `ninja -C out/build pyluxcore` builds Debug only;
-  the Release module needs `-f build-Release.ninja pyluxcore`.
+- Ninja multi-config: `ninja -C out/build pysuperluxcore` builds Debug only;
+  the Release module needs `-f build-Release.ninja pysuperluxcore`.

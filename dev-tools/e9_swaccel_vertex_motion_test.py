@@ -12,9 +12,9 @@ vertex interpolation at ray->time, correct hit attribution, clamping,
 non-uniform keyframes, and occlusion inside a swept volume.
 
 Run with the Blender-bundled python (or any python with the built
-pyluxcore on sys.path):
+pysuperluxcore on sys.path):
 
-    LUXCORE_PY=/path/to/pyluxcore/dir python3 e9_swaccel_vertex_motion_test.py
+    LUXCORE_PY=/path/to/pysuperluxcore/dir python3 e9_swaccel_vertex_motion_test.py
 
 Requires a Metal-capable device (Apple Silicon); skips cleanly otherwise.
 """
@@ -23,7 +23,7 @@ import os
 import sys
 import time as _t
 
-# Force the software kernel BEFORE pyluxcore/device init.
+# Force the software kernel BEFORE pysuperluxcore/device init.
 os.environ["LUXRAYS_METAL_HWRT"] = "0"
 
 import numpy as np
@@ -38,14 +38,14 @@ sys.path.insert(
             "out",
             "build",
             "src",
-            "pyluxcore",
+            "pysuperluxcore",
             "Release",
         ),
     ),
 )
-import pyluxcore
+import pysuperluxcore
 
-pyluxcore.Init()
+pysuperluxcore.Init()
 
 FAILURES = []
 
@@ -59,21 +59,21 @@ def check(name, cond, detail=""):
 
 def build_scene(steps_dx=None, times=None, shutter=(0.0, 1.0), with_wall=True):
     """Quad at z=0 moving along +x by steps_dx; wall at z=-2 behind it."""
-    props = pyluxcore.Properties()
-    props.Set(pyluxcore.Property("scene.materials.mat.type", "matte"))
-    props.Set(pyluxcore.Property("scene.materials.mat.kd", [0.9, 0.2, 0.2]))
-    props.Set(pyluxcore.Property("scene.materials.mat.emission", [4.0, 0.0, 0.0]))
-    props.Set(pyluxcore.Property("scene.materials.bgmat.type", "matte"))
-    props.Set(pyluxcore.Property("scene.materials.bgmat.kd", [0.8, 0.8, 0.8]))
+    props = pysuperluxcore.Properties()
+    props.Set(pysuperluxcore.Property("scene.materials.mat.type", "matte"))
+    props.Set(pysuperluxcore.Property("scene.materials.mat.kd", [0.9, 0.2, 0.2]))
+    props.Set(pysuperluxcore.Property("scene.materials.mat.emission", [4.0, 0.0, 0.0]))
+    props.Set(pysuperluxcore.Property("scene.materials.bgmat.type", "matte"))
+    props.Set(pysuperluxcore.Property("scene.materials.bgmat.kd", [0.8, 0.8, 0.8]))
     if with_wall:
-        props.Set(pyluxcore.Property("scene.objects.bg.material", "bgmat"))
+        props.Set(pysuperluxcore.Property("scene.objects.bg.material", "bgmat"))
         props.Set(
-            pyluxcore.Property(
+            pysuperluxcore.Property(
                 "scene.objects.bg.vertices",
                 [-5.0, -0.5, -2.0, 5.0, -0.5, -2.0, 5.0, 3.5, -2.0, -5.0, 3.5, -2.0],
             )
         )
-        props.Set(pyluxcore.Property("scene.objects.bg.faces", [0, 1, 2, 0, 2, 3]))
+        props.Set(pysuperluxcore.Property("scene.objects.bg.faces", [0, 1, 2, 0, 2, 3]))
 
     base = np.array(
         [[-0.4, 0.3, 0], [0.4, 0.3, 0], [0.4, 1.1, 0], [-0.4, 1.1, 0]],
@@ -81,7 +81,7 @@ def build_scene(steps_dx=None, times=None, shutter=(0.0, 1.0), with_wall=True):
     )
     tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.DefineMeshExt("quad", base, tris)
     if steps_dx:
         t = np.array(
@@ -91,32 +91,32 @@ def build_scene(steps_dx=None, times=None, shutter=(0.0, 1.0), with_wall=True):
         steps = [base + np.array([d, 0, 0], dtype=np.float32) for d in steps_dx]
         scene.SetMeshVertexMotion("quad", t, steps)
 
-    props.Set(pyluxcore.Property("scene.objects.quad.material", "mat"))
-    props.Set(pyluxcore.Property("scene.objects.quad.shape", "quad"))
-    props.Set(pyluxcore.Property("scene.camera.type", "perspective"))
-    props.Set(pyluxcore.Property("scene.camera.lookat.orig", [0.0, 1.2, 4.0]))
-    props.Set(pyluxcore.Property("scene.camera.lookat.target", [0.0, 0.7, 0.0]))
-    props.Set(pyluxcore.Property("scene.camera.fieldofview", [35.0]))
-    props.Set(pyluxcore.Property("scene.camera.shutteropen", [shutter[0]]))
-    props.Set(pyluxcore.Property("scene.camera.shutterclose", [shutter[1]]))
+    props.Set(pysuperluxcore.Property("scene.objects.quad.material", "mat"))
+    props.Set(pysuperluxcore.Property("scene.objects.quad.shape", "quad"))
+    props.Set(pysuperluxcore.Property("scene.camera.type", "perspective"))
+    props.Set(pysuperluxcore.Property("scene.camera.lookat.orig", [0.0, 1.2, 4.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.lookat.target", [0.0, 0.7, 0.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.fieldofview", [35.0]))
+    props.Set(pysuperluxcore.Property("scene.camera.shutteropen", [shutter[0]]))
+    props.Set(pysuperluxcore.Property("scene.camera.shutterclose", [shutter[1]]))
     # No lights: only the emissive quad is visible.
     scene.Parse(props)
     return scene
 
 
 def render(scene, w=128, h=128, spp=32):
-    rcfg = pyluxcore.Properties()
-    rcfg.Set(pyluxcore.Property("renderengine.type", "TILEPATHOCL"))
-    rcfg.Set(pyluxcore.Property("sampler.type", "TILEPATHSAMPLER"))
-    rcfg.Set(pyluxcore.Property("batch.haltspp", [spp]))
-    rcfg.Set(pyluxcore.Property("film.width", [w]))
-    rcfg.Set(pyluxcore.Property("film.height", [h]))
-    rcfg.Set(pyluxcore.Property("opencl.cpu.use", [0]))
-    rcfg.Set(pyluxcore.Property("opencl.gpu.use", [1]))
-    rcfg.Set(pyluxcore.Property("opencl.native.threads.count", [0]))
+    rcfg = pysuperluxcore.Properties()
+    rcfg.Set(pysuperluxcore.Property("renderengine.type", "TILEPATHOCL"))
+    rcfg.Set(pysuperluxcore.Property("sampler.type", "TILEPATHSAMPLER"))
+    rcfg.Set(pysuperluxcore.Property("batch.haltspp", [spp]))
+    rcfg.Set(pysuperluxcore.Property("film.width", [w]))
+    rcfg.Set(pysuperluxcore.Property("film.height", [h]))
+    rcfg.Set(pysuperluxcore.Property("opencl.cpu.use", [0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.gpu.use", [1]))
+    rcfg.Set(pysuperluxcore.Property("opencl.native.threads.count", [0]))
     # Second device slot is the Metal intersection device in this build.
-    rcfg.Set(pyluxcore.Property("opencl.devices.select", "01"))
-    session = pyluxcore.RenderSession(pyluxcore.RenderConfig(rcfg, scene))
+    rcfg.Set(pysuperluxcore.Property("opencl.devices.select", "01"))
+    session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(rcfg, scene))
     session.Start()
     t0 = _t.time()
     while _t.time() - t0 < 60:
@@ -129,7 +129,7 @@ def render(scene, w=128, h=128, spp=32):
         _t.sleep(0.05)
     session.Pause()
     rgb = np.zeros(w * h * 3, dtype=np.float32)
-    session.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB, rgb)
+    session.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB, rgb)
     session.Stop()
     return rgb.reshape(h, w, 3)
 

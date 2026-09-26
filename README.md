@@ -75,9 +75,9 @@ for building (`vcvarsall.bat`).
 #### Quick build
 
 ```
-git clone https://github.com/LuxCoreRender/LuxCore.git
+git clone https://github.com/claudianus/SuperLuxCore.git
 
-cd LuxCore
+cd SuperLuxCore
 git checkout for_v2.10
 
 make deps
@@ -88,7 +88,7 @@ This will download LuxCore source code and LuxCore precompiled dependencies,
 configure CMake and start the build.
 
 Nota: second `make` statement can also name a specific target. Examples:
-`make luxcore` `make pyluxcore` `make luxcoreconsole` `make luxcoreui`
+`make luxcore` `make pysuperluxcore` `make luxcoreconsole` `make luxcoreui`
 
 #### Build type
 

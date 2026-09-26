@@ -195,7 +195,7 @@ Phase-1 surface (implemented):
   `GEOMETRY_EDIT` so the next `Preprocess` rebuilds the DataSet.
 - Public API: `luxcore::Scene::SetMeshVertexMotion(meshName, times,
   timesCount, verts, vertsCount)` — flat step-major float array —
-  and the pyluxcore binding
+  and the pysuperluxcore binding
   `Scene.SetMeshVertexMotion(name, times, [step (N,3) arrays])`.
 - Properties: `<prefix>.motion.N.time` + `<prefix>.motion.N.vertices`
   parsed in `CreateInlinedMesh`, covering both `scene.objects.*` inlined

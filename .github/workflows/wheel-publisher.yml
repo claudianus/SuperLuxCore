@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.test && 'testpypi' || 'pypi' }}
-      url: ${{ inputs.test && 'https://test.pypi.org/p/pyluxcore' || 'https://pypi.org/p/pyluxcore' }}
+      url: ${{ inputs.test && 'https://test.pypi.org/p/pysuperluxcore' || 'https://pypi.org/p/pysuperluxcore' }}
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:

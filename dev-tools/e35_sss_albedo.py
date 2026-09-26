@@ -28,8 +28,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 240
 SPP = 128
@@ -40,7 +40,7 @@ OCL_DEV = os.environ.get("E35_OCL_DEV", "1")
 
 
 def render(scene, engine, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     # NOP pipeline: the default AutoLinearToneMap normalizes image mean and
     # would hide reflectance differences in a white furnace. Deep pathdepth
     # for the random walk: volume scatter vertices are DIFFUSE events, so
@@ -60,7 +60,7 @@ path.pathdepth.glossy = 64
 path.pathdepth.specular = 64
 {extra}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -72,7 +72,7 @@ path.pathdepth.specular = 64
             raise TimeoutError(f"render stalled ({engine})")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3)
@@ -88,10 +88,10 @@ def center_stat(img):
 
 
 def parse(props_str):
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString(props_str)
     os.chdir(str(REPO))
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return scene
 

@@ -8,7 +8,7 @@
 # MathFuncTexture_EvalOp kernel path.
 #
 # Run:
-#   LUXCORE_PY=out/build/src/pyluxcore/Release \
+#   LUXCORE_PY=out/build/src/pysuperluxcore/Release \
 #     <python3.13> dev-tools/e10_mathfunc_test.py
 #
 # Exits 0 when all checks pass.
@@ -25,10 +25,10 @@ sys.path.insert(
         "LUXCORE_PY",
         os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "..", "out", "build", "src", "pyluxcore", "Release"),
+            "..", "out", "build", "src", "pysuperluxcore", "Release"),
     ),
 )
-import pyluxcore
+import pysuperluxcore
 
 FAILURES = []
 
@@ -58,7 +58,7 @@ end_header
 
 
 def render(engine, op, t1, t2=None, w=128, h=128, spp=16):
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString("""
 scene.camera.lookat.orig = 0 -1.5 0
 scene.camera.lookat.target = 0 0 0
@@ -69,28 +69,28 @@ scene.materials.white.kd = 0.0
 scene.materials.white.emission = mf0
 scene.objects.quad.material = white
 """)
-    props.Set(pyluxcore.Property("scene.textures.mf0.type", "mathfunc"))
-    props.Set(pyluxcore.Property("scene.textures.mf0.op", op))
-    props.Set(pyluxcore.Property("scene.textures.mf0.texture1", t1))
+    props.Set(pysuperluxcore.Property("scene.textures.mf0.type", "mathfunc"))
+    props.Set(pysuperluxcore.Property("scene.textures.mf0.op", op))
+    props.Set(pysuperluxcore.Property("scene.textures.mf0.texture1", t1))
     if t2 is not None:
-        props.Set(pyluxcore.Property("scene.textures.mf0.texture2", t2))
-    scene = pyluxcore.Scene()
+        props.Set(pysuperluxcore.Property("scene.textures.mf0.texture2", t2))
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
 
-    rcfg = pyluxcore.Properties()
-    rcfg.Set(pyluxcore.Property("renderengine.type", engine))
-    rcfg.Set(pyluxcore.Property("sampler.type", "SOBOL"))
-    rcfg.Set(pyluxcore.Property("opencl.cpu.use", [0]))
-    rcfg.Set(pyluxcore.Property("opencl.gpu.use", [1 if engine != "PATHCPU" else 0]))
-    rcfg.Set(pyluxcore.Property("opencl.native.threads.count", [0]))
-    rcfg.Set(pyluxcore.Property("accelerator.type", "MBVH"))
-    rcfg.Set(pyluxcore.Property("batch.haltspp", [spp]))
-    rcfg.Set(pyluxcore.Property("film.width", [w]))
-    rcfg.Set(pyluxcore.Property("film.height", [h]))
+    rcfg = pysuperluxcore.Properties()
+    rcfg.Set(pysuperluxcore.Property("renderengine.type", engine))
+    rcfg.Set(pysuperluxcore.Property("sampler.type", "SOBOL"))
+    rcfg.Set(pysuperluxcore.Property("opencl.cpu.use", [0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.gpu.use", [1 if engine != "PATHCPU" else 0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.native.threads.count", [0]))
+    rcfg.Set(pysuperluxcore.Property("accelerator.type", "MBVH"))
+    rcfg.Set(pysuperluxcore.Property("batch.haltspp", [spp]))
+    rcfg.Set(pysuperluxcore.Property("film.width", [w]))
+    rcfg.Set(pysuperluxcore.Property("film.height", [h]))
     if engine == "PATHCPU":
-        rcfg.Set(pyluxcore.Property("film.hw.enable", [0]))
+        rcfg.Set(pysuperluxcore.Property("film.hw.enable", [0]))
 
-    session = pyluxcore.RenderSession(pyluxcore.RenderConfig(rcfg, scene))
+    session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(rcfg, scene))
     session.Start()
     t0 = _t.time()
     while _t.time() - t0 < 120:
@@ -102,13 +102,13 @@ scene.objects.quad.material = white
         _t.sleep(0.05)
     session.Pause()
     rgb = np.zeros(w * h * 3, dtype=np.float32)
-    session.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB, rgb)
+    session.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB, rgb)
     session.Stop()
     return float(rgb.mean())
 
 
 def main():
-    pyluxcore.Init()
+    pysuperluxcore.Init()
     open("/tmp/mathfunc_quad.ply", "w").write(QUAD_PLY)
 
     # op, arg1, arg2, expected brightness (True=lit quad, False=dark quad)

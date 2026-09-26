@@ -350,7 +350,7 @@ void PathGuidingCache::SwapTrees(const bool forced) const {
 			if (newR->leaves[i].count >= GuideWarmup())
 				++warm;
 		}
-		// stderr: pyluxcore installs no SLG log handler
+		// stderr: pysuperluxcore installs no SLG log handler
 		fprintf(stderr, "[PG] swap: leaves=%u kept=%llu attempts=%llu flux=%g warm=%u\n",
 				newW->leafCount, (unsigned long long)cSum,
 				writeRecords.load(std::memory_order_relaxed), tSum, warm);

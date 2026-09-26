@@ -37,10 +37,10 @@ sys.path.insert(
     0,
     os.environ.get(
         "LUXCORE_PY",
-        os.path.join(REPO, "out", "build", "src", "pyluxcore", "Release"),
+        os.path.join(REPO, "out", "build", "src", "pysuperluxcore", "Release"),
     ),
 )
-import pyluxcore
+import pysuperluxcore
 
 WIDTH = 320
 HEIGHT = 240
@@ -80,7 +80,7 @@ def record(name, ok, detail):
 
 def device_mask(want_type):
     """Build an opencl.devices.select mask enabling only `want_type`."""
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -94,12 +94,12 @@ def device_mask(want_type):
 
 
 def render(engine="PATHOCL", sel=None, spp=SPP):
-    scn = pyluxcore.Properties()
+    scn = pysuperluxcore.Properties()
     scn.SetFromString(SCENE)
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(scn)
 
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -114,9 +114,9 @@ film.outputs.2.type = INDIRECT_DIFFUSE
 film.outputs.2.filename = e22_id.exr
 """)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
 
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -130,12 +130,12 @@ film.outputs.2.filename = e22_id.exr
 
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
     ses.GetFilm().GetOutputFloat(
-        pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
+        pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
     alpha = np.empty(WIDTH * HEIGHT, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.ALPHA, alpha, 1, True)
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.ALPHA, alpha, 1, True)
     idiff = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
     ses.GetFilm().GetOutputFloat(
-        pyluxcore.FilmOutputType.INDIRECT_DIFFUSE, idiff, 0, True)
+        pysuperluxcore.FilmOutputType.INDIRECT_DIFFUSE, idiff, 0, True)
     ses.Stop()
     lum = (rgb.reshape(HEIGHT, WIDTH, 3)
            @ np.array([0.2126, 0.7152, 0.0722], np.float32))
@@ -143,7 +143,7 @@ film.outputs.2.filename = e22_id.exr
 
 
 def main():
-    pyluxcore.Init()
+    pysuperluxcore.Init()
 
     mtl_mask = device_mask("METAL_GPU")
     ocl_mask = device_mask("OPENCL_GPU")

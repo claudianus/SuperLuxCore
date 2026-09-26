@@ -11,9 +11,9 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
 sys.path.insert(0, str(REPO / "dev-tools"))
-import pyluxcore
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 TASK_COUNT = 8192
@@ -36,8 +36,8 @@ film.outputs.0.index = 0
 
 
 def device_mask(want_type):
-    pyluxcore.Init()  # required: device enumeration is empty before Init
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    pysuperluxcore.Init()  # required: device enumeration is empty before Init
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -58,18 +58,18 @@ def load_scene(spec):
     motion)."""
     if spec.get("builder"):
         return spec["builder"]()
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     if spec.get("props_file"):
         import os
         rel = REPO / spec["props_file"]
         cwd = os.getcwd()
         os.chdir(str(REPO))
         try:
-            scene.Parse(pyluxcore.Properties(str(rel)))
+            scene.Parse(pysuperluxcore.Properties(str(rel)))
         finally:
             os.chdir(cwd)
     else:
-        props = pyluxcore.Properties()
+        props = pysuperluxcore.Properties()
         props.SetFromString(spec["props"])
         scene.Parse(props)
     return scene
@@ -80,10 +80,10 @@ def render(scene, spec, sel=None, seed=17, spp=None):
     cfg_body += f"renderengine.type = {spec['engine']}\n"
     cfg_body += f"sampler.type = {spec['sampler']}\n"
     cfg_body += spec.get("cfg_extra", "")
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(cfg_body)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
     # Per-scene env overrides (e.g. LUXRAYS_METAL_CURVES): the accel reads
     # them during session Start() on the render thread, so they must stay
     # set for the whole render.
@@ -93,7 +93,7 @@ def render(scene, spec, sel=None, seed=17, spp=None):
         old_env[k] = os.environ.get(k)
         os.environ[k] = v
     try:
-        ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
         ses.Start()
         deadline = time.monotonic() + (spec.get("timeout") or RENDER_TIMEOUT_S)
         while time.monotonic() < deadline:
@@ -113,7 +113,7 @@ def render(scene, spec, sel=None, seed=17, spp=None):
                 os.environ[k] = v
     film = ses.GetFilm()
     buf = np.zeros((HEIGHT, WIDTH, 3), dtype=np.float32)
-    film.GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
+    film.GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
     return buf
 
 

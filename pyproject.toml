@@ -7,7 +7,7 @@ requires = ["scikit-build-core"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "pyluxcore"
+name = "pysuperluxcore"
 dynamic = ["version"]
 dependencies = [
   "nvidia-cuda-nvrtc-cu12 == 12.8.93; sys_platform != 'darwin' and platform_machine != 'ARM64'",
@@ -41,31 +41,31 @@ keywords = [
 [project.urls]
 Homepage = "https://luxcorerender.org/"
 Documentation = "http://wiki.luxcorerender.org/LuxCoreRender_Wiki"
-GitHub = "https://github.com/LuxCoreRender/LuxCore"
+GitHub = "https://github.com/claudianus/SuperLuxCore"
 
 [project.scripts]
-pyluxcoretest = "pyluxcoretest:main"
-pyluxcore-console = "pyluxcoretools.console.cmd:main"
-pyluxcore-maketx = "pyluxcoretools.maketx.cmd:main"
-pyluxcore-merge = "pyluxcoretools.merge.cmd:main"
-pyluxcore-netmenu = "pyluxcoretools.netmenu.cmd:main"
-pyluxcore-netconsole = "pyluxcoretools.netconsole.cmd:main"
-pyluxcore-netnode = "pyluxcoretools.netnode.cmd:main"
+pysuperluxcoretest = "pysuperluxcoretest:main"
+pysuperluxcore-console = "pysuperluxcoretools.console.cmd:main"
+pysuperluxcore-maketx = "pysuperluxcoretools.maketx.cmd:main"
+pysuperluxcore-merge = "pysuperluxcoretools.merge.cmd:main"
+pysuperluxcore-netmenu = "pysuperluxcoretools.netmenu.cmd:main"
+pysuperluxcore-netconsole = "pysuperluxcoretools.netconsole.cmd:main"
+pysuperluxcore-netnode = "pysuperluxcoretools.netnode.cmd:main"
 
 [project.gui-scripts]
-pyluxcore-netconsole-ui = "pyluxcoretools.netconsole.ui:main"
-pyluxcore-netnode-ui = "pyluxcoretools.netnode.ui:main"
+pysuperluxcore-netconsole-ui = "pysuperluxcoretools.netconsole.ui:main"
+pysuperluxcore-netnode-ui = "pysuperluxcoretools.netnode.ui:main"
 
 [tool.scikit-build]
 logging.level = "DEBUG"
 build.verbose = true
 cmake.source-dir = "."
-build.targets = ["pyluxcore"]
+build.targets = ["pysuperluxcore"]
 wheel.cmake = true
-wheel.packages = ["python/pyluxcore", "python/pyluxcoretest", "python/pyluxcoretools"]
+wheel.packages = ["python/pysuperluxcore", "python/pysuperluxcoretest", "python/pysuperluxcoretools"]
 build-dir = "out"
 ninja.make-fallback = false
-install.components = ["pyluxcore"]
+install.components = ["pysuperluxcore"]
 experimental = true
 
 [tool.scikit-build.cmake.define]

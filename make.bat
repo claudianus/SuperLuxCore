@@ -23,14 +23,14 @@ if "%COMMAND%" == "" (
     call :BuildAndInstall luxcore
     call :BuildAndInstall luxcoreui
     call :BuildAndInstall luxcoreconsole
-    call :BuildAndInstall pyluxcore
+    call :BuildAndInstall pysuperluxcore
 ) else if "%COMMAND%" == "luxcore" (
     call :Config
     call :BuildAndInstall luxcore
-) else if "%COMMAND%" == "pyluxcore" (
+) else if "%COMMAND%" == "pysuperluxcore" (
     call :Config
     call :BuildAndInstall luxcore
-    call :BuildAndInstall pyluxcore
+    call :BuildAndInstall pysuperluxcore
 ) else if "%COMMAND%" == "luxcoreui" (
     call :Config
     call :BuildAndInstall luxcore
@@ -127,7 +127,7 @@ call :Config
 call :BuildAndInstall luxcore
 call :BuildAndInstall luxcoreui
 call :BuildAndInstall luxcoreconsole
-call :BuildAndInstall pyluxcore 
+call :BuildAndInstall pysuperluxcore 
 
 :Clear
 REM rmdir /S /Q

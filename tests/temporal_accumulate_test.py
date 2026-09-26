@@ -16,7 +16,7 @@
 #      significant share of pixels, noise energy of the accumulated frame
 #      lower than the same frame without accumulation
 #
-# Usage: python3 temporal_accumulate_test.py [pyluxcore_module_dir]
+# Usage: python3 temporal_accumulate_test.py [pysuperluxcore_module_dir]
 # Exit code 0 = pass, 1 = fail.
 
 import os
@@ -27,7 +27,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else ".")
-import pyluxcore
+import pysuperluxcore
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCENE = os.path.join(ROOT, "scenes/bigmonkey/bigmonkey-motion.scn")
@@ -75,7 +75,7 @@ def make_frame_scn(frame_idx, out_path):
 
 
 def render_frame(scn, frame_idx, use_ta, seed, statedir):
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromFile(CFG)
     for k, v in [("scene.file", scn), ("film.width", W), ("film.height", H),
                  ("batch.halttime", 0), ("batch.haltspp", 0),
@@ -87,31 +87,31 @@ def render_frame(scn, frame_idx, use_ta, seed, statedir):
                  ("film.outputs.1.filename", "var.exr"),
                  ("film.outputs.2.type", "INDIRECT_DIFFUSE"),
                  ("film.outputs.2.filename", "id.exr")]:
-        props.Set(pyluxcore.Property(k, v))
+        props.Set(pysuperluxcore.Property(k, v))
     i = 0
     if use_ta:
         for k, v in [("type", "TEMPORAL_ACCUMULATE"), ("frame", frame_idx),
                      ("statedir", statedir), ("history", 16.0)]:
-            props.Set(pyluxcore.Property(f"film.imagepipelines.0.{i}.{k}", v))
+            props.Set(pysuperluxcore.Property(f"film.imagepipelines.0.{i}.{k}", v))
         i += 1
-    props.Set(pyluxcore.Property(f"film.imagepipelines.0.{i}.type", "TONEMAP_LINEAR"))
-    props.Set(pyluxcore.Property(f"film.imagepipelines.0.{i}.scale", 1.0)); i += 1
-    props.Set(pyluxcore.Property(f"film.imagepipelines.0.{i}.type", "GAMMA_CORRECTION"))
-    props.Set(pyluxcore.Property(f"film.imagepipelines.0.{i}.value", 2.2))
+    props.Set(pysuperluxcore.Property(f"film.imagepipelines.0.{i}.type", "TONEMAP_LINEAR"))
+    props.Set(pysuperluxcore.Property(f"film.imagepipelines.0.{i}.scale", 1.0)); i += 1
+    props.Set(pysuperluxcore.Property(f"film.imagepipelines.0.{i}.type", "GAMMA_CORRECTION"))
+    props.Set(pysuperluxcore.Property(f"film.imagepipelines.0.{i}.value", 2.2))
 
-    cfg = pyluxcore.RenderConfig(props)
-    session = pyluxcore.RenderSession(cfg)
+    cfg = pysuperluxcore.RenderConfig(props)
+    session = pysuperluxcore.RenderSession(cfg)
     session.Start()
     time.sleep(RENDER_SECS)
     session.Pause()
     film = session.GetFilm()
 
     out = np.zeros(H * W * 3, dtype=np.float32)
-    film.GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, out)
+    film.GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, out)
     mv = np.zeros(H * W * 4, dtype=np.float32)
-    film.GetOutputFloat(pyluxcore.FilmOutputType.MOTION_VECTOR, mv)
+    film.GetOutputFloat(pysuperluxcore.FilmOutputType.MOTION_VECTOR, mv)
     var = np.zeros(H * W * 3, dtype=np.float32)
-    film.GetOutputFloat(pyluxcore.FilmOutputType.VARIANCE, var)
+    film.GetOutputFloat(pysuperluxcore.FilmOutputType.VARIANCE, var)
     session.Stop()
     del session, cfg
     return out.reshape(H, W, 3), mv.reshape(H, W, 4), var.reshape(H, W, 3)
@@ -123,7 +123,7 @@ def hf_energy(img):
 
 
 def main():
-    pyluxcore.Init()
+    pysuperluxcore.Init()
     failures = []
 
     with tempfile.TemporaryDirectory() as statedir:

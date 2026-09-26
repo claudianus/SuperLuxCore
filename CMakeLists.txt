@@ -209,7 +209,7 @@ endif()
 # the system zone, so libsystem_malloc calls __TBB_malloc_safer_msize() on every
 # foreign pointer in find_zone_and_free()/malloc_make_purgeable(). For a pointer
 # at the start of a mapped region that probe reads an unmapped page
-# (EXC_BAD_ACCESS). pyluxcore is dlopen'd into Blender, so the proxy hijacks the
+# (EXC_BAD_ACCESS). pysuperluxcore is dlopen'd into Blender, so the proxy hijacks the
 # host allocator mid-process and crashes it. TBB::tbbmalloc itself is unaffected.
 if (TARGET onetbb::onetbb)
   get_property(_tbb_ils TARGET onetbb::onetbb PROPERTY INTERFACE_LINK_LIBRARIES)
@@ -221,7 +221,7 @@ endif()
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
 
-# Additional dependencies for pyluxcore
+# Additional dependencies for pysuperluxcore
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
@@ -339,7 +339,7 @@ set(INSTALL_EXCLUDE_REGEXES
 
 ################################################################################
 #
-# LuxRays, SLG, LuxCore and PyLuxCoreTools libraries
+# LuxRays, SLG, LuxCore and PySuperLuxCoreTools libraries
 #
 ################################################################################
 
@@ -352,7 +352,7 @@ include_directories(${GENERATED_INCLUDE_DIR})
 add_subdirectory(src/luxrays)
 add_subdirectory(src/slg)
 add_subdirectory(src/luxcore)
-add_subdirectory(src/pyluxcore)
+add_subdirectory(src/pysuperluxcore)
 
 ################################################################################
 #

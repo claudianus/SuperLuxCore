@@ -7,7 +7,7 @@
 # cube wrapped in an edgedetectoraov shape with a bevel texture as bumptex
 # and compares CPU/GPU outputs.
 #
-# Run from the repo root (after a configure+build of pyluxcore Debug):
+# Run from the repo root (after a configure+build of pysuperluxcore Debug):
 #   python3.13 dev-tools/e31_bevel_texture_parity.py
 
 import os
@@ -18,8 +18,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 SPP = 64
@@ -62,8 +62,8 @@ scene.objects.cube.transformation = 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
 
 
 def device_mask(want_type):
-    pyluxcore.Init()  # required: device enumeration is empty before Init
-    descs = pyluxcore.GetOpenCLDeviceDescs()
+    pysuperluxcore.Init()  # required: device enumeration is empty before Init
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
     mask = ""
     i = 0
     while True:
@@ -77,15 +77,15 @@ def device_mask(want_type):
 
 
 def parse_scene():
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString(SCENE_PROPS)
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return scene
 
 
 def render(scene, engine, sel=None, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -103,8 +103,8 @@ film.outputs.0.type = RGB_IMAGEPIPELINE
 film.outputs.0.index = 0
 """)
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while time.monotonic() < deadline:
@@ -124,7 +124,7 @@ film.outputs.0.index = 0
     film = ses.GetFilm()
     w, h = WIDTH, HEIGHT
     buf = np.zeros((h, w, 3), dtype=np.float32)
-    film.GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
+    film.GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
     return buf
 
 

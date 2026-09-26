@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
 SPP, SPP_REF = 32, 256
@@ -32,11 +32,11 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 def render(defs, spp, seed=17):
-    scn = pyluxcore.Properties(str(REPO / "scenes" / "manylights" / "scene.scn"))
-    sc = pyluxcore.Scene()
+    scn = pysuperluxcore.Properties(str(REPO / "scenes" / "manylights" / "scene.scn"))
+    sc = pysuperluxcore.Scene()
     sc.Parse(scn)
 
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -47,9 +47,9 @@ renderengine.seed = {seed}
 opencl.task.count = {TASK_COUNT}
 """)
     for k, v in defs.items():
-        cfg.Set(pyluxcore.Property(k, v))
+        cfg.Set(pysuperluxcore.Property(k, v))
 
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, sc))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, sc))
     t0 = time.monotonic()
     ses.Start()
     while True:
@@ -63,7 +63,7 @@ opencl.task.count = {TASK_COUNT}
     elapsed = time.monotonic() - t0
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
     ses.GetFilm().GetOutputFloat(
-        pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
+        pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3), elapsed
 

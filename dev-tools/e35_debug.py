@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Debug"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import pysuperluxcore
 
 sys.path.insert(0, str(REPO / "dev-tools"))
 from e35_tilepath_lighttracing import (SCENE_PROPS, device_mask, parse_scene,
@@ -26,7 +26,7 @@ def render(scene, engine, lt, hybrid, sel=None, tile_size=None):
     extra = ""
     if tile_size:
         extra += f"tile.size.x = {tile_size[0]}\ntile.size.y = {tile_size[1]}\n"
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -46,8 +46,8 @@ film.outputs.0.type = RGB_IMAGEPIPELINE
 film.outputs.0.index = 0
 {extra}""")
     if sel:
-        cfg.Set(pyluxcore.Property("opencl.devices.select", sel))
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+        cfg.Set(pysuperluxcore.Property("opencl.devices.select", sel))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while time.monotonic() < deadline:
@@ -58,7 +58,7 @@ film.outputs.0.index = 0
     ses.Stop()
     buf = np.zeros((HEIGHT, WIDTH, 3), dtype=np.float32)
     ses.GetFilm().GetOutputFloat(
-            pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
+            pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf, 0)
     return buf
 
 

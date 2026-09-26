@@ -30,8 +30,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 180
 SPP = 96
@@ -54,8 +54,8 @@ def parse_scene():
     cwd = os.getcwd()
     os.chdir(str(REPO))
     try:
-        props = pyluxcore.Properties(str(SCENE))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(SCENE))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -63,7 +63,7 @@ def parse_scene():
 
 
 def render(scene, engine, extra):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -75,7 +75,7 @@ opencl.task.count = {TASK_COUNT}
 opencl.native.threads.count = 0
 {extra}
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -93,7 +93,7 @@ opencl.native.threads.count = 0
     ses.Stop()
     # Raw linear radiance (unclamped): firefly tails only show in HDR
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB,
                                  rgb, 0, True)
     return rgb.reshape(HEIGHT, WIDTH, 3).mean(axis=2)
 

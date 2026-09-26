@@ -22,7 +22,7 @@ act workflow_dispatch \
   --matrix os:ubuntu-latest \
   --matrix python-minor:${python_version_minor} \
   --input build-type=Debug \
-  --artifact-server-path /tmp/pyluxcore \
+  --artifact-server-path /tmp/pysuperluxcore \
   --rm \
-  | tee /tmp/pyluxcore.log
+  | tee /tmp/pysuperluxcore.log
   #&& unzip -o ${zipfolder}/cibw-wheels-ubuntu-latest-13.zip -d ${zipfolder}

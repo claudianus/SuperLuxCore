@@ -29,8 +29,8 @@ def _rename(basepath, org, dest):
     """Rename wheel component."""
     try:
         shutil.move(
-            basepath / "pyluxcore.libs" / org,
-            basepath / "pyluxcore.libs" / dest,
+            basepath / "pysuperluxcore.libs" / org,
+            basepath / "pysuperluxcore.libs" / dest,
         )
     except FileNotFoundError:
         fail("Missing file in wheel: '%s'", org)

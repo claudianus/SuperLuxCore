@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pyluxcore/Release"))
-import pyluxcore
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
+import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 240
 SPP = 64
@@ -33,8 +33,8 @@ def parse_scene(rel_path):
     cwd = os.getcwd()
     os.chdir(str(REPO))
     try:
-        props = pyluxcore.Properties(str(REPO / rel_path))
-        scene = pyluxcore.Scene()
+        props = pysuperluxcore.Properties(str(REPO / rel_path))
+        scene = pysuperluxcore.Scene()
         scene.Parse(props)
         return scene
     finally:
@@ -42,7 +42,7 @@ def parse_scene(rel_path):
 
 
 def render(scene, engine, seed=17):
-    cfg = pyluxcore.Properties()
+    cfg = pysuperluxcore.Properties()
     # NOP pipeline: the default AutoLinearToneMap normalizes image mean and
     # would hide any reflectance differences in a white furnace.
     cfg.SetFromString(f"""
@@ -55,7 +55,7 @@ batch.haltspp = {SPP}
 renderengine.seed = {seed}
 path.pathdepth.total = 8
 """)
-    ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, scene))
+    ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
     ses.Start()
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
@@ -67,7 +67,7 @@ path.pathdepth.total = 8
             raise TimeoutError(f"render stalled ({engine})")
         time.sleep(0.5)
     rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
-    ses.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
+    ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE,
                                  rgb, 0, True)
     ses.Stop()
     return rgb.reshape(HEIGHT, WIDTH, 3)
@@ -76,7 +76,7 @@ path.pathdepth.total = 8
 def furnace(mb):
     # NOTE: the cornell room meshes live around (-2.78, 2, 2.7), not the
     # origin -- the camera must look at the room or no object is hit.
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString(f"""
 scene.camera.lookat.orig = -2.78 -1.0 2.73
 scene.camera.lookat.target = -2.78 1.5 1.8
@@ -98,7 +98,7 @@ scene.lights.env.color = 1.0 1.0 1.0
 scene.lights.env.gain = 1.0 1.0 1.0
 """)
     os.chdir(str(REPO))
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return render(scene, "PATHCPU")
 
@@ -107,7 +107,7 @@ def furnace_metal(mb):
     # metal2 GGX white-furnace: F0~=1 conductor at roughness 0.5. Single
     # scatter loses ~10% energy; the Heitz'16 height-tracking multi-bounce
     # walk must recover it (albedo -> ~1.0).
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString(f"""
 scene.camera.lookat.orig = -2.78 -1.0 2.73
 scene.camera.lookat.target = -2.78 1.5 1.8
@@ -132,7 +132,7 @@ scene.lights.env.color = 1.0 1.0 1.0
 scene.lights.env.gain = 1.0 1.0 1.0
 """)
     os.chdir(str(REPO))
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
     return render(scene, "PATHCPU")
 

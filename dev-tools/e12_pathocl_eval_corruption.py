@@ -32,10 +32,10 @@ sys.path.insert(
         "LUXCORE_PY",
         os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "..", "out", "build", "src", "pyluxcore", "Release"),
+            "..", "out", "build", "src", "pysuperluxcore", "Release"),
     ),
 )
-import pyluxcore
+import pysuperluxcore
 
 QUAD_PLY = """ply
 format ascii 1.0
@@ -56,7 +56,7 @@ end_header
 
 
 def render(engine, texdef, w=64, h=64, spp=8):
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString("""
 scene.camera.lookat.orig = 0 -1.5 0
 scene.camera.lookat.target = 0 0 0
@@ -67,25 +67,25 @@ scene.materials.white.kd = 0.0
 scene.materials.white.emission = gb0
 scene.objects.quad.material = white
 """ + texdef)
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.Parse(props)
 
-    rcfg = pyluxcore.Properties()
-    rcfg.Set(pyluxcore.Property("renderengine.type", engine))
-    rcfg.Set(pyluxcore.Property("sampler.type",
+    rcfg = pysuperluxcore.Properties()
+    rcfg.Set(pysuperluxcore.Property("renderengine.type", engine))
+    rcfg.Set(pysuperluxcore.Property("sampler.type",
             "TILEPATHSAMPLER" if engine == "TILEPATHOCL" else "SOBOL"))
-    rcfg.Set(pyluxcore.Property("opencl.cpu.use", [0]))
-    rcfg.Set(pyluxcore.Property("opencl.gpu.use",
+    rcfg.Set(pysuperluxcore.Property("opencl.cpu.use", [0]))
+    rcfg.Set(pysuperluxcore.Property("opencl.gpu.use",
             [1 if engine != "PATHCPU" else 0]))
-    rcfg.Set(pyluxcore.Property("opencl.native.threads.count", [0]))
-    rcfg.Set(pyluxcore.Property("accelerator.type", "MBVH"))
-    rcfg.Set(pyluxcore.Property("batch.haltspp", [spp]))
-    rcfg.Set(pyluxcore.Property("film.width", [w]))
-    rcfg.Set(pyluxcore.Property("film.height", [h]))
+    rcfg.Set(pysuperluxcore.Property("opencl.native.threads.count", [0]))
+    rcfg.Set(pysuperluxcore.Property("accelerator.type", "MBVH"))
+    rcfg.Set(pysuperluxcore.Property("batch.haltspp", [spp]))
+    rcfg.Set(pysuperluxcore.Property("film.width", [w]))
+    rcfg.Set(pysuperluxcore.Property("film.height", [h]))
     if engine == "PATHCPU":
-        rcfg.Set(pyluxcore.Property("film.hw.enable", [0]))
+        rcfg.Set(pysuperluxcore.Property("film.hw.enable", [0]))
 
-    session = pyluxcore.RenderSession(pyluxcore.RenderConfig(rcfg, scene))
+    session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(rcfg, scene))
     session.Start()
     t0 = _t.time()
     while _t.time() - t0 < 120:
@@ -97,13 +97,13 @@ scene.objects.quad.material = white
         _t.sleep(0.05)
     session.Pause()
     rgb = np.zeros(w * h * 3, dtype=np.float32)
-    session.GetFilm().GetOutputFloat(pyluxcore.FilmOutputType.RGB, rgb)
+    session.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB, rgb)
     session.Stop()
     return rgb[0::3].reshape(h, w)
 
 
 def main():
-    pyluxcore.Init()
+    pysuperluxcore.Init()
     open("/tmp/e12_quad.ply", "w").write(QUAD_PLY)
     runs = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 

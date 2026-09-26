@@ -15,9 +15,9 @@ def build_vertex_motion():
     visible in frame. Exercises vertex-motion interpolation and
     shared-shape instancing on every accel path (CPU embree, OpenCL
     swept MBVH, Metal HWRT)."""
-    import pyluxcore
+    import pysuperluxcore
 
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString("""
 scene.materials.mat.type = matte
 scene.materials.mat.kd = 0.9 0.2 0.2
@@ -47,7 +47,7 @@ scene.camera.shutterclose = 1.0
             [0.4, 1.1, 0], [-0.4, 1.1, 0]], dtype=np.float32)
     tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.DefineMeshExt("quad", base, tris)
     times = np.linspace(0.0, 1.0, 5, dtype=np.float32)
     steps = [base + np.array([d, 0, 0], dtype=np.float32)
@@ -70,9 +70,9 @@ def build_strand_motion():
     shutter. 'solid' tessellation keeps the primitive identical on
     every backend, so unlike Metal-native curve primitives this is a
     true same-image parity scene."""
-    import pyluxcore
+    import pysuperluxcore
 
-    props = pyluxcore.Properties()
+    props = pysuperluxcore.Properties()
     props.SetFromString("""
 scene.materials.mat.type = matte
 scene.materials.mat.kd = 0.9 0.2 0.2
@@ -96,7 +96,7 @@ scene.camera.shutterclose = 1.0
     moved = base.copy()
     moved[:, 0] += 0.8
 
-    scene = pyluxcore.Scene()
+    scene = pysuperluxcore.Scene()
     scene.DefineStrands("hair", 2, len(base), [tuple(p) for p in base],
             2, 0.03, 0.0, (0.8, 0.2, 0.2), None, "solid", 4, 0.0, 4,
             False, False, False)
