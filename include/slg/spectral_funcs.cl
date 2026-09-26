@@ -751,6 +751,23 @@ OPENCL_FORCE_INLINE float Spectral_CollapseToHero(__global uint *heroAlive) {
 	return (float)SLG_SPECTRAL_BINS;
 }
 
+// Non-mutating hero-only collapse of a connect contribution (MNEE/LMNEE):
+// the manifold constraint is satisfied only at the hero wavelength, so the
+// connect carries the MC wavelength-selection weight (SLG_SPECTRAL_BINS)
+// and the secondary bins are dropped. When the path was already collapsed
+// the contribution passes through unchanged.
+OPENCL_FORCE_INLINE float3 Spectral_KeepHeroBins(const float3 v,
+		const uint heroAlive) {
+	const uint hero = min((heroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
+			SLG_SPECTRAL_BINS - 1u);
+	const uint heroMask = 1u << hero;
+	if ((heroAlive & SLG_SW_ALIVE_MASK) == heroMask)
+		return v;
+	return (hero == 0u) ? MAKE_FLOAT3(v.x * SLG_SPECTRAL_BINS, 0.f, 0.f) :
+			((hero == 1u) ? MAKE_FLOAT3(0.f, v.y * SLG_SPECTRAL_BINS, 0.f) :
+			MAKE_FLOAT3(0.f, 0.f, v.z * SLG_SPECTRAL_BINS));
+}
+
 // Leaf-RGB upsampling for texture eval sites. Called at the leaf producers
 // (constfloat3, imagemap, hitpointcolor, ...) inside Texture_GetSpectrumValue
 // and the eval-op machine. The emission bit selects the Smits illuminant

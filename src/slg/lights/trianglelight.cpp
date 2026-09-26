@@ -76,6 +76,15 @@ void TriangleLight::Preprocess() {
 
 	meshArea = mesh.GetMeshArea(localToWorld);
 	invMeshArea = 1.f / meshArea;
+
+	// Canonical reference point/normal for the adaptive caustic
+	// partition's solid-angle estimate
+	const Triangle &tri = mesh.GetTriangles()[triangleIndex];
+	const Point p0 = mesh.GetVertex(localToWorld, tri.v[0]);
+	const Point p1 = mesh.GetVertex(localToWorld, tri.v[1]);
+	const Point p2 = mesh.GetVertex(localToWorld, tri.v[2]);
+	worldCentroid = p0 + (p1 - p0) * (1.f / 3.f) + (p2 - p0) * (1.f / 3.f);
+	worldGeometryNormal = mesh.GetGeometryNormal(localToWorld, triangleIndex);
 }
 
 Spectrum TriangleLight::Emit(SceneConstRef scene,

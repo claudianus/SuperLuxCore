@@ -333,24 +333,24 @@ void Film_AddSample(
 // GPU light tracing (doc/features/gpu_lighttracing.md): splat a
 // light-path-to-camera connection into the screen-normalized radiance
 // channel. The screen channel is a float[3] per pixel (no weight
-// accumulator - CPU AtomicAddIfValidWeightedPixel semantics); the v1
-// splat is a box at the landing pixel, the pixel filter is not applied
-// (documented gap vs the CPU FilmSampleSplatter path).
+// accumulator - CPU AtomicAddIfValidWeightedPixel semantics).
+//
+// filterLUTs is the host-packed pixel-filter LUT set (NULL under
+// FILTER_NONE -> box splat at the landing pixel). Layout:
+//   [0] = lutsSize, [1] = filter xWidth, [2] = filter yWidth,
+//   per-offset headers at [3 + 3*i] = {lutWidth, lutHeight, dataBase}
+//   followed by the weight floats. The offset LUT choice and the
+//   footprint walk mirror FilmSampleSplatter::AtomicSplatSample exactly.
 OPENCL_FORCE_INLINE void Film_SplatLight(
 		const float filmX, const float filmY,
 		const uint lightGroupID, const float3 radiance,
 		__global float **filmScreenRadianceGroup,
 		const uint filmWidth, const uint filmHeight,
 		const uint filmSubRegion0, const uint filmSubRegion1,
-		const uint filmSubRegion2, const uint filmSubRegion3) {
+		const uint filmSubRegion2, const uint filmSubRegion3,
+		__global const float *filterLUTs) {
 	if ((lightGroupID >= FILM_MAX_RADIANCE_GROUP_COUNT) ||
 			!filmScreenRadianceGroup[lightGroupID])
-		return;
-
-	const uint x = Floor2UInt(filmX);
-	const uint y = Floor2UInt(filmY);
-	if ((x < filmSubRegion0) || (x > filmSubRegion1) ||
-			(y < filmSubRegion2) || (y > filmSubRegion3))
 		return;
 
 	if (isnan(radiance.x) || isinf(radiance.x) ||
@@ -358,11 +358,62 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 			isnan(radiance.z) || isinf(radiance.z))
 		return;
 
-	__global float *dst = &filmScreenRadianceGroup[lightGroupID]
-			[(x + y * filmWidth) * 3];
-	AtomicAdd(&dst[0], radiance.x);
-	AtomicAdd(&dst[1], radiance.y);
-	AtomicAdd(&dst[2], radiance.z);
+	__global float *group = filmScreenRadianceGroup[lightGroupID];
+	if (!filterLUTs) {
+		const uint x = Floor2UInt(filmX);
+		const uint y = Floor2UInt(filmY);
+		if ((x < filmSubRegion0) || (x > filmSubRegion1) ||
+				(y < filmSubRegion2) || (y > filmSubRegion3))
+			return;
+
+		__global float *dst = &group[(x + y * filmWidth) * 3];
+		AtomicAdd(&dst[0], radiance.x);
+		AtomicAdd(&dst[1], radiance.y);
+		AtomicAdd(&dst[2], radiance.z);
+		return;
+	}
+
+	const float lutsSize = filterLUTs[0];
+	const float xWidth = filterLUTs[1];
+	const float yWidth = filterLUTs[2];
+
+	// LUT selection on the fractional pixel offset (FilterLUTs::GetLUT)
+	const float dImageX = filmX - .5f;
+	const float dImageY = filmY - .5f;
+	const int lix = clamp(Floor2Int(lutsSize *
+			(dImageX - floor(filmX) + .5f)), 0, (int)lutsSize - 1);
+	const int liy = clamp(Floor2Int(lutsSize *
+			(dImageY - floor(filmY) + .5f)), 0, (int)lutsSize - 1);
+	const uint lutHeader = 3u + 3u * (lix + liy * (uint)lutsSize);
+	const uint lutW = (uint)filterLUTs[lutHeader];
+	const uint lutH = (uint)filterLUTs[lutHeader + 1];
+	uint lutIdx = (uint)filterLUTs[lutHeader + 2];
+
+	const int x0 = Floor2Int(dImageX - xWidth * .5f + .5f);
+	const int x1 = x0 + (int)lutW;
+	const int y0 = Floor2Int(dImageY - yWidth * .5f + .5f);
+	const int y1 = y0 + (int)lutH;
+
+	for (int iy = y0; iy < y1; ++iy) {
+		if (iy < (int)filmSubRegion2) {
+			lutIdx += lutW;
+			continue;
+		} else if (iy > (int)filmSubRegion3)
+			break;
+
+		for (int ix = x0; ix < x1; ++ix) {
+			const float w = filterLUTs[lutIdx++];
+			if (ix < (int)filmSubRegion0)
+				continue;
+			else if (ix > (int)filmSubRegion1)
+				break;
+
+			__global float *dst = &group[(ix + iy * filmWidth) * 3];
+			AtomicAdd(&dst[0], radiance.x * w);
+			AtomicAdd(&dst[1], radiance.y * w);
+			AtomicAdd(&dst[2], radiance.z * w);
+		}
+	}
 }
 
 //------------------------------------------------------------------------------

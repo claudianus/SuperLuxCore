@@ -19,6 +19,10 @@
 #ifndef _SLG_PATHTRACER_H
 #define	_SLG_PATHTRACER_H
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+
 #include "slg/slg.h"
 #include "slg/engines/cpurenderengine.h"
 #include "slg/samplers/sampler.h"
@@ -183,6 +187,10 @@ public:
 
 	// Hybrid backward/forward path tracing settings
 	float hybridBackForwardPartition, hybridBackForwardGlossinessThreshold;
+	// Adaptive caustic partition: widened chain membership (any
+	// non-diffuse vertex) plus a per-path terminal difficulty gate.
+	float hybridBackForwardTerminalGlossiness, hybridBackForwardConnectProb;
+	bool hybridBackForwardAdaptiveCaustic;
 
 	// Albedo AOV settings
 	AlbedoSpecularSetting albedoSpecularSetting;
@@ -212,10 +220,22 @@ public:
 	// more also enable the multi-specular chain that closed glass slabs and
 	// glass balls need.
 	u_int mneeMaxSpecular;
-	// Manifold seed cache (GPU only, path.mnee.seedcache): converged
-	// single-vertex solutions are cached in a hashed world-space grid and
-	// reused as Newton warm-start seeds for nearby attempts.
+	// Manifold seed cache (path.mnee.seedcache): converged single-vertex
+	// solutions are cached in a hashed world-space grid and reused as
+	// Newton warm-start seeds for nearby attempts on the same occluder.
+	// The light-side (LMNEE) solves namespace their entries with a
+	// sentinel light index, exactly like the GPU mneeSeeds table.
 	bool mneeSeedCacheEnable;
+	struct MneeSeedEntry {
+		std::atomic<float> vx{0.f}, vy{0.f}, vz{0.f};
+		std::atomic<float> nx{0.f}, ny{0.f}, nz{0.f};
+		std::atomic<u_int> lightIndex{0}, meshIndex{0};
+		std::atomic<u_int> mirrorMode{0}, valid{0};
+	};
+	// The table is shared by all render threads: seeds are last-writer-wins
+	// hints (a stale entry only wastes Newton iterations, the constraint is
+	// still verified), so relaxed atomics are sufficient.
+	std::unique_ptr<MneeSeedEntry[]> mneeSeeds;
 
 	// ReSTIR GI (G1) settings (path.restir.gi.*): the CPU implementation
 	// runs through the restirGI store below; the GPU kernels read the
@@ -232,13 +252,33 @@ public:
 	// the eye side (caustic suppression, same contract as CPU hybrid).
 	bool lightTracingEnable;
 	float lightTracingTaskFraction;
-	// Caustic focus cache (GPU only): guided light emission toward
-	// remembered productive targets (see LIGHT_FOCUS_K in
-	// pathoclbase_datatypes.cl). Unbiased mixture: pdf = (1-ratio)*native
-	// + ratio*aim.
+	// Caustic focus cache: guided light emission toward remembered
+	// productive targets (see LIGHT_FOCUS_K in pathoclbase_datatypes.cl
+	// for the GPU ring; the CPU table below mirrors it). Unbiased
+	// mixture: pdf = (1-ratio)*native + ratio*aim.
 	bool lightFocusEnable;
 	float lightFocusRatio;
 	float lightFocusRadiusFrac;
+	// Per-light ring of the last K world-space targets that produced a
+	// screen contribution through a delta interface, plus the write
+	// cursor. Entries are last-writer-wins hints shared by all render
+	// threads: a torn read folds to the broad aim radius (same contract
+	// as the GPU ring), so relaxed atomics are sufficient.
+	static constexpr u_int lightFocusK = 32;
+	struct LightFocusEntry {
+		std::atomic<float> x{0.f}, y{0.f}, z{0.f}, aimR{0.f};
+	};
+	mutable std::once_flag lightFocusInitOnce;
+	mutable std::unique_ptr<LightFocusEntry[]> lightFocusTable;
+	mutable std::unique_ptr<std::atomic<u_int>[]> lightFocusCounts;
+	mutable u_int lightFocusLightCount = 0;
+	// Delta-specular caster bounding spheres (world space). Distant-family
+	// lights have no steerable emission direction, so LightFocusEmit
+	// instead re-origins their rays onto the casters' discs projected
+	// onto the emit plane: without this a directional light's rays are
+	// spread over the whole scene disc and almost none reach the glass.
+	mutable std::vector<luxrays::Point> lightFocusCasterCenters;
+	mutable std::vector<float> lightFocusCasterRadii;
 
 private:
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
@@ -304,6 +344,53 @@ private:
 			const LightSource &light,  const BSDF &bsdf,
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			std::vector<SampleResult> &sampleResults) const;
+
+	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera
+	// lens, the CPU port of the GPU LMnee_* driver. Called by ConnectToEye
+	// when the visibility ray hits a delta specular occluder. Returns true
+	// if a contribution was splatted. See pathtracer_mnee.cpp.
+	bool LMNEEConnectToEye(
+			luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene,
+			FilmConstRef film, const float time,
+			const LightSource &light, const BSDF &bsdf,
+			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+			const luxrays::RayHit &shadowRayHit,
+			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+			BSDF &warmV0, BSDF &warmV1, bool &warmOk,
+			std::vector<SampleResult> &sampleResults) const;
+
+	// LMNEE, multi-specular variant: x0 -> x1 -> ... -> xN -> lens for
+	// closed dielectrics (slabs, spheres) that need more than one
+	// refracting interface. Mirrors MNEEMultiDirectSampling. warmV0/warmV1
+	// optionally carry a consistent [solved vertex, seg2 blocker] seed
+	// pair from the failed single-vertex solve.
+	bool LMNEEMultiConnectToEye(
+			luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene,
+			FilmConstRef film, const float time,
+			const LightSource &light, const BSDF &bsdf,
+			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+			const BSDF *warmV0, const BSDF *warmV1,
+			std::vector<SampleResult> &sampleResults) const;
+
+	// Caustic focus cache (CPU side of the GPU lightFocus rings):
+	// lazy allocation against the scene light count, hotspot crediting
+	// and the guided-emission mixture applied to a freshly emitted ray.
+	void LightFocusEnsureInit(SceneConstRef scene) const;
+	void LightFocusCredit(SceneConstRef scene, const u_int lightIndex,
+			const luxrays::Point &p) const;
+	void LightFocusEmit(SceneConstRef scene, const LightSource &light,
+			Sampler &sampler, const float time,
+			luxrays::Ray &ray, luxrays::Spectrum &flux,
+			float &emissionPdfW) const;
+	// Distant-family branch of the caustic focus: the light direction is
+	// (nearly) fixed, so instead of re-aiming the direction the ray origin
+	// is re-sampled on a caster disc projected onto the emit plane.
+	void LightFocusEmitDistant(SceneConstRef scene, const LightSource &light,
+			Sampler &sampler, const float time,
+			luxrays::Ray &ray, float &emissionPdfW) const;
 
 	FilterDistribution *pixelFilterDistribution;
 	const PhotonGICache *photonGICache;

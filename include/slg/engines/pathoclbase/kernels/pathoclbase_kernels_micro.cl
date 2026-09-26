@@ -24,6 +24,30 @@
 
 //#define DEBUG_PRINTF_KERNEL_NAME 1
 
+// Adaptive aim radius for a focus-ring target: the cone should cover the
+// recorded target's local neighbourhood, so it is sized by the distance
+// to the nearest entry already in the ring. A dense cluster (a real
+// caustic hotspot) yields a tight cone; isolated/spread receivers yield
+// a broad one - self-tuning the radius instead of a fixed global value.
+// Clamped to [focus.radius, worldRadius]: the property is now the
+// tightest allowed cone, and an empty ring bootstraps to the broad cap.
+OPENCL_FORCE_INLINE float FocusAimRadius(
+		__global const float4 *ring, const uint nValid,
+		const float px, const float py, const float pz,
+		const float minR, const float maxR) {
+	float nn2 = INFINITY;
+	for (uint e = 0; e < nValid; ++e) {
+		const float4 q = ring[e];
+		const float dx = q.x - px, dy = q.y - py, dz = q.z - pz;
+		nn2 = fmin(nn2, dx * dx + dy * dy + dz * dz);
+	}
+	// The ring is written lock-free, so a scanned entry may be mid-update;
+	// a torn read can yield NaN. Fold that (and the empty-ring INF) to the
+	// broad cap; a genuine tight cluster (r < minR) keeps the floor.
+	const float r = sqrt(nn2);
+	return (r == r) ? clamp(r, minR, maxR) : maxR;
+}
+
 //------------------------------------------------------------------------------
 // Evaluation of the Path finite state machine.
 //
@@ -156,7 +180,15 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			// Avoid to render caustic path if hybridBackForwardEnable
-			(!taskConfig->pathTracer.hybridBackForward.enabled || !EyePathInfo_IsCausticPath(pathInfo));
+			(!taskConfig->pathTracer.hybridBackForward.enabled ||
+			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
+				// Env lights have infinite solid angle: only a delta
+				// terminal makes the connection eye-hard
+				!EyePathInfo_IsAdaptiveCausticHitPath(pathInfo,
+						taskConfig->pathTracer.hybridBackForward.terminalGlossiness,
+						taskConfig->pathTracer.hybridBackForward.connectProb,
+						INFINITY) :
+				!EyePathInfo_IsCausticPath(pathInfo)));
 
 	checkDirectLightHit = checkDirectLightHit &&
 			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
@@ -293,7 +325,17 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			// Avoid to render caustic path if hybridBackForwardEnable
-			(!taskConfig->pathTracer.hybridBackForward.enabled || !EyePathInfo_IsCausticPath(pathInfo));
+			(!taskConfig->pathTracer.hybridBackForward.enabled ||
+			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
+				// Only triangle lights are hittable; the hit BSDF carries
+				// the light index. The terminal vertex is the ray origin.
+				!(BSDF_IsLightSource(bsdf) &&
+					EyePathInfo_IsAdaptiveCausticHitPath(pathInfo,
+						taskConfig->pathTracer.hybridBackForward.terminalGlossiness,
+						taskConfig->pathTracer.hybridBackForward.connectProb,
+						Light_ConnectionSolidAngle(&lights[bsdf->triangleLightSourceIndex],
+								VLOAD3F(&rays[gid].o.x)))) :
+				!EyePathInfo_IsCausticPath(pathInfo)));
 
 	checkDirectLightHit = checkDirectLightHit &&
 			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
@@ -560,11 +602,17 @@ __kernel void AdvancePaths_MK_RT_DL(
 		// estimator is 0 on these paths and forward BSDF sampling can not
 		// hit a positional delta light, so the estimators are disjoint and
 		// no MIS is required.
+		// hybridBackForward: every MNEE path is caustic-class (light ->
+		// specular chain -> diffuse -> eye) and is owned by the light pass;
+		// the isNearlyCaustic gate only sees speculars in the eye prefix,
+		// so MNEE is suppressed here explicitly (measured: the two
+		// estimators summed exactly on tinycaster, 2x bias).
 		// Mnee_Start returns 1 (single vertex started), 2 (single vertex
 		// inapplicable but the chain may apply: mirror opposite-side seed),
 		// 0 (neither).
 		const int mneeStartResult =
-				((taskDirectLight->directLightResult == SHADOWED) ?
+				((taskDirectLight->directLightResult == SHADOWED) &&
+				!taskConfig->pathTracer.hybridBackForward.enabled ?
 				Mnee_Start(taskConfig, task, taskDirectLight, taskState,
 					&rayHits[gid], &rays[gid], mneeSeeds, worldRadius
 					LIGHTS_PARAM) : 0);
@@ -1814,6 +1862,12 @@ OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
 	lpi->isNearlyS = false;
 	lpi->isNearlySD = false;
 	lpi->isNearlySDS = false;
+	lpi->isAdaptiveS = false;
+	lpi->firstVertPX = 0.f;
+	lpi->firstVertPY = 0.f;
+	lpi->firstVertPZ = 0.f;
+	lpi->firstVertGloss = 0.f;
+	lpi->firstVertDelta = 1;
 	lpi->hasDeltaVertex = false;
 	lpi->pathDone = false;
 	lpi->mneeActive = false;
@@ -1844,6 +1898,20 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 	lpi->isNearlySD = lpi->isNearlyS && !isNewVertexNearlySpecular;
 	lpi->isNearlyS = ((lpi->depth.depth == 1) || lpi->isNearlyS) && isNewVertexNearlySpecular;
 
+	// Adaptive partition: any non-diffuse vertex keeps the chain alive;
+	// the first (light-adjacent) vertex is the terminal of the eye-side
+	// connection-difficulty test.
+	lpi->isAdaptiveS = ((lpi->depth.depth == 1) || lpi->isAdaptiveS) &&
+			((event & (SPECULAR | GLOSSY)) != 0);
+	if (lpi->depth.depth == 1) {
+		const float3 hp = VLOAD3F(&bsdf->hitPoint.p.x);
+		lpi->firstVertPX = hp.x;
+		lpi->firstVertPY = hp.y;
+		lpi->firstVertPZ = hp.z;
+		lpi->firstVertGloss = glossiness;
+		lpi->firstVertDelta = (event & SPECULAR) ? 1 : 0;
+	}
+
 	lpi->lastBSDFEvent = event;
 }
 
@@ -1860,6 +1928,24 @@ OPENCL_FORCE_INLINE bool LightPathInfo_IsCausticPath(__global const LightPathInf
 		const float glossinessThreshold) {
 	return lpi->isNearlyS && (lpi->depth.depth + 1 > 1) &&
 			!LightPathInfo_IsNearlySpecular(event, glossiness, glossinessThreshold);
+}
+
+// Adaptive counterpart: the path so far is all non-diffuse
+// (isAdaptiveS), the receiver is non-delta and the light-adjacent
+// vertex v1 is hard for the eye path (delta, or a sharp lobe facing a
+// tiny light solid angle). Same partition the eye side applies, so the
+// classes stay disjoint.
+OPENCL_FORCE_INLINE bool LightPathInfo_IsAdaptiveCausticPath(
+		__global const LightPathInfo *lpi, const BSDFEvent event,
+		const float terminalGlossiness, const float connectProb,
+		__global const LightSource* restrict light) {
+	return lpi->isAdaptiveS && (lpi->depth.depth + 1 > 1) &&
+			!(event & SPECULAR) &&
+			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
+					lpi->firstVertDelta, lpi->firstVertGloss,
+					Light_ConnectionSolidAngle(light,
+							MAKE_FLOAT3(lpi->firstVertPX, lpi->firstVertPY,
+									lpi->firstVertPZ)));
 }
 
 //------------------------------------------------------------------------------
@@ -1979,21 +2065,47 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 		// aim cones by 1/(1-g).
 		const uint focusN = (pathTracer->lightTracing.focusEnable && lightFocusCount) ?
 				min(lightFocusCount[emitLightIndex], (uint)LIGHT_FOCUS_K) : 0;
-		const bool focusActive = (focusN > 0) &&
-				((light->type == TYPE_POINT) || (light->type == TYPE_SPOT));
+		const bool isPositional = (light->type == TYPE_POINT) ||
+				(light->type == TYPE_SPOT);
+
+		// Area emitters (manifold-guided emission): the natively-sampled
+		// surface point is kept and only the outgoing direction is
+		// re-aimed into the hotspot cone. Only the open cosine hemisphere
+		// is guided - a restricted or forward emission cone cannot be
+		// steered without leaving its support, so those fall back to
+		// native sampling. The joint position*direction pdf factors as
+		// invTriangleArea * dirPdf for both branches, so the position
+		// density is unchanged and only the direction density mixes.
+		Frame emitFrame;
+		float3 emittedRad = BLACK;
+		bool isTri = false;
+		if ((focusN > 0) && !isPositional && (light->type == TYPE_TRIANGLE)) {
+			const uint triMatIndex = sceneObjs[light->triangle.meshIndex].materialIndex;
+			if (Material_GetEmittedCosThetaMax(triMatIndex MATERIALS_PARAM) <= 0.f) {
+				isTri = true;
+				HitPoint_GetFrame(&task->tmpHitPoint, &emitFrame);
+				// Recover the direction-independent emitted radiance:
+				// flux = emittedRad * |localDir.z| for every model
+				const float origLocalZ = Frame_ToLocal_Private(&emitFrame,
+						normalize(VLOAD3F(&rays[gid].d.x))).z;
+				emittedRad = (origLocalZ > 0.f) ? (flux / origLocalZ) : BLACK;
+			}
+		}
+		const bool focusActive = (focusN > 0) && (isPositional || isTri);
 		if (focusActive) {
 			const float3 rayOrig = VLOAD3F(&rays[gid].o.x);
-			const float aimR = pathTracer->lightTracing.focusRadiusFrac * worldRadius;
 			const float g = pathTracer->lightTracing.focusRatio;
 
-			// Optionally re-aim the direction at a remembered hotspot
+			// Optionally re-aim the direction at a remembered hotspot.
+			// Each ring entry carries its own aim radius in .w (tight for
+			// specular portals, broad for diffuse receivers).
 			if (Rnd_FloatValue(seed) < g) {
 				const uint slot = min((uint)(Rnd_FloatValue(seed) * focusN), focusN - 1);
 				const float4 hp = lightFocus[emitLightIndex * LIGHT_FOCUS_K + slot];
 				const float3 toTarget = MAKE_FLOAT3(hp.x, hp.y, hp.z) - rayOrig;
 				const float targetDist = length(toTarget);
-				if (targetDist > aimR) {
-					const float sinMax = aimR / targetDist;
+				if (targetDist > hp.w) {
+					const float sinMax = hp.w / targetDist;
 					const float cosMax = sqrt(fmax(0.f, 1.f - sinMax * sinMax));
 					const float3 axis = toTarget / targetDist;
 					float3 axX, axY;
@@ -2008,7 +2120,7 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 					if (light->type == TYPE_POINT)
 						flux = VLOAD3F(light->notIntersectable.point.emittedFactor.c) *
 								(1.f / (4.f * M_PI_F));
-					else {
+					else if (light->type == TYPE_SPOT) {
 						const float3 localDir = normalize(Transform_InvApplyVector(
 								&light->notIntersectable.light2World, newDir));
 						flux = VLOAD3F(light->notIntersectable.spot.emittedFactor.c) *
@@ -2016,6 +2128,13 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 								light->notIntersectable.spot.cosTotalWidth,
 								light->notIntersectable.spot.cosFalloffStart) /
 								fabs(CosTheta(localDir)));
+					} else {
+						// Cosine-hemisphere area emitter: emittedRad *
+						// cos(theta) off the surface normal (0 below the
+						// horizon - an aim into the far side just dies)
+						const float localZ = Frame_ToLocal_Private(&emitFrame,
+								newDir).z;
+						flux = emittedRad * fmax(localZ, 0.f);
 					}
 				}
 			}
@@ -2025,19 +2144,23 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 			float nativePdf;
 			if (light->type == TYPE_POINT)
 				nativePdf = 1.f / (4.f * M_PI_F);
-			else
+			else if (light->type == TYPE_SPOT)
 				nativePdf = (CosTheta(normalize(Transform_InvApplyVector(
 						&light->notIntersectable.light2World, emitDir))) >=
 						light->notIntersectable.spot.cosTotalWidth) ?
 						UniformConePdf(light->notIntersectable.spot.cosTotalWidth) : 0.f;
+			else
+				// cosine hemisphere around the surface normal
+				nativePdf = fmax(Frame_ToLocal_Private(&emitFrame, emitDir).z,
+						0.f) * (1.f / M_PI_F);
 
 			float aimPdf = 0.f;
 			for (uint k = 0; k < focusN; ++k) {
 				const float4 hk = lightFocus[emitLightIndex * LIGHT_FOCUS_K + k];
 				const float3 tk = MAKE_FLOAT3(hk.x, hk.y, hk.z) - rayOrig;
 				const float dk = length(tk);
-				if (dk > aimR) {
-					const float sk = aimR / dk;
+				if (dk > hk.w) {
+					const float sk = hk.w / dk;
 					const float ck = sqrt(fmax(0.f, 1.f - sk * sk));
 					if (dot(emitDir, tk / dk) >= ck)
 						aimPdf += UniformConePdf(ck);
@@ -2047,6 +2170,96 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 			aimPdf /= focusN;
 
 			emissionPdfW = (1.f - g) * nativePdf + g * aimPdf;
+			// Area emitters: fold the (unchanged) surface-position
+			// density back into the joint emission pdf
+			if (isTri)
+				emissionPdfW *= light->triangle.invTriangleArea;
+		}
+
+		// Distant-light caustic focusing (CPU LightFocusEmitDistant
+		// parity): distant directions aren't steerable, so with
+		// probability g the emit ORIGIN is re-aimed at the projected
+		// disc of a delta-specular caster. Casters are appended to
+		// lightFocus after the per-light rings (float4: center.xyz +
+		// bounding radius). The origin's one-sample mixture pdf is
+		//   (1-g)*nativeArea + g*coverN/(pi*sumR2)
+		// folded into emissionPdfW as a ratio over the native disc
+		// density, keeping both branches unbiased.
+		const uint focusCasterN = (pathTracer->lightTracing.focusEnable &&
+				lightFocus) ? pathTracer->lightTracing.focusCasterCount : 0;
+		if ((focusCasterN > 0) &&
+				((light->type == TYPE_DISTANT) || (light->type == TYPE_SHARPDISTANT))) {
+			const uint ltCount = as_uint(emitLightsDistribution[0]);
+			__global const float4* restrict casters =
+					lightFocus + ltCount * LIGHT_FOCUS_K;
+
+			float sumR2 = 0.f;
+			for (uint k = 0; k < focusCasterN; ++k)
+				sumR2 += casters[k].w * casters[k].w;
+
+			if (sumR2 > 0.f) {
+				const float g = pathTracer->lightTracing.focusRatio;
+				// Same radius the emit used (kernel-side envRadius arg)
+				const float envRadius = worldRadius;
+				const float3 wc = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+				float3 aDir, axX, axY;
+				if (light->type == TYPE_SHARPDISTANT) {
+					aDir = VLOAD3F(&light->notIntersectable.sharpDistant.absoluteLightDir.x);
+					axX = VLOAD3F(&light->notIntersectable.sharpDistant.x.x);
+					axY = VLOAD3F(&light->notIntersectable.sharpDistant.y.x);
+				} else {
+					aDir = VLOAD3F(&light->notIntersectable.distant.absoluteLightDir.x);
+					axX = VLOAD3F(&light->notIntersectable.distant.x.x);
+					axY = VLOAD3F(&light->notIntersectable.distant.y.x);
+				}
+				const float invR = 1.f / envRadius;
+
+				if (Rnd_FloatValue(seed) < g) {
+					// Pick a caster proportional to its disc area r^2,
+					// then sample a point of its projected disc
+					float t = Rnd_FloatValue(seed) * sumR2;
+					uint i = 0;
+					for (; i + 1 < focusCasterN; ++i) {
+						const float w = casters[i].w * casters[i].w;
+						if (t < w)
+							break;
+						t -= w;
+					}
+					float dd1, dd2;
+					ConcentricSampleDisk(Rnd_FloatValue(seed),
+							Rnd_FloatValue(seed), &dd1, &dd2);
+					const float rho = casters[i].w * invR;
+					const float3 oc = MAKE_FLOAT3(casters[i].x, casters[i].y,
+							casters[i].z) - wc;
+					// Emit-plane disc coords map to the perpendicular
+					// offset with a negative sign:
+					// o = wc - R*(dir + d1*x + d2*y)
+					const float s1 = -dot(oc, axX) * invR + rho * dd1;
+					const float s2 = -dot(oc, axY) * invR + rho * dd2;
+					Ray_Init2(&rays[gid],
+							wc - envRadius * (aDir + s1 * axX + s2 * axY),
+							normalize(VLOAD3F(&rays[gid].d.x)), time);
+				}
+
+				// Mixture pdf ratio on the final origin's disc coords
+				const float3 oo = VLOAD3F(&rays[gid].o.x) - wc;
+				const float s1 = -dot(oo, axX) * invR;
+				const float s2 = -dot(oo, axY) * invR;
+				uint coverN = 0;
+				for (uint k = 0; k < focusCasterN; ++k) {
+					const float3 oc = MAKE_FLOAT3(casters[k].x, casters[k].y,
+							casters[k].z) - wc;
+					const float c1 = -dot(oc, axX) * invR;
+					const float c2 = -dot(oc, axY) * invR;
+					const float rho = casters[k].w * invR;
+					const float e1 = s1 - c1, e2 = s2 - c2;
+					if (e1 * e1 + e2 * e2 <= rho * rho)
+						++coverN;
+				}
+				const float nativeArea = (s1 * s1 + s2 * s2 <= 1.f) ? 1.f : 0.f;
+				emissionPdfW *= (1.f - g) * nativeArea +
+						g * coverN * envRadius * envRadius / sumR2;
+			}
 		}
 
 #if defined(SLG_SPECTRAL)
@@ -2227,14 +2440,23 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 		visRay->flags = RAY_FLAGS_MASKED;
 		if ((visRayHit->meshIndex == NULL_INDEX) && lpi->pendingSplat.isCaustic) {
 			// Nothing blocked the connection: splat the radiance
-			const float3 radiance = MAKE_FLOAT3(lpi->pendingSplat.radianceR,
+			float3 radiance = MAKE_FLOAT3(lpi->pendingSplat.radianceR,
 					lpi->pendingSplat.radianceG, lpi->pendingSplat.radianceB) *
 					connectionThroughput;
+#if defined(SLG_SPECTRAL)
+			// The pending radiance and the connect throughput are both
+			// spectral wavelength bins: multiply first, then project to
+			// film RGB exactly like the eye-path splat
+			// (SampleResult_ProjectSpectralToRGB).
+			radiance = Spectral_ProjectToRGB(radiance,
+					sampleResult->spectralW, sampleResult->spectralHeroAlive);
+#endif
 			Film_SplatLight(lpi->pendingSplat.filmX, lpi->pendingSplat.filmY,
 					lpi->pendingSplat.lightGroupID, radiance,
 					filmScreenRadianceGroup,
 					filmWidth, filmHeight,
-					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3,
+					lightFilterLUTs);
 
 			// Caustic focus cache: a path that crossed a delta surface
 			// and connected to the camera is productive - append its
@@ -2244,12 +2466,37 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			if (lpi->hasDeltaVertex && lightFocusCount &&
 					pathTracer->lightTracing.focusEnable) {
 				lpi->hasDeltaVertex = false;
+				const uint ringBase = lpi->lightIndex * LIGHT_FOCUS_K;
 				const uint cursor = atomic_inc(&lightFocusCount[lpi->lightIndex]);
-				lightFocus[lpi->lightIndex * LIGHT_FOCUS_K +
-						(cursor % LIGHT_FOCUS_K)] =
+				const float aimR = FocusAimRadius(&lightFocus[ringBase],
+						min(cursor, (uint)LIGHT_FOCUS_K),
+						lpi->firstDeltaPX, lpi->firstDeltaPY, lpi->firstDeltaPZ,
+						pathTracer->lightTracing.focusRadiusFrac * worldRadius,
+						worldRadius);
+				lightFocus[ringBase + (cursor % LIGHT_FOCUS_K)] =
 						MAKE_FLOAT4(lpi->firstDeltaPX, lpi->firstDeltaPY,
-								lpi->firstDeltaPZ,
-								pathTracer->lightTracing.focusRadiusFrac * worldRadius);
+								lpi->firstDeltaPZ, aimR);
+			}
+
+			// Manifold-guided emission: a solved-manifold connect (LMNEE)
+			// reaches the camera only through specular interfaces. Credit
+			// its receiver x0 into the focus ring so emission is steered
+			// onto receivers that are known to reach the camera through a
+			// refractive/reflective occluder (the refracted-view hard case).
+			if (lpi->pendingSplat.fromMnee && lightFocusCount &&
+					pathTracer->lightTracing.focusEnable) {
+				const uint ringBase = lpi->lightIndex * LIGHT_FOCUS_K;
+				const uint cursor = atomic_inc(&lightFocusCount[lpi->lightIndex]);
+				const float aimR = FocusAimRadius(&lightFocus[ringBase],
+						min(cursor, (uint)LIGHT_FOCUS_K),
+						lpi->pendingSplat.recvPX, lpi->pendingSplat.recvPY,
+						lpi->pendingSplat.recvPZ,
+						pathTracer->lightTracing.focusRadiusFrac * worldRadius,
+						worldRadius);
+				lightFocus[ringBase + (cursor % LIGHT_FOCUS_K)] =
+						MAKE_FLOAT4(lpi->pendingSplat.recvPX,
+								lpi->pendingSplat.recvPY,
+								lpi->pendingSplat.recvPZ, aimR);
 			}
 		} else if (visRayHit->meshIndex != NULL_INDEX) {
 			// The connection was blocked by a delta occluder (glass/
@@ -2415,15 +2662,31 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						// there are no eye paths to own the non-caustic
 						// contribution, so every connection is splatted
 						// (LIGHTCPU-style output for validation).
-						if (!Spectrum_IsBlack(bsdfEval) &&
+						const bool evalBlack = Spectrum_IsBlack(bsdfEval);
+						// A black straight-direction eval does not
+						// exclude a specular-manifold connection: the
+						// receiver may face away from the lens while the
+						// refracted segment stays above its horizon
+						// (e.g. a table top seen only through a glass
+						// sphere). Queue the visibility ray as an LMNEE
+						// probe so a delta occluder can start a solve.
+						const bool mneeProbe = evalBlack &&
+								taskConfig->pathTracer.mnee.enabled;
+						if ((!evalBlack &&
 								((pathTracer->lightTracing.eyeTaskCount == 0) ||
+								(pathTracer->hybridBackForward.adaptiveCaustic ?
+								LightPathInfo_IsAdaptiveCausticPath(lpi, event,
+								pathTracer->hybridBackForward.terminalGlossiness,
+								pathTracer->hybridBackForward.connectProb,
+								&lights[lpi->lightIndex]) :
 								LightPathInfo_IsCausticPath(lpi, event,
 								BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
-								pathTracer->hybridBackForward.glossinessThreshold))) {
+								pathTracer->hybridBackForward.glossinessThreshold)))) ||
+								mneeProbe) {
+
 							float pdfW, fluxToRadianceFactor;
 							Camera_GetPDF(camera, visRay, eyeDistance,
 									&pdfW, &fluxToRadianceFactor);
-
 							if (fluxToRadianceFactor > 0.f) {
 								// Queue the reversed visibility ray: it
 								// spans the vertex -> lens segment
@@ -2442,7 +2705,9 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 								lpi->pendingSplat.radianceG = radiance.y;
 								lpi->pendingSplat.radianceB = radiance.z;
 								lpi->pendingSplat.lightGroupID = lpi->lightGroupID;
-								lpi->pendingSplat.isCaustic = true;
+								// A probe queued on a black eval must not
+								// splat if the ray turns out unblocked
+								lpi->pendingSplat.isCaustic = !evalBlack;
 								lpi->pendingSplat.fromMnee = false;
 								lpi->pendingSplat.valid = true;
 
@@ -2474,6 +2739,12 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						Sampler_GetLightSample(taskConfig, sampleOffset + 5 SAMPLER_PARAM),
 						&sampledDir, &bsdfPdfW, &cosSampledDir, &bsdfEvent
 						MATERIALS_PARAM);
+#if defined(SLG_SPECTRAL)
+				// A dispersive transmit may have collapsed the alive mask on
+				// the hit point: carry it back so the next intersection
+				// (which re-copies from the SampleResult) keeps it.
+				sampleResult->spectralHeroAlive = bsdf->hitPoint.spectralHeroAlive;
+#endif
 
 				if (Spectrum_IsBlack(bsdfSample))
 					terminate = true;
@@ -2491,7 +2762,8 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					// LIGHTCPU.
 					if (pathTracer->hybridBackForward.enabled &&
 							(pathTracer->lightTracing.eyeTaskCount > 0) &&
-							!lpi->isNearlyS &&
+							(pathTracer->hybridBackForward.adaptiveCaustic ?
+								!lpi->isAdaptiveS : !lpi->isNearlyS) &&
 							(lpi->depth.diffuseDepth + lpi->depth.glossyDepth > 1))
 						terminate = true;
 				}

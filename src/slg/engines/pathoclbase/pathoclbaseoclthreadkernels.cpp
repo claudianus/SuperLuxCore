@@ -606,6 +606,7 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
 				threadFilms[filmIndex]->channel_RADIANCE_PER_SCREEN_NORMALIZEDs_Buff[i] : nullptr;
 		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, b);
 	}
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, lightFilterLUTBuff);
 }
 
 // Mirror of the PathState enum in

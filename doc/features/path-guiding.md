@@ -36,10 +36,40 @@ where the light is". This is a leading practical variance-reduction method.
 
 ## Test scenes / validation
 
-- Indirect-heavy interiors (Cornell, classroom) — guiding reduces variance vs
-  unguided at equal spp; verified no bias (guiding only changes sampling, not
-  the estimator).
+- `scenes/cornell/pg-indirect.scn` — a divider-with-window room whose
+  camera-facing compartment is lit only by bounced light, built to exercise
+  the deep-indirect case guiding targets.
+- Unbiasedness confirmed (guided/unguided mean ≈ 1.0 on all scenes).
+
+## Honest status / measured findings
+
+Guiding is **functional and unbiased but currently shows no measurable
+variance reduction** on the tested scenes (Cornell, the pg-indirect room,
+a narrow-window variant). Three compounding reasons, verified by
+inspection and A/B renders:
+
+- **Conservative gating.** The bounce-time guide fires only at eye-path
+  `depth >= 2` (M2c choice — earlier bounces are served well enough by
+  direct-light sampling that guiding them only dilutes), and only on
+  glossy BSDFs by default (`BSDF_GetGlossiness() >= 0.3`). A purely
+  diffuse bounce is opt-in via `LUX_PG_DIFFUSE=1`.
+- **Coarse field.** The directional histogram is a flat per-cell bin grid:
+  16³ spatial × (16φ×8θ)=128 directional bins on CPU, and a coarser frozen
+  table on GPU (8³ × (8φ×4θ)=32 bins, chunked for memory). A broad or
+  slowly-varying indirect field converges to ~uniform inside each bin, so
+  the guided proposal collapses toward cosine/BSDF sampling and buys
+  nothing — measurable benefit needs a *peaked* deep-indirect field.
+- **Fixed earlier:** the `LUX_PG_DIFFUSE` opt-in was unreachable for pure
+  diffuse (matte reports glossiness 0 and failed the glossy-lobe cutoff);
+  the gate now routes diffuse-only BSDFs to the flag alone.
+
+To make guiding *deliver* a visible gain rather than merely run, the
+natural next step is a higher-resolution / better-shaped field (vMF or
+directional-mixture per cell, or product-with-BSDF guiding) plus a
+validation scene whose variance is dominated by deep (depth≥2) indirect
+light.
 
 ## Platforms
 
-CPU (M1) and GPU (M2b/M2c: OpenCL + Metal).
+CPU (M1) and GPU (M2b/M2c: OpenCL + Metal). The GPU diffuse opt-in is not
+yet plumbed (GPU gate is glossy-only); see the roadmap parity note.

@@ -112,6 +112,16 @@ typedef struct {
 	struct {
 		int enabled;
 		float glossinessThreshold;
+		// Adaptive caustic partition: the light pass owns path classes
+		// the eye side can not sample efficiently (delta terminal or a
+		// sharp glossy terminal facing a small light), classified by
+		// connection difficulty instead of the fixed glossiness
+		// threshold. terminalGlossiness bounds the glossy lobe still
+		// worth NEE on the eye side; connectProb is the
+		// solid-angle ratio epsilon (omegaLight < eps * omegaLobe).
+		int adaptiveCaustic;
+		float terminalGlossiness;
+		float connectProb;
 	} hybridBackForward;
 
 	// GPU light tracing (camera-projection splatting): a second task
@@ -136,6 +146,11 @@ typedef struct {
 		int focusEnable;
 		float focusRatio;		// guided-draw probability
 		float focusRadiusFrac;	// aim-sphere radius / worldRadius
+		// Distant-light caustic focusing: count of delta-specular caster
+		// bounding spheres appended to lightFocus[] after the per-light
+		// hotspot rings (float4: center.xyz + radius). Their projected
+		// discs steer the emit ORIGIN (directions aren't steerable).
+		unsigned int focusCasterCount;
 	} lightTracing;
 
 	// Hero-wavelength spectral transport (P2-1 A2): when non-zero the kernel

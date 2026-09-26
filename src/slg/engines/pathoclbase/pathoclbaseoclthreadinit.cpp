@@ -35,6 +35,8 @@
 #include "slg/engines/pathoclbase/pathoclbase.h"
 #include "slg/samplers/sobol.h"
 #include "slg/samplers/pmj02.h"
+#include "slg/film/filters/filter.h"
+#include "slg/film/filters/filterdistribution.h"
 #include "slg/utils/pathinfo.h"
 
 using namespace std;
@@ -1075,6 +1077,11 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 			(renderEngine->compiledScene->lightDefs.size() > 0)) {
 		const u_int lightCount = renderEngine->compiledScene->lightDefs.size();
 		std::vector<float> zeroFocus(4 * LIGHT_FOCUS_K * lightCount, 0.f);
+		// Distant-light casters ride the same buffer, appended after the
+		// rings (kernel base offset: lightCount * LIGHT_FOCUS_K)
+		zeroFocus.insert(zeroFocus.end(),
+				renderEngine->compiledScene->lightFocusCasters.begin(),
+				renderEngine->compiledScene->lightFocusCasters.end());
 		intersectionDevice.AllocBufferRW(&lightFocusBuff, zeroFocus.data(),
 				sizeof(float) * zeroFocus.size(), "LightFocusPoints");
 		std::vector<u_int> zeroCount(lightCount, 0u);
@@ -1084,6 +1091,38 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 		intersectionDevice.FreeBuffer(&lightFocusBuff);
 		intersectionDevice.FreeBuffer(&lightFocusCountBuff);
 	}
+
+	// Packed pixel-filter LUTs for the light-path camera splat (CPU
+	// FilmSampleSplatter parity). NULL under FILTER_NONE keeps the kernel
+	// on the box splat. Layout: [0]=lutsSize, [1]=xWidth, [2]=yWidth,
+	// then per-offset {lutW, lutH, dataBase} headers followed by the
+	// weight floats (kernel walk: Film_SplatLight in film_funcs.cl).
+	FilterRPtr lightSplatFilter = renderEngine->GetPixelFilter();
+	if ((renderEngine->lightTaskCount > 0) && lightSplatFilter &&
+			(lightSplatFilter->GetType() != FILTER_NONE)) {
+		const u_int lutsSize = Max<u_int>(4,
+				Max(lightSplatFilter->xWidth, lightSplatFilter->yWidth) + 1);
+		FilterLUTs luts(*lightSplatFilter, lutsSize);
+
+		std::vector<float> packed;
+		packed.push_back((float)lutsSize);
+		packed.push_back(lightSplatFilter->xWidth);
+		packed.push_back(lightSplatFilter->yWidth);
+		const u_int lutCount = lutsSize * lutsSize;
+		const size_t headerBase = packed.size();
+		packed.resize(headerBase + 3 * lutCount);
+		for (u_int i = 0; i < lutCount; ++i) {
+			const FilterLUT *lut = luts.GetLUTAt(i);
+			packed[headerBase + 3 * i] = (float)lut->GetWidth();
+			packed[headerBase + 3 * i + 1] = (float)lut->GetHeight();
+			packed[headerBase + 3 * i + 2] = (float)packed.size();
+			const std::span<const float> weights = lut->GetLUT();
+			packed.insert(packed.end(), weights.begin(), weights.end());
+		}
+		intersectionDevice.AllocBufferRO(&lightFilterLUTBuff, packed.data(),
+				sizeof(float) * packed.size(), "LightFilterLUTs");
+	} else
+		intersectionDevice.FreeBuffer(&lightFilterLUTBuff);
 
 	//--------------------------------------------------------------------------
 	// Allocate the ReSTIR DI per-pixel temporal reservoirs (zeroed: an

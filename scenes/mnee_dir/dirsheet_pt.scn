@@ -1,0 +1,26 @@
+# Far point light approximating the sharpdistant direction (0.05,0.08,-1):
+# emitter at R*(-dir) = (0.05,0.08,-1)*-2000 = up at +Z, I = 2.6*R^2 so the
+# irradiance matches the directional 2.6. At R=2000 the incident rays are
+# nearly parallel, so the point-MNEE caustic should converge to the
+# directional one -> validates the directional solver's energy.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -3.4 4.6
+scene.camera.lookat.target = 0.0 0.5 0.0
+scene.camera.fieldofview = 38
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 4000
+scene.lights.P.type = "point"
+scene.lights.P.color = 132000000.0 132000000.0 132000000.0
+scene.lights.P.position = -100.0 -160.0 2000.0
+scene.materials.Glass.type = "glass"
+scene.materials.Glass.kt = 1.0 1.0 1.0
+scene.materials.Glass.kr = 0.0 0.0 0.0
+scene.materials.Glass.exteriorior = 1.0
+scene.materials.Glass.interiorior = 1.5
+scene.materials.Floor.type = "matte"
+scene.materials.Floor.kd = 0.72 0.72 0.74
+scene.objects.Glass.material = Glass
+scene.objects.Glass.ply = "scenes/mnee_dir/wavysheet.ply"
+scene.objects.Glass.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 1.4 1.0
+scene.objects.Floor.material = Floor
+scene.objects.Floor.ply = "scenes/mnee_dir/floor.ply"

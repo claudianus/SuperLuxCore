@@ -62,6 +62,9 @@ public:
 	luxrays::Vector localSunDir;
 	float turbidity, relSize;
 
+	// Emission cone aperture (adaptive caustic partition solid angle)
+	float GetCosThetaMax() const { return cosThetaMax; }
+
 private:
 	luxrays::Vector absoluteSunDir;
 	// XY Vectors for cone sampling

@@ -95,6 +95,13 @@ public:
 		return luts[ix + iy * lutsSize].get();
 	}
 
+	// Enumerated access for GPU upload (light-path splat filter parity):
+	// lutsSize x lutsSize offset LUTs, row-major [ix + iy * lutsSize].
+	size_t GetLUTsSize() const { return lutsSize; }
+	const FilterLUT *GetLUTAt(const u_int index) const {
+		return luts[index].get();
+	}
+
 private:
 	size_t lutsSize;
 	float step;

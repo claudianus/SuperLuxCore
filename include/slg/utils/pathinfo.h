@@ -60,6 +60,23 @@ public:
 	static bool IsNearlySpecular(const BSDFEvent event, const float glossiness, const float glossinessThreshold);
 	static bool CanBeNearlySpecular(const BSDF &bsdf, const float glossinessThreshold);
 
+	// Adaptive caustic partition (see pathinfo_funcs.cl for the GPU
+	// mirror): the light-adjacent vertex is "hard" for the eye path when
+	// it is delta or when the light's solid angle covers a negligible
+	// fraction of its lobe (omegaLobe = PI * g^2, g == glossiness).
+	static bool IsAdaptiveTerminalHard(const float terminalGlossiness,
+			const float connectProb, const bool vertexDelta,
+			const float vertexGloss, const float lightSolidAngle) {
+		if (vertexDelta)
+			return true;
+		if (vertexGloss > terminalGlossiness)
+			return false;
+		// A point-like light (omegaL == 0) is covered by direct light
+		// sampling: it does not make the connection eye-hard
+		return (lightSolidAngle > 0.f) &&
+				(lightSolidAngle < connectProb * (M_PI * vertexGloss * vertexGloss));
+	}
+
 protected:
 	// Specular, Specular+ Diffuse and Specular+ Diffuse Specular+ paths
 	bool isNearlyS, isNearlySD, isNearlySDS;
@@ -80,6 +97,28 @@ public:
 	bool IsCausticPath() const { return isNearlyCaustic && (depth.depth > 1); }
 	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
 
+	// Adaptive counterpart of IsCausticPath(event, ...): widened S*D
+	// chain (isAdaptiveCaustic) + hard light-adjacent terminal. The
+	// pending event/glossiness are the ones of the vertex being
+	// evaluated; lightSolidAngle is Light_ConnectionSolidAngle().
+	bool IsAdaptiveCausticPath(const BSDFEvent event, const float glossiness,
+			const float terminalGlossiness, const float connectProb,
+			const float lightSolidAngle) const {
+		return isAdaptiveCaustic && (depth.depth + 1 > 1) &&
+				((event & (SPECULAR | GLOSSY)) != 0) &&
+				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
+						(event & SPECULAR) != 0, glossiness, lightSolidAngle);
+	}
+	// Direct emitter hit variant: the terminal is the last added vertex
+	bool IsAdaptiveCausticHitPath(const float terminalGlossiness,
+			const float connectProb, const float lightSolidAngle) const {
+		return isAdaptiveCaustic && (depth.depth > 1) &&
+				((lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) &&
+				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
+						(lastBSDFEvent & SPECULAR) != 0, lastGlossiness,
+						lightSolidAngle);
+	}
+
 	bool isPassThroughPath;
 
 	// Last path vertex information
@@ -87,6 +126,10 @@ public:
 	float lastGlossiness;
 	luxrays::Normal lastShadeN;
 	bool lastFromVolume, isTransmittedPath;
+
+	// Adaptive caustic partition (see isAdaptiveCaustic in
+	// pathinfo_types.cl)
+	bool isAdaptiveCaustic;
 
 private:
 	bool isNearlyCaustic;
@@ -126,7 +169,26 @@ public:
 
 	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
 
+	// Adaptive counterpart: all-non-diffuse chain (isAdaptiveS),
+	// non-delta receiver, hard light-adjacent terminal (v1).
+	bool IsAdaptiveCausticPath(const BSDFEvent event,
+			const float terminalGlossiness, const float connectProb,
+			const float lightSolidAngle) const {
+		return isAdaptiveS && (depth.depth + 1 > 1) &&
+				!(event & SPECULAR) &&
+				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
+						firstVertexDelta, firstVertexGlossiness, lightSolidAngle);
+	}
+
 	luxrays::Point lensPoint;
+
+	// Adaptive caustic partition: mirrors the GPU LightPathInfo fields.
+	// firstVertex* describe the light-adjacent vertex (v1), the terminal
+	// of the eye-side connection-difficulty test.
+	bool isAdaptiveS;
+	luxrays::Point firstVertexP;
+	float firstVertexGlossiness;
+	bool firstVertexDelta;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const LightPathInfo &lpi) {

@@ -1,0 +1,35 @@
+# Adaptive caustic partition regression scene: Cornell box lit by a
+# small emissive ceiling panel, a ROUGH glass sphere on the floor.
+#
+# The sphere's uroughness = 0.1 sits above the fixed
+# path.hybridbackforward.glossinessthreshold (0.05): under the old
+# partition the eye path owns the caustic and fireflies, because a BSDF
+# sample of a 0.1 lobe almost never lands on the small panel. The
+# adaptive partition measures the panel's solid angle against the lobe
+# (omegaLight < connectProb * PI * g^2) and hands the class to the
+# light pass.
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.730003
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.glass-mid.type = roughglass
+scene.materials.glass-mid.kt = 0.9 0.9 0.9
+scene.materials.glass-mid.kr = 0.9 0.9 0.9
+scene.materials.glass-mid.uroughness = 0.1
+scene.materials.glass-mid.vroughness = 0.1
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 500 500 500
+scene.materials.Light.kd = 0.0 0.0 0.0
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki3.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey-small.ply
+scene.objects.sphere-mid.material = glass-mid
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply

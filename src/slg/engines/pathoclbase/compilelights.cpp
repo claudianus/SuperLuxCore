@@ -224,6 +224,7 @@ void CompiledScene::CompileLightStrategy() {
 					case TYPE_POINT:
 					case TYPE_SPOT:
 					case TYPE_DISTANT:
+					case TYPE_SHARPDISTANT:
 					case TYPE_SUN:
 					case TYPE_IL_SKY2:
 					case TYPE_IL:
@@ -404,6 +405,12 @@ void CompiledScene::CompileLights() {
 				oclLight->triangle.invMeshArea = (meshArea == 0.f) ? 0.f : (1.f / meshArea);
 				oclLight->triangle.meshIndex = tl.meshIndex;
 				oclLight->triangle.triangleIndex = tl.triangleIndex;
+				oclLight->triangle.centroid.x = tl.worldCentroid.x;
+				oclLight->triangle.centroid.y = tl.worldCentroid.y;
+				oclLight->triangle.centroid.z = tl.worldCentroid.z;
+				oclLight->triangle.geomNormal.x = tl.worldGeometryNormal.x;
+				oclLight->triangle.geomNormal.y = tl.worldGeometryNormal.y;
+				oclLight->triangle.geomNormal.z = tl.worldGeometryNormal.z;
 
 				auto& emissionFunc = tl.lightMaterial->GetEmissionFunc();
 				if (emissionFunc) {
@@ -692,7 +699,9 @@ void CompiledScene::CompileLights() {
 
 				// SharpDistantLight data
 				ASSIGN_SPECTRUM(oclLight->notIntersectable.sharpDistant.color, sdl.color);
-				sdl.GetPreprocessedData(&(oclLight->notIntersectable.sharpDistant.absoluteLightDir.x), NULL, NULL);
+				sdl.GetPreprocessedData(&(oclLight->notIntersectable.sharpDistant.absoluteLightDir.x),
+						&(oclLight->notIntersectable.sharpDistant.x.x),
+						&(oclLight->notIntersectable.sharpDistant.y.x));
 				break;
 			}
 			case TYPE_DISTANT: {

@@ -104,6 +104,10 @@ public:
 	// device Emit ports carry zero weight
 	std::vector<float> emitLightsDistribution;
 	u_int emitLightsDistributionSize;
+	// Distant-light caustic focusing: delta-specular caster bounding
+	// spheres (4 floats per caster: center.xyz + radius), appended to
+	// the lightFocus device buffer after the per-light hotspot rings
+	std::vector<float> lightFocusCasters;
 	// DLSC related data
 	std::vector<slg::ocl::DLSCacheEntry> dlscAllEntries;
 	std::vector<float> dlscDistributions; 

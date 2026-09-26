@@ -1283,6 +1283,32 @@ OPENCL_FORCE_INLINE float3 SunLight_Emit(
 	return VLOAD3F(sunLight->notIntersectable.sun.color.c);
 }
 
+OPENCL_FORCE_INLINE float3 SharpDistantLight_Emit(
+		__global const LightSource *sharpDistantLight,
+		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
+		const float envRadius,
+		const float time, const float u0, const float u1,
+		__global Ray *ray, float *emissionPdfW) {
+	// CPU SharpDistantLight::Emit parity: fixed direction, origin sampled
+	// on the scene emit disc (u0, u1 are the disc coordinates here)
+	const float3 absoluteLightDir = VLOAD3F(&sharpDistantLight->notIntersectable.sharpDistant.absoluteLightDir.x);
+	const float3 x = VLOAD3F(&sharpDistantLight->notIntersectable.sharpDistant.x.x);
+	const float3 y = VLOAD3F(&sharpDistantLight->notIntersectable.sharpDistant.y.x);
+	const float3 worldCenter = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
+
+	float d1, d2;
+	ConcentricSampleDisk(u0, u1, &d1, &d2);
+	const float3 rayOrig = worldCenter - envRadius * (absoluteLightDir + d1 * x + d2 * y);
+
+	*emissionPdfW = 1.f / (M_PI_F * envRadius * envRadius);
+
+	Ray_Init2(ray, rayOrig, absoluteLightDir, time);
+
+	return VLOAD3F(sharpDistantLight->notIntersectable.temperatureScale.c) *
+			VLOAD3F(sharpDistantLight->notIntersectable.gain.c) *
+			VLOAD3F(sharpDistantLight->notIntersectable.sharpDistant.color.c);
+}
+
 OPENCL_FORCE_INLINE float3 DistantLight_Emit(
 		__global const LightSource *distantLight,
 		const float worldCenterX, const float worldCenterY, const float worldCenterZ,
@@ -1508,6 +1534,13 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1, u2, u3,
 					ray, emissionPdfW);
 			break;
+		case TYPE_SHARPDISTANT:
+			flux = SharpDistantLight_Emit(
+					light,
+					worldCenterX, worldCenterY, worldCenterZ, envRadius,
+					time, u0, u1,
+					ray, emissionPdfW);
+			break;
 		case TYPE_TRIANGLE:
 			flux = TriangleLight_Emit(
 					light,
@@ -1571,5 +1604,52 @@ OPENCL_FORCE_INLINE float Light_GetAvgPassThroughTransparency(
 		return mats[materialIndex].avgPassThroughTransparency;
 	} else
 		return 1.f;
+}
+
+// Canonical solid angle subtended by the light at vertex P, for the
+// adaptive caustic partition. It is a pure function of (P, light) so
+// the eye path and the light path classify the same connection
+// identically: INFINITY for environment lights (always easy for the
+// eye path), 0 for positional emitters (point/spot/laser - direct
+// light sampling covers them, BSDF sampling can never hit them) and
+// the cone/planar subtended angle for the rest.
+OPENCL_FORCE_INLINE float Light_ConnectionSolidAngle(
+		__global const LightSource* restrict light, const float3 P) {
+	switch (light->type) {
+		case TYPE_TRIANGLE: {
+			const float3 toV = P - VLOAD3F(&light->triangle.centroid.x);
+			const float dist2 = dot(toV, toV);
+			if (dist2 <= 0.f)
+				return INFINITY;
+			const float cosT = fabs(dot(VLOAD3F(&light->triangle.geomNormal.x), toV)) /
+					sqrt(dist2);
+			return (1.f / light->triangle.invTriangleArea) * cosT / dist2;
+		}
+		case TYPE_SUN:
+			return 2.f * M_PI_F * (1.f - light->notIntersectable.sun.cosThetaMax);
+		case TYPE_DISTANT:
+			return 2.f * M_PI_F * (1.f - light->notIntersectable.distant.cosThetaMax);
+		case TYPE_SPHERE:
+		case TYPE_MAPSPHERE: {
+			const float3 lp = (light->type == TYPE_SPHERE) ?
+				VLOAD3F(&light->notIntersectable.sphere.absolutePos.x) :
+				VLOAD3F(&light->notIntersectable.mapSphere.sphere.absolutePos.x);
+			const float r = (light->type == TYPE_SPHERE) ?
+				light->notIntersectable.sphere.radius :
+				light->notIntersectable.mapSphere.sphere.radius;
+			const float dist = length(P - lp);
+			if (dist <= r)
+				return 4.f * M_PI_F;
+			const float sinT = r / dist;
+			return 2.f * M_PI_F * (1.f - sqrt(fmax(0.f, 1.f - sinT * sinT)));
+		}
+		case TYPE_IL:
+		case TYPE_IL_SKY2:
+		case TYPE_IL_CONSTANT:
+			return INFINITY;
+		default:
+			// Point, mappoint, spot, projection, laser, sharpdistant
+			return 0.f;
+	}
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

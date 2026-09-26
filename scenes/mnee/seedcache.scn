@@ -1,0 +1,32 @@
+# Single-interface refraction MNEE scene for the manifold seed cache.
+# A point light sits inside a closed bumpy-glass sphere resting over a
+# diffuse floor. The sphere's displaced surface refracts the outgoing
+# rays, so floor points under/around the sphere only receive light via a
+# single refraction through the glass - their floor->light shadow rays
+# hit the sphere and single-vertex MNEE solves fire on those samples,
+# producing a refracted caustic pool. With MNEE off that region is dark,
+# which makes the "did MNEE actually run" check unambiguous. No
+# transparency.shadow - that would let shadow rays pass straight through
+# so MNEE never triggers (the trap that made the original e17 scenes a
+# vacuous test).
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -4.2 3.4
+scene.camera.lookat.target = 0.0 0.0 1.0
+scene.camera.fieldofview = 42
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+scene.lights.L.type = "point"
+scene.lights.L.color = 55.0 55.0 55.0
+scene.lights.L.position = 0.0 0.0 1.25
+scene.materials.Glass.type = "glass"
+scene.materials.Glass.kt = 1.0 1.0 1.0
+scene.materials.Glass.kr = 0.0 0.0 0.0
+scene.materials.Glass.exteriorior = 1.0
+scene.materials.Glass.interiorior = 1.7
+scene.materials.Floor.type = "matte"
+scene.materials.Floor.kd = 0.78 0.78 0.80
+scene.objects.Glass.material = Glass
+scene.objects.Glass.ply = "bumpysphere.ply"
+scene.objects.Glass.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 1.25 1.0
+scene.objects.Floor.material = Floor
+scene.objects.Floor.ply = "floor.ply"

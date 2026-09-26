@@ -30,4 +30,4 @@ scene.objects.slab.ply = scenes/cornell/lmnee-slab.ply
 # Tilt the mirror 40 deg about its centre so it reflects the ceiling
 # light back toward the camera (otherwise a vertical mirror reflects
 # the empty space behind the camera and the test is vacuous)
-scene.objects.slab.transformation = 1.00000 0.00000 0.00000 0.00000  0.00000 0.76604 0.64279 -2.50752  0.00000 -0.64279 0.76604 -1.28936  0.00000 0.00000 0.00000 1.00000
+scene.objects.slab.transformation = 1.00000 0.00000 0.00000 0.00000  0.00000 0.76604 -0.64279 0.00000  0.00000 0.64279 0.76604 0.00000  0.00000 -2.50752 -1.28936 1.00000

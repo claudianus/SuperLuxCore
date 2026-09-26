@@ -52,7 +52,8 @@ bool PathInfo::CanBeNearlySpecular(const BSDF &bsdf, const float glossinessThres
 
 EyePathInfo::EyePathInfo() : isPassThroughPath(true),
 		lastBSDFPdfW(1.f), lastGlossiness(0.f), lastFromVolume(false),
-		isTransmittedPath(true), isNearlyCaustic(false) {
+		isTransmittedPath(true), isAdaptiveCaustic(false),
+		isNearlyCaustic(false) {
 }
 
 void EyePathInfo::AddVertex(const BSDF &bsdf,
@@ -95,7 +96,13 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 		(!isNewVertexNearlySpecular) :
 		// All other vertices must be nearly specular
 		(isNearlyCaustic && isNewVertexNearlySpecular);
-	
+
+	// Adaptive partition: the receiver only has to be non-delta, later
+	// vertices must be non-diffuse (see pathinfo_funcs.cl)
+	isAdaptiveCaustic = (depth.depth == 1) ?
+		!(event & SPECULAR) :
+		(isAdaptiveCaustic && ((event & (SPECULAR | GLOSSY)) != 0));
+
 	// Update last path vertex information
 	lastBSDFPdfW = pdfW;
 	lastShadeN = bsdf.hitPoint.intoObject ? bsdf.hitPoint.shadeN : -bsdf.hitPoint.shadeN;
@@ -116,7 +123,8 @@ bool EyePathInfo::IsCausticPath(const BSDFEvent event,
 // LightPathInfo
 //------------------------------------------------------------------------------
 
-LightPathInfo::LightPathInfo() {
+LightPathInfo::LightPathInfo() : isAdaptiveS(false),
+		firstVertexGlossiness(0.f), firstVertexDelta(false) {
 }
 
 void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
@@ -142,6 +150,17 @@ void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
 
 	// Update isNearlySpecular
 	isNearlyS = ((depth.depth == 1) || isNearlyS) && isNewVertexNearlySpecular;
+
+	// Adaptive partition: the whole chain must be non-diffuse. The
+	// first (light-adjacent) vertex is also the terminal for the
+	// connection-difficulty test, so record it.
+	isAdaptiveS = ((depth.depth == 1) || isAdaptiveS) &&
+			((event & (SPECULAR | GLOSSY)) != 0);
+	if (depth.depth == 1) {
+		firstVertexP = bsdf.hitPoint.p;
+		firstVertexGlossiness = glossiness;
+		firstVertexDelta = (event & SPECULAR);
+	}
 
 	// Update last path vertex information
 	lastBSDFEvent = event;

@@ -34,5 +34,13 @@ typedef struct {
 	int isNearlyCaustic;
 	// Specular, Specular+ Diffuse and Specular+ Diffuse Specular+ paths
 	int isNearlyS, isNearlySD, isNearlySDS;
+
+	// Adaptive caustic partition (hybridBackForward.adaptivecaustic):
+	// like isNearlyCaustic but the chain accepts any non-diffuse event
+	// (glossy of any glossiness), so boundary-glossy interior vertices
+	// stay inside the light-tracing-owned class. The terminal
+	// (light-adjacent) vertex is gated separately by connection
+	// difficulty.
+	int isAdaptiveCaustic;
 } EyePathInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

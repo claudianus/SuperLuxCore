@@ -36,6 +36,7 @@ ask for.
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material+geometry deltas (A6-III) `2579a019`, `c28f40f0` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
 | Wavefront task queues (M1+M2, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` M1, `f424a8552` M2 λ-bucketed queues (branch `feature/wavefront-queues`) | cornell, cornell-spectral | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
 | Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc; `5b1e23fa1` plumbing; `d4dc25e22` Metal HWRT; `d1eb37198` SW MBVH; `c16e19453` Embree; BlendLuxCore `c9193f0a` export | `vertexmotion_test`; `dev-tools/e9_*_vertex_motion_test.py`; BlendLuxCore `dev-tools/e9_vertex_motion_e2e_test.py` | Metal HWRT + SW MBVH (OCL/cl2msl) + Embree timesteps; mesh export (hair pending) |
+| Adaptive caustic partition | [adaptive-caustic.md](adaptive-caustic.md) | pending | `scenes/cornell/caustic-roughglass.scn`; `dev-tools/e25_adaptive_caustic_test.py`, `e25_render_compare.py`, `e25_caustic_channel.py` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.

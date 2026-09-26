@@ -42,6 +42,9 @@ void CompiledScene::CompilePathTracer() {
 
 	compiledPathTracer.hybridBackForward.enabled = pathTracer->hybridBackForwardEnable;
 	compiledPathTracer.hybridBackForward.glossinessThreshold = pathTracer->hybridBackForwardGlossinessThreshold;
+	compiledPathTracer.hybridBackForward.adaptiveCaustic = pathTracer->hybridBackForwardAdaptiveCaustic;
+	compiledPathTracer.hybridBackForward.terminalGlossiness = pathTracer->hybridBackForwardTerminalGlossiness;
+	compiledPathTracer.hybridBackForward.connectProb = pathTracer->hybridBackForwardConnectProb;
 
 	// GPU light tracing (doc/features/gpu_lighttracing.md): a tail task
 	// population traces light sub-paths and splats their vertices into
@@ -58,6 +61,27 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.lightTracing.focusEnable = pathTracer->lightFocusEnable;
 	compiledPathTracer.lightTracing.focusRatio = pathTracer->lightFocusRatio;
 	compiledPathTracer.lightTracing.focusRadiusFrac = pathTracer->lightFocusRadiusFrac;
+
+	// Distant-light caustic focusing (CPU PathTracer::LightFocusEmitDistant
+	// parity): bounding spheres of every delta-specular object steer the
+	// distant light's emit origin onto their projected disc. Uploaded to
+	// the device appended after the per-light hotspot rings.
+	lightFocusCasters.clear();
+	if (pathTracer->lightFocusEnable) {
+		for (u_int i = 0; i < scene.GetObjects().GetSize(); ++i) {
+			SceneObjectConstRef obj = scene.GetObjects().GetSceneObject(i);
+			MaterialConstRef mat = obj.GetMaterial();
+			if (!mat.IsDelta() || !(mat.GetEventTypes() & SPECULAR))
+				continue;
+			const BBox &bb = obj.GetExtMesh().GetBBox();
+			const Point c = (bb.pMin + bb.pMax) * .5f;
+			lightFocusCasters.push_back(c.x);
+			lightFocusCasters.push_back(c.y);
+			lightFocusCasters.push_back(c.z);
+			lightFocusCasters.push_back((bb.pMax - c).Length());
+		}
+	}
+	compiledPathTracer.lightTracing.focusCasterCount = lightFocusCasters.size() / 4;
 	
 	compiledPathTracer.forceBlackBackground = pathTracer->forceBlackBackground;
 

@@ -271,6 +271,8 @@ void GlassMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  &
 		exteriorIor->AddReferencedTextures(referencedTexs);
 	if (interiorIor)
 		interiorIor->AddReferencedTextures(referencedTexs);
+	if (cauchyB)
+		cauchyB->AddReferencedTextures(referencedTexs);
 	if (filmThickness)
 		filmThickness->AddReferencedTextures(referencedTexs);
 	if (filmIor)
@@ -288,6 +290,8 @@ void GlassMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef n
 		exteriorIor = &newTex;
 	if (interiorIor == &oldTex)
 		interiorIor = &newTex;
+	if (cauchyB == &oldTex)
+		cauchyB = &newTex;
 	if (filmThickness == &oldTex)
 		filmThickness = &newTex;
 	if (filmIor == &oldTex)

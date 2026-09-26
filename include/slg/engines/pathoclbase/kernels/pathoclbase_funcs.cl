@@ -2213,9 +2213,19 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 
 	if (Spectrum_IsBlack(bsdfEval) ||
 			(taskConfig->pathTracer.hybridBackForward.enabled &&
-			EyePathInfo_IsCausticPathWithEvent(pathInfo, event,
-				BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
-				taskConfig->pathTracer.hybridBackForward.glossinessThreshold))
+			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
+				// Adaptive partition: the pending connection vertex is
+				// the light-adjacent terminal; its lobe vs the light's
+				// solid angle decides eye-side difficulty
+				EyePathInfo_IsAdaptiveCausticPath(pathInfo, event,
+					BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
+					taskConfig->pathTracer.hybridBackForward.terminalGlossiness,
+					taskConfig->pathTracer.hybridBackForward.connectProb,
+					Light_ConnectionSolidAngle(&lights[info->lightIndex],
+							VLOAD3F(&bsdf->hitPoint.p.x))) :
+				EyePathInfo_IsCausticPathWithEvent(pathInfo, event,
+					BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
+					taskConfig->pathTracer.hybridBackForward.glossinessThreshold)))
 			)
 		return false;
 
@@ -2415,8 +2425,11 @@ OPENCL_FORCE_INLINE void Mnee_ApplySeedShift(__global MneeState *mnee, const flo
 // Half-vector constraint residual C = (h.s, h.t) (Zeltner
 // compute_step_halfvector, n_offset = 0). ok = false on degenerate
 // distances.
+// lightIsDir: a directional endpoint has no finite position, so lightPos
+// carries the constant unit direction toward the light instead and wo is
+// independent of the vertex position.
 OPENCL_FORCE_INLINE bool Mnee_Residual(const float3 x0p, const float3 lightPos,
-		const MneeVtx *v, float2 *C) {
+		const bool lightIsDir, const MneeVtx *v, float2 *C) {
 	*C = MAKE_FLOAT2(0.f, 0.f);
 
 	float3 wi = x0p - v->p;
@@ -2425,11 +2438,16 @@ OPENCL_FORCE_INLINE bool Mnee_Residual(const float3 x0p, const float3 lightPos,
 		return false;
 	wi /= r01;
 
-	float3 wo = lightPos - v->p;
-	const float r12 = length(wo);
-	if (r12 < 1e-3f)
-		return false;
-	wo /= r12;
+	float3 wo;
+	if (lightIsDir) {
+		wo = lightPos;
+	} else {
+		wo = lightPos - v->p;
+		const float r12 = length(wo);
+		if (r12 < 1e-3f)
+			return false;
+		wo /= r12;
+	}
 
 	float eta = v->eta;
 	if (dot(wi, v->gn) < 0.f)
@@ -2452,7 +2470,7 @@ OPENCL_FORCE_INLINE bool Mnee_Residual(const float3 x0p, const float3 lightPos,
 // No clamping of dx1dx2: the true Jacobian exceeds 1 near glancing
 // configurations and clamping would bias the estimate (CPU notes).
 OPENCL_FORCE_INLINE float Mnee_GeometricTerm(const float3 x0p, const float3 lightPos,
-		const MneeVtx *v, float4 *j1Out) {
+		const bool lightIsDir, const MneeVtx *v, float4 *j1Out) {
 	if (j1Out)
 		*j1Out = MAKE_FLOAT4(0.f, 0.f, 0.f, 0.f);
 
@@ -2462,11 +2480,19 @@ OPENCL_FORCE_INLINE float Mnee_GeometricTerm(const float3 x0p, const float3 ligh
 		return 0.f;
 	wi /= r01;
 
-	float3 wo = lightPos - v->p;
-	const float r12 = length(wo);
-	if (r12 < 1e-3f)
-		return 0.f;
-	wo /= r12;
+	float3 wo;
+	float r12 = 0.f;
+	if (lightIsDir) {
+		// Directional endpoint: wo is the constant light direction, it does
+		// not move with the vertex (ilo = 0 for the vertex Jacobian below).
+		wo = lightPos;
+	} else {
+		wo = lightPos - v->p;
+		r12 = length(wo);
+		if (r12 < 1e-3f)
+			return 0.f;
+		wo /= r12;
+	}
 
 	float eta = v->eta;
 	if (dot(wi, v->gn) < 0.f)
@@ -2476,7 +2502,9 @@ OPENCL_FORCE_INLINE float Mnee_GeometricTerm(const float3 x0p, const float3 ligh
 		h = -h;
 	const float ilh = 1.f / length(h);
 	h *= ilh;
-	const float ilo = (1.f / r12) * eta * ilh;
+	// Vertex-side coupling of wo to x1: a point endpoint moves with x1
+	// (ilo = eta*ilh/r12); a directional endpoint is constant (ilo = 0).
+	const float ilo = lightIsDir ? 0.f : (1.f / r12) * eta * ilh;
 	const float ili = (1.f / r01) * ilh;
 
 	const float3 s = v->s;
@@ -2506,16 +2534,19 @@ OPENCL_FORCE_INLINE float Mnee_GeometricTerm(const float3 x0p, const float3 ligh
 	j1.z = dot(dhDdu, t) - dot(v->dpdv, v->dndu) * dotHN - dotDpdvN * dotHDndu;
 	j1.w = dot(dhDdv, t) - dot(v->dpdv, v->dndv) * dotHN - dotDpdvN * dotHDndv;
 
-	// dC/dx2 (fake light frame, from the light toward the vertex)
-	float3 dLight = v->p - lightPos;
-	const float rl = length(dLight);
-	if (rl < 1e-3f)
-		return 0.f;
-	dLight /= rl;
+	// dC/dx2: perturb the endpoint on its own measure. For a point light the
+	// endpoint is the emitter position and the frame is built on -wo; moving
+	// the position by eps*s2 turns wo by (s2 - wo*wo.s2)/r12, folded into ilo
+	// = eta*ilh/r12. For a directional light the endpoint IS the direction:
+	// rotating wo by eps*s2 changes wo by (s2 - wo*wo.s2) directly, so the
+	// factor is eta*ilh (no 1/r12). The frame is perpendicular to wo either
+	// way, i.e. dLight = -wo.
+	const float3 dLight = -wo;
 	float3 s2, t2;
 	Mnee_CoordinateSystem(dLight, &s2, &t2);
-	float3 dhDdu2 = ilo * (s2 - wo * dot(wo, s2));
-	float3 dhDdv2 = ilo * (t2 - wo * dot(wo, t2));
+	const float ilo2 = lightIsDir ? eta * ilh : ilo;
+	float3 dhDdu2 = ilo2 * (s2 - wo * dot(wo, s2));
+	float3 dhDdv2 = ilo2 * (t2 - wo * dot(wo, t2));
 	dhDdu2 -= h * dot(dhDdu2, h);
 	dhDdv2 -= h * dot(dhDdv2, h);
 	if (eta != 1.f) {
@@ -2566,8 +2597,17 @@ OPENCL_FORCE_INLINE float3 Mnee_SpecFactor(__global const Material *mat,
 	const float3 localFixedDir = Frame_ToLocal(&bsdf->frame, wiWorld);
 	float3 localSampledDir;
 	*specEvent = SPECULAR | TRANSMIT;
+	float cauchyB = 0.f;
+#if defined(SLG_SPECTRAL)
+	// Dispersive glass transmits at the path hero wavelength (the solver's
+	// vertex eta was derived from the same hero IOR); pass the real
+	// coefficient so EvalSpecularTransmission picks the spectral branch.
+	if (mat->glass.cauchyBTex != NULL_INDEX)
+		cauchyB = Texture_GetFloatValue(mat->glass.cauchyBTex, hitPoint
+				TEXTURES_PARAM);
+#endif
 	return GlassMaterial_EvalSpecularTransmission(hitPoint, localFixedDir, 0.f,
-			kt, nc, nt, 0.f, &localSampledDir);
+			kt, nc, nt, cauchyB, &localSampledDir);
 }
 
 // Exit transition of the MNEE sub-state machine (on success and failure):
@@ -2593,14 +2633,15 @@ OPENCL_FORCE_NOT_INLINE int Mnee_StepAndWriteProposal(
 	if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations)
 		return 0;
 
+	const bool lightIsDir = (mnee->lightIsDir != 0);
 	float2 C;
-	if (!Mnee_Residual(x0p, lightPos, v, &C))
+	if (!Mnee_Residual(x0p, lightPos, lightIsDir, v, &C))
 		return 0;
 	const float resNorm = length(C);
 	mnee->resNorm = resNorm;
 
 	float4 jac;
-	const float g = Mnee_GeometricTerm(x0p, lightPos, v, &jac);
+	const float g = Mnee_GeometricTerm(x0p, lightPos, lightIsDir, v, &jac);
 	if (resNorm < 3e-4f) {
 		*gOut = g;
 		return 2;
@@ -2740,9 +2781,14 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	__global const LightSource *light = &lights[info->lightIndex];
 
 	// Same gates as PathTracer::DirectLightSampling() on the CPU: positional
-	// delta light, delta specular occluder, mirror or glass material.
+	// delta light, delta specular occluder, mirror or glass material. A
+	// sharpdistant light is a delta-direction emitter, disjoint from forward
+	// BSDF sampling (a sharp direction can never be sampled): it is disjoint
+	// and needs no MIS. A distant/sun cone has finite solid angle - forward
+	// refraction CAN reach it, so it is excluded until MIS is in place.
+	const bool lightIsDir = (light->type == TYPE_SHARPDISTANT);
 	if ((light->type != TYPE_POINT) && (light->type != TYPE_SPOT) &&
-			(light->type != TYPE_MAPPOINT))
+			(light->type != TYPE_MAPPOINT) && !lightIsDir)
 		return 0;
 	if (BSDF_IsShadowCatcher(&taskState->bsdf MATERIALS_PARAM))
 		return 0;
@@ -2751,23 +2797,36 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	if ((occlMat->type != MIRROR) && (occlMat->type != GLASS))
 		return 0;
 
-	// Light position: the shadow ray maxt has been rewritten by the trace to
-	// the occluder distance, so recover the light distance from directPdfW
-	// (= squared distance to the light, preserved by Illuminate).
-	const float r12 = sqrt(info->directPdfW);
-	if (!isfinite(r12) || (r12 < 1e-3f))
-		return 0;
-	const float3 lightPos = VLOAD3F(&ray->o.x) + VLOAD3F(&ray->d.x) * r12;
+	// Endpoint of the specular connection. A point-like emitter has a finite
+	// position: the shadow ray maxt has been rewritten by the trace to the
+	// occluder distance, so recover the light distance from directPdfW (=
+	// squared distance to the light, preserved by Illuminate). A directional
+	// light has no finite position: the endpoint is the constant shadow-ray
+	// direction toward the light (its directPdfW is a solid-angle pdf, not a
+	// distance); it is stored in lightPosX/Y/Z and disambiguated by
+	// mnee->lightIsDir.
+	float3 lightPos;
+	if (lightIsDir) {
+		lightPos = normalize(VLOAD3F(&ray->d.x));
+	} else {
+		const float r12 = sqrt(info->directPdfW);
+		if (!isfinite(r12) || (r12 < 1e-3f))
+			return 0;
+		lightPos = VLOAD3F(&ray->o.x) + VLOAD3F(&ray->d.x) * r12;
+	}
 
 	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
 
 	// Generalized half-vector IOR ratio of the occluder (CPU MNEEDirectSampling)
 	float etaVertex;
+	bool dispersive = false;
 	if (occlMat->type == MIRROR) {
 		const float3 gn1s = VLOAD3F(&occlBsdf->hitPoint.geometryN.x);
 		const float3 x1p = VLOAD3F(&occlBsdf->hitPoint.p.x);
 		const float3 toX0 = x0p - x1p;
-		const float3 toY = lightPos - x1p;
+		// For a directional endpoint lightPos holds the constant direction
+		// toward the light, so toY is that direction itself.
+		const float3 toY = lightIsDir ? lightPos : (lightPos - x1p);
 		// +1 when the two endpoints are on the same side of the surface
 		// (h = wi + wo), the only physical reflection case: the reflected ray
 		// leaves with the normal component of its direction flipped, so the
@@ -2777,29 +2836,48 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 		// dev-tools/sota_p1_mnee_mirror_physics_test.py).
 		etaVertex = (dot(toX0, gn1s) * dot(toY, gn1s) > 0.f) ? 1.f : -1.f;
 		if (etaVertex != 1.f)
+			// Escalate to the chain solver (it handles directional endpoints
+			// in direction space, like the single vertex solver).
 			return 2;
 	} else {
-		// Dispersive glass: the manifold uses a single IOR ratio, skip
-		if ((occlMat->glass.cauchyBTex != NULL_INDEX) &&
-				(Texture_GetFloatValue(occlMat->glass.cauchyBTex,
-					&occlBsdf->hitPoint TEXTURES_PARAM) > 0.f))
-			return 0;
-
 		const float nc = ExtractExteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
 		const float nt = ExtractInteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.interiorIorTexIndex TEXTURES_PARAM);
 		if ((nt <= 0.f) || (nc <= 0.f))
 			return 0;
-		etaVertex = nt / nc;
+		const float cauchyB = (occlMat->glass.cauchyBTex != NULL_INDEX) ?
+				Texture_GetFloatValue(occlMat->glass.cauchyBTex,
+					&occlBsdf->hitPoint TEXTURES_PARAM) : 0.f;
+		if (cauchyB > 0.f) {
+#if defined(SLG_SPECTRAL)
+			// Dispersive glass: the manifold constraint is solved at the
+			// path hero wavelength (the direction-defining wavelength, same
+			// as GlassMaterial_Sample's dispersive branch). The connect
+			// exists only for that bin: the hero-only collapse is applied
+			// at contribution assembly (mnee->dispersive).
+			dispersive = true;
+			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					&occlBsdf->hitPoint) / nc;
+#else
+			// No wavelength state on the path: keep skipping dispersive
+			// occluders like the CPU solver.
+			return 0;
+#endif
+		} else
+			etaVertex = nt / nc;
 	}
 
 	mnee->mirrorMode = (occlMat->type == MIRROR);
+	mnee->dispersive = dispersive ? 1 : 0;
 	mnee->chainN = 0;
+	mnee->lightIsDir = lightIsDir ? 1 : 0;
 	mnee->lightPosX = lightPos.x;
 	mnee->lightPosY = lightPos.y;
 	mnee->lightPosZ = lightPos.z;
 	mnee->shadowMeshIndex = rayHit->meshIndex;
+	mnee->shadowSide = (dot(normalize(VLOAD3F(&ray->d.x)),
+			VLOAD3F(&occlBsdf->hitPoint.geometryN.x)) > 0.f) ? 1u : 0u;
 	// Occluder hit position: seed-cache key component, reused by the
 	// store on solve success (SolveEnd).
 	const float3 occlP = VLOAD3F(&occlBsdf->hitPoint.p.x);
@@ -2809,6 +2887,7 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	mnee->beta = 1.f;
 	mnee->iteration = 0;
 	mnee->needsTrace = false;
+	mnee->seedCacheTried = 0;
 
 	MneeVtx v;
 	Mnee_InitVtxFromBsdf(occlBsdf, etaVertex, &v);
@@ -2816,15 +2895,22 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 	// The current chain vertex BSDF starts as the shadow-ray occluder
 	taskDirectLight->mneeBsdfFinal = task->tmpBsdf;
 
-	// E4: warm-start from a cached manifold solution near this occluder
-	// hit when one exists (skips the mirror seed trace; the Newton solve
-	// re-verifies the constraint, so a bad seed is only wasted work).
-	if (taskConfig->pathTracer.mnee.seedCacheEnable) {
+	// E4: the mirror cold seed costs an extra seed trace, so the cache
+	// gets first refusal for eta == 1 (a hit skips the trace entirely; the
+	// Newton solve re-verifies the constraint). For glass (eta != 1) the
+	// line seed is free and defines the reference basin selection - the
+	// cache must not displace it: it is consulted only as a failure
+	// rescue in Mnee_FailToChainOrExit (cache-first seeding pinned nearby
+	// attempts to the first-cached basin, ~5% caustic energy loss
+	// measured on the bumpy-sphere seedcache scene).
+	if ((etaVertex == 1.f) && taskConfig->pathTracer.mnee.seedCacheEnable) {
 		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint seedMesh = rayHit->meshIndex * 2u + mnee->shadowSide;
 		const uint key = Mnee_SeedKey(info->lightIndex,
-				rayHit->meshIndex, occlP, cellSize);
+				seedMesh, occlP, cellSize);
 		if (Mnee_SeedCacheLookup(mneeSeeds, key, info->lightIndex,
-				rayHit->meshIndex, mnee->mirrorMode, etaVertex, mnee)) {
+				seedMesh, mnee->mirrorMode, etaVertex, mnee)) {
+			mnee->seedCacheTried = 1;
 			Mnee_ApplySeedShift(mnee, x0p);
 			mnee->phase = MNEE_PHASE_STEP;
 			taskState->state = MK_MNEE_NEXT_VERTEX;
@@ -2844,11 +2930,19 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 		// MNEE" idea, with the mirrored light instead of the shape bbox
 		// center).
 		const float3 gn1 = VLOAD3F(&occlBsdf->hitPoint.geometryN.x);
-		const float3 x1Line = VLOAD3F(&occlBsdf->hitPoint.p.x);
-		const float3 x1ToLight = lightPos - x1Line;
-		const float proj = 2.f * dot(x1ToLight, gn1);
-		const float3 mirroredLight = lightPos - proj * gn1;
-		const float3 dSeed = normalize(mirroredLight - x0p);
+		float3 dSeed;
+		if (lightIsDir) {
+			// Reflect the constant light direction across the tangent plane:
+			// the virtual emitter is at infinity along the mirrored
+			// direction, so the seed direction is the reflection itself.
+			dSeed = lightPos - 2.f * dot(lightPos, gn1) * gn1;
+		} else {
+			const float3 x1Line = VLOAD3F(&occlBsdf->hitPoint.p.x);
+			const float3 x1ToLight = lightPos - x1Line;
+			const float proj = 2.f * dot(x1ToLight, gn1);
+			const float3 mirroredLight = lightPos - proj * gn1;
+			dSeed = normalize(mirroredLight - x0p);
+		}
 		Ray_Init2(ray, BSDF_GetRayOrigin(&taskState->bsdf, dSeed), dSeed, ray->time);
 
 		mnee->phase = MNEE_PHASE_SEED_TRACE;
@@ -2941,19 +3035,26 @@ OPENCL_FORCE_INLINE float3 MneeChain_VtxPos(__global const MneeState *mnee, cons
 // The generalized half-vector constraint at one chain vertex (CPU
 // MneeChainResidual port): h = wi + eta * wo parallel to the surface,
 // eta flipped when the previous point is on the -geometryN side.
+// woIsDir: pNext carries the constant unit light direction instead of a
+// point (directional endpoint, CPU dirNext).
 OPENCL_FORCE_INLINE bool MneeChain_ResidualAt(const float3 pPrev, const float3 pNext,
-		const MneeVtx *v, const float etaVertex, float2 *C) {
+		const bool woIsDir, const MneeVtx *v, const float etaVertex, float2 *C) {
 	float3 wi = pPrev - v->p;
 	const float r0 = length(wi);
 	if (r0 < 1e-4f)
 		return false;
 	wi /= r0;
 
-	float3 wo = pNext - v->p;
-	const float r1 = length(wo);
-	if (r1 < 1e-4f)
-		return false;
-	wo /= r1;
+	float3 wo;
+	if (woIsDir) {
+		wo = pNext;
+	} else {
+		wo = pNext - v->p;
+		const float r1 = length(wo);
+		if (r1 < 1e-4f)
+			return false;
+		wo /= r1;
+	}
 
 	float eta = etaVertex;
 	if (dot(wi, v->gn) < 0.f)
@@ -2981,8 +3082,9 @@ OPENCL_FORCE_INLINE bool MneeChain_ResidualsAll(__global MneeState *mnee,
 		MneeChain_LoadVtx(mnee, i, &v);
 		const float3 pPrev = (i == 0) ? x0p : MneeChain_VtxPos(mnee, i - 1);
 		const float3 pNext = (i == n - 1) ? lightPos : MneeChain_VtxPos(mnee, i + 1);
+		const bool woDir = (mnee->lightIsDir != 0) && (i == n - 1);
 		float2 C;
-		if (!MneeChain_ResidualAt(pPrev, pNext, &v, v.eta, &C))
+		if (!MneeChain_ResidualAt(pPrev, pNext, woDir, &v, v.eta, &C))
 			return false;
 		MneeVec2T_FromFloat2(&mnee->chainRes[i], C);
 		maxRes = fmax(maxRes, length(C));
@@ -3103,16 +3205,17 @@ OPENCL_FORCE_INLINE bool MneeChain_ThomasSolveMat(__global const MneeState *mnee
 	return true;
 }
 
-// dC_last/dy (CPU MneeChainLightJacobian port).
+// dC_last/dy (CPU MneeChainLightJacobian port). For a directional endpoint
+// (lightIsDir) lightPos carries the constant light direction and the
+// perturbation tilts it instead of moving a point (the position->direction
+// 1/r conversion does not apply, same as Mnee_GeometricTerm's j2 block).
 OPENCL_FORCE_INLINE float4 MneeChain_LightJac(const float3 pPrev, const float3 lightPos,
-		const MneeVtx *v, const float etaVertex, const float eps) {
+		const bool lightIsDir, const MneeVtx *v, const float etaVertex,
+		const float eps) {
 	const float4 zero = MAKE_FLOAT4(0.f, 0.f, 0.f, 0.f);
 
-	float3 dLight = v->p - lightPos;
-	const float rl = length(dLight);
-	if (rl < 1e-3f)
-		return zero;
-	dLight /= rl;
+	const float3 wo = lightIsDir ? lightPos : normalize(lightPos - v->p);
+	const float3 dLight = -wo;
 	float3 s2, t2;
 	Mnee_CoordinateSystem(dLight, &s2, &t2);
 
@@ -3121,7 +3224,7 @@ OPENCL_FORCE_INLINE float4 MneeChain_LightJac(const float3 pPrev, const float3 l
 	if (dot(wi, v->gn) < 0.f)
 		eta = 1.f / eta;
 
-	float3 h = wi + eta * normalize(lightPos - v->p);
+	float3 h = wi + eta * wo;
 	if (eta != 1.f)
 		h = -h;
 	const float l = length(h);
@@ -3132,8 +3235,12 @@ OPENCL_FORCE_INLINE float4 MneeChain_LightJac(const float3 pPrev, const float3 l
 
 	float CPx[2], CPy[2];
 	for (int k = 0; k < 2; ++k) {
-		const float3 lightPosP = lightPos + ((k == 0) ? eps * s2 : eps * t2);
-		float3 hP = wi + eta * normalize(lightPosP - v->p);
+		// Point endpoint: move the position on the tangent frame.
+		// Directional endpoint: tilt the direction by eps on the same frame.
+		const float3 woP = lightIsDir ?
+				normalize(lightPos + ((k == 0) ? eps * s2 : eps * t2)) :
+				normalize(lightPos + ((k == 0) ? eps * s2 : eps * t2) - v->p);
+		float3 hP = wi + eta * woP;
 		if (eta != 1.f)
 			hP = -hP;
 		hP *= 1.f / length(hP);
@@ -3179,13 +3286,46 @@ OPENCL_FORCE_INLINE void MneeChain_WriteDiscoverRay(__global const BSDF *originB
 	Ray_Init2(ray, BSDF_GetRayOrigin(originBsdf, dir), dir, time);
 }
 
+// Continue the discovery walk through a collected vertex: refract at
+// dielectrics (etaVertex = interior/exterior), reflect at mirrors and on
+// TIR. Walking the physical refraction - instead of marching along the
+// straight receiver -> endpoint line - finds interfaces the straight ray
+// misses when the solved path deviates far from it (CPU MneeChainWalkDir
+// port).
+OPENCL_FORCE_INLINE float3 MneeChain_WalkDir(const float3 d,
+		__global const BSDF *vBsdf, const float etaVertex, const bool isMirror) {
+	// d travels into the vertex; geometryN is the raw mesh normal. When it
+	// faces the incident side the ray enters the denser medium
+	// (etaRel = nc/nt), otherwise it exits (etaRel = nt/nc) - the same
+	// side test the solver's half-vector residual uses (dot(wi, gn)).
+	const float3 gn = VLOAD3F(&vBsdf->hitPoint.geometryN.x);
+	if (isMirror)
+		return d - 2.f * dot(d, gn) * gn;
+
+	float3 N = gn;
+	float cosI = -dot(d, N);
+	float etaRel;
+	if (cosI > 0.f)
+		etaRel = 1.f / etaVertex;
+	else {
+		N = -N;
+		cosI = -cosI;
+		etaRel = etaVertex;
+	}
+	const float sin2T = etaRel * etaRel * (1.f - cosI * cosI);
+	return (sin2T >= 1.f) ? (d - 2.f * dot(d, N) * N)
+			: (etaRel * d + (etaRel * cosI - sqrt(1.f - sin2T)) * N);
+}
+
 // Shared chain initializer. Returns the capped vertex budget.
 OPENCL_FORCE_INLINE int MneeChain_Begin(__global MneeState *mnee, const unsigned int maxSpecular) {
 	mnee->chainN = 0;
+	mnee->dispersive = 0;
 	mnee->chainMaxV = (maxSpecular < MNEE_MS_MAX_VERTICES) ? (int)maxSpecular : MNEE_MS_MAX_VERTICES;
 	mnee->chainIdx = 0;
 	mnee->chainSub = 0;
 	mnee->chainProjected = 1;
+	mnee->walkInGlass = 0;
 	mnee->chainSpecR = 1.f; mnee->chainSpecG = 1.f; mnee->chainSpecB = 1.f;
 	mnee->beta = 1.f;
 	mnee->iteration = 0;
@@ -3195,7 +3335,7 @@ OPENCL_FORCE_INLINE int MneeChain_Begin(__global MneeState *mnee, const unsigned
 // Initialize chain vertex 0 from the shadow-ray occluder BSDF (CPU
 // MneeChainVertexInit port). The caller guarantees a delta specular
 // mirror/glass hit. Returns the eta, or -1.f when the vertex is unusable
-// (dispersive glass: the CPU discovery ends the chain there too).
+// (non-spectral dispersive glass keeps ending the chain like the CPU).
 OPENCL_FORCE_INLINE float MneeChain_InitVtxZero(
 		__global MneeState *mnee,
 		__global const BSDF *occlBsdf,
@@ -3206,17 +3346,27 @@ OPENCL_FORCE_INLINE float MneeChain_InitVtxZero(
 	if (occlMat->type == MIRROR)
 		etaVertex = 1.f;
 	else {
-		if ((occlMat->glass.cauchyBTex != NULL_INDEX) &&
-				(Texture_GetFloatValue(occlMat->glass.cauchyBTex,
-					&occlBsdf->hitPoint TEXTURES_PARAM) > 0.f))
-			return -1.f;
 		const float nc = ExtractExteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
 		const float nt = ExtractInteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.interiorIorTexIndex TEXTURES_PARAM);
 		if ((nt <= 0.f) || (nc <= 0.f))
 			return -1.f;
-		etaVertex = nt / nc;
+		const float cauchyB = (occlMat->glass.cauchyBTex != NULL_INDEX) ?
+				Texture_GetFloatValue(occlMat->glass.cauchyBTex,
+					&occlBsdf->hitPoint TEXTURES_PARAM) : 0.f;
+		if (cauchyB > 0.f) {
+#if defined(SLG_SPECTRAL)
+			// Hero-wavelength eta (see Mnee_Start); the chain-level
+			// dispersive flag marks the connect for hero collapse.
+			mnee->dispersive = 1;
+			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					&occlBsdf->hitPoint) / nc;
+#else
+			return -1.f;
+#endif
+		} else
+			etaVertex = nt / nc;
 	}
 
 	MneeVtx vv;
@@ -3252,8 +3402,9 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_StartFromShadow(
 	__global const Material *occlMat = &mats[occlBsdf->materialIndex];
 	__global const LightSource *light = &lights[info->lightIndex];
 
+	const bool lightIsDir = (light->type == TYPE_SHARPDISTANT);
 	if ((light->type != TYPE_POINT) && (light->type != TYPE_SPOT) &&
-			(light->type != TYPE_MAPPOINT))
+			(light->type != TYPE_MAPPOINT) && !lightIsDir)
 		return false;
 	if (BSDF_IsShadowCatcher(&taskState->bsdf MATERIALS_PARAM))
 		return false;
@@ -3262,13 +3413,21 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_StartFromShadow(
 	if ((occlMat->type != MIRROR) && (occlMat->type != GLASS))
 		return false;
 
-	const float r12 = sqrt(info->directPdfW);
-	if (!isfinite(r12) || (r12 < 1e-3f))
-		return false;
-	const float3 lightPos = VLOAD3F(&ray->o.x) + VLOAD3F(&ray->d.x) * r12;
+	float3 lightPos;
+	if (lightIsDir) {
+		// Directional endpoint: the manifold endpoint is the constant light
+		// direction (its directPdfW is a solid-angle pdf, not a distance).
+		lightPos = normalize(VLOAD3F(&ray->d.x));
+	} else {
+		const float r12 = sqrt(info->directPdfW);
+		if (!isfinite(r12) || (r12 < 1e-3f))
+			return false;
+		lightPos = VLOAD3F(&ray->o.x) + VLOAD3F(&ray->d.x) * r12;
+	}
 	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
 
 	__global MneeState *mnee = &taskDirectLight->mnee;
+	mnee->lightIsDir = lightIsDir ? 1 : 0;
 	mnee->lightPosX = lightPos.x;
 	mnee->lightPosY = lightPos.y;
 	mnee->lightPosZ = lightPos.z;
@@ -3277,11 +3436,20 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_StartFromShadow(
 	// Vertex 0 is the shadow-ray occluder itself (CPU MneeChainDiscover
 	// takes firstBsdf as given; re-tracing it with a different ray type
 	// lands microscopically elsewhere and the Newton starts off-solution).
-	if (MneeChain_InitVtxZero(mnee, occlBsdf, occlMat MATERIALS_PARAM) < 0.f)
+	const float eta0 = MneeChain_InitVtxZero(mnee, occlBsdf, occlMat MATERIALS_PARAM);
+	if (eta0 < 0.f)
 		return false;
 
-	// Discover from vertex 1 on along the straight ray.
-	const float3 dir = normalize(lightPos - x0p);
+	// Discover from vertex 1 on walking the physical refraction/reflection
+	// at each collected interface (the straight line misses interfaces
+	// where the solved path deviates far from it). For a directional
+	// endpoint the walk direction is the constant light direction.
+	const float3 dIn0 = lightIsDir ? lightPos : normalize(lightPos - x0p);
+	const float3 dir = MneeChain_WalkDir(dIn0,
+			occlBsdf, eta0, occlMat->type == MIRROR);
+	if (occlMat->type == GLASS)
+		mnee->walkInGlass = dot(dIn0,
+				VLOAD3F(&occlBsdf->hitPoint.geometryN.x)) < 0.f;
 	MneeChain_WriteDiscoverRay(occlBsdf, dir, ray, ray->time);
 	*dlVolInfo = pathInfo->volume;
 	mnee->phase = MNEE_PHASE_MS_DISCOVER;
@@ -3310,12 +3478,21 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_StartFromSSFail(
 
 	__global const BSDF *occlBsdf = &task->tmpBsdf;
 	__global const Material *occlMat = &mats[occlBsdf->materialIndex];
-	if (MneeChain_InitVtxZero(mnee, occlBsdf, occlMat MATERIALS_PARAM) < 0.f)
+	const float eta0 = MneeChain_InitVtxZero(mnee, occlBsdf, occlMat MATERIALS_PARAM);
+	if (eta0 < 0.f)
 		return false;
 
 	const float3 lightPos = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY, mnee->lightPosZ);
 	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
-	const float3 dir = normalize(lightPos - x0p);
+	// Directional endpoint (lightIsDir set by Mnee_Start): the stored value
+	// is the constant light direction, not a position.
+	const float3 dIn0 = (mnee->lightIsDir != 0) ? lightPos :
+			normalize(lightPos - x0p);
+	const float3 dir = MneeChain_WalkDir(dIn0,
+			occlBsdf, eta0, occlMat->type == MIRROR);
+	if (occlMat->type == GLASS)
+		mnee->walkInGlass = dot(dIn0,
+				VLOAD3F(&occlBsdf->hitPoint.geometryN.x)) < 0.f;
 	MneeChain_WriteDiscoverRay(occlBsdf, dir, ray, ray->time);
 	*dlVolInfo = pathInfo->volume;
 	mnee->phase = MNEE_PHASE_MS_DISCOVER;
@@ -3334,9 +3511,40 @@ OPENCL_FORCE_INLINE void Mnee_FailToChainOrExit(
 		__global Ray *ray,
 		__global PathVolumeInfo *dlVolInfo,
 		__global EyePathInfo *pathInfo,
-		__global SampleResult *sampleResult
+		__global SampleResult *sampleResult,
+		__global MneeSeedEntry *mneeSeeds,
+		const float worldRadius
 		LIGHTS_PARAM_DECL
 		) {
+	__global MneeState *mnee = &taskDirectLight->mnee;
+
+	// Cold-first seed policy (CPU pathtracer_mnee.cpp parity): a failed
+	// single-vertex solve retries once from the cached vertex before
+	// escalating to the chain solver. Single-vertex phases only - a chain
+	// failure (phase >= MS_DISCOVER) has no second seed to try.
+	if (!mnee->seedCacheTried &&
+			(mnee->phase < MNEE_PHASE_MS_DISCOVER) &&
+			taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+		mnee->seedCacheTried = 1;
+		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint seedMesh = mnee->shadowMeshIndex * 2u + mnee->shadowSide;
+		const uint key = Mnee_SeedKey(taskDirectLight->illumInfo.lightIndex,
+				seedMesh, occlP, cellSize);
+		MneeVtx v;
+		Mnee_LoadVtx(mnee, &v);
+		if (Mnee_SeedCacheLookup(mneeSeeds, key,
+				taskDirectLight->illumInfo.lightIndex, seedMesh,
+				mnee->mirrorMode, v.eta, mnee)) {
+			const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+			Mnee_ApplySeedShift(mnee, x0p);
+			mnee->phase = MNEE_PHASE_STEP;
+			mnee->iteration = 0;
+			mnee->beta = 1.f;
+			return;
+		}
+	}
+
 	if (!MneeChain_StartFromSSFail(taskConfig, task, taskDirectLight, taskState,
 			ray, dlVolInfo, pathInfo
 			LIGHTS_PARAM))
@@ -3377,6 +3585,24 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_Seg2Setup(
 
 	if (Spectrum_IsBlack(lightRadiance2) || !isfinite(directPdfW2))
 		return false;
+
+	if (mnee->lightIsDir != 0) {
+		// Illuminate() resampled a direction inside the emitter lobe; the
+		// manifold endpoint is the fixed direction the solve ran for. Rebuild
+		// the last-segment ray toward it and extend to the scene bounding
+		// sphere (a miss = the directional light is reached). Same
+		// construction as the single vertex Mnee_SolveEnd.
+		const float3 wo2 = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
+				mnee->lightPosZ);
+		const float3 o2 = BSDF_GetRayOrigin(&taskDirectLight->mneeBsdfFinal, wo2);
+		const float3 toCenter = MAKE_FLOAT3(worldCenterX, worldCenterY,
+				worldCenterZ) - o2;
+		const float approach = dot(toCenter, wo2);
+		const float dist = approach + sqrt(fmax(0.f,
+				worldRadius * worldRadius - dot(toCenter, toCenter) +
+				approach * approach));
+		Ray_Init4(rayOut, o2, wo2, 0.f, dist, ray->time);
+	}
 
 	mnee->lightRadiance2R = lightRadiance2.x;
 	mnee->lightRadiance2G = lightRadiance2.y;
@@ -3505,24 +3731,41 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 		else if (hitMat->type == MIRROR)
 			etaVertex = 1.f;
 		else if (hitMat->type == GLASS) {
-			if ((hitMat->glass.cauchyBTex != NULL_INDEX) &&
-					(Texture_GetFloatValue(hitMat->glass.cauchyBTex,
-						&taskDirectLight->mneeBsdf.hitPoint TEXTURES_PARAM) > 0.f))
+			const float nc = ExtractExteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+					hitMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
+			const float nt = ExtractInteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+					hitMat->glass.interiorIorTexIndex TEXTURES_PARAM);
+			const float cauchyB = (hitMat->glass.cauchyBTex != NULL_INDEX) ?
+					Texture_GetFloatValue(hitMat->glass.cauchyBTex,
+						&taskDirectLight->mneeBsdf.hitPoint TEXTURES_PARAM) : 0.f;
+			if ((nt <= 0.f) || (nc <= 0.f))
 				vertexOk = false;
-			else {
-				const float nc = ExtractExteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
-						hitMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
-				const float nt = ExtractInteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
-						hitMat->glass.interiorIorTexIndex TEXTURES_PARAM);
-				if ((nt <= 0.f) || (nc <= 0.f))
-					vertexOk = false;
-				else
-					etaVertex = nt / nc;
-			}
+			else if (cauchyB > 0.f) {
+#if defined(SLG_SPECTRAL)
+				// Hero-wavelength eta: the chain solves for the path hero
+				// bin only, the contribution collapses at assembly.
+				mnee->dispersive = 1;
+				etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+						&taskDirectLight->mneeBsdf.hitPoint) / nc;
+#else
+				vertexOk = false;
+#endif
+			} else
+				etaVertex = nt / nc;
 		} else
 			vertexOk = false;
 
 		if (!vertexOk) {
+			if (mnee->walkInGlass && (mnee->chainSub < 8)) {
+				++mnee->chainSub;   // bounded intrusion skips per walk
+				// Opaque intrusion inside the dielectric: step past it
+				// along the same direction and keep collecting (CPU
+				// MneeChainDiscover parity) - the solver validates the
+				// final path, discovery only needs the topology.
+				MneeChain_WriteDiscoverRay(&taskDirectLight->mneeBsdf,
+						VLOAD3F(&ray->d.x), ray, ray->time);
+				return;
+			}
 			// A non specular surface ends the chain (CPU: break).
 			if (mnee->chainN >= 2) {
 				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
@@ -3546,7 +3789,16 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			return;
 		}
 
-		const float3 dir = normalize(lightPos - x0p);
+		const float3 dIn = VLOAD3F(&ray->d.x);
+		const float3 dir = MneeChain_WalkDir(dIn,
+				&taskDirectLight->mneeBsdf,
+				etaVertex, hitMat->type == MIRROR);
+		if (hitMat->type == GLASS)
+			// Entering when the mesh normal faces the incident side; a
+			// TIR bounce keeps the walk inside either way.
+			mnee->walkInGlass = (dot(dIn,
+					VLOAD3F(&taskDirectLight->mneeBsdf.hitPoint.geometryN.x)) < 0.f) ||
+					(dot(dIn, dir) < 0.f);
 		MneeChain_WriteDiscoverRay(&taskDirectLight->mneeBsdf, dir, ray, ray->time);
 		*dlVolInfo = pathInfo->volume;
 		return;
@@ -3585,7 +3837,8 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			else
 				MneeChain_LoadVtx(mnee, jj, &vjj);
 			float2 CP;
-			if (!MneeChain_ResidualAt(pPrevJJ, pNextJJ, &vjj, vjj.eta, &CP)) {
+			const bool woDirJJ = (mnee->lightIsDir != 0) && (jj == nn - 1);
+			if (!MneeChain_ResidualAt(pPrevJJ, pNextJJ, woDirJJ, &vjj, vjj.eta, &CP)) {
 				Mnee_ExitTransition(taskState, sampleResult);
 				return;
 			}
@@ -3625,7 +3878,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			const float3 pPrevLast = (nn == 1) ? x0p : MneeChain_VtxPos(mnee, nn - 2);
 			const float epsLight = fmax(1e-5f, 1e-4f * length(x0p - vlast.p));
 			const float4 lightJac = MneeChain_LightJac(pPrevLast, lightPos,
-					&vlast, vlast.eta, epsLight);
+					mnee->lightIsDir != 0, &vlast, vlast.eta, epsLight);
 			const float4 dxDy = Mnee44_Mul(dxFirst, lightJac);
 			MneeVtx vfirst;
 			MneeChain_LoadVtx(mnee, 0, &vfirst);
@@ -3681,8 +3934,9 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			else {
 				const float3 pPrev = (i == 0) ? x0p : MneeChain_TrialPos(mnee, i - 1);
 				const float3 pNext = (i == nn - 1) ? lightPos : MneeChain_TrialPos(mnee, i + 1);
+				const bool woDirT = (mnee->lightIsDir != 0) && (i == nn - 1);
 				float2 CT;
-				if (!MneeChain_ResidualAt(pPrev, pNext, &trialV, trialV.eta, &CT))
+				if (!MneeChain_ResidualAt(pPrev, pNext, woDirT, &trialV, trialV.eta, &CT))
 					accepted = false;
 				else
 					MneeVec2T_FromFloat2(&mnee->chainTrialRes[i], CT);
@@ -3710,7 +3964,10 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 				trialMax = fmax(trialMax, length(MneeVec2T_ToFloat2(&mnee->chainTrialRes[t])));
 		}
 		if (mnee->chainProjected && (trialMax < mnee->resNorm)) {
-			mnee->beta = fmin(1.f, 2.f * mnee->beta);
+			// Beta doubling only after the commit: TrialPos is recomputed
+			// during MS_COMMIT and must still see the beta that produced
+			// the validated positions (CPU commits trial[] first, then
+			// raises beta).
 			const float3 pProp0 = MneeChain_TrialPos(mnee, 0);
 			MneeVtx v0;
 			MneeChain_LoadVtx(mnee, 0, &v0);
@@ -3758,6 +4015,9 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 			return;
 		}
 		mnee->iteration++;
+		// Step accepted: raise the line-search beta for the next Newton
+		// iteration (CPU ordering: commit trial positions, then double).
+		mnee->beta = fmin(1.f, 2.f * mnee->beta);
 		if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
 			Mnee_ExitTransition(taskState, sampleResult);
 			return;
@@ -3788,7 +4048,10 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 		const float3 pPrevK = (k == 0) ? x0p : MneeChain_VtxPos(mnee, k - 1);
 		const float3 pNextK = (k == nn - 1) ? lightPos : MneeChain_VtxPos(mnee, k + 1);
 		const float3 wik = normalize(pPrevK - vk.p);
-		const float3 wok = normalize(pNextK - vk.p);
+		// Directional endpoint: the stored value is the unit light
+		// direction, not a position.
+		const float3 wok = ((mnee->lightIsDir != 0) && (k == nn - 1)) ?
+				pNextK : normalize(pNextK - vk.p);
 		const float cosI = dot(vk.gn, wik);
 		const float cosO = dot(vk.gn, wok);
 		if (vk.eta == 1.f) {
@@ -3872,9 +4135,13 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 	// specular mode
 	MneeVtx v;
 	Mnee_LoadVtx(mnee, &v);
+	const float3 lightPosOrDir = MAKE_FLOAT3(mnee->lightPosX,
+			mnee->lightPosY, mnee->lightPosZ);
 	const float3 wi = normalize(x0p - v.p);
-	const float3 wo = normalize(MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
-				mnee->lightPosZ) - v.p);
+	// Directional endpoint: the stored value is already the unit light
+	// direction; point-like: wo = normalize(lightPos - x1).
+	const float3 wo = (mnee->lightIsDir != 0) ? lightPosOrDir :
+			normalize(lightPosOrDir - v.p);
 	const float cosX = dot(v.gn, wi);
 	const float cosY = dot(v.gn, wo);
 	const bool refraction = (cosX * cosY < 0.f);
@@ -3884,7 +4151,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 		// relation - the half-vector formulation can converge to such a mode,
 		// and accepting it produced light where none exists.
 		if (refraction) {
-			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 			return;
 		}
@@ -3892,7 +4159,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 		// Glass: only refraction solutions are supported (Zeltner SS handles
 		// dielectric transmission; external dielectric reflection is out of
 		// scope)
-		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 		return;
 	}
@@ -3905,7 +4172,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 			&taskDirectLight->mneeBsdfFinal, wi, &specEvent
 			MATERIALS_PARAM);
 	if (Spectrum_IsBlack(specFactor) || !(g > 0.f) || isnan(g) || isinf(g)) {
-		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 		return;
 	}
@@ -3916,18 +4183,6 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 	mnee->geometricTerm = g;
 	mnee->specEvent = specEvent;
 	mnee->plainHalfVector = (v.eta == 1.f);
-
-	// E4: publish the converged vertex as a warm-start seed for nearby
-	// attempts on the same occluder/light (key identical to the lookup).
-	if (taskConfig->pathTracer.mnee.seedCacheEnable) {
-		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
-		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
-		Mnee_SeedCacheStore(mneeSeeds,
-				Mnee_SeedKey(taskDirectLight->illumInfo.lightIndex,
-					mnee->shadowMeshIndex, occlP, cellSize),
-				v.p, v.n, taskDirectLight->illumInfo.lightIndex,
-				mnee->shadowMeshIndex, mnee->mirrorMode);
-	}
 
 	// Volume state after the specular event at x1 (CPU volSeg2)
 	*dlVolInfo = pathInfo->volume;
@@ -3957,9 +4212,29 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 			LIGHTS_PARAM);
 
 	if (Spectrum_IsBlack(lightRadiance2) || !isfinite(directPdfW2)) {
-		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 		return;
+	}
+
+	if (mnee->lightIsDir != 0) {
+		// Illuminate() resampled a direction inside the emitter lobe; the
+		// manifold endpoint is the fixed direction the solve ran for. Rebuild
+		// the second-segment ray toward wo and extend it to the scene
+		// bounding sphere (a miss = the directional light is reached). The
+		// emitted radiance is constant across the delta lobe, so
+		// lightRadiance2 stays valid; only the ray direction and length must
+		// reflect the solved endpoint.
+		const float3 wo2 = MAKE_FLOAT3(mnee->lightPosX, mnee->lightPosY,
+				mnee->lightPosZ);
+		const float3 o2 = BSDF_GetRayOrigin(&taskDirectLight->mneeBsdfFinal, wo2);
+		const float3 toCenter = MAKE_FLOAT3(worldCenterX, worldCenterY,
+				worldCenterZ) - o2;
+		const float approach = dot(toCenter, wo2);
+		const float dist = approach + sqrt(fmax(0.f,
+				worldRadius * worldRadius - dot(toCenter, toCenter) +
+				approach * approach));
+		Ray_Init4(ray, o2, wo2, 0.f, dist, ray->time);
 	}
 
 	mnee->lightRadiance2R = lightRadiance2.x;
@@ -4017,7 +4292,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		const int stepResult = Mnee_StepAndWriteProposal(taskConfig, mnee,
 				x0p, lightPos, &v, &taskState->bsdf, ray, &g);
 		if (stepResult == 0) {
-			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 			return;
 		}
@@ -4073,7 +4348,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		const int stepResult = Mnee_StepAndWriteProposal(taskConfig, mnee,
 				x0p, lightPos, &v, &taskState->bsdf, ray, &g);
 		if (stepResult == 0) {
-			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 			return;
 		}
@@ -4095,7 +4370,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		if (rayHit->meshIndex == NULL_INDEX) {
 			// The proposal ray missed everything: the CPU line search
 			// breaks out of the Newton loop here (solve failed).
-			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 			return;
 		}
@@ -4110,7 +4385,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 			MneeVtx vProp;
 			Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf, v.eta, &vProp);
 			float2 CProp;
-			if (!Mnee_Residual(x0p, lightPos, &vProp, &CProp)) {
+			if (!Mnee_Residual(x0p, lightPos, mnee->lightIsDir != 0, &vProp, &CProp)) {
 				stepRejected = true;
 			} else {
 				const float resPropNorm = length(CProp);
@@ -4127,15 +4402,15 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 					// CPU: after the accept the loop-top bound check runs
 					// before the residual convergence check
 					if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
-						Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+						Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 						return;
 					}
 					if (resPropNorm < 3e-4f) {
 						// Converged: geometric term at the converged vertex
 						converged = true;
-						gConverged = Mnee_GeometricTerm(x0p, lightPos, &vProp,
-								NULL);
+						gConverged = Mnee_GeometricTerm(x0p, lightPos,
+								mnee->lightIsDir != 0, &vProp, NULL);
 					}
 				} else
 					stepRejected = true;
@@ -4166,7 +4441,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		const int stepResult = Mnee_StepAndWriteProposal(taskConfig, mnee,
 				x0p, lightPos, &v, &taskState->bsdf, ray, &g);
 		if (stepResult == 0) {
-			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+			Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 			return;
 		}
@@ -4187,7 +4462,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 	// MNEE_PHASE_SEG2_TRACE: the chain is valid only if y is directly
 	// visible from x1
 	if (rayHit->meshIndex != NULL_INDEX) {
-		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult
+		Mnee_FailToChainOrExit(taskConfig, task, taskDirectLight, taskState, ray, dlVolInfo, pathInfo, sampleResult, mneeSeeds, worldRadius
 			LIGHTS_PARAM);
 		return;
 	}
@@ -4219,17 +4494,58 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 				mnee->specFactorG, mnee->specFactorB);
 		const float3 lightRadiance2 = MAKE_FLOAT3(mnee->lightRadiance2R,
 				mnee->lightRadiance2G, mnee->lightRadiance2B);
-		const float weightScale = (mnee->plainHalfVector ? mnee->directPdfW2 : 1.f) *
-				taskDirectLight->illumInfo.risScale /
-				taskDirectLight->illumInfo.pickPdf;
-		const float3 incomingRadiance = bsdfEval0 * specFactor *
+		// Directional endpoint: the geometric term is already the
+		// direction-space Jacobian (point-light limit lightPos = x0 + wo*R,
+		// R -> infinity cancels the perpendicular-frame Jacobian and the
+		// r12^2 factor exactly). The only remaining factor is the emitter's
+		// direction pdf: 1 for a delta direction (sharpdistant), the uniform
+		// cone pdf for a distant light.
+		const float weightScale = (mnee->lightIsDir != 0) ?
+				(taskDirectLight->illumInfo.risScale /
+					(mnee->directPdfW2 * taskDirectLight->illumInfo.pickPdf)) :
+				((mnee->plainHalfVector ? mnee->directPdfW2 : 1.f) *
+					taskDirectLight->illumInfo.risScale /
+					taskDirectLight->illumInfo.pickPdf);
+		float3 incomingRadiance = bsdfEval0 * specFactor *
 				(mnee->geometricTerm * weightScale) * lightRadiance2 *
 				connectionThroughput;
+#if defined(SLG_SPECTRAL)
+		if (mnee->dispersive)
+			// The manifold constraint holds at the hero wavelength only:
+			// carry the wavelength-selection weight, drop the dead bins.
+			incomingRadiance = Spectral_KeepHeroBins(incomingRadiance,
+					sampleResult->spectralHeroAlive);
+#endif
 
 		SampleResult_AddDirectLight(&taskConfig->film, sampleResult,
 				taskDirectLight->illumInfo.lightID,
 				(BSDFEvent)mnee->specEvent,
 				VLOAD3F(taskState->throughput.c), incomingRadiance, 1.f);
+
+		// E4: publish the converged vertex as a warm-start seed only now
+		// that the full connect validated (seg2 visibility + receiver
+		// BSDF): a vertex that solves but fails downstream lands its reuse
+		// in the same dead basin, and on multi-root casters those polluted
+		// seeds systematically out-compete the cold line seed (CPU
+		// pathtracer_mnee.cpp parity).
+		if (taskConfig->pathTracer.mnee.seedCacheEnable &&
+				(mnee->chainN == 0)) {
+			const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY,
+					mnee->occlZ);
+			const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC,
+					1e-4f);
+			const float3 vp = MAKE_FLOAT3(mnee->vtx.px, mnee->vtx.py,
+					mnee->vtx.pz);
+			const float3 vn = MAKE_FLOAT3(mnee->vtx.nX, mnee->vtx.nY,
+					mnee->vtx.nZ);
+			Mnee_SeedCacheStore(mneeSeeds,
+					Mnee_SeedKey(taskDirectLight->illumInfo.lightIndex,
+						mnee->shadowMeshIndex * 2u + mnee->shadowSide,
+						occlP, cellSize),
+					vp, vn, taskDirectLight->illumInfo.lightIndex,
+					mnee->shadowMeshIndex * 2u + mnee->shadowSide,
+					mnee->mirrorMode);
+		}
 	}
 
 	Mnee_ExitTransition(taskState, sampleResult);
@@ -4287,6 +4603,7 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 	// Generalized half-vector IOR ratio of the occluder (same convention
 	// as Mnee_Start)
 	float etaVertex;
+	bool dispersive = false;
 	if (occlMat->type == MIRROR) {
 		const float3 gn1s = VLOAD3F(&occlBsdf->hitPoint.geometryN.x);
 		const float3 x1p = VLOAD3F(&occlBsdf->hitPoint.p.x);
@@ -4296,27 +4613,41 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 		if (etaVertex != 1.f)
 			return 0;
 	} else {
-		// Dispersive glass: the manifold uses a single IOR ratio, skip
-		if ((occlMat->glass.cauchyBTex != NULL_INDEX) &&
-				(Texture_GetFloatValue(occlMat->glass.cauchyBTex,
-					&occlBsdf->hitPoint TEXTURES_PARAM) > 0.f))
-			return 0;
-
 		const float nc = ExtractExteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
 		const float nt = ExtractInteriorIors(&occlBsdf->hitPoint,
 				occlMat->glass.interiorIorTexIndex TEXTURES_PARAM);
 		if ((nt <= 0.f) || (nc <= 0.f))
 			return 0;
-		etaVertex = nt / nc;
+		const float cauchyB = (occlMat->glass.cauchyBTex != NULL_INDEX) ?
+				Texture_GetFloatValue(occlMat->glass.cauchyBTex,
+					&occlBsdf->hitPoint TEXTURES_PARAM) : 0.f;
+		if (cauchyB > 0.f) {
+#if defined(SLG_SPECTRAL)
+			// Hero-wavelength solve (see Mnee_Start); the contribution
+			// collapses at assembly via mnee->dispersive.
+			dispersive = true;
+			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					&occlBsdf->hitPoint) / nc;
+#else
+			return 0;
+#endif
+		} else
+			etaVertex = nt / nc;
 	}
 
 	mnee->mirrorMode = (occlMat->type == MIRROR);
+	mnee->dispersive = dispersive ? 1 : 0;
 	mnee->chainN = 0;
+	// The LMNEE endpoint is the camera lens point: always a finite position,
+	// never directional.
+	mnee->lightIsDir = 0;
 	mnee->lightPosX = lensPoint.x;
 	mnee->lightPosY = lensPoint.y;
 	mnee->lightPosZ = lensPoint.z;
 	mnee->shadowMeshIndex = visRayHit->meshIndex;
+	mnee->shadowSide = (dot(normalize(VLOAD3F(&visRay->d.x)),
+			VLOAD3F(&occlBsdf->hitPoint.geometryN.x)) > 0.f) ? 1u : 0u;
 	const float3 occlP = VLOAD3F(&occlBsdf->hitPoint.p.x);
 	mnee->occlX = occlP.x;
 	mnee->occlY = occlP.y;
@@ -4324,19 +4655,27 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 	mnee->beta = 1.f;
 	mnee->iteration = 0;
 	mnee->needsTrace = false;
+	mnee->seedCacheTried = 0;
 
 	MneeVtx v;
 	Mnee_InitVtxFromBsdf(occlBsdf, etaVertex, &v);
 	Mnee_StoreVtx(mnee, &v);
 	taskDirectLight->mneeBsdfFinal = task->tmpBsdf;
 
-	// Warm-start from the seed cache (camera endpoint id)
-	if (taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+	// Mirror (eta == 1) only: the cold seed costs a mirrored-lens trace,
+	// so the cache gets first refusal (camera endpoint id). For glass the
+	// free line seed keeps the reference basin; the cache is consulted
+	// only as a failure rescue before the chain fallback (eye-side
+	// parity, see Mnee_Start).
+	if ((etaVertex == 1.f) &&
+			taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
 		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint seedMesh = visRayHit->meshIndex * 2u + mnee->shadowSide;
 		const uint key = Mnee_SeedKey(LMNEE_CAMERA_SEED_ID,
-				visRayHit->meshIndex, occlP, cellSize);
+				seedMesh, occlP, cellSize);
 		if (Mnee_SeedCacheLookup(mneeSeeds, key, LMNEE_CAMERA_SEED_ID,
-				visRayHit->meshIndex, mnee->mirrorMode, etaVertex, mnee)) {
+				seedMesh, mnee->mirrorMode, etaVertex, mnee)) {
+			mnee->seedCacheTried = 1;
 			Mnee_ApplySeedShift(mnee, x0p);
 			mnee->phase = MNEE_PHASE_STEP;
 			return 1;
@@ -4413,16 +4752,6 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 	}
 
 	// Publish the converged vertex as a warm-start seed
-	if (taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
-		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
-		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
-		Mnee_SeedCacheStore(mneeSeeds,
-				Mnee_SeedKey(LMNEE_CAMERA_SEED_ID, mnee->shadowMeshIndex,
-					occlP, cellSize),
-				v.p, v.n, LMNEE_CAMERA_SEED_ID, mnee->shadowMeshIndex,
-				mnee->mirrorMode);
-	}
-
 	// Camera endpoint: project the arriving segment direction to the
 	// film and evaluate the camera weight (the light-side analog of
 	// Light_Illuminate + directPdfW2: fluxToRadianceFactor is the
@@ -4479,8 +4808,16 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 
 	lpi->pendingSplat.filmX = filmX;
 	lpi->pendingSplat.filmY = filmY;
-	const float3 radiance = VLOAD3F(taskState->throughput.c) *
+	float3 radiance = VLOAD3F(taskState->throughput.c) *
 			bsdfEval0 * specFactor * (g * camWeight);
+#if defined(SLG_SPECTRAL)
+	if (mnee->dispersive)
+		// The manifold constraint holds at the hero wavelength only:
+		// carry the wavelength-selection weight and drop the dead bins
+		// (same as the path-level Spectral_CollapseToHero).
+		radiance = Spectral_KeepHeroBins(radiance,
+				taskState->bsdf.hitPoint.spectralHeroAlive);
+#endif
 	lpi->pendingSplat.radianceR = radiance.x;
 	lpi->pendingSplat.radianceG = radiance.y;
 	lpi->pendingSplat.radianceB = radiance.z;
@@ -4489,6 +4826,10 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 	// fromMnee == 1 marks a single-vertex-solved segment: a re-block
 	// means a multi-interface occluder, so the chain takes over
 	lpi->pendingSplat.fromMnee = 1;
+	// Manifold-guided emission: remember the solved receiver
+	lpi->pendingSplat.recvPX = x0p.x;
+	lpi->pendingSplat.recvPY = x0p.y;
+	lpi->pendingSplat.recvPZ = x0p.z;
 
 	// Volume state after the specular event at the vertex (the seg2
 	// march runs through it), same convention as the eye side
@@ -4506,6 +4847,22 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 			segDir);
 	Ray_Init4(visRay, origin, segDir, 0.f, dSeg2 * (1.f - 1e-4f), time);
 	lpi->pendingSplat.valid = true;
+
+	// Publish the converged vertex as a warm-start seed only after the
+	// full connect validated (eye-side parity: solved-but-unusable roots
+	// pollute the cache and drain the caustic on multi-root casters).
+	if (taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		Mnee_SeedCacheStore(mneeSeeds,
+				Mnee_SeedKey(LMNEE_CAMERA_SEED_ID,
+					mnee->shadowMeshIndex * 2u + mnee->shadowSide,
+					occlP, cellSize),
+				v.p, v.n, LMNEE_CAMERA_SEED_ID,
+				mnee->shadowMeshIndex * 2u + mnee->shadowSide,
+				mnee->mirrorMode);
+	}
+
 	lpi->mneeActive = false;
 }
 
@@ -4610,8 +4967,15 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
 
 	lpi->pendingSplat.filmX = filmX;
 	lpi->pendingSplat.filmY = filmY;
-	const float3 radiance = VLOAD3F(taskState->throughput.c) *
+	float3 radiance = VLOAD3F(taskState->throughput.c) *
 			bsdfEval0 * specFactor * (mnee->geometricTerm * camWeight);
+#if defined(SLG_SPECTRAL)
+	if (mnee->dispersive)
+		// The manifold constraint holds at the hero wavelength only:
+		// carry the wavelength-selection weight, drop the dead bins.
+		radiance = Spectral_KeepHeroBins(radiance,
+				taskState->bsdf.hitPoint.spectralHeroAlive);
+#endif
 	lpi->pendingSplat.radianceR = radiance.x;
 	lpi->pendingSplat.radianceG = radiance.y;
 	lpi->pendingSplat.radianceB = radiance.z;
@@ -4621,6 +4985,10 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_SolveEnd(
 	// (the occluder needs more interfaces than maxSpecular models) rather
 	// than restarting the chain forever
 	lpi->pendingSplat.fromMnee = 2;
+	// Manifold-guided emission: remember the solved receiver
+	lpi->pendingSplat.recvPX = x0p.x;
+	lpi->pendingSplat.recvPY = x0p.y;
+	lpi->pendingSplat.recvPZ = x0p.z;
 
 	lpi->connectDepth = lpi->depth;
 	lpi->connectThroughShadow = false;
@@ -4694,24 +5062,40 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		else if (hitMat->type == MIRROR)
 			etaVertex = 1.f;
 		else if (hitMat->type == GLASS) {
-			if ((hitMat->glass.cauchyBTex != NULL_INDEX) &&
-					(Texture_GetFloatValue(hitMat->glass.cauchyBTex,
-						&taskDirectLight->mneeBsdf.hitPoint TEXTURES_PARAM) > 0.f))
+			const float nc = ExtractExteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+					hitMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
+			const float nt = ExtractInteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
+					hitMat->glass.interiorIorTexIndex TEXTURES_PARAM);
+			const float cauchyB = (hitMat->glass.cauchyBTex != NULL_INDEX) ?
+					Texture_GetFloatValue(hitMat->glass.cauchyBTex,
+						&taskDirectLight->mneeBsdf.hitPoint TEXTURES_PARAM) : 0.f;
+			if ((nt <= 0.f) || (nc <= 0.f))
 				vertexOk = false;
-			else {
-				const float nc = ExtractExteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
-						hitMat->glass.exteriorIorTexIndex TEXTURES_PARAM);
-				const float nt = ExtractInteriorIors(&taskDirectLight->mneeBsdf.hitPoint,
-						hitMat->glass.interiorIorTexIndex TEXTURES_PARAM);
-				if ((nt <= 0.f) || (nc <= 0.f))
-					vertexOk = false;
-				else
-					etaVertex = nt / nc;
-			}
+			else if (cauchyB > 0.f) {
+#if defined(SLG_SPECTRAL)
+				// Hero-wavelength eta: the chain solves for the path hero
+				// bin only, the contribution collapses at assembly.
+				mnee->dispersive = 1;
+				etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+						&taskDirectLight->mneeBsdf.hitPoint) / nc;
+#else
+				vertexOk = false;
+#endif
+			} else
+				etaVertex = nt / nc;
 		} else
 			vertexOk = false;
 
 		if (!vertexOk) {
+			if (mnee->walkInGlass && (mnee->chainSub < 8)) {
+				++mnee->chainSub;   // bounded intrusion skips per walk
+				// Opaque intrusion inside the dielectric: step past it
+				// along the same direction and keep collecting (CPU
+				// MneeChainDiscover parity).
+				MneeChain_WriteDiscoverRay(&taskDirectLight->mneeBsdf,
+						VLOAD3F(&ray->d.x), ray, ray->time);
+				return;
+			}
 			if (mnee->chainN >= 2) {
 				if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
 						taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
@@ -4734,7 +5118,16 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 			return;
 		}
 
-		const float3 dir = normalize(lightPos - x0p);
+		const float3 dIn = VLOAD3F(&ray->d.x);
+		const float3 dir = MneeChain_WalkDir(dIn,
+				&taskDirectLight->mneeBsdf,
+				etaVertex, hitMat->type == MIRROR);
+		if (hitMat->type == GLASS)
+			// Entering when the mesh normal faces the incident side; a
+			// TIR bounce keeps the walk inside either way.
+			mnee->walkInGlass = (dot(dIn,
+					VLOAD3F(&taskDirectLight->mneeBsdf.hitPoint.geometryN.x)) < 0.f) ||
+					(dot(dIn, dir) < 0.f);
 		MneeChain_WriteDiscoverRay(&taskDirectLight->mneeBsdf, dir, ray, ray->time);
 		*dlVolInfo = *srcVol;
 		return;
@@ -4771,7 +5164,10 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 			else
 				MneeChain_LoadVtx(mnee, jj, &vjj);
 			float2 CP;
-			if (!MneeChain_ResidualAt(pPrevJJ, pNextJJ, &vjj, vjj.eta, &CP)) {
+			// The LMNEE endpoint is the finite lens point: never directional
+			// (mnee->lightIsDir is 0 in the light-side context).
+			const bool woDirJJ = (mnee->lightIsDir != 0) && (jj == nn - 1);
+			if (!MneeChain_ResidualAt(pPrevJJ, pNextJJ, woDirJJ, &vjj, vjj.eta, &CP)) {
 				lpi->mneeActive = false;
 				return;
 			}
@@ -4810,7 +5206,7 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 			const float3 pPrevLast = (nn == 1) ? x0p : MneeChain_VtxPos(mnee, nn - 2);
 			const float epsLight = fmax(1e-5f, 1e-4f * length(x0p - vlast.p));
 			const float4 lightJac = MneeChain_LightJac(pPrevLast, lightPos,
-					&vlast, vlast.eta, epsLight);
+					mnee->lightIsDir != 0, &vlast, vlast.eta, epsLight);
 			const float4 dxDy = Mnee44_Mul(dxFirst, lightJac);
 			MneeVtx vfirst;
 			MneeChain_LoadVtx(mnee, 0, &vfirst);
@@ -4862,8 +5258,9 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 			else {
 				const float3 pPrev = (i == 0) ? x0p : MneeChain_TrialPos(mnee, i - 1);
 				const float3 pNext = (i == nn - 1) ? lightPos : MneeChain_TrialPos(mnee, i + 1);
+				const bool woDirT = (mnee->lightIsDir != 0) && (i == nn - 1);
 				float2 CT;
-				if (!MneeChain_ResidualAt(pPrev, pNext, &trialV, trialV.eta, &CT))
+				if (!MneeChain_ResidualAt(pPrev, pNext, woDirT, &trialV, trialV.eta, &CT))
 					accepted = false;
 				else
 					MneeVec2T_FromFloat2(&mnee->chainTrialRes[i], CT);
@@ -4889,7 +5286,10 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 				trialMax = fmax(trialMax, length(MneeVec2T_ToFloat2(&mnee->chainTrialRes[t])));
 		}
 		if (mnee->chainProjected && (trialMax < mnee->resNorm)) {
-			mnee->beta = fmin(1.f, 2.f * mnee->beta);
+			// Beta doubling only after the commit: TrialPos is recomputed
+			// during MS_COMMIT and must still see the beta that produced
+			// the validated positions (CPU commits trial[] first, then
+			// raises beta).
 			const float3 pProp0 = MneeChain_TrialPos(mnee, 0);
 			MneeVtx v0;
 			MneeChain_LoadVtx(mnee, 0, &v0);
@@ -4935,13 +5335,17 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 			return;
 		}
 		mnee->iteration++;
+		// Step accepted: raise the line-search beta for the next Newton
+		// iteration (CPU ordering: commit trial positions, then double).
+		mnee->beta = fmin(1.f, 2.f * mnee->beta);
 		if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
 			lpi->mneeActive = false;
 			return;
 		}
 		if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
-					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
+					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol)) {
 			lpi->mneeActive = false;
+		}
 		return;
 	}
 
@@ -4964,7 +5368,9 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		const float3 pPrevK = (k == 0) ? x0p : MneeChain_VtxPos(mnee, k - 1);
 		const float3 pNextK = (k == nn - 1) ? lightPos : MneeChain_VtxPos(mnee, k + 1);
 		const float3 wik = normalize(pPrevK - vk.p);
-		const float3 wok = normalize(pNextK - vk.p);
+		// LMNEE endpoints are finite lens points: never directional.
+		const float3 wok = ((mnee->lightIsDir != 0) && (k == nn - 1)) ?
+				pNextK : normalize(pNextK - vk.p);
 		const float cosI = dot(vk.gn, wik);
 		const float cosO = dot(vk.gn, wok);
 		if (vk.eta == 1.f) {
@@ -5066,6 +5472,50 @@ OPENCL_FORCE_NOT_INLINE bool LMneeChain_Start(
 	return true;
 }
 
+// Cold-first seed policy (eye-side Mnee_FailToChainOrExit parity): a
+// failed single-vertex solve retries once from the cached vertex before
+// escalating to the chain solver. The cache is a rescue only, never the
+// default glass seed.
+OPENCL_FORCE_NOT_INLINE void LMnee_FailToChainOrSeed(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskState *taskState,
+		__global Ray *visRay,
+		__global LightPathInfo *lpi,
+		__global MneeSeedEntry *mneeSeeds,
+		const float worldRadius
+		MATERIALS_PARAM_DECL
+		) {
+	__global MneeState *mnee = &taskDirectLight->mnee;
+
+	if (!mnee->seedCacheTried &&
+			(mnee->phase < MNEE_PHASE_MS_DISCOVER) &&
+			taskConfig->pathTracer.mnee.seedCacheEnable && mneeSeeds) {
+		mnee->seedCacheTried = 1;
+		const float3 occlP = MAKE_FLOAT3(mnee->occlX, mnee->occlY, mnee->occlZ);
+		const float cellSize = fmax(worldRadius / MNEE_SEED_CELL_FRAC, 1e-4f);
+		const uint seedMesh = mnee->shadowMeshIndex * 2u + mnee->shadowSide;
+		const uint key = Mnee_SeedKey(LMNEE_CAMERA_SEED_ID,
+				seedMesh, occlP, cellSize);
+		MneeVtx v;
+		Mnee_LoadVtx(mnee, &v);
+		if (Mnee_SeedCacheLookup(mneeSeeds, key, LMNEE_CAMERA_SEED_ID,
+				seedMesh, mnee->mirrorMode, v.eta, mnee)) {
+			const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+			Mnee_ApplySeedShift(mnee, x0p);
+			mnee->phase = MNEE_PHASE_STEP;
+			mnee->iteration = 0;
+			mnee->beta = 1.f;
+			return;
+		}
+	}
+
+	if (!LMneeChain_Start(taskConfig, task, taskDirectLight,
+			taskState, visRay, lpi MATERIALS_PARAM))
+		lpi->mneeActive = false;
+}
+
 // One launch of the light-side MNEE sub-state machine: consumes the trace
 // result sitting in the visibility slot and either writes the next trace
 // or exits (success -> pendingSplat queued for Stage A, failure -> drop).
@@ -5125,7 +5575,13 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 					camera MATERIALS_PARAM);
 			return;
 		}
-		lpi->mneeActive = false;
+		// Single-vertex solve failed: hand off to the chain (CPU
+		// LMNEEMultiConnectToEye fallback after LMNEEConnectToEye)
+		// Single-vertex solve failed: retry once from the seed cache,
+		// else hand off to the chain (CPU LMNEEMultiConnectToEye parity)
+		LMnee_FailToChainOrSeed(taskConfig, task, taskDirectLight,
+				taskState, visRay, lpi, mneeSeeds, worldRadius
+				MATERIALS_PARAM);
 		return;
 	}
 
@@ -5160,7 +5616,9 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 
 	// MNEE_PHASE_PROP_TRACE
 	if (visRayHit->meshIndex == NULL_INDEX) {
-		lpi->mneeActive = false;
+		LMnee_FailToChainOrSeed(taskConfig, task, taskDirectLight,
+				taskState, visRay, lpi, mneeSeeds, worldRadius
+				MATERIALS_PARAM);
 		return;
 	}
 
@@ -5173,7 +5631,7 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		MneeVtx vProp;
 		Mnee_InitVtxFromBsdf(&taskDirectLight->mneeBsdf, v.eta, &vProp);
 		float2 CProp;
-		if (!Mnee_Residual(x0p, lensPoint, &vProp, &CProp)) {
+		if (!Mnee_Residual(x0p, lensPoint, mnee->lightIsDir != 0, &vProp, &CProp)) {
 			stepRejected = true;
 		} else {
 			const float resPropNorm = length(CProp);
@@ -5186,13 +5644,15 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				stepRejected = false;
 
 				if (mnee->iteration >= taskConfig->pathTracer.mnee.maxIterations) {
-					lpi->mneeActive = false;
+					LMnee_FailToChainOrSeed(taskConfig, task,
+							taskDirectLight, taskState, visRay, lpi,
+							mneeSeeds, worldRadius MATERIALS_PARAM);
 					return;
 				}
 				if (resPropNorm < 3e-4f) {
 					converged = true;
-					gConverged = Mnee_GeometricTerm(x0p, lensPoint, &vProp,
-							NULL);
+					gConverged = Mnee_GeometricTerm(x0p, lensPoint,
+							mnee->lightIsDir != 0, &vProp, NULL);
 				}
 			} else
 				stepRejected = true;
@@ -5229,7 +5689,10 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				camera MATERIALS_PARAM);
 		return;
 	}
-	lpi->mneeActive = false;
+	LMnee_FailToChainOrSeed(taskConfig, task, taskDirectLight,
+			taskState, visRay, lpi, mneeSeeds, worldRadius
+			MATERIALS_PARAM);
+	return;
 }
 
 
@@ -5442,7 +5905,8 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global float *filmScreenRadianceGroup4 \
 		, __global float *filmScreenRadianceGroup5 \
 		, __global float *filmScreenRadianceGroup6 \
-		, __global float *filmScreenRadianceGroup7
+		, __global float *filmScreenRadianceGroup7 \
+		, __global const float* restrict lightFilterLUTs
 
 // Wavefront lane -> task index mapping. Under wavefrontEnable, lane
 // gid indexes this kernel's state queue; otherwise the dense mapping

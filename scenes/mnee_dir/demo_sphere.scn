@@ -1,0 +1,30 @@
+# MNEE demo: glass sphere + point light -> focused caustic ring on the floor.
+# Floor shadow rays toward the light are blocked by the sphere (delta specular,
+# two refractive interfaces), so plain NEE gives 0 and forward BSDF sampling can
+# never hit the point light: the caustic is unreachable without MNEE (or light
+# tracing). Compare path.mnee.enable=0 vs 1 with lighttracing off.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -4.4 3.0
+scene.camera.lookat.target = 0.0 0.3 0.6
+scene.camera.fieldofview = 42
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+scene.lights.L.type = "point"
+scene.lights.L.color = 350.0 350.0 350.0
+scene.lights.L.position = 0.5 0.3 3.2
+scene.lights.F.type = "distant"
+scene.lights.F.color = 0.10 0.10 0.11
+scene.lights.F.direction = -0.3 -0.5 -1.0
+scene.materials.Glass.type = "glass"
+scene.materials.Glass.kt = 1.0 1.0 1.0
+scene.materials.Glass.kr = 0.0 0.0 0.0
+scene.materials.Glass.exteriorior = 1.0
+scene.materials.Glass.interiorior = 1.5
+scene.materials.Floor.type = "matte"
+scene.materials.Floor.kd = 0.72 0.72 0.74
+# column-major: scale 0.45, translate (0,0.2,1.5) (translation at serialized idx 12-14)
+scene.objects.Glass.material = Glass
+scene.objects.Glass.ply = "scenes/mnee_dir/sphere.ply"
+scene.objects.Glass.transformation = 0.45 0.0 0.0 0.0  0.0 0.45 0.0 0.0  0.0 0.0 0.45 0.0  0.0 0.2 1.5 1.0
+scene.objects.Floor.material = Floor
+scene.objects.Floor.ply = "scenes/mnee_dir/floor.ply"

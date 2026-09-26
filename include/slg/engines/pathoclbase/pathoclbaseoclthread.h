@@ -310,6 +310,9 @@ protected:
 	// plus a per-light fill counter (ring cursor). Zero-initialized.
 	luxrays::HardwareDeviceBuffer *lightFocusBuff;
 	luxrays::HardwareDeviceBuffer *lightFocusCountBuff;
+	// Packed pixel-filter LUTs for the light-path camera splat (CPU
+	// FilmSampleSplatter parity); NULL when the film uses FILTER_NONE.
+	luxrays::HardwareDeviceBuffer *lightFilterLUTBuff;
 	// ReSTIR DI per-pixel temporal reservoirs (filmWidth * filmHeight)
 	luxrays::HardwareDeviceBuffer *restirReservoirsBuff;
 	// MNEE manifold seed cache (E4): fixed-size hashed grid of converged

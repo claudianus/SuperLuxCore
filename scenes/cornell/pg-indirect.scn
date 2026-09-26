@@ -1,0 +1,28 @@
+# Path-guiding validation scene: a divider wall pierced by a window splits
+# the room. The emitter lives in the back compartment (camera-invisible);
+# the camera-facing front compartment is lit only by bounced light, which is
+# the deep-indirect regime path guiding targets. Render with
+#   renderengine.type = PATHOCL (or PATHCPU), path.guiding.enable = 1.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -4.0 1.5
+scene.camera.lookat.target = 0.0 2.0 1.2
+scene.camera.fieldofview = 50
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 100
+
+# Rough-glossy walls: glossy enough (glossiness >= 0.3) for the default
+# guide gate; use matte + LUX_PG_DIFFUSE=1 to exercise the diffuse path.
+scene.materials.Wall.type = glossy2
+scene.materials.Wall.kd = 0.7 0.7 0.7
+scene.materials.Wall.ks = 0.15 0.15 0.15
+scene.materials.Wall.uroughness = 0.5
+scene.materials.Wall.vroughness = 0.5
+scene.materials.Light.type = matte
+scene.materials.Light.kd = 0.0 0.0 0.0
+scene.materials.Light.emission = 60.0 60.0 60.0
+scene.materials.Light.emission.id = 0
+
+scene.objects.Room.material = Wall
+scene.objects.Room.ply = scenes/cornell/pg-room.ply
+scene.objects.Emitter.material = Light
+scene.objects.Emitter.ply = scenes/cornell/pg-light.ply

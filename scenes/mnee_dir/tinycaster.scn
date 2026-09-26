@@ -1,0 +1,30 @@
+# Tiny-caster caustic scene: a small glass sphere (r~0.08) floats above a huge
+# floor under a sharpdistant light. The sphere covers ~1e-6 of the light's
+# emission disc, so uniform light-path emission essentially never hits it:
+# this isolates the emission-coverage bottleneck of light-traced caustics.
+# The caustic lands on floor visible directly to the camera (no glass in the
+# camera path), so splats connect without LMNEE.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0.0 -2.6 2.0
+scene.camera.lookat.target = 0.0 0.0 0.25
+scene.camera.fieldofview = 30
+scene.camera.cliphither = 0.01
+scene.camera.clipyon = 200
+scene.lights.S.type = "sharpdistant"
+scene.lights.S.color = 3.0 3.0 3.0
+scene.lights.S.direction = 0.0 0.0 -1.0
+scene.materials.Glass.type = "glass"
+scene.materials.Glass.kt = 1.0 1.0 1.0
+scene.materials.Glass.kr = 0.0 0.0 0.0
+scene.materials.Glass.exteriorior = 1.0
+scene.materials.Glass.interiorior = 1.5
+scene.materials.Floor.type = "matte"
+scene.materials.Floor.kd = 0.72 0.72 0.74
+# column-major: scale 0.08 sphere, translate (0,0,0.9)
+scene.objects.Glass.material = Glass
+scene.objects.Glass.ply = "scenes/mnee_dir/sphere.ply"
+scene.objects.Glass.transformation = 0.08 0.0 0.0 0.0  0.0 0.08 0.0 0.0  0.0 0.0 0.08 0.0  0.0 0.0 0.9 1.0
+# column-major: scale 6x floor at z=0
+scene.objects.Floor.material = Floor
+scene.objects.Floor.ply = "scenes/mnee_dir/floor.ply"
+scene.objects.Floor.transformation = 6.0 0.0 0.0 0.0  0.0 6.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 0.0 1.0

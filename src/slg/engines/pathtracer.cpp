@@ -18,9 +18,18 @@
 
 
 #include "luxrays/usings.h"
+#include "luxrays/utils/mc.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/core/color/spectral.h"
 #include "slg/lights/light.h"
+#include "slg/lights/pointlight.h"
+#include "slg/lights/spotlight.h"
+#include "slg/lights/distantlight.h"
+#include "slg/lights/sharpdistantlight.h"
+#include "slg/lights/sunlight.h"
+#include "slg/lights/spherelight.h"
+#include "slg/lights/trianglelight.h"
+#include "slg/scene/sceneobject.h"
 #include "slg/usings.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/engines/caches/photongi/photongicache.h"
@@ -56,6 +65,12 @@ PathTracerThreadState::PathTracerThreadState(IntersectionDeviceRef dev,
 
 PathTracerThreadState::~PathTracerThreadState() {
 }
+
+// Adaptive caustic partition: canonical solid angle of a light as seen
+// from a vertex (definition near DirectHitFiniteLight, used by
+// DirectLightSampling earlier in this file)
+static float LightConnectionSolidAngle(const LightSource &light,
+		const Point &P);
 
 //------------------------------------------------------------------------------
 // PathTracer
@@ -131,6 +146,17 @@ static bool GuidingIndirect() {
 		return !e || (atoi(e) != 0);
 	}();
 	return kIndirect;
+}
+
+// Is this vertex's BSDF a usable guiding target? The glossiness cutoff
+// exists only to skip near-smooth lobes the coarse field cannot resolve
+// - it is meaningless for a purely diffuse surface, which previously made
+// the LUX_PG_DIFFUSE opt-in unreachable (matte reports glossiness 0 and
+// always failed the cutoff). A pure-diffuse bounce is guided when the
+// flag is on; a glossy bounce still needs enough roughness for the field.
+static bool GuidableBsdf(const BSDF &bsdf) {
+	return ((bsdf.GetEventTypes() & GLOSSY) != 0) ?
+			(bsdf.GetGlossiness() >= GuidingGloss()) : GuidingDiffuse();
 }
 
 static u_int GuidingHash(u_int x) {
@@ -260,7 +286,16 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 
 				if (!bsdfEval.Black() &&
 						(!hybridBackForwardEnable ||
-						!pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold))) {
+						(hybridBackForwardAdaptiveCaustic ?
+							// Adaptive partition: the vertex connecting
+							// to the light is the terminal; its lobe vs
+							// the light's solid angle decides difficulty
+							!pathInfo.IsAdaptiveCausticPath(event,
+									bsdf.GetGlossiness(),
+									hybridBackForwardTerminalGlossiness,
+									hybridBackForwardConnectProb,
+									LightConnectionSolidAngle(*light, bsdf.hitPoint.p)) :
+							!pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold)))) {
 					verify (!isnan(bsdfPdfW) && !isinf(bsdfPdfW));
 					
 					// Create a new PathDepthInfo for the path to the light source
@@ -297,8 +332,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							// time flip is a negligible transient.)
 							float bouncePdfW = bsdfPdfW;
 							if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
-								(GuidingDiffuse() || ((bsdf.GetEventTypes() & GLOSSY) != 0)) &&
-								(bsdf.GetGlossiness() >= GuidingGloss()) &&
+								GuidableBsdf(bsdf) &&
 									((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
 									pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
 								const float wDl = PathGuidingCache::MixWeight(
@@ -350,10 +384,29 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 						// The plain estimator is 0 on these paths and forward BSDF
 						// sampling can not hit a positional delta light, so the
 						// estimators are disjoint and no MIS is required.
-						if (mneeEnable && useBSDFEVal && !bsdf.IsShadowCatcher() &&
-								(light->GetType() == TYPE_POINT ||
-								light->GetType() == TYPE_SPOT ||
-								light->GetType() == TYPE_MAPPOINT) &&
+						//
+						// hybridBackForward: every MNEE path is caustic-class
+						// (light -> specular chain -> diffuse -> eye), which the
+						// light-tracing pass owns. The isNearlyCaustic gate above
+						// only sees speculars in the EYE prefix, not in the
+						// connection leg, so MNEE must be suppressed explicitly -
+						// measured double counting: interior luminance summed the
+						// two estimators exactly (0.0299 = 0.0154 + 0.0149 on
+						// tinycaster).
+						const LightSourceType mneeLightType = light->GetType();
+						// Only a delta-direction emitter is disjoint from forward
+						// BSDF sampling (a sharpdistant direction can never be hit
+						// by a sampled direction). A distant/sun/environment cone
+						// has finite solid angle: forward refraction CAN reach it,
+						// so MNEE would double-count the caustic without MIS.
+						const bool mneeLightIsDir =
+								(mneeLightType == TYPE_SHARPDISTANT);
+						const bool mneeLightIsPoint = (mneeLightType == TYPE_POINT ||
+								mneeLightType == TYPE_SPOT ||
+								mneeLightType == TYPE_MAPPOINT);
+						if (mneeEnable && !hybridBackForwardEnable &&
+								useBSDFEVal && !bsdf.IsShadowCatcher() &&
+								(mneeLightIsPoint || mneeLightIsDir) &&
 								!shadowBsdf.IsVolume() &&
 								shadowBsdf.IsDelta() &&
 								(shadowBsdf.GetEventTypes() & SPECULAR)) {
@@ -369,7 +422,9 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							// multi-specular chain (closed glass slab / glass ball
 							// caustics). The two are different path structures
 							// (one specular vertex vs N), so they never both
-							// contribute to the same path.
+							// contribute to the same path. Directional endpoints
+							// are solved in direction space, same as the single
+							// vertex solver.
 							if (mneeMaxSpecular > 1 &&
 									MNEEMultiDirectSampling(device, scene, time, pathInfo,
 										pathThroughput, bsdf, *light, lightPickPdf, risScale,
@@ -401,6 +456,54 @@ bool PathTracer::CheckDirectHitVisibilityFlags(LightSourceConstRef lightSource, 
 		return true;
 
 	return false;
+}
+
+// Canonical solid angle subtended by the light at vertex P, for the
+// adaptive caustic partition - the CPU port of
+// Light_ConnectionSolidAngle() (light_funcs.cl). A pure function of
+// (P, light) so eye and light paths classify the same connection
+// identically: infinity for environment lights (always easy for the
+// eye path), 0 for positional emitters (direct light sampling covers
+// them, BSDF sampling can never hit them) and the cone/planar
+// subtended angle otherwise.
+static float LightConnectionSolidAngle(const LightSource &light,
+		const Point &P) {
+	switch (light.GetType()) {
+		case slg::TYPE_TRIANGLE: {
+			const TriangleLight &tl = static_cast<const TriangleLight &>(light);
+			const Vector toV = Vector(P) - Vector(tl.worldCentroid);
+			const float dist2 = toV.LengthSquared();
+			if (dist2 <= 0.f)
+				return INFINITY;
+			const float cosT = fabsf(Dot(tl.worldGeometryNormal, toV)) / sqrtf(dist2);
+			return tl.GetTriangleArea() * cosT / dist2;
+		}
+		case slg::TYPE_SUN: {
+			const SunLight &sl = static_cast<const SunLight &>(light);
+			return 2.f * M_PI * (1.f - sl.GetCosThetaMax());
+		}
+		case slg::TYPE_DISTANT: {
+			const DistantLight &dl = static_cast<const DistantLight &>(light);
+			return 2.f * M_PI * (1.f - dl.GetCosThetaMax());
+		}
+		case slg::TYPE_SPHERE:
+		case slg::TYPE_MAPSPHERE: {
+			const SphereLight &sl = static_cast<const SphereLight &>(light);
+			const float dist = Distance(P, sl.GetAbsolutePosition());
+			if (dist <= sl.radius)
+				return 4.f * M_PI;
+			const float sinT = sl.radius / dist;
+			return 2.f * M_PI * (1.f - sqrtf(Max(0.f, 1.f - sinT * sinT)));
+		}
+		case slg::TYPE_IL:
+		case slg::TYPE_IL_SKY:
+		case slg::TYPE_IL_SKY2:
+		case slg::TYPE_IL_CONSTANT:
+			return INFINITY;
+		default:
+			// Point, mappoint, spot, projection, laser, sharpdistant
+			return 0.f;
+	}
 }
 
 void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
@@ -577,16 +680,24 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		// Note: pass-through check is done inside Scene::Intersect()
 
 		const bool checkDirectLightHit =
-				// Avoid to render caustic path if hybridBackForwardEnable
-				(!hybridBackForwardEnable || !pathInfo.IsCausticPath()) &&
 				// Avoid to render caustic path if PhotonGI caustic cache is enabled
 				(!photonGICache ||
 					photonGICache->IsDirectLightHitVisible(pathInfo, photonGICausticCacheUsed));
 
+		// Hybrid caustic suppression is per-emitter in the adaptive
+		// partition: env hits have infinite solid angle so only a delta
+		// terminal makes the connection eye-hard
+		const bool suppressInfiniteHit = hybridBackForwardEnable &&
+				(hybridBackForwardAdaptiveCaustic ?
+					pathInfo.IsAdaptiveCausticHitPath(
+							hybridBackForwardTerminalGlossiness,
+							hybridBackForwardConnectProb, INFINITY) :
+					pathInfo.IsCausticPath());
+
 		if (!hit) {
 			// Nothing was hit, look for env. lights
 			if ((!(forceBlackBackground && pathInfo.isPassThroughPath) || !pathInfo.isPassThroughPath) &&
-					checkDirectLightHit) {
+					checkDirectLightHit && !suppressInfiniteHit) {
 				DirectHitInfiniteLight(scene, pathInfo, pathThroughput,
 						eyeRay, sampleResult.firstPathVertex ? nullptr : &bsdf,
 						&sampleResult);
@@ -649,7 +760,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		// Check if it is a light source and I have to add light emission
 		//----------------------------------------------------------------------
 
-		if (bsdf.IsLightSource() && checkDirectLightHit) {
+		if (bsdf.IsLightSource() && checkDirectLightHit &&
+				(!hybridBackForwardEnable ||
+				(hybridBackForwardAdaptiveCaustic ?
+					// The terminal vertex is the ray origin (it scattered
+					// the path into this emitter)
+					!pathInfo.IsAdaptiveCausticHitPath(
+							hybridBackForwardTerminalGlossiness,
+							hybridBackForwardConnectProb,
+							LightConnectionSolidAngle(*bsdf.GetLightSource(),
+									eyeRay.o)) :
+					!pathInfo.IsCausticPath()))) {
 			DirectHitFiniteLight(scene, pathInfo, pathThroughput,
 					eyeRay, eyeRayHit.t, bsdf, &sampleResult);
 		}
@@ -817,8 +938,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				// depth on every guided bounce and terminate paths early).
 				bool guided = false;
 				const bool tryGuide = pathGuidingCache && !bsdf.IsDelta() &&
-						(GuidingDiffuse() || ((bsdf.GetEventTypes() & GLOSSY) != 0)) &&
-						(bsdf.GetGlossiness() >= GuidingGloss()) &&
+						GuidableBsdf(bsdf) &&
 						((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
 						pathGuidingCache->CanGuide(bsdf.hitPoint.p);
 				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
@@ -1149,7 +1269,12 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 		BSDFEvent event;
 		const Spectrum bsdfEval = bsdf.Evaluate(-eyeDir, &event);
 
-		if (!bsdfEval.Black()) {
+		// The visibility ray is needed even when the straight-line
+		// receiver eval is black: a surface whose normal faces away from
+		// the lens can still be reached through a specular interface
+		// (e.g. a table top seen only through a glass sphere). LMNEE
+		// evaluates the receiver toward the solved vertex, not the lens.
+		if (!bsdfEval.Black() || mneeEnable) {
 			// I have to flip the direction of the traced ray because
 			// the information inside PathVolumeInfo are about the path from
 			// the light toward the camera (i.e. ray.o would be in the wrong
@@ -1180,6 +1305,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 					&connectionThroughput, nullptr, nullptr, false,
 					&connDepthInfo, NONE)) {
 				// Nothing was hit, the light path vertex is visible
+				if (!bsdfEval.Black()) {
 
 				float fluxToRadianceFactor;
 				scene.GetCamera().GetPDF(eyeRay, eyeDistance, filmX, filmY, nullptr, &fluxToRadianceFactor);
@@ -1199,13 +1325,356 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				assert (sampleResult.pixelY >= subRegion[2]);
 				assert (sampleResult.pixelY <= subRegion[3]);
 
-				sampleResult.isCaustic = pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold);
+				sampleResult.isCaustic = hybridBackForwardAdaptiveCaustic ?
+						pathInfo.IsAdaptiveCausticPath(event,
+								hybridBackForwardTerminalGlossiness,
+								hybridBackForwardConnectProb,
+								LightConnectionSolidAngle(light,
+										pathInfo.firstVertexP)) :
+						pathInfo.IsCausticPath(event, bsdf.GetGlossiness(),
+								hybridBackForwardGlossinessThreshold);
 
 				// Add radiance from the light source
 				sampleResult.radiance[light.GetID()] = connectionThroughput * flux * fluxToRadianceFactor * bsdfEval;
+				}
+			} else {
+				if (mneeEnable && !bsdfConn.IsVolume() &&
+					bsdfConn.IsDelta() &&
+					(bsdfConn.GetEventTypes() & SPECULAR)) {
+				// The connect was blocked by a delta specular surface.
+				// LMNEE: solve the specular manifold x0 -> x1 -> lens and
+				// splat the refracted/reflected contribution (the CPU port
+				// of the GPU LMnee_* driver; the plain estimator is 0 on
+				// these paths, so the estimators are disjoint and no MIS
+				// is needed). The solver starts from the clean path volume
+				// state, not volInfo which the connect march mutated.
+				PathVolumeInfo mneeVolInfo = pathInfo.volume;
+				BSDF warmV0, warmV1;
+				bool warmOk = false;
+				if (!LMNEEConnectToEye(device, scene, film, time, light,
+						bsdf, flux, pathInfo, traceRayHit, bsdfConn,
+						mneeVolInfo, warmV0, warmV1, warmOk,
+						sampleResults) && (mneeMaxSpecular > 1)) {
+					// The single vertex solve found no solution. When it
+					// converged but its second segment re-blocked, warmV0/
+					// warmV1 carry the solved vertex + the re-blocker: a
+					// consistent seed pair on the solved ray's path.
+					PathVolumeInfo mneeChainVolInfo = pathInfo.volume;
+					LMNEEMultiConnectToEye(device, scene, film, time, light,
+							bsdf, flux, pathInfo, bsdfConn, mneeChainVolInfo,
+							warmOk ? &warmV0 : nullptr,
+							warmOk ? &warmV1 : nullptr,
+							sampleResults);
+				}
 			}
 		}
 	}
+	}
+}
+
+//------------------------------------------------------------------------------
+// Caustic focus cache (CPU side)
+//
+// CPU port of the GPU lightFocus/lightFocusCount rings
+// (pathoclbase_kernels_micro.cl): each light keeps a ring of the last
+// lightFocusK world-space targets that produced a screen contribution
+// through a delta interface. Emission is steered toward a remembered
+// hotspot with probability lightFocusRatio, weighted by the one-sample
+// mixture pdf (1-g)*native + g*aim over BOTH branches so the estimator
+// stays unbiased. The aim radius of a new entry is its distance to the
+// nearest existing target, clamped to [focusRadiusFrac, 1] * worldRadius.
+//------------------------------------------------------------------------------
+
+void PathTracer::LightFocusEnsureInit(SceneConstRef scene) const {
+	std::call_once(lightFocusInitOnce, [&]() {
+		lightFocusLightCount = scene.GetLightSources().GetSize();
+		lightFocusTable.reset(new LightFocusEntry[lightFocusLightCount * lightFocusK]);
+		lightFocusCounts.reset(new std::atomic<u_int>[lightFocusLightCount]);
+		for (u_int i = 0; i < lightFocusLightCount; ++i)
+			lightFocusCounts[i].store(0u, std::memory_order_relaxed);
+
+		// Delta-specular caster bounding spheres for distant-light
+		// caustic focusing: every object able to produce a delta
+		// specular event (glass, mirror, ...) is a potential caustic
+		// caster for a directional light.
+		for (u_int i = 0; i < scene.GetObjects().GetSize(); ++i) {
+			SceneObjectConstRef obj = scene.GetObjects().GetSceneObject(i);
+			MaterialConstRef mat = obj.GetMaterial();
+			if (!mat.IsDelta() || !(mat.GetEventTypes() & SPECULAR))
+				continue;
+			const BBox &bb = obj.GetExtMesh().GetBBox();
+			const Point c = (bb.pMin + bb.pMax) * .5f;
+			lightFocusCasterCenters.push_back(c);
+			lightFocusCasterRadii.push_back((bb.pMax - c).Length());
+		}
+	});
+}
+
+void PathTracer::LightFocusCredit(SceneConstRef scene, const u_int lightIndex,
+		const Point &p) const {
+	if (!lightFocusEnable)
+		return;
+	// Cheap after the first call; keeps the table pointer write
+	// sequenced-before any ring access on every thread
+	LightFocusEnsureInit(scene);
+	if (lightIndex >= lightFocusLightCount)
+		return;
+
+	const float worldRadius = scene.GetDataSet().GetBSphere().rad;
+	const float minR = lightFocusRadiusFrac * worldRadius;
+	const float maxR = worldRadius;
+
+	LightFocusEntry *ring = &lightFocusTable[lightIndex * lightFocusK];
+	const u_int cursor = lightFocusCounts[lightIndex].fetch_add(1u,
+			std::memory_order_relaxed);
+	const u_int nValid = Min(cursor, lightFocusK);
+
+	// Aim radius = distance to the nearest existing target (GPU
+	// FocusAimRadius). A torn read yields NaN; fold it to the broad cap.
+	float nn2 = numeric_limits<float>::infinity();
+	for (u_int e = 0; e < nValid; ++e) {
+		const float dx = ring[e].x.load(std::memory_order_relaxed) - p.x;
+		const float dy = ring[e].y.load(std::memory_order_relaxed) - p.y;
+		const float dz = ring[e].z.load(std::memory_order_relaxed) - p.z;
+		nn2 = Min(nn2, dx * dx + dy * dy + dz * dz);
+	}
+	const float r = sqrtf(nn2);
+	const float aimR = (r == r) ? Clamp(r, minR, maxR) : maxR;
+
+	LightFocusEntry &slot = ring[cursor % lightFocusK];
+	slot.x.store(p.x, std::memory_order_relaxed);
+	slot.y.store(p.y, std::memory_order_relaxed);
+	slot.z.store(p.z, std::memory_order_relaxed);
+	slot.aimR.store(aimR, std::memory_order_relaxed);
+}
+
+// SpotLight::LocalFalloff twin (spotlight.cpp keeps it file-static)
+static float LightFocusSpotFalloff(const Vector &w,
+		const float cosTotalWidth, const float cosFalloffStart) {
+	const float cosT = CosTheta(w);
+	if (cosT < cosTotalWidth)
+		return 0.f;
+	if (cosT > cosFalloffStart)
+		return 1.f;
+	const float delta = (cosT - cosTotalWidth) / (cosFalloffStart - cosTotalWidth);
+	return powf(delta, 4);
+}
+
+void PathTracer::LightFocusEmit(SceneConstRef scene, const LightSource &light,
+		Sampler &sampler, const float time,
+		Ray &ray, Spectrum &flux, float &emissionPdfW) const {
+	if (!lightFocusEnable)
+		return;
+	LightFocusEnsureInit(scene);
+
+	const u_int lightIndex = light.lightSceneIndex;
+	if (lightIndex >= lightFocusLightCount)
+		return;
+	const LightSourceType lightType = light.GetType();
+	// Distant-family lights have a (nearly) fixed direction, so focusing
+	// cannot steer it; it acts on the ray ORIGIN instead. Native emission
+	// spreads origins uniformly over the whole scene disc, while only the
+	// fraction crossing a delta-specular caster produces caustics.
+	if ((lightType == TYPE_DISTANT) || (lightType == TYPE_SHARPDISTANT)) {
+		LightFocusEmitDistant(scene, light, sampler, time, ray, emissionPdfW);
+		return;
+	}
+
+	const u_int focusN = Min(lightFocusCounts[lightIndex].load(
+			std::memory_order_relaxed), lightFocusK);
+	// Positional emitters only (GPU parity): re-aiming the direction of
+	// an area emitter needs the emission frame at the sampled point,
+	// handled on the GPU side; distant/env lights have no steerable
+	// origin either.
+	if ((focusN == 0) || ((lightType != TYPE_POINT) && (lightType != TYPE_SPOT)))
+		return;
+
+	const float g = lightFocusRatio;
+	const float worldRadius = scene.GetDataSet().GetBSphere().rad;
+	// Focus dims sit right after the 9 fixed boot dims (the spectral
+	// wavelength draw keeps occupying the last boot slot)
+	const float uCoin = sampler.GetSample(9);
+	const float uSlot = sampler.GetSample(10);
+	const float uCone0 = sampler.GetSample(11);
+	const float uCone1 = sampler.GetSample(12);
+
+	LightFocusEntry *ring = &lightFocusTable[lightIndex * lightFocusK];
+
+	float nativePdf = 0.f;
+	if (lightType == TYPE_POINT)
+		nativePdf = UniformSpherePdf();
+	// SPOT native pdf is evaluated below from the local direction
+
+	const Point &rayOrig = ray.o;
+	if (uCoin < g) {
+		// Re-aim the emitted direction at a remembered hotspot: uniform
+		// slot pick + uniform cone sample inside its aim radius
+		const u_int slot = Min((u_int)(uSlot * focusN), focusN - 1);
+		const LightFocusEntry &hp = ring[slot];
+		const Point target(hp.x.load(std::memory_order_relaxed),
+				hp.y.load(std::memory_order_relaxed),
+				hp.z.load(std::memory_order_relaxed));
+		const float aimR = hp.aimR.load(std::memory_order_relaxed);
+		const Vector toTarget = target - rayOrig;
+		const float targetDist = toTarget.Length();
+		if (targetDist > aimR) {
+			const float sinMax = aimR / targetDist;
+			const float cosMax = sqrtf(Max(0.f, 1.f - sinMax * sinMax));
+			const Vector axis = toTarget / targetDist;
+			Vector axX, axY;
+			CoordinateSystem(axis, &axX, &axY);
+			const Vector newDir = UniformSampleCone(uCone0, uCone1,
+					cosMax, axX, axY, axis);
+			ray.d = newDir;
+
+			// Recompute the emission flux for the redirected ray
+			if (lightType == TYPE_POINT) {
+				float ef[3];
+				static_cast<const PointLight &>(light).
+						GetPreprocessedData(nullptr, nullptr, ef);
+				flux = Spectral::Emission(Spectrum(ef[0], ef[1], ef[2])) *
+						(1.f / (4.f * M_PI));
+			} else {
+				float ef[3], cosTotalWidth, cosFalloffStart;
+				const Transform *l2w;
+				static_cast<const SpotLight &>(light).GetPreprocessedData(
+						ef, nullptr, &cosTotalWidth, &cosFalloffStart, &l2w);
+				const Vector localDir = Normalize(Inverse(*l2w) * newDir);
+				// Outside the cone the falloff is 0 and the path dies,
+				// exactly like the GPU's leaked rim sample
+				flux = Spectral::Emission(Spectrum(ef[0], ef[1], ef[2])) *
+						(LightFocusSpotFalloff(localDir, cosTotalWidth,
+						cosFalloffStart) / fabsf(CosTheta(localDir)));
+			}
+		}
+	}
+
+	// Mixture pdf of the final direction over both strategies (the aim
+	// strategy covers every slot whose cone contains the direction;
+	// degenerate slots contribute the native density, GPU parity)
+	const Vector emitDir = Normalize(ray.d);
+	if (lightType == TYPE_SPOT) {
+		float cosTotalWidth, cosFalloffStart;
+		const Transform *l2w;
+		static_cast<const SpotLight &>(light).GetPreprocessedData(
+				nullptr, nullptr, &cosTotalWidth, &cosFalloffStart, &l2w);
+		const Vector localDir = Normalize(Inverse(*l2w) * emitDir);
+		nativePdf = (CosTheta(localDir) >= cosTotalWidth) ?
+				UniformConePdf(cosTotalWidth) : 0.f;
+	}
+	float aimPdf = 0.f;
+	for (u_int k = 0; k < focusN; ++k) {
+		const LightFocusEntry &hk = ring[k];
+		const Vector tk = Point(hk.x.load(std::memory_order_relaxed),
+				hk.y.load(std::memory_order_relaxed),
+				hk.z.load(std::memory_order_relaxed)) - rayOrig;
+		const float aimR = hk.aimR.load(std::memory_order_relaxed);
+		const float dk = tk.Length();
+		if (dk > aimR) {
+			const float sk = aimR / dk;
+			const float ck = sqrtf(Max(0.f, 1.f - sk * sk));
+			if (Dot(emitDir, tk / dk) >= ck)
+				aimPdf += UniformConePdf(ck);
+		} else
+			aimPdf += nativePdf;
+	}
+	aimPdf /= focusN;
+
+	emissionPdfW = (1.f - g) * nativePdf + g * aimPdf;
+}
+
+void PathTracer::LightFocusEmitDistant(SceneConstRef scene,
+		const LightSource &light, Sampler &sampler, const float time,
+		Ray &ray, float &emissionPdfW) const {
+	const u_int casterN = lightFocusCasterCenters.size();
+	if (casterN == 0)
+		return;
+
+	// Emit-plane frame of the light (the direction itself is not steered)
+	Vector dirV, ax, ay;
+	float ld[3], lx[3], ly3[3];
+	if (light.GetType() == TYPE_SHARPDISTANT)
+		static_cast<const SharpDistantLight &>(light).GetPreprocessedData(
+				ld, lx, ly3);
+	else
+		static_cast<const DistantLight &>(light).GetPreprocessedData(
+				ld, lx, ly3, nullptr, nullptr);
+	dirV = Vector(ld[0], ld[1], ld[2]);
+	ax = Vector(lx[0], lx[1], lx[2]);
+	ay = Vector(ly3[0], ly3[1], ly3[2]);
+
+	const Point worldCenter = scene.GetDataSet().GetBSphere().center;
+	const float envR = InfiniteLightSource::GetEnvRadius(scene);
+	const float invR = 1.f / envR;
+
+	// Emit-plane coordinates are unit-disc: a caster sphere (C, r)
+	// projects to disc center proj(C)/envR with radius r/envR.
+	float sumR2 = 0.f;
+	for (u_int i = 0; i < casterN; ++i) {
+		const float r = lightFocusCasterRadii[i];
+		sumR2 += r * r;
+	}
+	if (sumR2 <= 0.f)
+		return;
+
+	const float g = lightFocusRatio;
+	const float uCoin = sampler.GetSample(9);
+	const float uSlot = sampler.GetSample(10);
+	const float uCone0 = sampler.GetSample(11);
+	const float uCone1 = sampler.GetSample(12);
+
+	if (uCoin < g) {
+		// Pick a caster proportional to its disc area r^2, then sample a
+		// point of its projected disc
+		float t = uSlot * sumR2;
+		u_int i = 0;
+		for (; i + 1 < casterN; ++i) {
+			const float w = lightFocusCasterRadii[i] *
+					lightFocusCasterRadii[i];
+			if (t < w)
+				break;
+			t -= w;
+		}
+		float dd1, dd2;
+		ConcentricSampleDisk(uCone0, uCone1, &dd1, &dd2);
+		const float rho = lightFocusCasterRadii[i] * invR;
+		const Vector oc = lightFocusCasterCenters[i] - worldCenter;
+		// Emit-plane disc coords map to the perpendicular offset with a
+		// negative sign: ray.o = wc - R*(dir + d1*x + d2*y), so the caster
+		// disc center sits at -perp(C - wc)/R.
+		const float s1 = -Dot(oc, ax) * invR + rho * dd1;
+		const float s2 = -Dot(oc, ay) * invR + rho * dd2;
+		ray.Update(worldCenter - envR * (dirV + s1 * ax + s2 * ay),
+				ray.d, ray.time);
+	}
+
+	// Exact mixture pdf on the final origin's emit-plane coordinates.
+	// The area pdf of the native strategy is 1/(pi*envR^2) inside the
+	// unit disc; each caster disc covering the origin contributes
+	// (r_i^2/sumR2)/(pi*r_i^2) = 1/(pi*sumR2), so the area pdf is
+	// (1-g)/(pi*envR^2)*[in disc] + g*coverN/(pi*sumR2). Multiplying the
+	// already-evaluated native emissionPdfW by the ratio folds the
+	// direction pdf through unchanged.
+	const Vector oo = ray.o - worldCenter;
+	const float s1 = -Dot(oo, ax) * invR;
+	const float s2 = -Dot(oo, ay) * invR;
+	u_int coverN = 0;
+	for (u_int i = 0; i < casterN; ++i) {
+		const Vector oc = lightFocusCasterCenters[i] - worldCenter;
+		const float c1 = -Dot(oc, ax) * invR;
+		const float c2 = -Dot(oc, ay) * invR;
+		const float rho = lightFocusCasterRadii[i] * invR;
+		const float e1 = s1 - c1, e2 = s2 - c2;
+		if (e1 * e1 + e2 * e2 <= rho * rho)
+			++coverN;
+	}
+	const float nativeArea = (s1 * s1 + s2 * s2 <= 1.f) ? 1.f : 0.f;
+	const float mult = (1.f - g) * nativeArea +
+			g * coverN * envR * envR / sumR2;
+	static u_int dbgN = 0;
+	if (dbgN < 8 && (dbgN++ , true))
+		SLG_LOG("FocusDistant o=" << ray.o << " d=" << ray.d << " s=" << s1 << "," << s2 << " cover=" << coverN << " envR=" << envR << " mult=" << mult);
+	emissionPdfW *= mult;
 }
 
 //------------------------------------------------------------------------------
@@ -1247,10 +1716,25 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		if (lightPathFlux.Black())
 			return;
 
+		// Caustic focus cache: with probability focusRatio re-aim the
+		// emitted direction at a remembered productive target and fold
+		// the one-sample mixture pdf into emissionPdfW (GPU parity)
+		LightFocusEmit(scene, *light, sampler, time,
+				nextEventRay, lightPathFlux, lightEmitPdfW);
+		if (lightEmitPdfW <= 0.f)
+			return;
+
 		lightPathFlux /= lightEmitPdfW * lightPickPdf;
 		assert (!lightPathFlux.IsNaN() && !lightPathFlux.IsInf());
 
 		LightPathInfo pathInfo;
+
+		// Caustic focus cache: position of the first delta-specular
+		// vertex of this path (credited into the emitting light's
+		// hotspot ring on a successful camera connect, GPU
+		// hasDeltaVertex/firstDeltaP parity)
+		bool hasDeltaVertex = false;
+		Point firstDeltaP;
 
 		/*
 		// Sample a point on the camera lens
@@ -1292,6 +1776,14 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 
 			lightPathFlux *= connectionThroughput;
 
+			// Caustic focus cache: remember the first delta-specular
+			// vertex of this path - a successful camera connect credits
+			// it into the emitting light's hotspot ring
+			if (!hasDeltaVertex && bsdf.IsDelta()) {
+				firstDeltaP = bsdf.hitPoint.p;
+				hasDeltaVertex = true;
+			}
+
 			//--------------------------------------------------------------
 			// Try to connect the light path vertex with the eye
 			//--------------------------------------------------------------
@@ -1299,6 +1791,7 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 			scene.GetCamera().SampleLens(time, sampler.GetSample(6), sampler.GetSample(7),
 				&pathInfo.lensPoint);
 
+			const size_t sampleResultsBefore = sampleResults.size();
 			if (ConnectToEyeCallBack){
 				ConnectToEyeCallBack(pathInfo, bsdf, light->GetID(), lightPathFlux, sampleResults);
 			} else {
@@ -1308,6 +1801,16 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 						sampler.GetSample(sampleOffset + 2),
 						sampler.GetSample(sampleOffset + 3),
 						*light, bsdf, lightPathFlux, pathInfo, sampleResults);
+			}
+
+			// A connect that produced a screen contribution after
+			// crossing a delta surface is a productive target: remember
+			// it (once per path, GPU parity - the flag clears so a later
+			// second delta bounce can still be credited)
+			if (hasDeltaVertex &&
+					(sampleResults.size() > sampleResultsBefore)) {
+				LightFocusCredit(scene, light->lightSceneIndex, firstDeltaP);
+				hasDeltaVertex = false;
 			}
 
 			if (pathInfo.depth.depth == maxPathDepth.depth - 1)
@@ -1330,8 +1833,12 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 
 			pathInfo.AddVertex(bsdf, bsdfEvent, hybridBackForwardGlossinessThreshold);
 
-			// If it isn't anymore a (nearly) specular path, I can stop
-			if (hybridBackForwardEnable && !pathInfo.IsSpecularPath() &&
+			// If it isn't anymore a (nearly) specular path, I can stop.
+			// Adaptive partition: the chain survives while vertices are
+			// non-diffuse (boundary-glossy interior vertices included)
+			if (hybridBackForwardEnable &&
+					!(hybridBackForwardAdaptiveCaustic ?
+						pathInfo.isAdaptiveS : pathInfo.IsSpecularPath()) &&
 					// This condition is added to "stabilize" Metropolis sampler
 					// used in light tracing part of hybrid rendering. In this case
 					// I render also some not-caustic sample to make an "easy"
@@ -1488,6 +1995,11 @@ void PathTracer::ParseOptions(
 	// hybridBackForwardGlossinessThreshold is used by LIGHTCPU when PSR is enabled
 	// so I have always to set the value
 	hybridBackForwardGlossinessThreshold = .05f;
+	// Adaptive caustic partition: parsed unconditionally because
+	// path.lighttracing.enable below can force hybrid on after this block
+	hybridBackForwardAdaptiveCaustic = cfg.Get(defaultProps.Get("path.hybridbackforward.adaptivecaustic")).Get<bool>();
+	hybridBackForwardTerminalGlossiness = Clamp(cfg.Get(defaultProps.Get("path.hybridbackforward.terminalglossiness")).Get<double>(), 0.0, 1.0);
+	hybridBackForwardConnectProb = Clamp(cfg.Get(defaultProps.Get("path.hybridbackforward.connectprob")).Get<double>(), 0.0, 1.0);
 	if (hybridBackForwardEnable) {
 		hybridBackForwardPartition = Clamp(cfg.Get(defaultProps.Get("path.hybridbackforward.partition")).Get<double>(), 0.0, 1.0);
 		hybridBackForwardGlossinessThreshold = Clamp(cfg.Get(defaultProps.Get("path.hybridbackforward.glossinessthreshold")).Get<double>(), 0.0, 1.0);
@@ -1517,9 +2029,14 @@ void PathTracer::ParseOptions(
 	mneeEnable = cfg.Get(defaultProps.Get("path.mnee.enable")).Get<bool>();
 	mneeMaxIterations = Max(1, cfg.Get(defaultProps.Get("path.mnee.maxiterations")).Get<int>());
 	mneeMaxSpecular = Clamp(cfg.Get(defaultProps.Get("path.mnee.maxspecular")).Get<int>(), 1, 4);
-	// Manifold seed cache (GPU only): warm-start Newton from cached
-	// converged solutions nearby on the same occluder/light.
+	// Manifold seed cache: warm-start Newton from cached converged
+	// solutions nearby on the same occluder/light (the GPU mneeSeeds
+	// hashed grid, same size and key function).
 	mneeSeedCacheEnable = cfg.Get(defaultProps.Get("path.mnee.seedcache")).Get<bool>();
+	if (mneeSeedCacheEnable)
+		mneeSeeds.reset(new MneeSeedEntry[1u << 14]());
+	else
+		mneeSeeds.reset();
 
 	// Path guiding (P1-3 M1 CPU; M2b GPU samples a frozen table file)
 	// (path.guiding.tablefile, empty = train inline (CPU) / unguided (GPU))
@@ -1566,8 +2083,9 @@ void PathTracer::ParseOptions(
 		eyeSampleBootSize + // To generate eye ray
 		(maxPathDepth.depth + 1) * eyeSampleStepSize; // For each path vertex
 
-	// Update light sample size
-	lightSampleBootSize = 9 + (spectralEnable ? 1 : 0); // +1 wavelength draw
+	// Update light sample size (the 4 caustic-focus dims sit right after
+	// the 9 fixed dims; the wavelength draw stays last)
+	lightSampleBootSize = 9 + (lightFocusEnable ? 4 : 0) + (spectralEnable ? 1 : 0);
 	lightSampleStepSize = 7;
 	lightSampleSize =
 		lightSampleBootSize + // To generate eye ray
@@ -1605,6 +2123,9 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.partition")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.glossinessthreshold")) <<
+			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.adaptivecaustic")) <<
+			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.terminalglossiness")) <<
+			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.connectprob")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.taskfraction")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.only")) <<
@@ -1645,6 +2166,17 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.hybridbackforward.enable")(false) <<
 			Property("path.hybridbackforward.partition")(0.8) <<
 			Property("path.hybridbackforward.glossinessthreshold")(.05f) <<
+			// Adaptive caustic partition (on by default): the light pass
+			// owns path classes whose light-adjacent vertex is hard for
+			// the eye path - delta, or a glossy lobe of glossiness <=
+			// terminalglossiness facing a light covering less than
+			// connectprob of the lobe solid angle (PI * g^2). connectProb
+			// is the eye-connection success probability below which the
+			// light pass takes over: paths the eye completes less than
+			// half the time are noise-dominant, so 0.5 is the default.
+			Property("path.hybridbackforward.adaptivecaustic")(true) <<
+			Property("path.hybridbackforward.terminalglossiness")(.3f) <<
+			Property("path.hybridbackforward.connectprob")(.5f) <<
 			Property("path.lighttracing.enable")(false) <<
 			Property("path.lighttracing.taskfraction")(0.25) <<
 			Property("path.lighttracing.only")(false) <<

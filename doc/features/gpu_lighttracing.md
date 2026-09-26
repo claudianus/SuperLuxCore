@@ -538,6 +538,138 @@ Properties: `path.lighttracing.focus.enable` (default true),
 0.01 — shrink toward `hotspot cluster size / worldRadius` for tight
 aiming; too small under-covers the caustic-forming surface).
 
+#### Distant-light casters (origin steering)
+
+Distant-family lights (`distant`, `sharpdistant`) have no position to
+aim *from* and their direction is (nearly) fixed, so the hotspot ring
+cannot steer them. Instead the emit **origin** is focused: every
+delta-specular object in the scene is a potential caustic *caster*, and
+its bounding sphere projects to a disc on the light's emit plane.
+Sampling origins on that disc sends ~100% of the guided rays through the
+caster — the uniform-emission coverage problem disappears regardless of
+how small the caster is relative to the scene disc.
+
+- Casters are collected at compile time (delta + SPECULAR materials),
+  stored as `(center.xyz, boundingRadius)` float4s appended to the
+  `lightFocus` buffer after the per-light rings, count in
+  `pathTracer.lightTracing.focusCasterCount`. CPU mirrors this in
+  `PathTracer::LightFocusEmitDistant`.
+- With probability `g` a caster is picked proportional to its disc area
+  `r^2` and the origin is resampled inside its projected disc; the
+  direction (including `distant` cone jitter) is untouched.
+- Mixture pdf on the final origin: `(1-g)*nativeArea/(pi*envR^2) +
+  g*coverN/(pi*sumR2)` — folded into `emissionPdfW` as a ratio, so
+  unfocused draws are correctly down-weighted by `1-g` and focused draws
+  carry their share of the inflated density. Unbiased.
+- Emit-plane gotcha: `o = wc - R*(dir + d1*x + d2*y)` maps unit-disc
+  coords to the perpendicular offset with a **negative** sign — the
+  caster disc center sits at `-perp(C - wc)/R`, not `+perp/R`.
+- `TYPE_SHARPDISTANT` previously had no device `Emit` at all (zero
+  weight in the emit distribution); the port is a fixed direction +
+  disc origin (u0/u1 are the disc coords, pdf `1/(pi*envR^2)`).
+
+**Camera-side caveat (measured)**: focusing fixes only the emission
+half. A caustic whose receiver is seen *through* the refractor (sheet /
+window / basin) cannot splat — the camera connect ray hits the caster
+itself and the vertex is rejected. That is the LMNEE path's job; enable
+`path.mnee.enable` for those views. `scenes/mnee_dir/dirsheet.scn`
+renders 0.00 in the shadowed footprint without LMNEE and ~0.30-0.47 with
+it, focus making no measurable difference there (the sheet is large
+enough that uniform emission already covers it).
+
+### Manifold-guided emission
+
+The focus cache steers emission toward *specular hotspots* — the first
+delta vertex of a camera-connected path — which targets the **portal** a
+photon must refract through to form a caustic. Manifold-guided emission
+(MGE) closes the loop from the other side: every *successful camera
+connection*, including LMNEE specular-manifold solves, records the
+**receiver** position (the light-path vertex that connected to the
+lens), and emission is steered toward those camera-productive positions.
+
+#### Why the receiver, not the portal
+
+For an LMNEE connect `light → … → x0 (diffuse) → s1 … sn (specular) →
+lens`, the photon must *land* on the receiver `x0`; the `x0 → lens`
+manifold is then solved by the connect machinery. Aiming emission at
+`x0` deposits photons on a receiver that is known to reach the camera
+(possibly only through the solved specular chain). Aiming at the
+specular `si` would be wrong — `si` lies on the receiver→camera half,
+not the emitter→receiver half. So the productive emission target is the
+receiver position `x0` of each camera connect, manifold or plain.
+
+This directly targets the refracted-view hard case: an interior surface
+that can only reach the camera *through* glass is invisible to ordinary
+emission (a plain connect is blocked by the shell), but once LMNEE
+solves it once, its receiver is recorded and subsequent emission is
+preferentially deposited there — bootstrapping the very paths that are
+slowest to discover.
+
+#### Estimator and unbiasedness
+
+Identical one-sample mixture to the focus cache. With aim ratio `g`, the
+direction (and, for area emitters, the surface position) is drawn from
+`q = (1−g)·p_native + g·p_aim`. Because the returned weight is divided by
+the **full mixture** `q` — including the `g·p_aim` term evaluated on the
+native draw and the `(1−g)·p_native` term on the guided draw — every
+emitted direction carries its true density under the mixture, so the
+estimator stays unbiased for any `0 ≤ g < 1` and any `p_aim > 0` over
+the native support. Recording adds no bias: it only changes which
+positions future emission is aimed at, and the mixture pdf already
+covers the whole ring.
+
+#### Mechanism
+
+* On a camera connect (plain or LMNEE/chain), the receiver vertex
+  position is appended to the per-light `lightFocus` ring alongside the
+  existing first-delta hotspots. Both are just world-space "productive"
+  positions; the aim cone treats them uniformly.
+* Emit-side guidance is extended from `POINT`/`SPOT` to area (`TRIANGLE`)
+  emitters: the sampled surface point is kept (native position pdf), the
+  outgoing direction is re-aimed into the hotspot cone, and the
+  direction pdf is recomputed for the redirected direction and folded
+  into the mixture. This removes the previous gap where triangle/area
+  lights — the most common studio emitter — received no guidance at all.
+
+#### Design notes / failure modes
+
+* The same ring holds portals (first-delta) and receivers; a scene with
+  both gets a population-weighted mixture, which is the desired
+  behaviour. A portal target is the transit point a productive path
+  refracted/reflected through (aiming there sends fresh photons along a
+  known-good route); a receiver target is a camera-visible diffuse
+  surface point. Both are just world-space "productive" positions.
+* Each ring entry stores its own aim radius in `.w`, set adaptively at
+  record time to the distance to the nearest ring entry already present
+  (`FocusAimRadius`, clamped to `[focus.radius, worldRadius]`). A dense
+  caustic cluster yields a tight cone; a spread-out receiver field
+  yields a broad one — so `focus.radius` now acts as the *tightest*
+  allowed cone rather than a single global width, and no separate
+  per-target radius has to be tuned.
+* Stale entries (moved/deleted geometry, animation) are simply aims that
+  no longer connect — they cost a little emission but never bias, and
+  ring replacement naturally ages them out.
+* Validation (`scenes/cornell/mge-recvonly.scn`, a pure-receiver case
+  where the light reaches the wall directly but the camera sees it only
+  through a glass pane, so the ring fills with receivers alone): guided
+  emission cut the wall region's variance to **~0.4×** the unguided
+  value (~2.5× reduction) at 512 spp / 1280×720, unbiased (mean ratio
+  ~1.0). `mge-cavity.scn` exercises the mixed portal+receiver path.
+* Benefit is largest when productive receivers are hard to reach by
+  native emission (isotropic point emitters, receivers seen only through
+  an occluder). When a large area light already floods the receiver,
+  guidance adds little — the mixture pdf still keeps it unbiased, so the
+  feature is safe to leave on by default.
+* **Known limitation:** the aim cone is a straight-line cone to the
+  receiver. When the *light* can only reach the receiver through a
+  refractive interface too (light and camera on the same side of a glass
+  pane, receiver on the far side), the emitted ray refracts off-axis and
+  does not land on the aimed receiver — guidance then mis-aims and can
+  raise variance. Covering that case needs an emission-side manifold
+  solve (refract the aim direction onto the receiver), which is future
+  work. It never biases the result either way — it only wastes a little
+  emission.
+
 ### Connection rays through refractive enclosures
 
 A light path readily refracts *into* a glass shell, but splats on
@@ -621,6 +753,30 @@ residual converges. LMNEE mirrors it with the endpoint roles swapped:
   (blocked by delta) cover disjoint path-space regions — no double
   counting, no bias. A failed solve contributes zero, exactly like a
   blocked straight connect today.
+- **Black-eval probe** (CPU `ConnectToEye` + `MK_LIGHT_VERTEX` share the
+  rule): the receiver's straight-line `BSDF_Evaluate(-eyeDir)` can be
+  black even when a valid manifold connect exists — a matte surface whose
+  normal faces *away* from the lens (pedestal top seen only through a
+  glass sphere) fails the reflect/transmit side test. Both sides queue
+  the visibility ray whenever `mnee.enabled` regardless of the eval, and
+  only the unblocked splat is gated on `!evalBlack` — a probe that turns
+  out visible contributes nothing, a probe blocked by a delta occluder
+  starts the solve. Without this the wedge of receivers facing away from
+  the camera is never attempted (`lt-dispersion.scn` upper disc).
+- **Single→chain fallback**: when the single-vertex LMNEE machine exits
+  unsolved (Newton stall, proposal miss, iteration cap), the same light
+  path retries with `LMneeChain_Start` — the straight `x0 → lens`
+  discovery re-walk rebuilds the occluder topology from scratch (CPU:
+  `LMNEEMultiConnectToEye` after `LMNEEConnectToEye` failure).
+- **Chain line-search ordering** (both chain machines, eye and light
+  side): the CPU solver commits the accepted `trial[]` vertices *before*
+  doubling `beta`. On the GPU the commit re-projects `TrialPos = v.p −
+  beta·(dpdu·dx.x + dpdv·dx.y)` *on the fly* during `MS_COMMIT`, so beta
+  must stay at the value that produced the validated trial until the last
+  vertex committed — doubling it at trial-acceptance made every commit
+  re-projection target a 2×-displaced, off-surface point and miss, which
+  killed every chain solve. Beta is raised at the end of `MS_COMMIT`
+  instead.
 
 ### Multi-interface chains (glass slab, lens, closed dielectrics)
 

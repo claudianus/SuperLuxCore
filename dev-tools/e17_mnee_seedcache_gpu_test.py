@@ -5,45 +5,61 @@ The seed cache stores converged single-vertex MNEE solutions in a hashed
 world-space grid and reuses them as Newton warm-start seeds for nearby
 attempts on the same occluder/light (path.mnee.seedcache, default on).
 
-Correctness contract: the cache only changes WHERE Newton starts, never
-what is accepted - every candidate seed still goes through the same
-half-vector constraint solve and post-solve mode checks. The rendered
-result must therefore be statistically identical to seedcache=off.
+Correctness contract: the cache is a basin-selection rescue, never the
+authority on which root is found. For glass (eta != 1) the cold line
+seed runs first and the cache only re-seeds a FAILED solve; for mirror
+(eta == 1) the cache gets first refusal because the cold seed costs an
+extra trace. Rescued solves can only add valid contributions, so
+cache-on may legitimately exceed cache-off - the contract is "never
+drains", not "statistically identical" (cache-first seeding once drained
+~5% of the caustic by pinning attempts to the first-cached basin).
+
+Scope (measured, doc/features/mnee.md): the cache accelerates the
+*single-vertex* solve only. That is the default path
+(path.mnee.maxspecular = 1). Mirror blocking is almost always
+opposite-side -> the expensive chain solver, which is uncached, so this
+test targets the glass (refraction) warm-start path.
 
 Checks:
-  T1 cache-on mean matches cache-off (paired seeds, same SPP) within 2%
-  T2 cache-on image is finite everywhere (no NaN/Inf)
-  T3 the on/off difference is confined to MNEE-affected pixels and the
-     caustic-region mean is preserved (a cached seed can legitimately
-     land Newton in a different valid basin on a caustic pixel, so a
-     pixelwise diff is expected there - it must NOT appear elsewhere
-     and must not drain the caustic)
+  T0 ACTIVITY - render path.mnee.enable=0 vs 1. With MNEE off the
+     shadow ray through the delta-specular sheet fails, so the caustic
+     region is dark; with MNEE on it resolves. The caustic mean must be
+     significantly higher with MNEE on - if it is not, the scene never
+     triggers MNEE and every other check below is vacuous. (This is the
+     regression the original transparency.shadow=1 scenes fell into:
+     shadow rays passed through, MNEE never ran, and the 'unbiased'
+     result was trivially true.)
+  T1 unbiased - cache-on mean matches cache-off (paired seeds, same SPP)
+  T2 finite - cache-on image is finite everywhere (no NaN/Inf)
+  T3 caustic-region energy preserved on/off (a cached seed can
+     legitimately land Newton in a different valid basin on a caustic
+     pixel, so a pixelwise diff is expected there; it must not drain the
+     caustic or shift the global mean)
 
-Scene: scenes/juice/test.scn - a point light behind a glass object:
-shadow rays blocked by delta specular material trigger single-vertex
-MNEE solves every sample.
+Scene: scenes/mnee/seedcache.scn - a point light inside a closed
+bumpy-glass sphere over a diffuse floor; floor->light shadow rays
+refract once through the sphere surface so single-vertex MNEE solves
+fire and produce a refracted caustic pool on the floor.
 
-Safety: the earlier ReSTIR-visibility development wedged the GPU twice
-via an undersized ray buffer (WindowServer userspace-watchdog panic).
-This test therefore runs with a small task count and a hard per-render
-deadline instead of an infinite wait; run it under an external shell
-timeout as well.
+Safety: runs with a small task count and a hard per-render deadline
+instead of an infinite wait; run it under an external shell timeout too.
 """
-import sys, time
+import sys, os, time
 sys.path.insert(0, "/Users/modumaru/.zcode/workspace/default/LuxCore/out/build/src/pyluxcore/Release")
 import pyluxcore
 import numpy as np
 
-# PLY refs inside the .scn are cwd-relative: run from scenes/juice.
-SCENE_DIR = "/Users/modumaru/.zcode/workspace/default/LuxCore/scenes/juice"
+# PLY refs inside the .scn are cwd-relative: chdir into the scene dir.
+SCENE_DIR = "/Users/modumaru/.zcode/workspace/default/LuxCore/scenes/mnee"
+SCENE = "seedcache.scn"
 TASK_COUNT = 8192       # small: development-time bound, not production size
 RENDER_TIMEOUT_S = 240  # hard deadline; far below the macOS GPU watchdog
-SPP = 64
-W, H = 160, 120
+SPP = 256
+W, H = 192, 144
 
 
-def render(seedcache, scene, seed=1):
-    scn = pyluxcore.Properties(scene)
+def render(mnee_enable, seedcache, seed=1):
+    scn = pyluxcore.Properties(SCENE)  # ply refs resolve via chdir(SCENE_DIR)
     sc = pyluxcore.Scene(); sc.Parse(scn)
     cfg = pyluxcore.Properties()
     cfg.SetFromString(f"""
@@ -54,8 +70,9 @@ sampler.type = SOBOL
 sampler.sobol.rng0 = {seed}
 batch.haltspp = {SPP}
 opencl.task.count = {TASK_COUNT}
-path.mnee.enable = 1
+path.mnee.enable = {mnee_enable}
 path.mnee.seedcache = {seedcache}
+film.imagepipelines.0.0.type = NOP
 """)
     ses = pyluxcore.RenderSession(pyluxcore.RenderConfig(cfg, sc))
     ses.Start()
@@ -72,54 +89,65 @@ path.mnee.seedcache = {seedcache}
     ses.Stop()
     img = rgb.reshape(H, W, 3)
     if not ok:
-        print(f"  seedcache={seedcache}: TIMED OUT at {RENDER_TIMEOUT_S}s", flush=True)
-    return img, time.monotonic() - t0
-
-
-def check(scene, label):
-    print(f"  [{label}]")
-    results = []
-    for seedcache in (0, 1, 0, 1):
-        img, dt = render(seedcache, scene)
-        finite = np.isfinite(img).all()
-        results.append(img)
-        print(f"    seedcache={seedcache}: mean={img.mean():.5f} "
-              f"max={img.max():.3f} finite={finite} t={dt:.0f}s", flush=True)
-
-    off = (results[0] + results[2]) / 2
-    on = (results[1] + results[3]) / 2
-
-    m_off, m_on = off.mean(), on.mean()
-    d = np.abs(on - off).mean(axis=2)
-    lum = off.mean(axis=2)
-    # MNEE-affected pixels are the caustic (bright) ones: the diff must
-    # live there and must not drain their mean (solve coverage loss).
-    bright = lum > np.percentile(lum, 90)
-    caustic_ratio = on[bright].mean() / max(off[bright].mean(), 1e-9)
-    diff_outside = d[~bright].max() if (~bright).any() else 0.
-
-    checks = [
-        ("T1.unbiased-mean", abs(m_on - m_off) / max(m_off, 1e-9) < 0.02,
-         f"on={m_on:.5f} off={m_off:.5f}"),
-        ("T2.finite", np.isfinite(on).all(), f"finite={np.isfinite(on).all()}"),
-        ("T3a.diff-confined-to-caustic", diff_outside < 1e-4,
-         f"max|diff| outside bright10%={diff_outside:.6f}"),
-        ("T3b.caustic-mean-preserved", abs(caustic_ratio - 1.) < 0.02,
-         f"caustic on/off={caustic_ratio:.4f}"),
-    ]
-    allok = True
-    for name, ok, info in checks:
-        print(f"  [{'PASS' if ok else 'FAIL'}] {name}: {info}")
-        allok &= ok
-    return allok
+        print(f"    mnee={mnee_enable} seedcache={seedcache}: TIMED OUT at {RENDER_TIMEOUT_S}s", flush=True)
+    return img
 
 
 def main():
-    print(f"MNEE seed cache on GPU (juice {W}x{H}, {SPP}spp)")
-    ok_glass = check(SCENE_DIR + "/test.scn", "glass occluder (line-seed path)")
-    ok_mirror = check(SCENE_DIR + "/test-mirror.scn", "mirror occluder (seed-trace path)")
-    print(f"===== MNEE seed cache: "
-          f"{'ALL PASS' if ok_glass and ok_mirror else 'FAIL'} =====")
+    os.chdir(SCENE_DIR)
+    pyluxcore.Init()  # enable SLG_LOG so kernel compile / progress is visible
+    print(f"MNEE seed cache on GPU ({SCENE}, {W}x{H}, {SPP}spp)", flush=True)
+    checks = []
+
+    # --- T0: prove MNEE actually runs in this scene ---------------------
+    # Without MNEE the refracted caustic cannot be connected, so the
+    # bright region collapses. If it does not, the scene is vacuous.
+    img_off_mnee = render(0, 0)
+    img_on_mnee = render(1, 1)
+    lum_off = img_off_mnee.mean(axis=2)
+    lum_on = img_on_mnee.mean(axis=2)
+    bright = lum_on > np.percentile(lum_on, 90)
+    caustic_off = img_off_mnee[bright].mean()
+    caustic_on = img_on_mnee[bright].mean()
+    t0_gain = caustic_on / max(caustic_off, 1e-9)
+    checks.append(("T0.mnee-actually-fires", t0_gain > 1.5,
+                   f"caustic mean mnee=on {caustic_on:.4f} vs mnee=off "
+                   f"{caustic_off:.4f} (x{t0_gain:.2f})"))
+    print(f"  [{'PASS' if checks[-1][1] else 'FAIL'}] {checks[-1][0]}: {checks[-1][2]}", flush=True)
+    if not checks[-1][1]:
+        print("  scene does not exercise MNEE - aborting (vacuous)", flush=True)
+        print("===== MNEE seed cache: FAIL =====")
+        return
+
+    # --- T1/T2/T3: seed-cache on/off equivalence on an MNEE-active scene -
+    off = (render(1, 0, 1) + render(1, 0, 2)) / 2
+    on = (render(1, 1, 1) + render(1, 1, 2)) / 2
+
+    m_off, m_on = off.mean(), on.mean()
+    lum = off.mean(axis=2)
+    bright = lum > np.percentile(lum, 90)
+    caustic_ratio = on[bright].mean() / max(off[bright].mean(), 1e-9)
+
+    checks += [
+        # The cache is a failure-rescue accelerator (cold-first policy):
+        # rescued roots only ADD contribution where the cold solve failed,
+        # so cache-on may legitimately EXCEED cache-off - the contract is
+        # "never drains", not "statistically identical". A drained caustic
+        # (the original bug: cache-first seeds pinned attempts to the
+        # first-cached basin) fails the lower bound; a blow-up fails the
+        # upper sanity bound.
+        ("T1.no-global-drain", m_on > m_off * 0.97 and m_on < m_off * 1.5,
+         f"on={m_on:.5f} off={m_off:.5f} ratio={m_on/max(m_off,1e-9):.4f}"),
+        ("T2.finite", np.isfinite(on).all(),
+         f"finite={np.isfinite(on).all()}"),
+        ("T3.caustic-energy-preserved", caustic_ratio > 0.97 and caustic_ratio < 1.5,
+         f"caustic on/off={caustic_ratio:.4f}"),
+    ]
+    for name, ok, info in checks[1:]:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}: {info}", flush=True)
+
+    allok = all(ok for _, ok, _ in checks)
+    print(f"===== MNEE seed cache: {'ALL PASS' if allok else 'FAIL'} =====", flush=True)
 
 
 if __name__ == "__main__":

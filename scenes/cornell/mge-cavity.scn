@@ -1,0 +1,23 @@
+# Manifold-guided emission demo: a point light sits on the camera side of
+# a glass pane; the diffuse wall behind the pane is lit only by photons
+# that refract through the glass, and seen only through it (LMNEE). The
+# isotropic point emitter wastes most photons off-target; guiding emission
+# onto the manifold-discovered receivers concentrates them.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0. 0. -5.
+scene.camera.lookat.target = 0. 0.05 0.
+scene.camera.fieldofview = 45.
+scene.materials.Wall.type = matte
+scene.materials.Wall.kd = 0.8 0.8 0.8
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.95 0.95 0.95
+scene.materials.glass.kr = 0.05 0.05 0.05
+scene.materials.glass.interiorior = 1.5
+scene.materials.glass.exteriorior = 1.0
+scene.lights.l1.type = point
+scene.lights.l1.position = 0. 0. -2.5
+scene.lights.l1.gain = 40. 40. 40.
+scene.objects.Wall.material = Wall
+scene.objects.Wall.ply = scenes/cornell/lmnee-wall.ply
+scene.objects.pane.material = glass
+scene.objects.pane.ply = scenes/cornell/mge-pane.ply

@@ -35,6 +35,8 @@ public:
 	virtual void Preprocess();
 	void GetPreprocessedData(float *absoluteLightDirData, float *xData, float *yData,
 		float *sin2ThetaMaxData, float *cosThetaMaxData) const;
+	// Emission cone aperture (adaptive caustic partition solid angle)
+	float GetCosThetaMax() const { return cosThetaMax; }
 
 	virtual LightSourceType GetType() const { return TYPE_DISTANT; }
 	virtual float GetPower(SceneConstRef scene) const;

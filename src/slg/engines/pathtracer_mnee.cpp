@@ -49,8 +49,10 @@
 #include <limits>
 
 #include "luxrays/usings.h"
+#include "luxrays/core/color/spectral.h"
 #include "slg/lights/light.h"
 #include "slg/usings.h"
+#include "slg/cameras/camera.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/materials/mirror.h"
 #include "slg/materials/glass.h"
@@ -59,6 +61,8 @@
 using namespace std;
 using namespace luxrays;
 using namespace slg;
+
+static bool LMneeRejEnabled();
 
 //------------------------------------------------------------------------------
 // Small linear algebra helpers (2x2) and the specular chain vertex
@@ -101,6 +105,17 @@ struct MneeVertex {
 	Vector s, t;
 	// Relative IOR (interior/exterior). 1.f == conductor (mirror).
 	float eta;
+};
+
+// Endpoint of the specular connection. For a point-like emitter (isDir ==
+// false) pos is the emitter position and wo = normalize(pos - x1) moves with
+// the vertex; for a directional light (isDir == true) dir is the fixed unit
+// direction toward the light, wo = dir is constant, there is no finite
+// emitter position and the endpoint Jacobian is taken in direction space.
+struct MneeEndpoint {
+	Point pos;
+	Vector dir;
+	bool isDir;
 };
 
 inline void MneeCoordinateSystem(const Vector &n, Vector &s, Vector &t);
@@ -182,7 +197,7 @@ inline void MneeCoordinateSystem(const Vector &n, Vector &s, Vector &t) {
 // geometric_term, validated by the numpy prototype), while the Newton
 // constraint may use the physical eta (e.g. -1 for an opposite-side mirror
 // reflection).
-static bool MneeResidual(const Point &x0p, const Point &lightPos,
+static bool MneeResidual(const Point &x0p, const MneeEndpoint &ep,
 		const MneeVertex &vtx, MneeVec2 &C, const float etaOverride = 0.f) {
 	Vector wi = x0p - vtx.p;
 	float r01 = wi.Length();
@@ -190,11 +205,17 @@ static bool MneeResidual(const Point &x0p, const Point &lightPos,
 		return false;
 	wi /= r01;
 
-	Vector wo = lightPos - vtx.p;
-	float r12 = wo.Length();
-	if (r12 < 1e-3f)
-		return false;
-	wo /= r12;
+	Vector wo;
+	if (ep.isDir) {
+		// Directional endpoint: wo is the constant light direction.
+		wo = ep.dir;
+	} else {
+		wo = ep.pos - vtx.p;
+		const float r12 = wo.Length();
+		if (r12 < 1e-3f)
+			return false;
+		wo /= r12;
+	}
 
 	float eta = (etaOverride > 0.f) ? etaOverride : vtx.eta;
 	if (Dot(wi, vtx.gn) < 0.f)
@@ -233,10 +254,10 @@ static bool MneeReproject(
 static bool MneeConstraintWithJacobian(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
 		const float time,
-		const Point &x0p, const Point &lightPos,
+		const Point &x0p, const MneeEndpoint &ep,
 		const MneeVertex &vtx,
 		MneeVec2 &C, MneeMat2 &jac, const float etaOverride = 0.f) {
-	if (!MneeResidual(x0p, lightPos, vtx, C, etaOverride))
+	if (!MneeResidual(x0p, ep, vtx, C, etaOverride))
 		return false;
 
 	const float eps = Max(1e-5f, 1e-4f * Distance(x0p, vtx.p));
@@ -253,7 +274,7 @@ static bool MneeConstraintWithJacobian(
 		MneeInitVertex(vPert, pertBsdf, vtx.eta);
 
 		MneeVec2 CP;
-		if (!MneeResidual(x0p, lightPos, vPert, CP, etaOverride))
+		if (!MneeResidual(x0p, ep, vPert, CP, etaOverride))
 			return false;
 
 		if (k == 0) {
@@ -315,7 +336,7 @@ static MneeMat2 MneeLightJacobian(const Point &x0p, const Point &lightPos,
 // Returns dw0/dx1 * |det(inv(J1) * J2)|. If jacVertex (the constraint
 // Jacobian dC/dX used by the Newton step) is not null it receives J1.
 static float MneeGeometricTermWithJacobians(const Point &x0p,
-		const Point &lightPos, const MneeVertex &vtx, MneeMat2 *jacVertex,
+		const MneeEndpoint &ep, const MneeVertex &vtx, MneeMat2 *jacVertex,
 		float *det1Out = nullptr, float *det2Out = nullptr) {
 	Vector wi = x0p - vtx.p;
 	const float r01 = wi.Length();
@@ -323,11 +344,19 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 		return 0.f;
 	wi /= r01;
 
-	Vector wo = lightPos - vtx.p;
-	const float r12 = wo.Length();
-	if (r12 < 1e-3f)
-		return 0.f;
-	wo /= r12;
+	Vector wo;
+	float r12 = 0.f;
+	if (ep.isDir) {
+		// Directional endpoint: wo is the constant light direction, it does
+		// not depend on the vertex position (ilo = 0 below).
+		wo = ep.dir;
+	} else {
+		wo = ep.pos - vtx.p;
+		r12 = wo.Length();
+		if (r12 < 1e-3f)
+			return 0.f;
+		wo /= r12;
+	}
 
 	float eta = vtx.eta;
 	if (Dot(wi, vtx.gn) < 0.f)
@@ -337,7 +366,10 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 		h = -h;
 	const float ilh = 1.f / h.Length();
 	h *= ilh;
-	const float ilo = (1.f / r12) * eta * ilh;
+	// Vertex-side coupling of wo to x1. For a point endpoint wo =
+	// normalize(pos - x1) moves with x1: ilo = eta*ilh/r12. For a directional
+	// endpoint wo is constant: ilo = 0, dropping the wo-motion terms from J1.
+	const float ilo = ep.isDir ? 0.f : (1.f / r12) * eta * ilh;
 	const float ili = (1.f / r01) * ilh;
 
 	const Vector &s = vtx.s;
@@ -368,16 +400,20 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 		Dot(dhDdv, t) - Dot(vtx.dpdv, vtx.dndv) * dotHN - dotDpdvN * dotHDndv
 	};
 
-	// dC/dx2 (fake light frame, from the light toward the vertex)
-	Vector dLight = vtx.p - lightPos;
-	const float rl = dLight.Length();
-	if (rl < 1e-3f)
-		return 0.f;
-	dLight /= rl;
+	// dC/dx2: perturb the endpoint on its own measure. For a point light the
+	// endpoint is the emitter position and the fake frame is built on the
+	// light->vertex direction (-wo); moving the position by eps*s2 changes wo
+	// by (s2 - wo*wo.s2)/r12, captured by the ilo = eta*ilh/r12 factor. For a
+	// directional light the endpoint IS the direction: rotating wo by eps*s2
+	// changes wo by (s2 - wo*wo.s2) directly, so the factor is eta*ilh (the
+	// 1/r12 position->direction conversion does not apply). In both cases the
+	// frame is perpendicular to wo, i.e. dLight = -wo.
+	const Vector dLight = -wo;
 	Vector s2, t2;
 	MneeCoordinateSystem(dLight, s2, t2);
-	Vector dhDdu2 = ilo * (s2 - wo * Dot(wo, s2));
-	Vector dhDdv2 = ilo * (t2 - wo * Dot(wo, t2));
+	const float ilo2 = ep.isDir ? eta * ilh : ilo;
+	Vector dhDdu2 = ilo2 * (s2 - wo * Dot(wo, s2));
+	Vector dhDdv2 = ilo2 * (t2 - wo * Dot(wo, t2));
 	dhDdu2 -= h * Dot(dhDdu2, h);
 	dhDdv2 -= h * Dot(dhDdv2, h);
 	if (eta != 1.f) {
@@ -408,10 +444,10 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 	return dw0Dx1 * dx1Dx2;
 }
 
-static float MneeGeometricTerm(const Point &x0p, const Point &lightPos,
+static float MneeGeometricTerm(const Point &x0p, const MneeEndpoint &ep,
 		const MneeVertex &vtx, float *det1Out = nullptr,
 		float *det2Out = nullptr) {
-	return MneeGeometricTermWithJacobians(x0p, lightPos, vtx, nullptr,
+	return MneeGeometricTermWithJacobians(x0p, ep, vtx, nullptr,
 			det1Out, det2Out);
 }
 
@@ -440,6 +476,275 @@ static bool MneeRejXEnabled() {
 	} while (0)
 
 //------------------------------------------------------------------------------
+// MNEE manifold seed cache (path.mnee.seedcache, GPU mneeSeeds port).
+//
+// Every converged single-vertex solve stores its vertex in a fixed-size
+// world-space hash grid keyed by (endpoint id, occluder mesh, quantized
+// blocker-hit position). A later attempt blocked by the same occluder
+// region warm-starts Newton from the cached vertex instead of the line
+// seed, which is what makes solves on a curved caster converge at all (the
+// straight-line seed sits far outside the Newton basin there). The seed
+// only selects the basin: the solver still verifies the half-vector
+// constraint on re-projected surface vertices, so a stale or colliding
+// entry costs iterations but never biases the estimator. Eye-side solves
+// namespace entries by the light pointer; light-side (LMNEE) solves share
+// one camera sentinel - the same split as the GPU table.
+//------------------------------------------------------------------------------
+
+#define MNEE_SEED_CACHE_SIZE_CPU (1u << 14)
+#define MNEE_SEED_CELL_FRAC_CPU 64.f
+#define LMNEE_CAMERA_SEED_ID 0xFFFFFFFEu
+
+static u_int MneeSeedKey(const u_int lightIndex, const u_int meshIndex,
+		const Point &p, const float cellSize) {
+	const int cx = Floor2Int(p.x / cellSize);
+	const int cy = Floor2Int(p.y / cellSize);
+	const int cz = Floor2Int(p.z / cellSize);
+	u_int h = (u_int)cx * 73856093u ^ (u_int)cy * 19349663u ^
+			(u_int)cz * 83492791u;
+	h ^= lightIndex * 2654435761u;
+	h ^= meshIndex * 40503u;
+	h ^= h >> 16;
+	h *= 2246822519u;
+	h ^= h >> 13;
+	return h & (MNEE_SEED_CACHE_SIZE_CPU - 1u);
+}
+
+// Returns true and fills *v when a usable seed was found (the flat tangent
+// frame fallback like the GPU Mnee_SeedCacheLookup; the first proposal
+// re-projects onto the real surface anyway).
+static bool MneeSeedLookup(const PathTracer::MneeSeedEntry *cache,
+		const u_int key, const u_int lightIndex, const u_int meshIndex,
+		const bool mirrorMode, const float eta, MneeVertex *v) {
+	const PathTracer::MneeSeedEntry &e = cache[key];
+	if (!e.valid.load(std::memory_order_relaxed) ||
+			(e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
+			(e.meshIndex.load(std::memory_order_relaxed) != meshIndex) ||
+			(e.mirrorMode.load(std::memory_order_relaxed) !=
+				(mirrorMode ? 1u : 0u)))
+		return false;
+
+	const Point p(e.vx.load(std::memory_order_relaxed),
+			e.vy.load(std::memory_order_relaxed),
+			e.vz.load(std::memory_order_relaxed));
+	const Normal n(e.nx.load(std::memory_order_relaxed),
+			e.ny.load(std::memory_order_relaxed),
+			e.nz.load(std::memory_order_relaxed));
+	if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z) ||
+			!isfinite(n.x) || !isfinite(n.y) || !isfinite(n.z) ||
+			(n.LengthSquared() < 1e-12f))
+		return false;
+
+	v->p = p;
+	v->n = n;
+	v->gn = n;
+	MneeCoordinateSystem(Vector(n.x, n.y, n.z), v->dpdu, v->dpdv);
+	v->dndu = Normal();
+	v->dndv = Normal();
+	v->eta = eta;
+	MneeOrthonormalize(*v);
+	return true;
+}
+
+static void MneeSeedStore(PathTracer::MneeSeedEntry *cache,
+		const u_int key, const Point &p, const Normal &n,
+		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode) {
+	PathTracer::MneeSeedEntry &e = cache[key];
+	e.vx.store(p.x, std::memory_order_relaxed);
+	e.vy.store(p.y, std::memory_order_relaxed);
+	e.vz.store(p.z, std::memory_order_relaxed);
+	e.nx.store(n.x, std::memory_order_relaxed);
+	e.ny.store(n.y, std::memory_order_relaxed);
+	e.nz.store(n.z, std::memory_order_relaxed);
+	e.lightIndex.store(lightIndex, std::memory_order_relaxed);
+	e.meshIndex.store(meshIndex, std::memory_order_relaxed);
+	e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
+	e.valid.store(1u, std::memory_order_relaxed);
+}
+
+// Single-vertex Newton solve of the specular constraint between x0p and the
+// endpoint ep (Zeltner newton_solver, n_offset = 0, step_scale = 1). Shared
+// by the eye-side estimator (MNEEDirectSampling) and the light-side camera
+// connect (LMNEEConnectToEye): the solver is endpoint-agnostic, only the
+// seeding and the contribution assembly differ. On success *vtx and
+// *finalBsdf hold the solved specular vertex. seedVtx (optional) replaces
+// the line/mirror seeding with a cached manifold solution.
+static bool MneeSolveSingleVertex(
+		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
+		const float time, const Point &x0p, const MneeEndpoint &ep,
+		const BSDF &x0Bsdf, const RayHit &shadowRayHit,
+		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+		const float etaVertex, const u_int maxIterations,
+		const MneeVertex *seedVtx, MneeVertex *vtx, BSDF *finalBsdf) {
+	if (seedVtx)
+		*vtx = *seedVtx;
+	else
+		MneeInitVertex(*vtx, shadowBsdf, etaVertex);
+	*finalBsdf = shadowBsdf;
+
+	// The shadow-ray seed lies exactly on the x0->y line, where the
+	// generalized half-vector degenerates (h = wi + eta*wo = (1 - eta)*wi).
+	// For a mirror (eta == 1) the line seed carries no information at all and
+	// the Newton iteration diverges from there. Seed the reflection chain
+	// with the first hit of the ray from x0 toward the endpoint mirrored
+	// across the tangent plane at the shadow hit: for a flat mirror this is
+	// the exact solution, for curved reflectors the best local approximation
+	// (Zeltner's "Modified MNEE" idea, with the mirrored endpoint instead of
+	// the shape bbox center). For eta != 1 the line seed is informative
+	// ((1 - eta) * wi != 0) and is kept. A seed-cache hit skips the mirror
+	// seed trace entirely (GPU parity: the cached vertex is already a
+	// verified surface point).
+	if (!seedVtx && etaVertex == 1.f) {
+		const Normal &gn1 = shadowBsdf.hitPoint.geometryN;
+		const Point x1Line = shadowBsdf.hitPoint.p;
+		Vector dSeed;
+		if (ep.isDir) {
+			// Reflect the constant endpoint direction across the tangent
+			// plane: the virtual emitter is at infinity along the mirrored
+			// direction, so the seed direction is the reflection itself.
+			dSeed = ep.dir - 2.f * Dot(ep.dir, gn1) *
+					Vector(gn1.x, gn1.y, gn1.z);
+		} else {
+			const Vector x1ToLight = ep.pos - x1Line;
+			const float proj = 2.f * Dot(x1ToLight, gn1);
+			const Vector mirroredLight = Vector(ep.pos.x, ep.pos.y, ep.pos.z) -
+					proj * Vector(gn1.x, gn1.y, gn1.z);
+			dSeed = Normalize(mirroredLight - Vector(x0p.x, x0p.y, x0p.z));
+		}
+		Ray seedRay(x0Bsdf.GetRayOrigin(dSeed), dSeed, 0.f,
+				numeric_limits<float>::infinity(), time);
+		RayHit seedHit;
+		BSDF seedBsdf;
+		Spectrum seedThru;
+		PathVolumeInfo seedVol = volInfo;
+		if (scene.Intersect(IntersectionDevicePtr(&device),
+				INDIRECT_RAY, &seedVol, .5f, &seedRay,
+				&seedHit, &seedBsdf, &seedThru, nullptr, nullptr, false) &&
+				seedHit.meshIndex == shadowRayHit.meshIndex) {
+			MneeInitVertex(*vtx, seedBsdf, etaVertex);
+		}
+	}
+
+	// Small deterministic tangent offset so the initial half-vector never
+	// degenerates exactly (e.g. an off-axis endpoint still on the x0->center
+	// line). The offset only selects the Newton basin; the solve itself is
+	// pulled to the exact constraint solution.
+	const float seedShift = Max(1e-4f, 1e-3f * Distance(x0p, vtx->p));
+	vtx->p += (vtx->dpdu + vtx->dpdv) * (seedShift / sqrtf(2.f));
+
+	bool solved = false;
+	float beta = 1.f;
+	MneeVec2 residual{ 0.f, 0.f };
+	MneeMat2 jac{ 0.f, 0.f, 0.f, 0.f };
+	u_int dbgMeshMiss = 0, dbgResFail = 0, dbgEsc = 0;
+
+	u_int iteration = 0;
+	while (iteration < maxIterations) {
+		// Constraint residual and analytic Jacobian of the current vertex
+		if (!MneeResidual(x0p, ep, *vtx, residual)) {
+			break;
+		}
+		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx, &jac);
+
+		if (sqrtf(residual.x * residual.x + residual.y * residual.y) < 3e-4f) {
+			solved = true;
+			break;
+		}
+
+		const float det = MneeDet(jac);
+		if (fabs(det) < 1e-9f) {
+			break;
+		}
+		const MneeMat2 invJac = MneeInverse(jac, det);
+		MneeVec2 dX{ invJac.a11 * residual.x + invJac.a12 * residual.y,
+				invJac.a21 * residual.x + invJac.a22 * residual.y };
+		// Clamp the step near singular configurations (det(J1) -> 0 along the
+		// mirror axis): the Newton direction is still the descent direction
+		// but its magnitude explodes, so cap it to a fraction of the vertex
+		// distance and let the line search find the residual decrease.
+		const float dXNorm = sqrtf(dX.x * dX.x + dX.y * dX.y);
+		const float dXMax = .25f * Distance(x0p, vtx->p);
+		if (dXNorm > dXMax) {
+			dX.x *= dXMax / dXNorm;
+			dX.y *= dXMax / dXNorm;
+		}
+
+		// Line search: accept the step only when the residual decreases and
+		// the re-projection stays on the same mesh (Zeltner's beta
+		// backtracking, extended with a residual decrease check; the
+		// half-vector residual is strongly nonlinear for coarse seeds, so
+		// this keeps the iteration inside the Newton basin).
+		const float resNorm = sqrtf(residual.x * residual.x + residual.y * residual.y);
+		bool stepAccepted = false;
+		while (beta > 1e-2f) {
+			const Point pProp = vtx->p - beta * (vtx->dpdu * dX.x + vtx->dpdv * dX.y);
+			const Vector dProp = Normalize(pProp - x0p);
+
+			Ray propRay(x0Bsdf.GetRayOrigin(dProp), dProp, 0.f,
+					numeric_limits<float>::infinity(), time);
+			RayHit propHit;
+			BSDF propBsdf;
+			Spectrum propThru;
+			PathVolumeInfo propVol = volInfo;
+			if (!scene.Intersect(IntersectionDevicePtr(&device),
+					INDIRECT_RAY, &propVol, .5f, &propRay,
+					&propHit, &propBsdf, &propThru, nullptr, nullptr, false)) {
+				// The proposal left every surface (e.g. past the caster's
+				// silhouette as seen from x0, through the open camera
+				// face): halving beta lands back on the mesh, so treat it
+				// like any rejected step instead of aborting the solve.
+				++dbgEsc;
+				beta *= .5f;
+				++iteration;
+				continue;
+			}
+
+			if (propHit.meshIndex != shadowRayHit.meshIndex) {
+				++dbgMeshMiss;
+				beta *= .5f;
+				++iteration;
+				continue;
+			}
+
+			MneeVertex vProp;
+			MneeInitVertex(vProp, propBsdf, etaVertex);
+			MneeVec2 resProp;
+			if (!MneeResidual(x0p, ep, vProp, resProp)) {
+				++dbgResFail;
+				beta *= .5f;
+				++iteration;
+				continue;
+			}
+			const float resPropNorm = sqrtf(resProp.x * resProp.x + resProp.y * resProp.y);
+
+			if (resPropNorm < resNorm) {
+				beta = Min(1.f, 2.f * beta);
+				*vtx = vProp;
+				*finalBsdf = propBsdf;
+				stepAccepted = true;
+				break;
+			}
+
+			beta *= .5f;
+			++iteration;
+		}
+		if (!stepAccepted)
+			break;
+		++iteration;
+	}
+
+	if (!solved && LMneeRejEnabled()) {
+		printf("LMNEE_DIVE x0=%.4g %.4g %.4g v=%.4g %.4g %.4g it=%u res=%.4g "
+				"meshmiss=%u resfail=%u esc=%u\n",
+				x0p.x, x0p.y, x0p.z, vtx->p.x, vtx->p.y, vtx->p.z,
+				iteration, sqrtf(residual.x * residual.x + residual.y * residual.y),
+				dbgMeshMiss, dbgResFail, dbgEsc);
+		fflush(stdout);
+	}
+	return solved;
+}
+
+//------------------------------------------------------------------------------
 // PathTracer::MNEEDirectSampling
 //------------------------------------------------------------------------------
 
@@ -461,13 +766,32 @@ bool PathTracer::MNEEDirectSampling(
 	const MaterialType seedMatType = shadowBsdf.GetMaterialType();
 	const Point &x0p = bsdf.hitPoint.p;
 
-	// Light position: the shadow ray maxt has been rewritten by Scene::Intersect
-	// to the occluder distance, so recover the light distance from directPdfW
-	// (= squared distance to the light, preserved by Illuminate).
-	const Point lightPos = shadowRay.o + shadowRay.d * sqrtf(directPdfW0);
+	// Endpoint of the specular connection. A point-like emitter has a finite
+	// position: the shadow ray maxt has been rewritten by Scene::Intersect to
+	// the occluder distance, so recover the light distance from directPdfW (=
+	// squared distance to the light, preserved by Illuminate). A directional
+	// light has no finite position: the endpoint is the constant shadow-ray
+	// direction (its directPdfW is a solid-angle pdf, not a distance).
+	const LightSourceType lightType = light.GetType();
+	const bool lightIsDir = (lightType == TYPE_DISTANT ||
+			lightType == TYPE_SHARPDISTANT);
+	MneeEndpoint ep;
+	ep.isDir = lightIsDir;
+	if (lightIsDir) {
+		ep.dir = Normalize(shadowRay.d);
+		ep.pos = Point(0.f, 0.f, 0.f);
+	} else {
+		ep.pos = shadowRay.o + shadowRay.d * sqrtf(directPdfW0);
+		ep.dir = Vector(0.f, 0.f, 0.f);
+	}
+	const Point lightPos = ep.pos;
 	observer_ptr<const MirrorMaterial> mirrorMat = nullptr;
 	observer_ptr<const GlassMaterial> glassMat = nullptr;
 	float etaVertex = 1.f;
+	// True when the occluder is dispersive glass: the solve runs at the
+	// path hero wavelength and the connect contribution collapses to the
+	// hero bin at assembly (Spectral::KeepHeroBins).
+	bool dispersiveConnect = false;
 	if (seedMatType == MIRROR) {
 		mirrorMat = dynamic_observer_cast<const MirrorMaterial>(shadowBsdf.GetMaterial());
 		if (!mirrorMat)
@@ -488,7 +812,8 @@ bool PathTracer::MNEEDirectSampling(
 		// "plane" case).
 		const Normal &gn1s = shadowBsdf.hitPoint.geometryN;
 		const Vector toX0 = x0p - shadowBsdf.hitPoint.p;
-		const Vector toY = lightPos - shadowBsdf.hitPoint.p;
+		const Vector toY = lightIsDir ? ep.dir :
+				(lightPos - shadowBsdf.hitPoint.p);
 		etaVertex = (Dot(toX0, gn1s) * Dot(toY, gn1s) > 0.f) ? 1.f : -1.f;
 		if (etaVertex != 1.f)
 			return false;
@@ -496,16 +821,26 @@ bool PathTracer::MNEEDirectSampling(
 		glassMat = dynamic_observer_cast<const GlassMaterial>(shadowBsdf.GetMaterial());
 		if (!glassMat)
 			{ return false; }
-		// Dispersive glass: the manifold uses a single IOR ratio, skip
-		if (glassMat->GetCauchyB() &&
-				glassMat->GetCauchyB()->GetFloatValue(shadowBsdf.hitPoint) > 0.f)
-			return false;
 
 		const float nc = ExtractExteriorIors(shadowBsdf.hitPoint, glassMat->GetExteriorIOR());
 		const float nt = ExtractInteriorIors(shadowBsdf.hitPoint, glassMat->GetInteriorIOR());
 		if (nt <= 0.f || nc <= 0.f)
 			return false;
-		etaVertex = nt / nc;
+		const float cauchyB = glassMat->GetCauchyB() ?
+				glassMat->GetCauchyB()->GetFloatValue(shadowBsdf.hitPoint) : 0.f;
+		if (cauchyB > 0.f) {
+			if (!Spectral::Current())
+				// No wavelength state on the path: a single IOR ratio
+				// cannot represent dispersion, keep skipping.
+				return false;
+			// Hero-wavelength solve: the manifold constraint is evaluated
+			// at the path hero wavelength, the direction-defining
+			// wavelength of a dispersive transmission. The connect exists
+			// only for that bin, flagged for the hero collapse below.
+			dispersiveConnect = true;
+			etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+		} else
+			etaVertex = nt / nc;
 	} else
 		{ return false; }
 
@@ -517,141 +852,54 @@ bool PathTracer::MNEEDirectSampling(
 	// Newton solve (Zeltner newton_solver, n_offset = 0, step_scale = 1)
 	//------------------------------------------------------------------------------
 
+	// Seed cache policy: the cache is a basin-selection accelerator, never
+	// the authority on which root is found. For glass (eta != 1) the cold
+	// line seed is free (the shadow-ray hit itself) and defines the
+	// reference basin selection - seeding Newton from a cached vertex
+	// instead pins every nearby attempt to the first-cached basin, which
+	// measured ~5% caustic energy loss on the multi-root bumpy-sphere
+	// scene. Glass therefore solves cold first and consults the cache only
+	// as a failure rescue below. For a mirror (eta == 1) the cold seed
+	// needs an extra seed trace - the cache gets first refusal and skips
+	// it entirely. Entries are namespaced by light object, mesh and the
+	// incident side (meshIndex*2+1 when the connect ray hits the blocker
+	// on its -geometryN side, i.e. exiting a dielectric): a vertex solved
+	// for the opposite-side context sits in the wrong Newton basin.
+	MneeVertex seedVtx;
+	const MneeVertex *seedPtr = nullptr;
+	const u_int seedLightIndex = (u_int)(uintptr_t)&light;
+	const u_int seedMesh = shadowRayHit.meshIndex * 2u +
+			(Dot(Normalize(shadowRay.d), shadowBsdf.hitPoint.geometryN) > 0.f ?
+			1u : 0u);
+	float seedCellSize = 0.f;
+	u_int seedKey = 0;
+	if (mneeSeedCacheEnable && mneeSeeds) {
+		seedCellSize = Max(scene.GetDataSet().GetBSphere().rad /
+				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
+		seedKey = MneeSeedKey(seedLightIndex, seedMesh,
+				shadowBsdf.hitPoint.p, seedCellSize);
+		if ((etaVertex == 1.f) &&
+				MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
+				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx))
+			seedPtr = &seedVtx;
+	}
+
 	MneeVertex vtx;
-	MneeInitVertex(vtx, shadowBsdf, etaVertex);
-
-	// The shadow-ray seed lies exactly on the x0->y line, where the
-	// generalized half-vector degenerates (h = wi + eta*wo = (1 - eta)*wi).
-	// For a mirror (eta == 1) the line seed carries no information at all and
-	// the Newton iteration diverges from there. Seed the reflection chain
-	// with the first hit of the ray from x0 toward the light mirrored across
-	// the tangent plane at the shadow hit: for a flat mirror this is the
-	// exact solution, for curved reflectors the best local approximation
-	// (Zeltner's "Modified MNEE" idea, with the mirrored light instead of the
-	// shape bbox center). For eta != 1 the line seed is informative
-	// ((1 - eta) * wi != 0) and is kept.
-	if (etaVertex == 1.f) {
-		const Normal &gn1 = shadowBsdf.hitPoint.geometryN;
-		const Point x1Line = shadowBsdf.hitPoint.p;
-		const Vector x1ToLight = lightPos - x1Line;
-		const float proj = 2.f * Dot(x1ToLight, gn1);
-		const Vector mirroredLight = Vector(lightPos.x, lightPos.y, lightPos.z) -
-				proj * Vector(gn1.x, gn1.y, gn1.z);
-		const Vector dSeed = Normalize(mirroredLight -
-				Vector(x0p.x, x0p.y, x0p.z));
-		Ray seedRay(bsdf.GetRayOrigin(dSeed), dSeed, 0.f,
-				numeric_limits<float>::infinity(), time);
-		RayHit seedHit;
-		BSDF seedBsdf;
-		Spectrum seedThru;
-		PathVolumeInfo seedVol = volInfo;
-		if (scene.Intersect(IntersectionDevicePtr(&device),
-				INDIRECT_RAY, &seedVol, .5f, &seedRay,
-				&seedHit, &seedBsdf, &seedThru, nullptr, nullptr, false) &&
-				seedHit.meshIndex == shadowRayHit.meshIndex) {
-			MneeInitVertex(vtx, seedBsdf, etaVertex);
-		}
-	}
-
-	// Small deterministic tangent offset so the initial half-vector never
-	// degenerates exactly (e.g. an off-axis light still on the x0->center
-	// line). The offset only selects the Newton basin; the solve itself is
-	// pulled to the exact constraint solution.
-	const float seedShift = Max(1e-4f, 1e-3f * Distance(x0p, vtx.p));
-	vtx.p += (vtx.dpdu + vtx.dpdv) * (seedShift / sqrtf(2.f));
-
-	bool solved = false;
-	float beta = 1.f;
 	BSDF finalBsdf = shadowBsdf;
-	MneeVec2 residual{ 0.f, 0.f };
-	MneeMat2 jac{ 0.f, 0.f, 0.f, 0.f };
-
-	u_int iteration = 0;
-	while (iteration < mneeMaxIterations) {
-		// Constraint residual and analytic Jacobian of the current vertex
-		if (!MneeResidual(x0p, lightPos, vtx, residual)) {
-			break;
-		}
-		const float g = MneeGeometricTermWithJacobians(x0p, lightPos, vtx, &jac);
-	
-		if (sqrtf(residual.x * residual.x + residual.y * residual.y) < 3e-4f) {
-			solved = true;
-			break;
-		}
-
-		const float det = MneeDet(jac);
-		if (fabs(det) < 1e-9f) {
-			break;
-		}
-		const MneeMat2 invJac = MneeInverse(jac, det);
-		MneeVec2 dX{ invJac.a11 * residual.x + invJac.a12 * residual.y,
-				invJac.a21 * residual.x + invJac.a22 * residual.y };
-		// Clamp the step near singular configurations (det(J1) -> 0 along the
-		// mirror axis): the Newton direction is still the descent direction
-		// but its magnitude explodes, so cap it to a fraction of the vertex
-		// distance and let the line search find the residual decrease.
-		const float dXNorm = sqrtf(dX.x * dX.x + dX.y * dX.y);
-		const float dXMax = .25f * Distance(x0p, vtx.p);
-		if (dXNorm > dXMax) {
-			dX.x *= dXMax / dXNorm;
-			dX.y *= dXMax / dXNorm;
-		}
-
-		// Line search: accept the step only when the residual decreases and
-		// the re-projection stays on the same mesh (Zeltner's beta
-		// backtracking, extended with a residual decrease check; the
-		// half-vector residual is strongly nonlinear for coarse seeds, so
-		// this keeps the iteration inside the Newton basin).
-		const float resNorm = sqrtf(residual.x * residual.x + residual.y * residual.y);
-		bool stepAccepted = false;
-		while (beta > 1e-2f) {
-			const Point pProp = vtx.p - beta * (vtx.dpdu * dX.x + vtx.dpdv * dX.y);
-			const Vector dProp = Normalize(pProp - x0p);
-
-			Ray propRay(bsdf.GetRayOrigin(dProp), dProp, 0.f,
-					numeric_limits<float>::infinity(), time);
-			RayHit propHit;
-			BSDF propBsdf;
-			Spectrum propThru;
-			PathVolumeInfo propVol = volInfo;
-			if (!scene.Intersect(IntersectionDevicePtr(&device),
-					INDIRECT_RAY, &propVol, .5f, &propRay,
-					&propHit, &propBsdf, &propThru, nullptr, nullptr, false))
-				break;
-
-			if (propHit.meshIndex != shadowRayHit.meshIndex) {
-				beta *= .5f;
-				++iteration;
-				continue;
-			}
-
-			MneeVertex vProp;
-			MneeInitVertex(vProp, propBsdf, etaVertex);
-			MneeVec2 resProp;
-			if (!MneeResidual(x0p, lightPos, vProp, resProp)) {
-				beta *= .5f;
-				++iteration;
-				continue;
-			}
-			const float resPropNorm = sqrtf(resProp.x * resProp.x + resProp.y * resProp.y);
-
-			if (resPropNorm < resNorm) {
-				beta = Min(1.f, 2.f * beta);
-				vtx = vProp;
-				finalBsdf = propBsdf;
-				stepAccepted = true;
-				break;
-			}
-
-			beta *= .5f;
-			++iteration;
-		}
-		if (!stepAccepted)
-			break;
-		++iteration;
+	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
+			shadowRayHit, shadowBsdf, volInfo, etaVertex, mneeMaxIterations,
+			seedPtr, &vtx, &finalBsdf);
+	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
+			mneeSeedCacheEnable && mneeSeeds &&
+			MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
+				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx)) {
+		// Failure rescue: retry once from the cached vertex. Deterministic
+		// in (x0, light, cache state) - the estimator stays unbiased.
+		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
+				shadowRayHit, shadowBsdf, volInfo, etaVertex,
+				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
 	}
-
-	if (!solved) {
+	if (!solveOk) {
 		MNEE_REJX("newton");
 		return false;
 	}
@@ -662,7 +910,7 @@ bool PathTracer::MNEEDirectSampling(
 	//------------------------------------------------------------------------------
 
 	const Vector wi = Normalize(x0p - vtx.p);
-	const Vector wo = Normalize(lightPos - vtx.p);
+	const Vector wo = lightIsDir ? ep.dir : Normalize(lightPos - vtx.p);
 	const float cosX = Dot(vtx.gn, wi);
 	const float cosY = Dot(vtx.gn, wo);
 	const bool refraction = (cosX * cosY < 0.f);
@@ -702,8 +950,14 @@ bool PathTracer::MNEEDirectSampling(
 
 		const Vector localFixedDir = finalBsdf.GetFrame().ToLocal(wi);
 		Vector localSampledDir;
+		// Pass the real Cauchy coefficient: reaching this point with
+		// cauchyB > 0 implies spectral transport (the gate above rejects
+		// otherwise), and the spectral branch evaluates the transmission
+		// at the same hero wavelength the manifold was solved for.
+		const float cauchyB = glassMat->GetCauchyB() ?
+				glassMat->GetCauchyB()->GetFloatValue(finalBsdf.hitPoint) : 0.f;
 		specFactor = GlassMaterial::EvalSpecularTransmission(finalBsdf.hitPoint,
-				localFixedDir, 0.f, kt, nc, nt, 0.f, &localSampledDir);
+				localFixedDir, 0.f, kt, nc, nt, cauchyB, &localSampledDir);
 		specEvent = SPECULAR | TRANSMIT;
 	}
 	if (specFactor.Black()) {
@@ -723,7 +977,7 @@ bool PathTracer::MNEEDirectSampling(
 	// and clamping would bias the estimate.
 	//------------------------------------------------------------------------------
 	float mneeDet1 = 0.f, mneeDet2 = 0.f;
-	const float geometricTerm = MneeGeometricTerm(x0p, lightPos, vtx,
+	const float geometricTerm = MneeGeometricTerm(x0p, ep, vtx,
 			&mneeDet1, &mneeDet2);
 	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm)) {
 		MNEE_REJX("geoterm");
@@ -748,6 +1002,25 @@ bool PathTracer::MNEEDirectSampling(
 		return false;
 	}
 	verify(!isnan(directPdfW2) && !isinf(directPdfW2));
+
+	if (lightIsDir) {
+		// Illuminate() resampled a direction inside the emitter lobe; the
+		// manifold endpoint is the fixed direction ep.dir that the solve was
+		// run for. Rebuild the second-segment ray toward wo and extend it to
+		// the scene bounding sphere (a miss = the directional light is
+		// reached). The emitted radiance is constant across the delta / cone
+		// lobe, so lightRadiance2 stays valid; only the ray direction and
+		// length must reflect the solved endpoint.
+		const Vector wo2 = ep.dir;
+		const Point o2 = finalBsdf.GetRayOrigin(wo2);
+		const BSphere &bs = scene.GetDataSet().GetBSphere();
+		const Vector toCenter(bs.center.x - o2.x, bs.center.y - o2.y,
+				bs.center.z - o2.z);
+		const float approach = Dot(toCenter, wo2);
+		const float dist = approach + sqrtf(Max(0.f, bs.rad * bs.rad -
+				toCenter.LengthSquared() + approach * approach));
+		shadowRay2 = Ray(o2, wo2, 0.f, dist, time);
+	}
 
 	RayHit occlHit;
 	BSDF occlBsdf;
@@ -799,19 +1072,33 @@ bool PathTracer::MNEEDirectSampling(
 	//    spread with which light tracing itself matches the analytic
 	//    radiance).
 	//
+	// For a directional endpoint (lightIsDir) the geometric term is already
+	// the direction-space Jacobian (point-light limit: lightPos = x0 + wo*R,
+	// R -> infinity makes the perpendicular-frame Jacobian and the r12^2
+	// factor cancel exactly). The only remaining factor is the emitter's
+	// direction sampling pdf: 1 for a delta direction (sharpdistant), the
+	// uniform cone pdf for a distant light.
+	//
 	// risScale keeps ReSTIR RIS unbiased.
 	const bool plainHalfVector = (etaVertex == 1.f);
-	const Spectrum lightWeight = lightRadiance2 *
-			((plainHalfVector ? directPdfW2 : 1.f) * risScale / lightPickPdf);
-	const Spectrum incomingRadiance = bsdfEval0 * specFactor * geometricTerm *
+	const Spectrum lightWeight = lightIsDir ?
+			(lightRadiance2 * (risScale / (directPdfW2 * lightPickPdf))) :
+			(lightRadiance2 * ((plainHalfVector ? directPdfW2 : 1.f) *
+			risScale / lightPickPdf));
+	Spectrum incomingRadiance = bsdfEval0 * specFactor * geometricTerm *
 			lightWeight * seg2Throughput;
+	if (dispersiveConnect)
+		// The solved constraint holds at the hero wavelength only: carry
+		// the wavelength-selection weight and drop the dead bins.
+		incomingRadiance = Spectral::KeepHeroBins(incomingRadiance,
+				*Spectral::Current());
 	verify(!incomingRadiance.IsNaN() && !incomingRadiance.IsInf());
 
 	if (MneeDebugEnabled()) {
 		const Vector dbgWi = Normalize(x0p - vtx.p);
-		const Vector dbgWo = Normalize(lightPos - vtx.p);
+		const Vector dbgWo = lightIsDir ? ep.dir : Normalize(lightPos - vtx.p);
 		const float dbgR01 = Distance(x0p, vtx.p);
-		const float dbgR12 = Distance(lightPos, vtx.p);
+		const float dbgR12 = lightIsDir ? 0.f : Distance(lightPos, vtx.p);
 		// Analytic per-point radiance leaving x0 toward the camera for this
 		// path (the quantity a light-transport estimator measures):
 		//   (kd/pi)*|cos| * (1-F)*eta_t^2 * I / r12^2
@@ -840,6 +1127,17 @@ bool PathTracer::MNEEDirectSampling(
 
 	sampleResult->AddDirectLight(light.GetID(), specEvent, pathThroughput,
 			incomingRadiance, 1.f);
+
+	// Publish the converged vertex as a warm-start seed only after the full
+	// connect validated (seg2 visibility + receiver BSDF): a vertex that
+	// solves but fails downstream lands its reuse in the same dead basin,
+	// and on multi-root casters those polluted seeds systematically
+	// out-compete the cold line seed (~5% caustic energy loss measured on
+	// the bumpy-sphere seedcache scene). Keyed by the blocker-hit cell,
+	// valued by the solved vertex (GPU SolveEnd parity).
+	if (mneeSeedCacheEnable && mneeSeeds)
+		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
+				seedLightIndex, seedMesh, mirrorMat != nullptr);
 
 	return true;
 }
@@ -892,6 +1190,10 @@ struct MneeChainVertex {
 	// constraint flips it when the previous point lies on the -geometryN side,
 	// exactly like MneeResidual does for a single vertex.
 	float etaVertex;
+	// True for a dispersive-glass vertex (cauchyB > 0, spectral paths only):
+	// the constraint ran at the hero wavelength, so the chain contribution
+	// collapses to the hero bin.
+	bool dispersive;
 	Spectrum specFactor;
 	BSDFEvent specEvent;
 	BSDF bsdf;
@@ -920,20 +1222,28 @@ inline MneeVec2 MneeMatVec(const MneeMat2 &A, const MneeVec2 &v) {
 // flipped when the previous point lies on the -geometryN side (LuxCore's
 // exterior IOR sits on the +geometryN side; the same convention as
 // MneeResidual). wi points at the previous chain point, wo at the next one.
+// For the last vertex of a chain ending at a directional light, wo is the
+// constant light direction instead of a point difference (dirNext != nullptr).
 // Returns false for degenerate configurations.
 static bool MneeChainResidual(const Point &pPrev, const Point &pNext,
-		const MneeVertex &v, const float etaVertex, MneeVec2 &C) {
+		const Vector *dirNext, const MneeVertex &v, const float etaVertex,
+		MneeVec2 &C) {
 	Vector wi = pPrev - v.p;
 	const float r0 = wi.Length();
 	if (r0 < 1e-4f)
 		return false;
 	wi *= 1.f / r0;
 
-	Vector wo = pNext - v.p;
-	const float r1 = wo.Length();
-	if (r1 < 1e-4f)
-		return false;
-	wo *= 1.f / r1;
+	Vector wo;
+	if (dirNext) {
+		wo = *dirNext;
+	} else {
+		wo = pNext - v.p;
+		const float r1 = wo.Length();
+		if (r1 < 1e-4f)
+			return false;
+		wo *= 1.f / r1;
+	}
 
 	float eta = etaVertex;
 	if (Dot(wi, v.gn) < 0.f)
@@ -955,19 +1265,20 @@ static bool MneeChainResidual(const Point &pPrev, const Point &pNext,
 }
 
 // Residuals of the whole chain (no scene access)
-static bool MneeChainResiduals(const Point &x0p, const Point &lightPos,
+static bool MneeChainResiduals(const Point &x0p, const MneeEndpoint &ep,
 		const MneeChainVertex *chain, const u_int n,
 		MneeVec2 *residual, float &maxResidual) {
 	Point pts[MNEE_MS_MAX_VERTICES + 2];
 	pts[0] = x0p;
 	for (u_int i = 0; i < n; ++i)
 		pts[i + 1] = chain[i].v.p;
-	pts[n + 1] = lightPos;
+	pts[n + 1] = ep.pos;
 
 	maxResidual = 0.f;
 	for (u_int i = 0; i < n; ++i) {
-		if (!MneeChainResidual(pts[i], pts[i + 2], chain[i].v, chain[i].etaVertex,
-				residual[i]))
+		const Vector *dirNext = (ep.isDir && (i == n - 1)) ? &ep.dir : nullptr;
+		if (!MneeChainResidual(pts[i], pts[i + 2], dirNext, chain[i].v,
+				chain[i].etaVertex, residual[i]))
 			return false;
 		maxResidual = Max(maxResidual, sqrtf(residual[i].x * residual[i].x +
 				residual[i].y * residual[i].y));
@@ -983,10 +1294,10 @@ static bool MneeChainResiduals(const Point &x0p, const Point &lightPos,
 // solver's MneeConstraintWithJacobian.
 static bool MneeChainJacobian(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
-		const float time, const Point &x0p, const Point &lightPos,
+		const float time, const Point &x0p, const MneeEndpoint &ep,
 		const MneeChainVertex *chain, const u_int n,
 		MneeJacobianBlock *blocks, MneeVec2 *residual, float &maxResidual) {
-	if (!MneeChainResiduals(x0p, lightPos, chain, n, residual, maxResidual))
+	if (!MneeChainResiduals(x0p, ep, chain, n, residual, maxResidual))
 		return false;
 
 	const MneeMat2 zero{ 0.f, 0.f, 0.f, 0.f };
@@ -1005,7 +1316,7 @@ static bool MneeChainJacobian(
 	pts[0] = x0p;
 	for (u_int i = 0; i < n; ++i)
 		pts[i + 1] = chain[i].v.p;
-	pts[n + 1] = lightPos;
+	pts[n + 1] = ep.pos;
 
 	for (u_int i = 0; i < n; ++i) {
 		const float eps = Max(1e-5f, 1e-4f * Distance(pts[i], pts[i + 1]));
@@ -1030,7 +1341,10 @@ static bool MneeChainJacobian(
 
 				MneeVec2 CP;
 				const MneeVertex &vj = (j == (int)i) ? pertV : chain[j].v;
-				if (!MneeChainResidual(ptsP[j], ptsP[j + 2], vj, chain[j].etaVertex, CP))
+				const Vector *dirNext = (ep.isDir && (j == (int)n - 1)) ?
+						&ep.dir : nullptr;
+				if (!MneeChainResidual(ptsP[j], ptsP[j + 2], dirNext, vj,
+						chain[j].etaVertex, CP))
 					return false;
 
 				MneeMat2 *block;
@@ -1131,18 +1445,18 @@ static bool MneeTridiagonalSolveMatrixRhs(const MneeJacobianBlock *blocks,
 	return true;
 }
 
-// dC_last/dy: how the last vertex's constraint reacts to moving the light along
-// its (fake) tangent frame, the point emitter branch of Zeltner's
-// emitter_interaction_to_vertex (the same construction as MneeLightJacobian).
-static MneeMat2 MneeChainLightJacobian(const Point &pPrev, const Point &lightPos,
+// dC_last/dy: how the last vertex's constraint reacts to perturbing the light
+// endpoint, the emitter_interaction_to_vertex analog (same construction as
+// MneeLightJacobian). For a point emitter the endpoint moves along a tangent
+// frame; for a directional endpoint the direction itself is perturbed (the
+// position->direction 1/r conversion does not apply, same as the single
+// vertex solver's j2 block).
+static MneeMat2 MneeChainLightJacobian(const Point &pPrev, const MneeEndpoint &ep,
 		const MneeVertex &v, const float etaVertex, const float eps) {
 	const MneeMat2 zero{ 0.f, 0.f, 0.f, 0.f };
 
-	Vector dLight = v.p - lightPos;
-	const float rl = dLight.Length();
-	if (rl < 1e-3f)
-		return zero;
-	dLight *= 1.f / rl;
+	const Vector wo = ep.isDir ? ep.dir : Normalize(ep.pos - v.p);
+	const Vector dLight = -wo;
 	Vector s2, t2;
 	MneeCoordinateSystem(dLight, s2, t2);
 
@@ -1151,7 +1465,7 @@ static MneeMat2 MneeChainLightJacobian(const Point &pPrev, const Point &lightPos
 	if (Dot(wi, v.gn) < 0.f)
 		eta = 1.f / eta;
 
-	Vector h = wi + eta * Normalize(lightPos - v.p);
+	Vector h = wi + eta * wo;
 	if (eta != 1.f)
 		h = -h;
 	const float l = h.Length();
@@ -1162,8 +1476,12 @@ static MneeMat2 MneeChainLightJacobian(const Point &pPrev, const Point &lightPos
 
 	float CP[2][2];
 	for (u_int k = 0; k < 2; ++k) {
-		const Point lightPosP = lightPos + ((k == 0) ? eps * s2 : eps * t2);
-		Vector hP = wi + eta * Normalize(lightPosP - v.p);
+		// Point endpoint: move the position on the tangent frame.
+		// Directional endpoint: tilt the direction by eps on the same frame.
+		const Vector woP = ep.isDir ?
+				Normalize(ep.dir + ((k == 0) ? eps * s2 : eps * t2)) :
+				Normalize(ep.pos + ((k == 0) ? eps * s2 : eps * t2) - v.p);
+		Vector hP = wi + eta * woP;
 		if (eta != 1.f)
 			hP = -hP;
 		hP *= 1.f / hP.Length();
@@ -1185,6 +1503,7 @@ static bool MneeChainVertexInit(MneeChainVertex &cv, const BSDF &bsdf) {
 	cv.glassMat = nullptr;
 	cv.specEvent = SPECULAR;
 	cv.specFactor = Spectrum(1.f);
+	cv.dispersive = false;
 
 	if (type == MIRROR) {
 		cv.mirrorMat = dynamic_observer_cast<const MirrorMaterial>(bsdf.GetMaterial());
@@ -1197,16 +1516,22 @@ static bool MneeChainVertexInit(MneeChainVertex &cv, const BSDF &bsdf) {
 		cv.glassMat = dynamic_observer_cast<const GlassMaterial>(bsdf.GetMaterial());
 		if (!cv.glassMat)
 			return false;
-		// Dispersive glass: the chain uses a single IOR ratio, skip
-		if (cv.glassMat->GetCauchyB() &&
-				cv.glassMat->GetCauchyB()->GetFloatValue(bsdf.hitPoint) > 0.f)
-			return false;
 
 		const float nc = ExtractExteriorIors(bsdf.hitPoint, cv.glassMat->GetExteriorIOR());
 		const float nt = ExtractInteriorIors(bsdf.hitPoint, cv.glassMat->GetInteriorIOR());
 		if (nt <= 0.f || nc <= 0.f)
 			return false;
-		cv.etaVertex = nt / nc;
+		const float cauchyB = cv.glassMat->GetCauchyB() ?
+				cv.glassMat->GetCauchyB()->GetFloatValue(bsdf.hitPoint) : 0.f;
+		if (cauchyB > 0.f) {
+			if (!Spectral::Current())
+				// No wavelength state: keep ending the chain here.
+				return false;
+			// Hero-wavelength constraint IOR (see MNEEDirectSampling).
+			cv.dispersive = true;
+			cv.etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+		} else
+			cv.etaVertex = nt / nc;
 		cv.specEvent |= TRANSMIT;
 	} else
 		return false;
@@ -1215,132 +1540,196 @@ static bool MneeChainVertexInit(MneeChainVertex &cv, const BSDF &bsdf) {
 	return true;
 }
 
-// Chain topology: trace the straight ray from x0 toward the light and collect
-// the delta specular surfaces it pierces (the reference's mnee_init seeding).
-// The first vertex is the shadow ray's blocker, which the caller already has.
-// Returns the number of collected vertices; the solver only handles 2 or more
-// (a single vertex is the SS solver's job).
+// Continue the discovery walk through a collected vertex: refract at
+// dielectrics (etaVertex = interior/exterior), reflect at mirrors and on
+// TIR. Walking the physical refraction - instead of marching along the
+// straight receiver -> endpoint line - finds interfaces the straight ray
+// misses when the solved path deviates far from it (curved glass near the
+// silhouette).
+static Vector MneeChainWalkDir(const Vector &d, const MneeChainVertex &cv) {
+	const Vector gn(cv.v.gn.x, cv.v.gn.y, cv.v.gn.z);
+	if (cv.mirrorMat)
+		return d - 2.f * Dot(d, gn) * gn;
+
+	// d travels into the vertex; gn is the raw mesh normal. When it faces
+	// the incident side the ray enters the denser medium (etaRel = nc/nt),
+	// otherwise it exits (etaRel = nt/nc) - the same side test the solver's
+	// half-vector residual uses (Dot(wi, gn), wi = -d).
+	Vector N = gn;
+	float cosI = -Dot(d, N);
+	float etaRel;
+	if (cosI > 0.f)
+		etaRel = 1.f / cv.etaVertex;
+	else {
+		N = -N;
+		cosI = -cosI;
+		etaRel = cv.etaVertex;
+	}
+	const float sin2T = etaRel * etaRel * (1.f - cosI * cosI);
+	if (sin2T >= 1.f)
+		return d - 2.f * Dot(d, N) * N;     // TIR: continue as a reflection
+	const float cosT = sqrtf(1.f - sin2T);
+	return etaRel * d + (etaRel * cosI - cosT) * N;
+}
+
+// Chain topology: walk the refracted/reflected path from the connect
+// blocker and collect the delta specular surfaces it crosses (the first
+// vertex is the shadow ray's blocker, which the caller already has).
+// seedV0/seedV1 optionally carry a consistent [solved vertex, re-blocker]
+// pair from the failed single-vertex solve: both lie on the solved ray's
+// path, a far better Newton seed than geometry the straight line finds.
+// Returns the number of collected vertices; the solver only handles 2 or
+// more (a single vertex is the SS solver's job).
 static u_int MneeChainDiscover(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
-		const float time, const Point &x0p, const Point &lightPos,
+		const float time, const Point &x0p, const MneeEndpoint &ep,
 		const float u4, PathVolumeInfo volInfo,
-		const BSDF &firstBsdf, MneeChainVertex *chain, const u_int maxVertices) {
+		const BSDF &firstBsdf, MneeChainVertex *chain, const u_int maxVertices,
+		const BSDF *seedV0 = nullptr, const BSDF *seedV1 = nullptr) {
 	if (maxVertices < 2)
 		return 0;
-	if (!MneeChainVertexInit(chain[0], firstBsdf))
+	if (!MneeChainVertexInit(chain[0], seedV0 ? *seedV0 : firstBsdf))
 		return 0;
 	u_int n = 1;
 
-	const Vector dir = Normalize(lightPos - x0p);
-	for (u_int guard = 0; (guard < MNEE_MS_MAX_VERTICES) && (n < maxVertices); ++guard) {
-		Ray ray(chain[n - 1].bsdf.GetRayOrigin(dir), dir, 0.f,
+	// The direction the path arrives at the last collected vertex: the
+	// straight x0 -> endpoint line for a fresh walk (the fixed direction
+	// for a directional light), the solved seg2 direction when a warm
+	// pair seeded the chain.
+	Vector dir = ep.isDir ? ep.dir : Normalize(ep.pos - x0p);
+	if (seedV1 && MneeChainVertexInit(chain[1], *seedV1)) {
+		chain[1].v.p = seedV1->hitPoint.p;
+		dir = ep.isDir ? ep.dir : Normalize(ep.pos - chain[0].v.p);
+		n = 2;
+	}
+
+	// The walk follows the physical refraction/reflection at each
+	// collected interface (the straight line misses interfaces where the
+	// solved path deviates far from it).
+	dir = MneeChainWalkDir(dir, chain[n - 1]);
+	// Whether the walk is currently inside a dielectric body (entered a
+	// glass interface and not yet exited). While inside, a matte hit is
+	// geometry intruding into the glass (e.g. a box the caster rests on):
+	// skip it and keep walking so the chain still collects the exit
+	// interface - the solver validates the final path, the discovery only
+	// needs the right topology plus plausible positions.
+	bool insideGlass;
+	if (n == 2) {
+		// chain[0] was entered, chain[1] was hit on its far side: the
+		// walk inside ends only when chain[1] was an exit (normal faces
+		// the walk direction side).
+		insideGlass = (chain[0].glassMat != nullptr) &&
+				(Dot(Normalize(chain[0].v.p - x0p), chain[0].v.gn) < 0.f);
+		if (chain[1].glassMat)
+			insideGlass = (Dot(Normalize(chain[1].v.p - chain[0].v.p),
+					chain[1].v.gn) < 0.f);
+	} else
+		insideGlass = (chain[0].glassMat != nullptr) &&
+				(Dot(dir, chain[0].v.gn) < 0.f);
+	BSDF skipBsdf;              // ray origin when stepping past intruders
+	bool skipped = false;
+	static const bool discDbg = (getenv("LUX_MNEE_DISC") != nullptr);
+	for (u_int guard = 0; (guard < MNEE_MS_MAX_VERTICES * 4) && (n < maxVertices); ++guard) {
+		const BSDF &originBsdf = skipped ? skipBsdf : chain[n - 1].bsdf;
+		Ray ray(originBsdf.GetRayOrigin(dir), dir, 0.f,
 				numeric_limits<float>::infinity(), time);
 		RayHit hit;
 		BSDF hitBsdf;
 		Spectrum through;
 		PathVolumeInfo vol = volInfo;
 		if (!scene.Intersect(IntersectionDevicePtr(&device), INDIRECT_RAY, &vol, u4,
-				&ray, &hit, &hitBsdf, &through, nullptr, nullptr, false))
+				&ray, &hit, &hitBsdf, &through, nullptr, nullptr, false)) {
+			if (discDbg)
+				printf("MNEE_DISC escape n=%u dir=%.4g %.4g %.4g o=%.4g %.4g %.4g\n",
+						n, dir.x, dir.y, dir.z, ray.o.x, ray.o.y, ray.o.z);
 			break;      // the ray escaped: the last vertex may see the light
+		}
 
-		if (!hitBsdf.IsDelta() || !(hitBsdf.GetEventTypes() & SPECULAR))
+		if (!hitBsdf.IsDelta() || !(hitBsdf.GetEventTypes() & SPECULAR)) {
+			if (insideGlass) {
+				// Opaque intrusion inside the dielectric: step past it
+				// along the same direction and keep collecting.
+				skipBsdf = hitBsdf;
+				skipped = true;
+				continue;
+			}
+			if (discDbg)
+				printf("MNEE_DISC nonspec n=%u hit=%.4g %.4g %.4g delta=%d ev=%u mat=%d\n",
+						n, hitBsdf.hitPoint.p.x, hitBsdf.hitPoint.p.y,
+						hitBsdf.hitPoint.p.z, (int)hitBsdf.IsDelta(),
+						(unsigned)hitBsdf.GetEventTypes(),
+						(int)hitBsdf.GetMaterialType());
 			break;      // a non specular surface ends the chain
+		}
 
 		MneeChainVertex cv;
-		if (!MneeChainVertexInit(cv, hitBsdf))
+		if (!MneeChainVertexInit(cv, hitBsdf)) {
+			if (discDbg)
+				printf("MNEE_DISC initfail n=%u mat=%d\n", n,
+						(int)hitBsdf.GetMaterialType());
 			break;
-		chain[n++] = cv;
+		}
+		const Vector dIn = dir;
+		dir = MneeChainWalkDir(dir, cv);
+		if (cv.glassMat)
+			// Entering when the mesh normal faces the incident side; a
+			// TIR bounce keeps the walk inside either way.
+			insideGlass = (Dot(dIn, cv.v.gn) < 0.f) || (Dot(dIn, dir) < 0.f);
+		chain[n] = cv;
+		skipped = false;
+		++n;
 	}
 
 	return n;
 }
 
-bool PathTracer::MNEEMultiDirectSampling(
-		luxrays::IntersectionDeviceRef device,
-		SceneConstRef scene,
-		const float time,
-		const EyePathInfo &pathInfo,
-		const luxrays::Spectrum &pathThroughput,
-		const BSDF &bsdf,
-		LightSourceConstRef light, const float lightPickPdf, const float risScale,
-		const luxrays::Ray &shadowRay, const float directPdfW0,
-		const luxrays::RayHit &shadowRayHit,
-		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
-		const float u1, const float u2, const float u3, const float u4,
-		SampleResult *sampleResult) const {
-	const Point &x0p = bsdf.hitPoint.p;
-	// Light position: the shadow ray maxt has been rewritten by Scene::Intersect
-	// to the occluder distance, so recover the light distance from directPdfW
-	// (= squared distance to the light, preserved by Illuminate).
-	const Point lightPos = shadowRay.o + shadowRay.d * sqrtf(directPdfW0);
-
-	// Every exit of this function is a sample the estimator does not cover, and
-	// coverage (not the per-chain value, which an independent analytic model
-	// reproduces to 1-3%) is what limits a curved caster. LUX_MNEE_REJ prints one
-	// line per rejected attempt so the reasons can be counted: pair it with
-	// LUX_MNEE_DEBUG and attempts = accepted + rejected.
-	static const bool rejDebug = (getenv("LUX_MNEE_REJ") != nullptr);
-	auto rej = [&](const char *why) {
-		if (rejDebug)
-			printf("MNEE_MS_REJ %s film=%.4g %.4g\n", why, sampleResult->filmX,
-					sampleResult->filmY);
-		return false;
-	};
-
-	//--------------------------------------------------------------------------
-	// Chain topology (straight line seed)
-	//--------------------------------------------------------------------------
-	MneeChainVertex chain[MNEE_MS_MAX_VERTICES];
-	const u_int maxVertices = Min(mneeMaxSpecular, MNEE_MS_MAX_VERTICES);
-	const u_int n = MneeChainDiscover(device, scene, time, x0p, lightPos, u4,
-			volInfo, shadowBsdf, chain, maxVertices);
-	if (n < 2)
-		return rej("chain<2");
-
-	//--------------------------------------------------------------------------
-	// Newton solve on the whole chain (block tridiagonal step, line search with
-	// re-projection onto the shapes).
-	//--------------------------------------------------------------------------
+// Newton solve of the whole specular chain (block tridiagonal step, line
+// search with re-projection onto the shapes). Shared by the eye-side
+// estimator (MNEEMultiDirectSampling) and the light-side camera connect
+// (LMNEEMultiConnectToEye): the solver is endpoint-agnostic, only the
+// contribution assembly differs. *failWhy reports the failure stage for the
+// LUX_MNEE_REJ rejection counters.
+static bool MneeSolveChain(
+		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
+		const float time, const Point &x0p, const MneeEndpoint &endpoint,
+		MneeChainVertex *chain, const u_int n, const u_int maxIterations,
+		const char **failWhy) {
 	MneeJacobianBlock blocks[MNEE_MS_MAX_VERTICES];
 	MneeVec2 residual[MNEE_MS_MAX_VERTICES];
 	float maxResidual = 0.f;
-	bool solved = false;
 	float beta = 1.f;
 	u_int iteration = 0;
-	const char *failWhy = "iterations";
+	*failWhy = "iterations";
 
-	// Per-iteration trace (LUX_MNEE_ITER): shows whether the Newton stalls at a
-	// fixed residual, creeps down, or oscillates. The outer caustic of a curved
-	// caster is where the chain solve fails, and the failure mode decides what to
-	// change (step size policy vs the walk parameterization itself).
+	// Per-iteration trace (LUX_MNEE_ITER): shows whether the Newton stalls at
+	// a fixed residual, creeps down, or oscillates. The outer caustic of a
+	// curved caster is where the chain solve fails, and the failure mode
+	// decides what to change (step size policy vs the walk parameterization
+	// itself).
 	static const bool iterDebug = (getenv("LUX_MNEE_ITER") != nullptr);
 
-	while (iteration < mneeMaxIterations) {
-		if (!MneeChainJacobian(device, scene, time, x0p, lightPos, chain, n,
+	while (iteration < maxIterations) {
+		if (!MneeChainJacobian(device, scene, time, x0p, endpoint, chain, n,
 				blocks, residual, maxResidual)) {
-			failWhy = "jacobian";
-			break;
+			*failWhy = "jacobian";
+			return false;
 		}
 		if (iterDebug) {
-			printf("MNEE_MS_IT film=%.4g %.4g it=%u res=%.6g beta=%.4g "
-					"x0=%.9g %.9g %.9g",
-					sampleResult->filmX, sampleResult->filmY, iteration,
-					maxResidual, beta, x0p.x, x0p.y, x0p.z);
+			printf("MNEE_MS_IT x0=%.9g %.9g %.9g it=%u res=%.6g beta=%.4g",
+					x0p.x, x0p.y, x0p.z, iteration, maxResidual, beta);
 			for (u_int k = 0; k < n; ++k)
 				printf(" | x%u=%.9g %.9g %.9g C=(%.4g %.4g)", k + 1,
 						chain[k].v.p.x, chain[k].v.p.y, chain[k].v.p.z,
 						residual[k].x, residual[k].y);
 			printf("\n");
 		}
-		if (maxResidual < 1e-5f) {
-			solved = true;
-			break;
-		}
+		if (maxResidual < 1e-5f)
+			return true;
 
 		MneeVec2 dx[MNEE_MS_MAX_VERTICES];
 		if (!MneeTridiagonalSolve(blocks, n, residual, dx)) {
-			failWhy = "tridiagonal";
-			break;
+			*failWhy = "tridiagonal";
+			return false;
 		}
 
 		bool stepAccepted = false;
@@ -1368,7 +1757,7 @@ bool PathTracer::MNEEMultiDirectSampling(
 			if (projected) {
 				MneeVec2 trialRes[MNEE_MS_MAX_VERTICES];
 				float trialMax = 0.f;
-				if (MneeChainResiduals(x0p, lightPos, trial, n, trialRes, trialMax) &&
+				if (MneeChainResiduals(x0p, endpoint, trial, n, trialRes, trialMax) &&
 						(trialMax < maxResidual)) {
 					for (u_int i = 0; i < n; ++i)
 						chain[i] = trial[i];
@@ -1382,13 +1771,78 @@ bool PathTracer::MNEEMultiDirectSampling(
 			++iteration;
 		}
 		if (!stepAccepted) {
-			failWhy = "no-step";
-			break;
+			*failWhy = "no-step";
+			return false;
 		}
 		++iteration;
 	}
 
-	if (!solved)
+	return false;
+}
+
+bool PathTracer::MNEEMultiDirectSampling(
+		luxrays::IntersectionDeviceRef device,
+		SceneConstRef scene,
+		const float time,
+		const EyePathInfo &pathInfo,
+		const luxrays::Spectrum &pathThroughput,
+		const BSDF &bsdf,
+		LightSourceConstRef light, const float lightPickPdf, const float risScale,
+		const luxrays::Ray &shadowRay, const float directPdfW0,
+		const luxrays::RayHit &shadowRayHit,
+		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+		const float u1, const float u2, const float u3, const float u4,
+		SampleResult *sampleResult) const {
+	const Point &x0p = bsdf.hitPoint.p;
+	// Manifold endpoint: the shadow ray maxt has been rewritten by
+	// Scene::Intersect to the occluder distance, so a point light's position
+	// is recovered from directPdfW (= squared distance, preserved by
+	// Illuminate). A directional light has no finite position: the endpoint
+	// is the constant shadow-ray direction (its directPdfW is a solid-angle
+	// pdf, not a distance) - same construction as MNEEDirectSampling.
+	const LightSourceType lightType = light.GetType();
+	const bool lightIsDir = (lightType == TYPE_DISTANT ||
+			lightType == TYPE_SHARPDISTANT);
+	MneeEndpoint ep;
+	ep.isDir = lightIsDir;
+	if (lightIsDir) {
+		ep.dir = Normalize(shadowRay.d);
+		ep.pos = Point(0.f, 0.f, 0.f);
+	} else {
+		ep.pos = shadowRay.o + shadowRay.d * sqrtf(directPdfW0);
+		ep.dir = Vector(0.f, 0.f, 0.f);
+	}
+
+	// Every exit of this function is a sample the estimator does not cover, and
+	// coverage (not the per-chain value, which an independent analytic model
+	// reproduces to 1-3%) is what limits a curved caster. LUX_MNEE_REJ prints one
+	// line per rejected attempt so the reasons can be counted: pair it with
+	// LUX_MNEE_DEBUG and attempts = accepted + rejected.
+	static const bool rejDebug = (getenv("LUX_MNEE_REJ") != nullptr);
+	auto rej = [&](const char *why) {
+		if (rejDebug)
+			printf("MNEE_MS_REJ %s film=%.4g %.4g\n", why, sampleResult->filmX,
+					sampleResult->filmY);
+		return false;
+	};
+
+	//--------------------------------------------------------------------------
+	// Chain topology (straight line seed)
+	//--------------------------------------------------------------------------
+	MneeChainVertex chain[MNEE_MS_MAX_VERTICES];
+	const u_int maxVertices = Min(mneeMaxSpecular, MNEE_MS_MAX_VERTICES);
+	const u_int n = MneeChainDiscover(device, scene, time, x0p, ep, u4,
+			volInfo, shadowBsdf, chain, maxVertices);
+	if (n < 2)
+		return rej("chain<2");
+
+	//--------------------------------------------------------------------------
+	// Newton solve on the whole chain (block tridiagonal step, line search with
+	// re-projection onto the shapes).
+	//--------------------------------------------------------------------------
+	const char *failWhy = "iterations";
+	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
+			mneeMaxIterations, &failWhy))
 		return rej(failWhy);
 
 	//--------------------------------------------------------------------------
@@ -1401,13 +1855,16 @@ bool PathTracer::MNEEMultiDirectSampling(
 	pts[0] = x0p;
 	for (u_int i = 0; i < n; ++i)
 		pts[i + 1] = chain[i].v.p;
-	pts[n + 1] = lightPos;
+	pts[n + 1] = ep.pos;
 
 	Spectrum specProduct(1.f);
 	bool plainHalfVector = true;
 	for (u_int i = 0; i < n; ++i) {
 		const Vector wi = Normalize(pts[i] - pts[i + 1]);
-		const Vector wo = Normalize(pts[i + 2] - pts[i + 1]);
+		// The last vertex's outgoing direction is the constant light
+		// direction for a directional endpoint (ep.pos is degenerate there).
+		const Vector wo = (ep.isDir && (i == n - 1)) ? ep.dir :
+				Normalize(pts[i + 2] - pts[i + 1]);
 		const float cosI = Dot(chain[i].v.gn, wi);
 		const float cosO = Dot(chain[i].v.gn, wo);
 
@@ -1427,8 +1884,13 @@ bool PathTracer::MNEEMultiDirectSampling(
 					chain[i].glassMat->GetInteriorIOR());
 			const Vector localFixedDir = chain[i].bsdf.GetFrame().ToLocal(wi);
 			Vector localSampledDir;
+			// Same hero-wavelength evaluation as the single vertex solver:
+			// a dispersive vertex is only reachable under spectral transport.
+			const float cauchyB = chain[i].glassMat->GetCauchyB() ?
+					chain[i].glassMat->GetCauchyB()->GetFloatValue(
+						chain[i].bsdf.hitPoint) : 0.f;
 			const Spectrum trans = GlassMaterial::EvalSpecularTransmission(
-					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt, 0.f,
+					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt, cauchyB,
 					&localSampledDir);
 			if (trans.Black())
 				return rej("tir");
@@ -1454,6 +1916,22 @@ bool PathTracer::MNEEMultiDirectSampling(
 		return rej("light-black");
 	verify(!isnan(directPdfW2) && !isinf(directPdfW2));
 
+	if (ep.isDir) {
+		// Illuminate() resampled a direction inside the emitter lobe; the
+		// manifold endpoint is the fixed direction ep.dir that the solve was
+		// run for. Rebuild the last-segment ray toward it and extend to the
+		// scene bounding sphere (a miss = the light is reached). Same
+		// construction as the single vertex solver.
+		const Point o2 = chain[n - 1].bsdf.GetRayOrigin(ep.dir);
+		const BSphere &bs = scene.GetDataSet().GetBSphere();
+		const Vector toCenter(bs.center.x - o2.x, bs.center.y - o2.y,
+				bs.center.z - o2.z);
+		const float approach = Dot(toCenter, ep.dir);
+		const float dist = approach + sqrtf(Max(0.f, bs.rad * bs.rad -
+				toCenter.LengthSquared() + approach * approach));
+		shadowRay2 = Ray(o2, ep.dir, 0.f, dist, time);
+	}
+
 	RayHit occlHit;
 	BSDF occlBsdf;
 	Spectrum segThroughput;
@@ -1471,7 +1949,7 @@ bool PathTracer::MNEEMultiDirectSampling(
 	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
 	MneeVec2 geoResidual[MNEE_MS_MAX_VERTICES];
 	float geoMax = 0.f;
-	if (!MneeChainJacobian(device, scene, time, x0p, lightPos, chain, n,
+	if (!MneeChainJacobian(device, scene, time, x0p, ep, chain, n,
 			geoBlocks, geoResidual, geoMax))
 		return rej("geo-jacobian");
 
@@ -1480,18 +1958,18 @@ bool PathTracer::MNEEMultiDirectSampling(
 		return rej("geo-tridiagonal");
 
 	const float epsLight = Max(1e-5f, 1e-4f * Distance(x0p, chain[n - 1].v.p));
-	const MneeMat2 lightJac = MneeChainLightJacobian(pts[n - 1], lightPos,
+	const MneeMat2 lightJac = MneeChainLightJacobian(pts[n - 1], ep,
 			chain[n - 1].v, chain[n - 1].etaVertex, epsLight);
 	const MneeMat2 dxDy = MneeMul(dxFirst, lightJac);
 
 	const Vector d01 = x0p - chain[0].v.p;
 	const float r01sq = d01.LengthSquared();
 	if (r01sq < 1e-6f)
-		return false;
+		return rej("r01sq");
 	const float dw0Dx1 = fabsf(Dot(d01, chain[0].v.gn)) / (sqrtf(r01sq) * r01sq);
 	const float geometricTerm = dw0Dx1 * fabsf(MneeDet(dxDy));
 	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm))
-		return false;
+		return rej("geo-term");
 
 	//--------------------------------------------------------------------------
 	// Contribution. The r12^2 (Illuminate directPdfW) measure factor belongs to
@@ -1505,24 +1983,42 @@ bool PathTracer::MNEEMultiDirectSampling(
 	const Spectrum bsdfEval0 = bsdf.Evaluate(Normalize(chain[0].v.p - x0p),
 			&receiverEvent, &bsdfPdfW);
 	if (bsdfEval0.Black())
-		return false;
+		return rej("bsdf0-black");
 
 	PathDepthInfo mneeDepthInfo = pathInfo.depth;
 	mneeDepthInfo.IncDepths(receiverEvent);
 	for (u_int i = 0; i < n; ++i)
 		mneeDepthInfo.IncDepths(chain[i].specEvent);
 
-	const Spectrum lightWeight = lightRadiance2 *
-			((plainHalfVector ? directPdfW2 : 1.f) * risScale / lightPickPdf);
-	const Spectrum incomingRadiance = bsdfEval0 * specProduct * geometricTerm *
+	// For a directional endpoint the chain geometric term is already the
+	// direction-space Jacobian (the perpendicular-frame Jacobian and the
+	// r12^2 factor cancel in the point-light limit, as in the single vertex
+	// solver); the only remaining factor is the emitter's direction pdf,
+	// which divides out here.
+	const Spectrum lightWeight = ep.isDir ?
+			(lightRadiance2 * (risScale / (directPdfW2 * lightPickPdf))) :
+			(lightRadiance2 * ((plainHalfVector ? directPdfW2 : 1.f) *
+			risScale / lightPickPdf));
+	Spectrum incomingRadiance = bsdfEval0 * specProduct * geometricTerm *
 			lightWeight * segThroughput;
+	{
+		bool chainDispersive = false;
+		for (u_int i = 0; i < n; ++i)
+			chainDispersive |= chain[i].dispersive;
+		if (chainDispersive)
+			// The solved constraint holds at the hero wavelength only.
+			incomingRadiance = Spectral::KeepHeroBins(incomingRadiance,
+					*Spectral::Current());
+	}
 	verify(!incomingRadiance.IsNaN() && !incomingRadiance.IsInf());
 
 	if (MneeDebugEnabled()) {
-		const float dbgR12 = Distance(lightPos, chain[n - 1].v.p);
+		const float dbgR12 = ep.isDir ? 1.f :
+				Distance(ep.pos, chain[n - 1].v.p);
 		// The analytic per-point radiance a light transport estimator measures
 		// for this chain: every specular factor times the light's radiance at
-		// the last vertex (see the single vertex debug print).
+		// the last vertex (see the single vertex debug print). A directional
+		// endpoint is already in direction space: no r^2 falloff applies.
 		const float dbgTruth = bsdfEval0.Filter() * specProduct.Filter() *
 				lightRadiance2.Filter() / (dbgR12 * dbgR12);
 		printf("MNEE_MS_DBG film=%.4g %.4g n=%u x0=%.9g %.9g %.9g",
@@ -1534,7 +2030,8 @@ bool PathTracer::MNEEMultiDirectSampling(
 			// point against the surface's outward direction silently inverts
 			// every vertex's constraint IOR (see dev-tools/mnee_design.md 4e).
 			const Vector dbgWi = Normalize(pts[i] - pts[i + 1]);
-			const Vector dbgWo = Normalize(pts[i + 2] - pts[i + 1]);
+			const Vector dbgWo = (ep.isDir && (i == n - 1)) ? ep.dir :
+					Normalize(pts[i + 2] - pts[i + 1]);
 			printf(" | x%u=%.9g %.9g %.9g gn=%.4g %.4g %.4g eta=%.9g "
 					"dWiGn=%.4g cWiGn=%.4g cWoGn=%.4g", i + 1,
 					chain[i].v.p.x, chain[i].v.p.y, chain[i].v.p.z,
@@ -1544,8 +2041,8 @@ bool PathTracer::MNEEMultiDirectSampling(
 					fabsf(Dot(dbgWo, chain[i].v.gn)));
 		}
 		printf(" | y=%.9g %.9g %.9g residual=%.3e spec=%.9g G=%.9g in=%.9g "
-				"truth=%.9g\n", lightPos.x, lightPos.y, lightPos.z,
-				maxResidual, specProduct.Filter(), geometricTerm,
+				"truth=%.9g\n", ep.pos.x, ep.pos.y, ep.pos.z,
+				geoMax, specProduct.Filter(), geometricTerm,
 				incomingRadiance.Filter(), dbgTruth);
 		fflush(stdout);
 	}
@@ -1553,6 +2050,512 @@ bool PathTracer::MNEEMultiDirectSampling(
 	sampleResult->AddDirectLight(light.GetID(), chain[n - 1].specEvent,
 			pathThroughput, incomingRadiance, 1.f);
 
+	return true;
+}
+
+//------------------------------------------------------------------------------
+// LMNEE: light-side manifold connect x0 -> specular -> camera lens
+//
+// ConnectToEye drops the light-path vertex when a delta specular surface
+// blocks the camera connect; the GPU kernels instead solve the specular
+// manifold (LMnee_Start / LMnee_SolveEnd / LMneeChain_*, see
+// pathoclbase_funcs.cl). These are the CPU ports of that driver, reusing the
+// eye-side Newton machinery with the endpoint roles swapped: the endpoint is
+// the sampled lens point and the emission weight is the camera's emitted
+// importance (Camera::GetPDF pdfW) instead of LightSource::Illuminate.
+//
+// Endpoint measure: the manifold geometric term already carries the last
+// segment's 1/d^2 conversion, so the camera weight is pdfW alone for a
+// refractive chain and pdfW * dSeg^2 for a pure mirror chain - the same rule
+// as directPdfW2 on the eye side (the pinhole lens is a delta, so the r^2
+// factor is the squared segment length).
+//
+// The splat lands where the SOLVED segment projects: the film position is
+// re-computed from the last specular vertex toward the lens, not from the
+// blocked connect's projection.
+//------------------------------------------------------------------------------
+
+// Project the last specular vertex to the film and evaluate the camera
+// endpoint weight (the light-side analog of LightSource::Illuminate +
+// directPdfW2 on the eye side). Returns false when the vertex projects
+// outside the film or behind the camera.
+static bool LMneeCameraEndpoint(SceneConstRef scene, const Point &lensPoint,
+		const Point &v, const float time, const bool plainHalfVector,
+		float *filmX, float *filmY, float *camWeight) {
+	const Vector toVtx = v - lensPoint;
+	const float dSeg2 = toVtx.Length();
+	if (dSeg2 < 1e-3f)
+		return false;
+
+	Ray segRay;
+	if (scene.GetCamera().GetType() == Camera::ORTHOGRAPHIC) {
+		// An orthographic camera has no finite lens position: the solve
+		// keeps the sampled point on the camera plane as endpoint (the GPU
+		// kernel does the same) and the arriving segment projects along
+		// the fixed camera direction.
+		segRay = Ray(v, Normalize(scene.GetCamera().GetDir()),
+				0.f, dSeg2, time);
+	} else
+		segRay = Ray(lensPoint, toVtx / dSeg2, 0.f, dSeg2, time);
+	if (!scene.GetCamera().GetSamplePosition(&segRay, filmX, filmY))
+		return false;
+
+	float pdfW, fluxToRadianceFactor;
+	scene.GetCamera().GetPDF(segRay, dSeg2, *filmX, *filmY,
+			&pdfW, &fluxToRadianceFactor);
+	if (fluxToRadianceFactor <= 0.f)
+		return false;
+
+	*camWeight = pdfW * (plainHalfVector ? dSeg2 * dSeg2 : 1.f);
+	return true;
+}
+
+// Rejection diagnostics (LUX_LMNEE_REJ=1): one line per rejected attempt,
+// keyed by stage; pair with the accepted splats to measure coverage.
+static bool LMneeRejEnabled() {
+	static const bool enabled = (getenv("LUX_LMNEE_REJ") != nullptr);
+	return enabled;
+}
+#define LMNEE_REJ(why) do { \
+		if (LMneeRejEnabled()) { \
+			printf("LMNEE_REJ %s x0=%.9g %.9g %.9g\n", why, \
+					x0p.x, x0p.y, x0p.z); \
+			fflush(stdout); \
+		} \
+	} while (0)
+
+// Splat the solved light-side contribution. isCaustic is fixed: the path
+// crossed at least one specular interface on the way to the lens (the GPU
+// pending splat uses the same convention).
+static void LMneeSplat(FilmConstRef film, const LightSource &light,
+		const float filmX, const float filmY, const Spectrum &radiance,
+		std::vector<SampleResult> &sampleResults, const char *how = nullptr,
+		const Point *x0dbg = nullptr) {
+	if (LMneeRejEnabled() && how) {
+		printf("LMNEE_ACC %s film=%.1f %.1f r=%.4g %.4g %.4g x0=%.4g %.4g %.4g\n",
+				how, filmX, filmY, radiance.c[0], radiance.c[1], radiance.c[2],
+				x0dbg ? x0dbg->x : 0.f, x0dbg ? x0dbg->y : 0.f,
+				x0dbg ? x0dbg->z : 0.f);
+		fflush(stdout);
+	}
+	SampleResult &sampleResult =
+			PathTracer::AddLightSampleResult(sampleResults, film);
+	sampleResult.filmX = filmX;
+	sampleResult.filmY = filmY;
+	sampleResult.pixelX = Floor2UInt(filmX);
+	sampleResult.pixelY = Floor2UInt(filmY);
+	sampleResult.isCaustic = true;
+	sampleResult.radiance[light.GetID()] = radiance;
+}
+
+bool PathTracer::LMNEEConnectToEye(
+		luxrays::IntersectionDeviceRef device,
+		SceneConstRef scene,
+		FilmConstRef film, const float time,
+		const LightSource &light, const BSDF &bsdf,
+		const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+		const luxrays::RayHit &shadowRayHit,
+		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+		BSDF &warmV0, BSDF &warmV1, bool &warmOk,
+		std::vector<SampleResult> &sampleResults) const {
+	warmOk = false;
+	const Point &x0p = bsdf.hitPoint.p;
+	const Point &lensPoint = pathInfo.lensPoint;
+	MneeEndpoint ep;
+	ep.isDir = false;	// the sampled lens point is a finite position
+	ep.pos = lensPoint;
+	ep.dir = Vector(0.f, 0.f, 0.f);
+
+	//--------------------------------------------------------------------------
+	// Occluder material gate (same rules as the eye side)
+	//--------------------------------------------------------------------------
+	const MaterialType seedMatType = shadowBsdf.GetMaterialType();
+	observer_ptr<const MirrorMaterial> mirrorMat = nullptr;
+	observer_ptr<const GlassMaterial> glassMat = nullptr;
+	float etaVertex = 1.f;
+	bool dispersiveConnect = false;
+	if (seedMatType == MIRROR) {
+		mirrorMat = dynamic_observer_cast<const MirrorMaterial>(
+				shadowBsdf.GetMaterial());
+		if (!mirrorMat)
+			{ LMNEE_REJ("mirror-mat"); return false; }
+
+		// Only the same-side relation is a reflection (see
+		// MNEEDirectSampling); endpoints on opposite sides would need the
+		// mirror to transmit.
+		const Normal &gn1s = shadowBsdf.hitPoint.geometryN;
+		const Vector toX0 = x0p - shadowBsdf.hitPoint.p;
+		const Vector toY = lensPoint - shadowBsdf.hitPoint.p;
+		etaVertex = (Dot(toX0, gn1s) * Dot(toY, gn1s) > 0.f) ? 1.f : -1.f;
+		if (etaVertex != 1.f)
+			{ LMNEE_REJ("mirror-side"); return false; }
+	} else if (seedMatType == GLASS) {
+		glassMat = dynamic_observer_cast<const GlassMaterial>(
+				shadowBsdf.GetMaterial());
+		if (!glassMat)
+			{ LMNEE_REJ("glass-mat"); return false; }
+
+		const float nc = ExtractExteriorIors(shadowBsdf.hitPoint,
+				glassMat->GetExteriorIOR());
+		const float nt = ExtractInteriorIors(shadowBsdf.hitPoint,
+				glassMat->GetInteriorIOR());
+		if (nt <= 0.f || nc <= 0.f)
+			{ LMNEE_REJ("ior"); return false; }
+		const float cauchyB = glassMat->GetCauchyB() ?
+				glassMat->GetCauchyB()->GetFloatValue(shadowBsdf.hitPoint) : 0.f;
+		if (cauchyB > 0.f) {
+			if (!Spectral::Current())
+				{ LMNEE_REJ("disp-nospectral"); return false; }
+			dispersiveConnect = true;
+			etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+		} else
+			etaVertex = nt / nc;
+	} else
+		{ LMNEE_REJ("material"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Newton solve x0 -> x1 -> lens
+	//--------------------------------------------------------------------------
+
+	// Seed cache policy (eye-side parity): mirror endpoints (eta == 1)
+	// consult the cache first - the cold mirrored-lens seed costs a trace
+	// the cache skips. For glass the free cold line seed keeps the
+	// reference basin selection and the cache is only a failure rescue
+	// below (the eye-side bumpy-sphere scene measured ~5% caustic energy
+	// loss from cache-first glass seeding). The camera endpoint shares the
+	// GPU LMNEE_CAMERA_SEED_ID namespace. Same incident-side namespacing
+	// as the eye-side caller: solves from inside a closed dielectric (the
+	// connect ray hits the blocker on its -geometryN side) must not
+	// warm-start from outside-context seeds.
+	MneeVertex seedVtx;
+	const MneeVertex *seedPtr = nullptr;
+	const u_int seedMesh = shadowRayHit.meshIndex * 2u +
+			(Dot(Normalize(shadowBsdf.hitPoint.p - x0p),
+			shadowBsdf.hitPoint.geometryN) > 0.f ? 1u : 0u);
+	float seedCellSize = 0.f;
+	u_int seedKey = 0;
+	if (mneeSeedCacheEnable && mneeSeeds) {
+		seedCellSize = Max(scene.GetDataSet().GetBSphere().rad /
+				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
+		seedKey = MneeSeedKey(LMNEE_CAMERA_SEED_ID, seedMesh,
+				shadowBsdf.hitPoint.p, seedCellSize);
+		if ((etaVertex == 1.f) &&
+				MneeSeedLookup(mneeSeeds.get(), seedKey, LMNEE_CAMERA_SEED_ID,
+				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx))
+			seedPtr = &seedVtx;
+	}
+
+	MneeVertex vtx;
+	BSDF finalBsdf;
+	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
+			shadowRayHit, shadowBsdf, volInfo, etaVertex, mneeMaxIterations,
+			seedPtr, &vtx, &finalBsdf);
+	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
+			mneeSeedCacheEnable && mneeSeeds &&
+			MneeSeedLookup(mneeSeeds.get(), seedKey, LMNEE_CAMERA_SEED_ID,
+				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx)) {
+		// Failure rescue: retry once from the cached vertex.
+		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
+				shadowRayHit, shadowBsdf, volInfo, etaVertex,
+				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
+	}
+	if (!solveOk)
+		{ LMNEE_REJ(seedPtr ? "newton-s" : "newton"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Post-solve validity check (same as the eye side): the half-vector
+	// formulation can converge to a solution of the wrong specular mode
+	//--------------------------------------------------------------------------
+	const Vector wi = Normalize(x0p - vtx.p);
+	const Vector wo = Normalize(lensPoint - vtx.p);
+	const float cosX = Dot(vtx.gn, wi);
+	const float cosY = Dot(vtx.gn, wo);
+	const bool refraction = (cosX * cosY < 0.f);
+	if (mirrorMat ? refraction : !refraction)
+		{ LMNEE_REJ("mode"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Specular factor at the solved vertex (same code as the eye side)
+	//--------------------------------------------------------------------------
+	Spectrum specFactor;
+	BSDFEvent specEvent;
+	if (mirrorMat) {
+		specFactor = mirrorMat->GetKr()->GetSpectrumValue(finalBsdf.hitPoint).
+				Clamp(0.f, 1.f);
+		specEvent = SPECULAR | REFLECT;
+	} else {
+		const Spectrum kt = glassMat->GetKt()->GetSpectrumValue(
+				finalBsdf.hitPoint).Clamp(0.f, 1.f);
+		const float nc = ExtractExteriorIors(finalBsdf.hitPoint,
+				glassMat->GetExteriorIOR());
+		const float nt = ExtractInteriorIors(finalBsdf.hitPoint,
+				glassMat->GetInteriorIOR());
+		const Vector localFixedDir = finalBsdf.GetFrame().ToLocal(wi);
+		Vector localSampledDir;
+		const float cauchyB = glassMat->GetCauchyB() ?
+				glassMat->GetCauchyB()->GetFloatValue(finalBsdf.hitPoint) : 0.f;
+		specFactor = GlassMaterial::EvalSpecularTransmission(finalBsdf.hitPoint,
+				localFixedDir, 0.f, kt, nc, nt, cauchyB, &localSampledDir);
+		specEvent = SPECULAR | TRANSMIT;
+	}
+	if (specFactor.Black())
+		{ LMNEE_REJ("spec"); return false; }
+
+	const float geometricTerm = MneeGeometricTerm(x0p, ep, vtx);
+	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm))
+		{ LMNEE_REJ("geo"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Camera endpoint: project the arriving segment x1 -> lens to the film
+	//--------------------------------------------------------------------------
+	const bool plainHalfVector = (etaVertex == 1.f);
+	float filmX, filmY, camWeight;
+	if (!LMneeCameraEndpoint(scene, lensPoint, vtx.p, time,
+			plainHalfVector, &filmX, &filmY, &camWeight))
+		{ LMNEE_REJ("camproj"); return false; }
+
+	// Receiver BSDF at x0 toward the solved vertex (includes the cosine)
+	BSDFEvent receiverEvent;
+	float receiverPdfW;
+	const Spectrum bsdfEval0 = bsdf.Evaluate(Normalize(vtx.p - x0p),
+			&receiverEvent, &receiverPdfW);
+	if (bsdfEval0.Black())
+		{ LMNEE_REJ("recv"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Last segment x1 -> lens: visibility through the updated volume state
+	//--------------------------------------------------------------------------
+	PathVolumeInfo volSeg2 = volInfo;
+	volSeg2.Update(specEvent, finalBsdf);
+	const Vector toLens = lensPoint - vtx.p;
+	const float dSeg2 = toLens.Length();
+	const Vector segDir = toLens / dSeg2;
+	Ray segRay(finalBsdf.GetRayOrigin(segDir), segDir, 0.f,
+			dSeg2 * (1.f - 1e-4f), time);
+	RayHit segHit;
+	BSDF segBsdf;
+	Spectrum segThroughput;
+	PathVolumeInfo volSegTrace = volSeg2;
+	if (scene.Intersect(IntersectionDevicePtr(&device), SHADOW_RAY,
+			&volSegTrace, .5f, &segRay, &segHit, &segBsdf, &segThroughput,
+			nullptr, nullptr, true)) {
+		// Re-blocked: another interface is in the way - the caller falls
+		// back to the chain solve (the GPU fromMnee escalation). Hand the
+		// converged vertex and the re-blocker to the chain as a consistent
+		// seed pair: both sit on the solved ray's path, unlike a straight
+		// -line discovery seed.
+		if (segBsdf.IsDelta() && (segBsdf.GetEventTypes() & SPECULAR)) {
+			warmV0 = finalBsdf;
+			warmV1 = segBsdf;
+			warmOk = true;
+		}
+		LMNEE_REJ("seg2block");
+		return false;
+	}
+
+	Spectrum radiance = flux * bsdfEval0 * specFactor * geometricTerm *
+			camWeight * segThroughput;
+	if (dispersiveConnect)
+		// The solved constraint holds at the hero wavelength only: carry
+		// the wavelength-selection weight and drop the dead bins.
+		radiance = Spectral::KeepHeroBins(radiance, *Spectral::Current());
+	if (radiance.IsNaN() || radiance.IsInf())
+		{ LMNEE_REJ("nan"); return false; }
+
+	LMneeSplat(film, light, filmX, filmY, radiance, sampleResults, "single", &x0p);
+
+	// Manifold-guided emission: a solved-manifold connect reaches the
+	// camera only through specular interfaces - credit the receiver x0
+	// into the light's focus ring (GPU pendingSplat.recvP parity)
+	LightFocusCredit(scene, light.lightSceneIndex, x0p);
+
+	// Publish the converged vertex as a warm-start seed only after the
+	// full connect validated (eye-side parity: solved-but-unusable roots
+	// pollute the cache and drain the caustic on multi-root casters).
+	if (mneeSeedCacheEnable && mneeSeeds)
+		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
+				LMNEE_CAMERA_SEED_ID, seedMesh,
+				mirrorMat != nullptr);
+	return true;
+}
+
+bool PathTracer::LMNEEMultiConnectToEye(
+		luxrays::IntersectionDeviceRef device,
+		SceneConstRef scene,
+		FilmConstRef film, const float time,
+		const LightSource &light, const BSDF &bsdf,
+		const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+		const BSDF *warmV0, const BSDF *warmV1,
+		std::vector<SampleResult> &sampleResults) const {
+	const Point &x0p = bsdf.hitPoint.p;
+	const Point &lensPoint = pathInfo.lensPoint;
+	// The camera endpoint is always a finite position (the sampled lens point).
+	MneeEndpoint ep;
+	ep.isDir = false;
+	ep.pos = lensPoint;
+	ep.dir = Vector(0.f, 0.f, 0.f);
+
+	//--------------------------------------------------------------------------
+	// Chain topology: the delta specular surfaces along the refracted walk
+	// (the first is the connect blocker itself; a warm pair from the single
+	// solve seeds both ends when available)
+	//--------------------------------------------------------------------------
+	MneeChainVertex chain[MNEE_MS_MAX_VERTICES];
+	const u_int maxVertices = Min(mneeMaxSpecular, MNEE_MS_MAX_VERTICES);
+	const u_int n = MneeChainDiscover(device, scene, time, x0p, ep,
+			.5f, volInfo, shadowBsdf, chain, maxVertices, warmV0, warmV1);
+	if (n < 2) {
+		if (LMneeRejEnabled()) {
+			printf("LMNEE_REJ ms-chain<2 x0=%.9g %.9g %.9g n=%u b0=%s p=%.4g %.4g %.4g\n",
+					x0p.x, x0p.y, x0p.z, n,
+					shadowBsdf.GetMaterial() ? "mat" : "null",
+					shadowBsdf.hitPoint.p.x, shadowBsdf.hitPoint.p.y,
+					shadowBsdf.hitPoint.p.z);
+			fflush(stdout);
+		}
+		return false;
+	}
+
+
+
+	//--------------------------------------------------------------------------
+	// Newton solve on the whole chain
+	//--------------------------------------------------------------------------
+	const char *failWhy = "iterations";
+	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
+			mneeMaxIterations, &failWhy))
+		{ LMNEE_REJ("ms-newton"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Post-solve validity + specular factor product (same rules as the eye
+	// side: mirrors keep both segments on one side, dielectrics transmit)
+	//--------------------------------------------------------------------------
+	Point pts[MNEE_MS_MAX_VERTICES + 2];
+	pts[0] = x0p;
+	for (u_int i = 0; i < n; ++i)
+		pts[i + 1] = chain[i].v.p;
+	pts[n + 1] = ep.pos;
+
+	Spectrum specProduct(1.f);
+	bool plainHalfVector = true;
+	for (u_int i = 0; i < n; ++i) {
+		const Vector wi = Normalize(pts[i] - pts[i + 1]);
+		const Vector wo = Normalize(pts[i + 2] - pts[i + 1]);
+		const float cosI = Dot(chain[i].v.gn, wi);
+		const float cosO = Dot(chain[i].v.gn, wo);
+
+		if (chain[i].etaVertex == 1.f) {
+			if (cosI * cosO < 0.f)
+				{ LMNEE_REJ("ms-mirror-side"); return false; }
+			specProduct *= chain[i].specFactor;
+		} else {
+			if (cosI * cosO > 0.f)
+				{ LMNEE_REJ("ms-sameside"); return false; }
+
+			const Spectrum kt = chain[i].glassMat->GetKt()->
+					GetSpectrumValue(chain[i].bsdf.hitPoint).Clamp(0.f, 1.f);
+			const float nc = ExtractExteriorIors(chain[i].bsdf.hitPoint,
+					chain[i].glassMat->GetExteriorIOR());
+			const float nt = ExtractInteriorIors(chain[i].bsdf.hitPoint,
+					chain[i].glassMat->GetInteriorIOR());
+			const Vector localFixedDir = chain[i].bsdf.GetFrame().ToLocal(wi);
+			Vector localSampledDir;
+			const float cauchyB = chain[i].glassMat->GetCauchyB() ?
+					chain[i].glassMat->GetCauchyB()->GetFloatValue(
+						chain[i].bsdf.hitPoint) : 0.f;
+			const Spectrum trans = GlassMaterial::EvalSpecularTransmission(
+					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt,
+					cauchyB, &localSampledDir);
+			if (trans.Black())
+				{ LMNEE_REJ("ms-tir"); return false; }
+			specProduct *= trans;
+			plainHalfVector = false;
+		}
+	}
+	if (specProduct.Black())
+		{ LMNEE_REJ("ms-spec"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Chain geometric term: dw0_dx1 * |det(dx_1 / dy)| with the lens point as
+	// the moving endpoint (same construction as the eye side)
+	//--------------------------------------------------------------------------
+	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
+	MneeVec2 geoResidual[MNEE_MS_MAX_VERTICES];
+	float geoMax = 0.f;
+	if (!MneeChainJacobian(device, scene, time, x0p, ep, chain, n,
+			geoBlocks, geoResidual, geoMax))
+		{ LMNEE_REJ("ms-geojac"); return false; }
+
+	MneeMat2 dxFirst;
+	if (!MneeTridiagonalSolveMatrixRhs(geoBlocks, n, dxFirst))
+		{ LMNEE_REJ("ms-geotri"); return false; }
+
+	const float epsLight = Max(1e-5f, 1e-4f * Distance(x0p, chain[n - 1].v.p));
+	const MneeMat2 lightJac = MneeChainLightJacobian(pts[n - 1], ep,
+			chain[n - 1].v, chain[n - 1].etaVertex, epsLight);
+	const MneeMat2 dxDy = MneeMul(dxFirst, lightJac);
+
+	const Vector d01 = x0p - chain[0].v.p;
+	const float r01sq = d01.LengthSquared();
+	if (r01sq < 1e-6f)
+		{ LMNEE_REJ("ms-r01"); return false; }
+	const float dw0Dx1 = fabsf(Dot(d01, chain[0].v.gn)) / (sqrtf(r01sq) * r01sq);
+	const float geometricTerm = dw0Dx1 * fabsf(MneeDet(dxDy));
+	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm))
+		{ LMNEE_REJ("ms-geo"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Camera endpoint: project the LAST vertex to the film (the far
+	// interface for a closed dielectric)
+	//--------------------------------------------------------------------------
+	float filmX, filmY, camWeight;
+	if (!LMneeCameraEndpoint(scene, lensPoint, chain[n - 1].v.p, time,
+			plainHalfVector, &filmX, &filmY, &camWeight))
+		{ LMNEE_REJ("ms-camproj"); return false; }
+
+	// Receiver BSDF at x0 toward the FIRST chain vertex
+	BSDFEvent receiverEvent;
+	float receiverPdfW;
+	const Spectrum bsdfEval0 = bsdf.Evaluate(Normalize(chain[0].v.p - x0p),
+			&receiverEvent, &receiverPdfW);
+	if (bsdfEval0.Black())
+		{ LMNEE_REJ("ms-recv"); return false; }
+
+	//--------------------------------------------------------------------------
+	// Last segment xN -> lens: visibility through the chain's exit volume
+	//--------------------------------------------------------------------------
+	PathVolumeInfo volLast = volInfo;
+	for (u_int i = 0; i < n; ++i)
+		volLast.Update(chain[i].specEvent, chain[i].bsdf);
+	const Vector toLens = lensPoint - chain[n - 1].v.p;
+	const float dSeg2 = toLens.Length();
+	const Vector segDir = toLens / dSeg2;
+	Ray segRay(chain[n - 1].bsdf.GetRayOrigin(segDir), segDir, 0.f,
+			dSeg2 * (1.f - 1e-4f), time);
+	RayHit segHit;
+	BSDF segBsdf;
+	Spectrum segThroughput;
+	PathVolumeInfo volSegTrace = volLast;
+	if (scene.Intersect(IntersectionDevicePtr(&device), SHADOW_RAY,
+			&volSegTrace, .5f, &segRay, &segHit, &segBsdf, &segThroughput,
+			nullptr, nullptr, true))
+		{ LMNEE_REJ("ms-segblock"); return false; }
+
+	Spectrum radiance = flux * bsdfEval0 * specProduct * geometricTerm *
+			camWeight * segThroughput;
+	{
+		bool chainDispersive = false;
+		for (u_int i = 0; i < n; ++i)
+			chainDispersive |= chain[i].dispersive;
+		if (chainDispersive)
+			radiance = Spectral::KeepHeroBins(radiance, *Spectral::Current());
+	}
+	if (radiance.IsNaN() || radiance.IsInf())
+		{ LMNEE_REJ("ms-nan"); return false; }
+
+	LMneeSplat(film, light, filmX, filmY, radiance, sampleResults, "chain", &x0p);
+	LightFocusCredit(scene, light.lightSceneIndex, x0p);
 	return true;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

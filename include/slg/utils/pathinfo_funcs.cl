@@ -38,6 +38,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->isNearlyS = false;
 	pathInfo->isNearlySD = false;
 	pathInfo->isNearlySDS = false;
+	pathInfo->isAdaptiveCaustic = false;
 }
 
 OPENCL_FORCE_INLINE bool EyePathInfo_UseRR(__global EyePathInfo *pathInfo, const uint rrDepth) {
@@ -101,6 +102,13 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 		// All other vertices must be nearly specular
 		(pathInfo->isNearlyCaustic && isNewVertexNearlySpecular);
 
+	// Adaptive partition: the receiver (first vertex) only has to be
+	// non-delta (a glossy receiver can still connect to the lens); every
+	// later vertex must be non-diffuse so the chain concentrates light.
+	pathInfo->isAdaptiveCaustic = (pathInfo->depth.depth == 1) ?
+		!(event & SPECULAR) :
+		(pathInfo->isAdaptiveCaustic && ((event & (SPECULAR | GLOSSY)) != 0));
+
 	// Update last path vertex information
 	pathInfo->lastBSDFPdfW = pdfW;
 	const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
@@ -120,5 +128,67 @@ OPENCL_FORCE_INLINE bool EyePathInfo_IsCausticPathWithEvent(__global EyePathInfo
 	// Note: the +1 is there for the event passed as method arguments
 	return pathInfo->isNearlyCaustic && (pathInfo->depth.depth + 1 > 1) &&
 			EyePathInfo_IsNearlySpecular(pathInfo, event, glossiness, glossinessThreshold);
+}
+
+//------------------------------------------------------------------------------
+// Adaptive caustic partition
+//
+// The fixed glossinessThreshold only sees material constants: a glossy
+// vertex just above the threshold can still be unreachable for the eye
+// path when the light covers a negligible fraction of its BSDF lobe (a
+// firefly source). The adaptive test keeps the S*D path shape but
+// widens the chain to any non-diffuse vertex and adds a terminal
+// difficulty gate: the light-adjacent vertex is "hard" when it is delta
+// or when the light's solid angle covers a negligible fraction of its
+// lobe (approximated as omegaLobe = PI * g^2, g == glossiness ==
+// roughness). Both directions evaluate the same pure function of
+// (vertex, light) so the eye/light partition stays disjoint and
+// unbiased.
+//------------------------------------------------------------------------------
+
+// Eye-side connection difficulty of the light-adjacent vertex: the eye
+// path completes the chain by BSDF-sampling this vertex's lobe onto the
+// light (direct light sampling does not fire on delta terminals and is
+// the covered technique otherwise).
+OPENCL_FORCE_INLINE bool CausticPath_IsTerminalHard(
+		const float terminalGlossiness, const float connectProb,
+		const int vertexDelta, const float vertexGloss,
+		const float lightSolidAngle) {
+	if (vertexDelta)
+		return true;
+	if (vertexGloss > terminalGlossiness)
+		return false;
+	// A point-like light (omegaL == 0) is covered by direct light
+	// sampling: it does not make the connection hard for the eye path
+	return (lightSolidAngle > 0.f) &&
+			(lightSolidAngle < connectProb * (M_PI_F * vertexGloss * vertexGloss));
+}
+
+// Adaptive counterpart of EyePathInfo_IsCausticPathWithEvent(): the
+// path has the widened S*D shape (isAdaptiveCaustic) and the pending
+// connection's terminal vertex (the one being evaluated) is hard for
+// the eye path.
+OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticPath(__global EyePathInfo *pathInfo,
+		const BSDFEvent event, const float glossiness,
+		const float terminalGlossiness, const float connectProb,
+		const float lightSolidAngle) {
+	// Note: the +1 is there for the event passed as method arguments
+	return pathInfo->isAdaptiveCaustic && (pathInfo->depth.depth + 1 > 1) &&
+			((event & (SPECULAR | GLOSSY)) != 0) &&
+			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
+					(event & SPECULAR) != 0, glossiness, lightSolidAngle);
+}
+
+// Adaptive counterpart of EyePathInfo_IsCausticPath() for a direct
+// emitter hit: the terminal vertex is the last added one (it scattered
+// the path into the light).
+OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticHitPath(__global EyePathInfo *pathInfo,
+		const float terminalGlossiness, const float connectProb,
+		const float lightSolidAngle) {
+	return pathInfo->isAdaptiveCaustic && (pathInfo->depth.depth > 1) &&
+			((pathInfo->lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) &&
+			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
+					(pathInfo->lastBSDFEvent & SPECULAR) != 0,
+					pathInfo->lastGlossiness, lightSolidAngle);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

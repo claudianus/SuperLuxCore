@@ -1,0 +1,25 @@
+# Pure-receiver MGE test: the point light sits BETWEEN the glass pane and
+# the wall, so light paths reach the wall directly (no delta vertex -> no
+# portal entries), while the camera sees the wall ONLY through the pane
+# (LMNEE connect -> receiver entries). The focus ring therefore fills with
+# receivers alone, isolating receiver-guidance. The wall is a small angular
+# target from the off-axis light, so native isotropic emission rarely hits
+# it and guidance has room to help.
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = 0. 0. -5.
+scene.camera.lookat.target = 0. 0.05 0.
+scene.camera.fieldofview = 45.
+scene.materials.Wall.type = matte
+scene.materials.Wall.kd = 0.8 0.8 0.8
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.95 0.95 0.95
+scene.materials.glass.kr = 0.05 0.05 0.05
+scene.materials.glass.interiorior = 1.5
+scene.materials.glass.exteriorior = 1.0
+scene.lights.l1.type = point
+scene.lights.l1.position = 3. 3. -0.5
+scene.lights.l1.gain = 40. 40. 40.
+scene.objects.Wall.material = Wall
+scene.objects.Wall.ply = scenes/cornell/mge-wall-small.ply
+scene.objects.pane.material = glass
+scene.objects.pane.ply = scenes/cornell/mge-pane.ply

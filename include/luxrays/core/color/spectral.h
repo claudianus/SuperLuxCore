@@ -172,6 +172,20 @@ float CollapseToHero();
 // scalar value exactly (achromatic-invariant projector).
 Spectrum ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw);
 
+// Non-mutating hero-only collapse of a connect contribution (MNEE manifold
+// connects): the half-vector constraint is satisfied only at the hero
+// wavelength, so the connect carries the MC wavelength-selection weight
+// (SPECTRAL_BINS) and the secondary bins are dropped. Passes through
+// unchanged when the path was already collapsed.
+inline Spectrum KeepHeroBins(const Spectrum &v, const PathWavelengths &sw) {
+	const u_int heroMask = 1u << sw.hero;
+	if (sw.aliveMask == heroMask)
+		return v;
+	Spectrum r(0.f);
+	r.c[sw.hero] = v.c[sw.hero] * SPECTRAL_BINS;
+	return r;
+}
+
 } // namespace Spectral
 
 } // namespace luxrays

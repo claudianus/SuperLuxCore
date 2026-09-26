@@ -12,13 +12,15 @@ claims backed by measured evidence.
 | Track | Scope | State |
 |---|---|---|
 | Metal backend | Device + HWRT, cl2msl kernel translation, pipeline, HW film + OIDN, native curves | shipped (Apple-only; CPU/OCL fallbacks intact) |
-| ReSTIR DI / MNEE / path guiding / spectral / samplers | see `features/README.md` index | shipped, CPU/OCL/Metal; GPU ReSTIR visibility-weighted target + MNEE manifold seed cache landed (e16 8/8, e17 8/8) |
+| ReSTIR DI / MNEE / path guiding / spectral / samplers | see `features/README.md` index | shipped, CPU/OCL/Metal; GPU ReSTIR visibility-weighted target + MNEE manifold seed cache (validated: 92% hit, −9.5% Newton iters/solve, unbiased; e17 rewritten non-vacuous — old scenes set transparency.shadow=1 so MNEE never ran) |
 | Wavefront queues (M1+M2) | per-state task queues + λ-bucketed queues, opt-in `LUXRAYS_WAVEFRONT_QUEUES=1` | validated; A/B done — stays opt-in (see below) |
 | DEP-1/DEP-2 | deps refresh (openvdb 13, robin-hood removal), v2.3.0/v2.4.0 dep releases | done, CI green |
 | A6-II/A6-III | persistent-scene incremental export, transform/material/geometry deltas, dupli-set refresh | done; `a6_persistent_scene_test.py` all PASS |
 | A5 | dupli/particle + point-cloud transform motion blur | done |
 | E9 deformation motion blur | vertex-motion series plumbing (Ph1), Metal HWRT descriptors + motion intersector fix (Ph2), swept-bound SW MBVH/OCL path (Ph3), Embree timesteps (Ph4), BlendLuxCore mesh export (Ph5), strand/hair control-point motion incl. Metal motion-curve AS + Blender adapter (Ph5b) | done; `e9_parity_test.py` 4-backend parity + `e9_strand_motion_test.py`/`e9_strand_motion_e2e_test.py` PASS |
 | E9 Ph6 | Validation scenes | done — GN-deformed mesh (`e9_gn_vertex_motion_e2e_test.py`), particle-hair (`e9_psys_strand_motion_e2e_test.py`), topology-change fallback (`e9_topology_change_test.py`) all PASS |
+| GPU light tracing + LMNEE | PATHOCL/RTPATHOCL light-path splatting (dense + wavefront), caustic focus cache, light→camera manifold NEE for delta occluders incl. multi-interface chains (glass slab/lens, mirror) with correct camera endpoint weighting | shipped; `doc/features/gpu_lighttracing.md`, `dev-tools/lighttracing-depth-parity.sh`. Fixed a deep-path deficit where the hybridBackForward diffuse cut wrongly truncated light paths in `lighttracing.only` mode (eyeTaskCount==0) — now depth-1..4 == `LIGHTCPU` within 0.03% |
+| MGE (manifold-guided emission) | records each solved-manifold camera connect's receiver into the per-light focus ring and steers emission toward those camera-productive points; per-entry aim radius (tight portals / broad receivers); extends guided emission to triangle area emitters (joint position×direction pdf) | shipped; `mge-recvonly.scn` pure-receiver test cuts receiver-region variance to ~0.39× unguided; mixture pdf keeps all emitter types unbiased |
 
 ## In flight / next
 
@@ -33,6 +35,19 @@ claims backed by measured evidence.
 | Compatibility | Cycles shader-node / Geometry Nodes coverage | audited vs Blender 5.2.1 (97 node branches); Math/VectorMath nearly complete via `mathfunc` (trig/exp/log/hyperbolic/invsqrt/floormod + smooth-min/max); BsdfHair/RayPortal/PointInfo/VectorRotate/VectorTransform/EeveeSpecular/Squeeze/Gabor mapped (native `gabornoise` texture); IES light nodes map to mappoint/mapsphere iesblob (parity-tested vs native IES path); residual gaps are scene-query nodes (Raycast/CameraData/LightFalloff/Script) — warn+neutral fallback, see BlendLuxCore `doc/cycles_node_coverage.md` |
 
 ## Standing gaps (honest list)
+
+- **MNEE only handles delta *point* lights.** `Mnee_Start`/`MNEEDirectSampling`
+  gate on `TYPE_POINT/SPOT/MAPPOINT`; the manifold solve targets a single
+  `lightPos` recovered from the shadow ray. Area emitters (`TYPE_TRIANGLE`),
+  directional (`TYPE_DISTANT/SHARPDISTANT/SUN`) and environmental lights are
+  excluded, so in production scenes — where lights are emissive meshes or the
+  sun — the whole caustic stack (MNEE + seed cache + MGE) is bypassed. This is
+  the highest-value MNEE gap: extending it needs a directional/area endpoint
+  (constant `wo` for sun, `ilo->0` vertex Jacobian, direction-space or
+  emitter-area endpoint Jacobian, fixed-endpoint second segment instead of
+  `Illuminate` re-sampling) plus a measure-validation harness.
+- Metal is Apple-only by design; OpenCL SW path is the cross-vendor
+  fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 
 - ~~Critical bug found 2026-10 (PATHOCL texture eval corruption)~~ —
   **fixed 2026-10.** Root cause was not texture evaluation: PATHOCL's
@@ -50,8 +65,6 @@ claims backed by measured evidence.
   256², 6+ repeats — `dev-tools/e12_pathocl_eval_corruption.py` is the
   regression test. Also fixed: `atan2(0,0)` in the Gabor phase output
   returned garbage on Metal fast-math paths (explicit guard added).
-- Metal is Apple-only by design; OpenCL SW path is the cross-vendor
-  fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and
   approximated piecewise-uniformly on Metal HWRT and Embree.
 - `PATHOCL` + `SOBOL` black frames were reported once in an old build;

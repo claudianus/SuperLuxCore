@@ -34,6 +34,8 @@ public:
 
 	virtual void Preprocess();
 	void GetPreprocessedData(float *localPos, float *absolutePos, float *emittedFactor) const;
+	// World-space emitter position (adaptive caustic partition solid angle)
+	const luxrays::Point &GetAbsolutePosition() const { return absolutePos; }
 
 	virtual LightSourceType GetType() const { return TYPE_POINT; }
 	virtual float GetPower(SceneConstRef scene) const;

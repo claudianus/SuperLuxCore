@@ -87,7 +87,7 @@ typedef struct {
 
 typedef struct {
 	Spectrum color;
-	Vector absoluteLightDir;
+	Vector absoluteLightDir, x, y;
 } SharpDistantLightParam;
 
 typedef struct {
@@ -143,6 +143,13 @@ typedef struct {
 	// Used for image map and/or IES map
 	float average;
 	unsigned int imageMapIndex;
+
+	// World-space centroid + geometry normal of the emitting triangle:
+	// the canonical reference for the adaptive caustic partition's
+	// solid-angle estimate (a pure function of vertex and light, so eye
+	// and light paths classify identically).
+	Point centroid;
+	Normal geomNormal;
 } TriangleLightParam;
 
 typedef struct {

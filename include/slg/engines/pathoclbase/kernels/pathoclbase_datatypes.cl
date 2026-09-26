@@ -119,6 +119,16 @@ typedef struct {
 
 	int isNearlyS, isNearlySD, isNearlySDS;
 
+	// Adaptive caustic partition: all vertices so far are non-diffuse
+	// (SPECULAR|GLOSSY), the widened-chain counterpart of isNearlyS.
+	int isAdaptiveS;
+	// Light-adjacent vertex (v1): the terminal of the eye-side chain.
+	// Its lobe width vs the light's solid angle decides eye-side
+	// connection difficulty. Lobe is 0 for delta terminals.
+	float firstVertPX, firstVertPY, firstVertPZ;
+	float firstVertGloss;
+	int firstVertDelta;
+
 	// The emitted light source (index into lights[]) and its group ID
 	unsigned int lightIndex, lightGroupID;
 
@@ -159,6 +169,10 @@ typedef struct {
 		// occluder is the chain's exit interface and the light-side
 		// multi-vertex solve takes over instead of a fresh LMnee_Start
 		int fromMnee;
+		// Receiver position x0 of a solved-manifold connect (LMNEE): a
+		// camera-productive surface point credited to the emitting
+		// light's focus ring (manifold-guided emission)
+		float recvPX, recvPY, recvPZ;
 		int valid;
 	} pendingSplat;
 } LightPathInfo;
@@ -503,12 +517,34 @@ typedef struct {
 	int needsTrace;
 
 	float lightPosX, lightPosY, lightPosZ;
+	// 1 = directional endpoint: lightPosX/Y/Z holds the constant unit
+	// direction toward the light (wo is constant, the endpoint Jacobian is in
+	// direction space, no finite emitter position). 0 = point-like emitter
+	// position.
+	int lightIsDir;
+	// 1 = at least one manifold vertex is dispersive glass (cauchyB > 0): the
+	// solve is hero-wavelength only and the connect contribution gets the
+	// hero-bin collapse at contribution assembly (Spectral_KeepHeroBins).
+	int dispersive;
 	unsigned int shadowMeshIndex;
+	// Incident side of the connect ray on the blocker (1 = ray hits the
+	// -geometryN side, i.e. exiting a dielectric). Namespaces the seed
+	// cache as meshIndex*2+shadowSide: a vertex solved for the opposite
+	// side sits in the wrong Newton basin (CPU pathtracer_mnee.cpp parity).
+	unsigned int shadowSide;
 	// 1 = mirror occluder (eta = ±1 by the side test), 0 = glass occluder
 	int mirrorMode;
 	// Shadow-ray occluder hit position: the seed-cache key component,
 	// remembered from Mnee_Start for the store on solve success.
 	float occlX, occlY, occlZ;
+
+	// 1 when the seed cache was already consulted for this attempt (mirror
+	// cache-first hit, or the failure-rescue retry). The cache is a rescue
+	// only: for glass the free cold line seed keeps the reference basin
+	// selection and a cached vertex only re-seeds a FAILED solve - the
+	// cache-first policy measured ~5% caustic energy loss on multi-root
+	// casters by pinning nearby attempts to the first-cached basin.
+	unsigned int seedCacheTried;
 
 	MneeVertex vtx;
 
@@ -542,6 +578,11 @@ typedef struct {
 	int chainIdx;
 	int chainSub;
 	int chainProjected;
+	// 1 while the discovery walk is inside a dielectric body (entered a
+	// glass interface, not yet exited): a matte hit then is geometry
+	// intruding into the glass and gets stepped past so the chain still
+	// collects the exit interface (CPU MneeChainDiscover parity).
+	int walkInGlass;
 	// Accumulated specular product over the MS_POST phases.
 	float chainSpecR, chainSpecG, chainSpecB;
 

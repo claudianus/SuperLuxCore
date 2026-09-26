@@ -68,7 +68,14 @@ public:
 	SceneObjectConstPtr sceneObject;
 	// Note: meshIndex is initialized in LightSourceDefinitions::Preprocess()
 	u_int meshIndex, triangleIndex;
-	
+
+	// World-space centroid + geometry normal of the emitting triangle:
+	// the canonical reference for the adaptive caustic partition's
+	// solid-angle estimate (a pure function of vertex and light, so eye
+	// and light paths classify identically)
+	luxrays::Point worldCentroid;
+	luxrays::Normal worldGeometryNormal;
+
 private:
 	float triangleArea, invTriangleArea;
 	float meshArea, invMeshArea;
