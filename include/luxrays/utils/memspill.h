@@ -41,4 +41,17 @@ namespace luxrays {
 std::shared_ptr<void> SpillToFile(const void *ptr, std::size_t bytes,
 		const std::string &fileName);
 
+// Maps an existing file read/write copy-on-write (PROT_READ|PROT_WRITE,
+// MAP_PRIVATE) and returns an owning handle plus the file size in
+// `size`. Unlike SpillToFile the file is NOT unlinked: it is a real,
+// persistent file (e.g. an .lxm mesh proxy) whose clean pages the
+// kernel can still evict under memory pressure and page back on
+// demand — this is what makes mapped mesh buffers out-of-core.
+// Writes stay private (COW), never touching the file.
+// POSIX mmap / Windows FILE_MAP_COPY are both implemented.
+//
+// Returns nullptr on any failure (missing file, mapping error).
+std::shared_ptr<void> MapFileCopyOnWrite(const std::string &fileName,
+		std::size_t &size);
+
 }  // namespace luxrays

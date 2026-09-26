@@ -681,7 +681,13 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 			const ExtTriangleMesh *curveMesh = nullptr;
 			if (useCurveData) {
 				curveMesh = baseMesh;
-				if (curveMesh && !curveMesh->HasCurveData())
+				// Light-source meshes keep the tessellation: light
+				// sampling draws points on the triangles, so the
+				// intersected surface must be the same geometry (the
+				// round tube is larger than the inscribed prism and
+				// would self-occlude shadow rays).
+				if (curveMesh && (!curveMesh->HasCurveData() ||
+						!curveMesh->AreCurvePrimitivesEnabled()))
 					curveMesh = nullptr;
 			}
 			const bool curveHasMotion = curveMesh && vmMesh &&

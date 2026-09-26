@@ -31,6 +31,9 @@
 #if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
 #include "luxrays/devices/metaldevice.h"
 #endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+#include "luxrays/devices/vkdevice.h"
+#endif
 #include "luxrays/kernels/kernels.h"
 
 #include "luxcore/cfg.h"
@@ -97,13 +100,26 @@ void PathOCLBaseOCLRenderThread::GetKernelParamters(
 			params.push_back("-D LUXCORE_GENERIC_OPENCL");
 	}
 	catch (std::bad_cast&) {
+		bool typed = false;
 #if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
 		try {
 			dynamic_cast<MetalDeviceDescriptionConstRef>(
 				intersectionDevice.GetDeviceDesc());
 			params.push_back("-D LUXCORE_METAL");
+			typed = true;
 		}
 		catch (std::bad_cast&) {}
+#endif
+#if !defined(LUXRAYS_DISABLE_VULKAN)
+		if (!typed) {
+			try {
+				dynamic_cast<VulkanDeviceDescriptionConstRef>(
+					intersectionDevice.GetDeviceDesc());
+				params.push_back("-D LUXCORE_GENERIC_OPENCL");
+				typed = true;
+			}
+			catch (std::bad_cast&) {}
+		}
 #endif
 	}
 }
@@ -733,7 +749,16 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	// ReSTIR visibility (E2a): resolve the queued candidate shadow rays
 	// before the normal illuminate step consumes the winner's ray.
-	if (advancePathsKernel_MK_RT_RESTIR)
+	// The MK_RT_RESTIR state is only reachable when visibility reuse is
+	// on (MK_RT_DL gates on restir.visibilityEnable && visCandCount) -
+	// skip the dispatch entirely when it is off: the kernel would
+	// early-out on every task anyway, and its heavy call graph pushes
+	// the Apple OpenCL->Metal translator past its buffer-argument limit
+	// (dispatch crashed in AGX::ComputeContext::prepareForEnqueue on
+	// TILEPATHOCL with ReSTIR disabled).
+	const auto &restirCfg = renderEngine->taskConfig.pathTracer.restir;
+	if (advancePathsKernel_MK_RT_RESTIR && restirCfg.visibilityEnable &&
+			restirCfg.visCandCount > 0)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_RESTIR,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_DL_ILLUMINATE,
@@ -750,11 +775,14 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	// ReSTIR GI (G1 GPU): consume the GI bounce hits and queue the NEE
 	// rays. The resolve launch below skips the just-queued tasks via
 	// the needsTrace flag (their NEE hits only exist after the next
-	// trace pass).
-	if (advancePathsKernel_MK_RT_GI_BOUNCE)
+	// trace pass). Same reachability gate as MK_RT_RESTIR: tasks only
+	// enter MK_RT_GI_BOUNCE when ReSTIR GI candidates are enabled.
+	const bool giEnabled = renderEngine->taskConfig.pathTracer.restirGI.enabled &&
+			renderEngine->taskConfig.pathTracer.restirGI.giCandCount > 0;
+	if (advancePathsKernel_MK_RT_GI_BOUNCE && giEnabled)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_BOUNCE,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
-	if (advancePathsKernel_MK_RT_GI_RESOLVE)
+	if (advancePathsKernel_MK_RT_GI_RESOLVE && giEnabled)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_RESOLVE,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,

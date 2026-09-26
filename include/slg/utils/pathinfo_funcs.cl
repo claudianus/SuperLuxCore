@@ -33,6 +33,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->lastGlossiness = 0.f;
 	pathInfo->lastFromVolume = false;
 	pathInfo->isTransmittedPath = true;
+	pathInfo->lastOnlyInfiniteLights = false;
 
 	pathInfo->isNearlyCaustic = false;
 	pathInfo->isNearlyS = false;
@@ -115,6 +116,12 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	VSTORE3F(bsdf->hitPoint.intoObject ? shadeN : -shadeN, &pathInfo->lastShadeN.x);
 	pathInfo->lastFromVolume =  bsdf->isVolume;
 	pathInfo->lastGlossiness = glossiness;
+	// Inlined BSDF_IsShadowCatcherOnlyInfiniteLights() (bsdf_funcs.cl is
+	// concatenated AFTER this file, so the helper is not declared yet)
+	pathInfo->lastOnlyInfiniteLights =
+			(bsdf->materialIndex != NULL_INDEX) &&
+			mats[bsdf->materialIndex].isShadowCatcher &&
+			mats[bsdf->materialIndex].isShadowCatcherOnlyInfiniteLights;
 	
 	pathInfo->isTransmittedPath = pathInfo->isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }

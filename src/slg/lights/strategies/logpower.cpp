@@ -45,7 +45,13 @@ void LightStrategyLogPower::Preprocess(SceneConstRef scene, const LightStrategyT
 
 	for (u_int i = 0; i < lightCount; ++i) {
 		auto& l = scene.GetLightSources().GetLightSource(i);
-		const float power = logf(1.f + l.GetPower(scene)) * l.GetImportance();
+		const float rawPower = l.GetPower(scene) * l.GetImportance();
+		// Guard the distribution inputs: logf(1 + NaN/negative) is NaN
+		// and poisons the whole CDF; +Inf collapses to a finite cap so
+		// the light stays dominant without overflowing funcInt
+		const float power = isfinite(rawPower) ?
+				logf(1.f + Max(0.f, rawPower)) :
+				((rawPower > 0.f) ? logf(FLT_MAX) : 0.f);
 
 		switch (taskType) {
 			case TASK_EMIT: {

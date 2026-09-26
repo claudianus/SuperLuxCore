@@ -126,6 +126,10 @@ public:
 	float lastGlossiness;
 	luxrays::Normal lastShadeN;
 	bool lastFromVolume, isTransmittedPath;
+	// The last vertex restricts direct-light sampling to infinite lights
+	// (shadow catcher): its NEE proposal was the infinite distribution, so
+	// DirectHit MIS must measure the hit against that same distribution
+	bool lastOnlyInfiniteLights;
 
 	// Adaptive caustic partition (see isAdaptiveCaustic in
 	// pathinfo_types.cl)

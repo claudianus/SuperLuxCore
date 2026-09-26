@@ -221,8 +221,13 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		if (!Spectrum_IsBlack(envRadiance)) {
 			float weight;
 			if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
-				const float lightPickProb = LightStrategy_SampleLightPdf(lightsDistribution,
-						dlscAllEntries,
+				// The previous vertex picked its NEE distribution: a
+				// shadow-catcher-only-infinite vertex used the infinite
+				// distribution (no DLSC lookup - CPU parity)
+				const float lightPickProb = LightStrategy_SampleLightPdf(
+						pathInfo->lastOnlyInfiniteLights ?
+								infiniteLightSourcesDistribution : lightsDistribution,
+						pathInfo->lastOnlyInfiniteLights ? NULL : dlscAllEntries,
 						dlscDistributions, dlscBVHNodes,
 						dlscRadius2, dlscNormalCosAngle,
 						VLOAD3F(&ray->o.x), VLOAD3F(&pathInfo->lastShadeN.x),
@@ -262,8 +267,13 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 		// Add emitted radiance
 		float weight = 1.f;
 		if (!(pathInfo->lastBSDFEvent & SPECULAR)) {
-			const float lightPickProb = LightStrategy_SampleLightPdf(lightsDistribution,
-					dlscAllEntries,
+			// Same distribution the previous vertex's NEE drew from:
+			// shadow-catcher-only-infinite vertices use the infinite
+			// distribution (no DLSC lookup - CPU parity)
+			const float lightPickProb = LightStrategy_SampleLightPdf(
+					pathInfo->lastOnlyInfiniteLights ?
+							infiniteLightSourcesDistribution : lightsDistribution,
+					pathInfo->lastOnlyInfiniteLights ? NULL : dlscAllEntries,
 					dlscDistributions, dlscBVHNodes,
 					dlscRadius2, dlscNormalCosAngle,
 					VLOAD3F(&ray->o.x), VLOAD3F(&pathInfo->lastShadeN.x),
@@ -271,8 +281,12 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 					light->lightSceneIndex);
 
 #if !defined(RENDER_ENGINE_RTPATHOCL)
-			// This is a specific check to avoid fireflies with DLSC
-			if ((lightPickProb == 0.f) && light->isDirectLightSamplingEnabled && dlscAllEntries)
+			// This is a specific check to avoid fireflies with DLSC. It
+			// must not fire when the zero pick pdf comes from the
+			// infinite-lights-only restriction: the BSDF hit then has the
+			// sole coverage of this light and deserves weight 1, not a drop
+			if (!pathInfo->lastOnlyInfiniteLights &&
+					(lightPickProb == 0.f) && light->isDirectLightSamplingEnabled && dlscAllEntries)
 				return;
 #endif
 			
@@ -470,8 +484,17 @@ OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
 		const uint reservoirCount,
 		uint *mergeCount, bool *ioWinnerIsFresh
 		LIGHTS_PARAM_DECL) {
+	// No distribution compiled (e.g. no lights): nothing to merge
+	if (!lightDist)
+		return;
 	const uint gridLightCount = as_uint(lightDist[0]);
 	const float3 curGeomN = BSDF_GetLandingGeometryN(bsdf);
+	// The caller selected lightDist; when it is the infinite
+	// distribution (shadow-catcher-only-infinite vertex) the DLSC
+	// lookup does not apply (CPU parity)
+	const bool onlyInfLights =
+			BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM);
+	const float3 curShadeN = BSDF_GetLandingShadeN(bsdf);
 	const float maxDist2 = RESTIR_PIXEL_MERGE_DIST2 * worldRadius * worldRadius;
 
 	const uint px = pixelIndex % filmWidth;
@@ -528,10 +551,10 @@ OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
 
 		const float nbPickPdf = LightStrategy_SampleLightPdf(
 				lightDist,
-				dlscAllEntries,
+				onlyInfLights ? NULL : dlscAllEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
-				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+				VLOAD3F(&bsdf->hitPoint.p.x), curShadeN,
 				bsdf->isVolume,
 				eLightIndex);
 		if (nbPickPdf <= 0.f)
@@ -563,13 +586,12 @@ OPENCL_FORCE_INLINE void Restir_SpatialMergePixels(
 		if (nbTarget <= 0.f)
 			continue;
 
-		// Bound the GRIS ratio: even gated, a steep emission gradient
-		// (cone edge) can produce a pi_new/pi_old outlier that inflates
-		// wSum - and the paid contribution scales with wSum, so one
-		// outlier merge becomes a hot pixel. Clamping bounds the bias
-		// to the outlier tail (see RESTIR_MERGE_MAX_TARGET_RATIO).
-		const float bNbr = eWSum * fmin(nbTarget / eTarget,
-				RESTIR_MERGE_MAX_TARGET_RATIO);
+		// GRIS combine weight, unclamped - CPU parity: capping or
+		// dropping the merge by its ratio is a data-dependent weight
+		// distortion and biases the estimator dark (restirdi.cpp).
+		// The outlier pathology is handled by the representative-winner
+		// gate above, which both sides share.
+		const float bNbr = eWSum * (nbTarget / eTarget);
 		*ioWSum += bNbr;
 		*ioMTotal += eM;
 		++(*mergeCount);
@@ -625,8 +647,13 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 		const uint filmWidth, const uint reservoirCount,
 		__global RestirReservoir *restirReservoirs
 		LIGHTS_PARAM_DECL) {
-	__global const float* restrict lightDist = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM) ?
+	const bool onlyInfLights = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM);
+	__global const float* restrict lightDist = onlyInfLights ?
 			infiniteLightSourcesDistribution : lightsDistribution;
+	// The infinite distribution has no DLSC coverage (CPU parity)
+	__global const DLSCacheEntry* restrict dlscEntries =
+			onlyInfLights ? NULL : dlscAllEntries;
+	const float3 landingShadeN = BSDF_GetLandingShadeN(bsdf);
 
 	bool anyValid = false;
 	for (uint i = 0; i < visCandCount; ++i) {
@@ -650,10 +677,10 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 
 		float candPickPdf = 0.f;
 		const uint candIndex = LightStrategy_SampleLights(lightDist,
-				dlscAllEntries,
+				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
-				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+				VLOAD3F(&bsdf->hitPoint.p.x), landingShadeN,
 				bsdf->isVolume,
 				u_i, &candPickPdf);
 
@@ -725,7 +752,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
 		candRays[slot].flags = RAY_FLAGS_MASKED;
 
-		if (!restirSpatialEnable)
+		if (!restirSpatialEnable || !lightDist)
 			continue;
 
 		const uint gridLightCount = as_uint(lightDist[0]);
@@ -773,10 +800,10 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 		// aware), so pi_new is measured under the current reservoir's q.
 		const float nbPickPdf = LightStrategy_SampleLightPdf(
 				lightDist,
-				dlscAllEntries,
+				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
-				VLOAD3F(&bsdf->hitPoint.p.x), curGeomN,
+				VLOAD3F(&bsdf->hitPoint.p.x), landingShadeN,
 				bsdf->isVolume,
 				eLightIndex);
 		if (nbPickPdf <= 0.f)
@@ -957,9 +984,11 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirResolveVisibility(
 		if (nbTarget <= 0.f)
 			continue;
 
+		// GRIS combine weight, unclamped - CPU parity: capping or
+		// dropping the merge by its ratio is a data-dependent weight
+		// distortion and biases the estimator dark (restirdi.cpp).
 		const float bNbr = candData[slot].nbrWSum *
-				fmin(nbTarget / candData[slot].nbrTarget,
-				RESTIR_MERGE_MAX_TARGET_RATIO);
+				(nbTarget / candData[slot].nbrTarget);
 		wSum += bNbr;
 		mTotal += candData[slot].nbrM;
 		++mergeCount;
@@ -1046,9 +1075,15 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		const uint filmWidth, const uint reservoirCount,
 		__global DirectLightIlluminateInfo *info
 		LIGHTS_PARAM_DECL) {
-	// Select the light strategy to use
-	__global const float* restrict lightDist = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM) ?
+	// Select the light strategy to use. A shadow catcher restricted to
+	// infinite lights samples the infinite distribution - which the DLSC
+	// cache does NOT cover (the CPU infinite strategy instance skips the
+	// cache lookup entirely), so the cache params are gated off too.
+	const bool onlyInfLights = BSDF_IsShadowCatcherOnlyInfiniteLights(bsdf MATERIALS_PARAM);
+	__global const float* restrict lightDist = onlyInfLights ?
 		infiniteLightSourcesDistribution : lightsDistribution;
+	__global const DLSCacheEntry* restrict dlscEntries =
+		onlyInfLights ? NULL : dlscAllEntries;
 
 	// Pick a light source to sample
 	float lightPickPdf;
@@ -1111,10 +1146,12 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 
 			float candPickPdf;
 			const uint candIndex = LightStrategy_SampleLights(lightDist,
-					dlscAllEntries,
+					dlscEntries,
 					dlscDistributions, dlscBVHNodes,
 					dlscRadius2, dlscNormalCosAngle,
-					VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+					// DLSC cache entries are keyed on the landing SHADE
+					// normal (CPU GetLandingShadeN parity)
+					VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingShadeN(bsdf),
 					bsdf->isVolume,
 					u_i, &candPickPdf);
 			if ((candIndex == NULL_INDEX) || (candPickPdf <= 0.f))
@@ -1217,10 +1254,10 @@ OPENCL_FORCE_INLINE bool DirectLight_Illuminate(
 		lightPickPdf = resPickPdf;
 	} else {
 		lightIndex = LightStrategy_SampleLights(lightDist,
-				dlscAllEntries,
+				dlscEntries,
 				dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
-				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingGeometryN(bsdf),
+				VLOAD3F(&bsdf->hitPoint.p.x), BSDF_GetLandingShadeN(bsdf),
 				bsdf->isVolume,
 				u0, &lightPickPdf);
 		if ((lightIndex == NULL_INDEX) || (lightPickPdf <= 0.f))
@@ -1429,7 +1466,8 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 				dlscAllEntries, dlscDistributions, dlscBVHNodes,
 				dlscRadius2, dlscNormalCosAngle,
 				VLOAD3F(&tmpBsdf->hitPoint.p.x),
-				VLOAD3F(&tmpBsdf->hitPoint.geometryN.x),
+				// DLSC entries are keyed on the landing shade normal
+				BSDF_GetLandingShadeN(tmpBsdf),
 				tmpBsdf->isVolume,
 				RestirGI_Hash(seed, 0x72u), &pickPdf);
 		bool neeQueued = false;

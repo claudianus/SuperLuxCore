@@ -450,6 +450,15 @@ public:
 		return curveCpsMotionSteps;
 	}
 
+	// When false, Metal HWRT must use the triangle tessellation even
+	// though curve data is present. The scene sets this on meshes that
+	// are light sources: light sampling draws points on the tessellated
+	// triangles, so the intersected surface has to be the same geometry —
+	// the round curve tube is strictly larger than the inscribed prism
+	// and would self-occlude shadow rays toward the sampled points.
+	void SetCurvePrimitivesEnabled(const bool e) { curvePrimitivesEnabled = e; }
+	bool AreCurvePrimitivesEnabled() const { return curvePrimitivesEnabled; }
+
 	// Per-vertex deformation motion blur (see
 	// dev-tools/deformation-motion-blur-design.md): a series of
 	// shutter-time samples, each a full vertex-position buffer with the
@@ -712,6 +721,10 @@ public:
 
 	static ExtTriangleMeshUPtr LoadPly(const std::string &fileName);
 	static ExtTriangleMeshUPtr LoadSerialized(const std::string &fileName);
+	// .lxm mesh proxy: raw section dump, loaded straight into a
+	// copy-on-write file mapping (no parse, no heap copy — pages are
+	// demand-paged and evictable, i.e. out-of-core by construction).
+	static ExtTriangleMeshUPtr LoadProxy(const std::string &fileName);
 
 	// Used by serialization
 	ExtTriangleMesh() {
@@ -729,6 +742,8 @@ public:
 	
 	virtual void SavePly(const std::string &fileName) const;
 	virtual void SaveSerialized(const std::string &fileName) const;
+	// Writes the raw mesh buffers as an .lxm proxy file (see LoadProxy)
+	virtual void SaveProxy(const std::string &fileName) const;
 
 	template<class Archive> void save(Archive &ar, const unsigned int version) const {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(TriangleMesh);
@@ -810,6 +825,7 @@ public:
 	std::vector<CurveControlPoint> curveCps;
 	std::vector<u_int> curveSegIndices;
 	std::vector<CurveCpAttr> curveCpAttrs;
+	bool curvePrimitivesEnabled = true;
 
 	// Per-step curve control points for native curve primitives (Metal
 	// HWRT), parallel to the vertex-motion series (same step times).

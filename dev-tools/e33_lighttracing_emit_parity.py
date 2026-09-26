@@ -165,6 +165,7 @@ film.outputs.0.index = 0
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while time.monotonic() < deadline:
         time.sleep(0.5)
+        ses.UpdateStats()
         if ses.HasDone():
             break
     ses.Stop()

@@ -40,22 +40,29 @@ void LightStrategyUniform::Preprocess(SceneConstRef scene, const LightStrategyTa
 
 	for (u_int i = 0; i < lightCount; ++i) {
 		auto& l = scene.GetLightSources().GetLightSource(i);
+		float importance = l.GetImportance();
+		// Same guard as the other strategies: a NaN/negative/+Inf
+		// weight would poison or flatten the whole CDF
+		if (!isfinite(importance))
+			importance = (importance > 0.f) ? 1e30f : 0.f;
+		else
+			importance = Max(0.f, importance);
 
 		switch (taskType) {
 			case TASK_EMIT: {
-				lightPower.push_back(l.GetImportance());
+				lightPower.push_back(importance);
 				break;
 			}
 			case TASK_ILLUMINATE: {
 				if (l.IsDirectLightSamplingEnabled())
-					lightPower.push_back(l.GetImportance());
+					lightPower.push_back(importance);
 				else
 					lightPower.push_back(0.f);
 				break;
 			}
 			case TASK_INFINITE_ONLY: {
 				if (l.IsInfinite())
-					lightPower.push_back(l.GetImportance());
+					lightPower.push_back(importance);
 				else
 					lightPower.push_back(0.f);
 				break;

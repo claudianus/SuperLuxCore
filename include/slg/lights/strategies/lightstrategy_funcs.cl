@@ -92,7 +92,10 @@ OPENCL_FORCE_INLINE float LightStrategy_SampleLightPdf(
 		if (lightsDistribution1D)
 			return Distribution1D_PdfDiscrete(lightsDistribution1D, lightIndex);
 		else
-			return NULL_INDEX;
+			// No distribution: this light has no DL-side coverage (the
+			// CPU SampleLightPdf() returns 0.f - a bogus large value here
+			// would still change the MIS weight)
+			return 0.f;
 	}
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

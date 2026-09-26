@@ -182,7 +182,7 @@ void CompiledScene::CompileLightStrategy() {
 		// Check if it is an LightStrategyDLSCache
 		try {
 			auto& dlscLightStrategy =
-				dynamic_cast<const LightStrategyDLSCache&>(illuminateLightStrategy);
+				dynamic_cast<const LightStrategyDLSCache&>(infiniteLightStrategy);
 			if (dlscLightStrategy.GetLightsDistribution()) {
 				std::tie(
 					infiniteLightSourcesDistribution, infiniteLightSourcesDistributionSize

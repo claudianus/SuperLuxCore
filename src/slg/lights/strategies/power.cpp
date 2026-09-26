@@ -45,6 +45,13 @@ void LightStrategyPower::Preprocess(SceneConstRef scene, const LightStrategyTask
 	for (u_int i = 0; i < lightCount; ++i) {
 		auto& l = scene.GetLightSources().GetLightSource(i);
 		float power = l.GetPower(scene) * l.GetImportance();
+		// Guard the distribution inputs: a NaN weight poisons the whole
+		// CDF (NaN comparisons), a negative one is meaningless and +Inf
+		// overflows funcInt so func[] *= 1/Inf zeroes EVERY light
+		if (!isfinite(power))
+			power = (power > 0.f) ? 1e30f : 0.f;
+		else
+			power = Max(0.f, power);
 		// In order to avoid over-sampling of distant lights
 		if (l.IsInfinite())
 			power *= invEnvRadius2;

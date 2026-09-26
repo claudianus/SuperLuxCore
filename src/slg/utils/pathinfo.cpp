@@ -52,7 +52,8 @@ bool PathInfo::CanBeNearlySpecular(const BSDF &bsdf, const float glossinessThres
 
 EyePathInfo::EyePathInfo() : isPassThroughPath(true),
 		lastBSDFPdfW(1.f), lastGlossiness(0.f), lastFromVolume(false),
-		isTransmittedPath(true), isAdaptiveCaustic(false),
+		isTransmittedPath(true), lastOnlyInfiniteLights(false),
+		isAdaptiveCaustic(false),
 		isNearlyCaustic(false) {
 }
 
@@ -108,6 +109,7 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	lastShadeN = bsdf.hitPoint.intoObject ? bsdf.hitPoint.shadeN : -bsdf.hitPoint.shadeN;
 	lastFromVolume =  bsdf.IsVolume();
 	lastGlossiness = glossiness;
+	lastOnlyInfiniteLights = bsdf.IsShadowCatcherOnlyInfiniteLights();
 
 	isTransmittedPath = isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }

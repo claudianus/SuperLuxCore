@@ -660,7 +660,15 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 	if (!emittedRadiance.Black()) {
 		float weight;
 		if (!(pathInfo.lastBSDFEvent & SPECULAR)) {
-			auto& lightStrategy = scene.GetLightSources().GetIlluminateLightStrategy();
+			// The previous vertex decided which light strategy produced
+			// this segment: a shadow catcher restricted to infinite
+			// lights sampled the infinite distribution, so the MIS pdf
+			// must be evaluated against that same strategy (using the
+			// illuminate distribution here would pair the hit with a
+			// density the competing technique never used -> bias)
+			auto& lightStrategy = pathInfo.lastOnlyInfiniteLights ?
+					scene.GetLightSources().GetInfiniteLightStrategy() :
+					scene.GetLightSources().GetIlluminateLightStrategy();
 			// RESTIR_DI culls provably-shadowed lights from DL sampling
 			// (Stage 2/3 IsAlwaysInShadow). A culled light has NO DL-side
 			// coverage, so the direct hit is the sole covering technique
@@ -678,8 +686,12 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 					*lightSource,
 					ray.o, pathInfo.lastShadeN, pathInfo.lastFromVolume);
 
-			// This is a specific check to avoid fireflies with DLSC
-			if ((lightPickProb == 0.f) && lightSource->IsDirectLightSamplingEnabled() &&
+			// This is a specific check to avoid fireflies with DLSC. It
+			// must not fire when the zero pick pdf comes from the
+			// infinite-lights-only restriction: the BSDF hit then has the
+			// sole coverage of this light and deserves weight 1, not a drop
+			if (!pathInfo.lastOnlyInfiniteLights &&
+					(lightPickProb == 0.f) && lightSource->IsDirectLightSamplingEnabled() &&
 					(lightStrategy.GetType() == TYPE_DLS_CACHE))
 				return;
 
@@ -729,7 +741,13 @@ void PathTracer::DirectHitInfiniteLight(SceneConstRef scene,
 		if (!envRadiance.Black()) {
 			float weight;
 			if (!(pathInfo.lastBSDFEvent & SPECULAR)) {
-				const float lightPickProb = scene.GetLightSources().GetIlluminateLightStrategy().
+				// Same strategy selection as DirectLightSampling: a
+				// shadow-catcher-only-infinite vertex drew its NEE
+				// candidate from the infinite distribution
+				auto& lightStrategy = pathInfo.lastOnlyInfiniteLights ?
+						scene.GetLightSources().GetInfiniteLightStrategy() :
+						scene.GetLightSources().GetIlluminateLightStrategy();
+				const float lightPickProb = lightStrategy.
 						SampleLightPdf(envLight, ray.o, pathInfo.lastShadeN, pathInfo.lastFromVolume);
 
 				// MIS between BSDF sampling and direct light sampling

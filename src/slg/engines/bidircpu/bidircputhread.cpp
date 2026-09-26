@@ -460,8 +460,9 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 	auto& scene = engine->renderConfig.GetScene();
 	
 	if (!eyeVertex.bsdf.IsDelta()) {
-		// Pick a light source to sample
-		const Normal landingNormal = eyeVertex.bsdf.hitPoint.intoObject ? eyeVertex.bsdf.hitPoint.geometryN : -eyeVertex.bsdf.hitPoint.geometryN;
+		// Pick a light source to sample (landing shade normal - the
+		// convention every DLSC-keyed lookup follows)
+		const Normal landingNormal = eyeVertex.bsdf.hitPoint.GetLandingShadeN();
 		float lightPickPdf;
 		auto light = scene.GetLightSources().GetEmitLightStrategy().SampleLights(
 			scene, u0,

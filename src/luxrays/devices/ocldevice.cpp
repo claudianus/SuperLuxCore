@@ -312,16 +312,14 @@ void OpenCLDevice::SetKernelArgBuffer(HardwareDeviceKernelRPtr kernel,
 }
 
 static void ConvertHardwareRange(const HardwareDeviceRange &range, size_t *globalSizeArray) {
-	if (range.dimensions == 1) {
-		globalSizeArray[0] = range.sizes[0];
-	} else if (range.dimensions == 2) {
-		globalSizeArray[0] = range.sizes[0];
-		globalSizeArray[2] = range.sizes[1];
-	} else {
-		globalSizeArray[0] = range.sizes[0];
-		globalSizeArray[2] = range.sizes[1];
-		globalSizeArray[0] = range.sizes[2];
-	}
+	// 2D/3D ranges must fill indices [0..dimensions): leaving [1]
+	// uninitialized passes stack garbage as a global size to
+	// clEnqueueNDRangeKernel (and the 3D path clobbered [0]).
+	globalSizeArray[0] = range.sizes[0];
+	if (range.dimensions > 1)
+		globalSizeArray[1] = range.sizes[1];
+	if (range.dimensions > 2)
+		globalSizeArray[2] = range.sizes[2];
 }
 
 void OpenCLDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,

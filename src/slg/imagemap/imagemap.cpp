@@ -968,6 +968,34 @@ void ImageMap::Init(
 			"Unsupported number of channels in an ImageMap: " + ToString(channelCount)
 		);
 
+	// The file has no mip level matching the size hint (typical for
+	// non-.tx sources): decode + downscale through a lazily-read,
+	// tile-cached ImageBuf so the full-resolution pixels never
+	// materialize in heap at once. Peak memory becomes
+	// (target + cache working set) instead of (source + target).
+	bool streamedResize = false;
+	if ((widthHint > 0) || (heightHint > 0)) {
+		u_int targetW = width, targetH = height;
+		if (widthHint > 0 && heightHint > 0) {
+			targetW = widthHint;
+			targetH = heightHint;
+		} else if (widthHint > 0) {
+			targetW = widthHint;
+			targetH = Max(1u, (u_int)(height * (widthHint / (float)width)));
+		} else {
+			targetH = heightHint;
+			targetW = Max(1u, (u_int)(width * (heightHint / (float)height)));
+		}
+		if (bestMipmapIndex == 0 && (width > targetW || height > targetH)) {
+			SDL_LOG("No matching mip level: streaming resize " <<
+					width << "x" << height << " => " <<
+					targetW << "x" << targetH);
+			streamedResize = true;
+			width = targetW;
+			height = targetH;
+		}
+	}
+
 	// Anything not TypeDesc::UCHAR or TypeDesc::HALF, is stored in float format
 
 	ImageMapStorage::StorageType selectedStorageType = cfg.GetStorageType();
@@ -1014,14 +1042,30 @@ void ImageMap::Init(
 	}
 
 	// Read image
-	bool res = in->read_image(
-		0, bestMipmapIndex, 0, channelCount, td, pixelStorage->GetPixelsData()
-	);
-	if (not res) {
-		auto error = in->geterror();
-		SDL_LOG("Error reading image map: " << error);
+	bool res;
+	if (streamedResize) {
+		in->close();
+		// Lazy + tile-cached source: ImageBufAlgo::resize pulls only the
+		// scanlines/tiles it needs through the ImageCache. Same
+		// UnassociatedAlpha config as the ImageInput path.
+		ImageBuf source(resolvedFileName, 0, 0, nullptr, &config);
+		ImageBufAlgo::KWArgs options = {};
+		ROI roi(0, width, 0, height, 0, 1, 0, channelCount);
+		ImageBuf dest = ImageBufAlgo::resize(source, options, roi);
+		res = dest.get_pixels(roi, td, pixelStorage->GetPixelsData());
+		if (!res)
+			SDL_LOG("Error reading image map: " << dest.geterror());
+	} else {
+		res = in->read_image(
+			0, bestMipmapIndex, 0, channelCount, td,
+			pixelStorage->GetPixelsData()
+		);
+		if (!res) {
+			auto error = in->geterror();
+			SDL_LOG("Error reading image map: " << error);
+		}
+		in->close();
 	}
-	in->close();
 
 	switch (cfg.colorSpaceCfg.colorSpaceType) {
 		case ColorSpaceConfig::NOP_COLORSPACE:

@@ -30,6 +30,10 @@ typedef struct {
 	float lastGlossiness;
 	Normal lastShadeN;
 	bool lastFromVolume, isTransmittedPath;
+	// The last vertex restricts direct-light sampling to infinite lights
+	// (shadow catcher): its NEE proposal was the infinite distribution, so
+	// DirectHit MIS must measure the hit against that same distribution
+	bool lastOnlyInfiniteLights;
 
 	int isNearlyCaustic;
 	// Specular, Specular+ Diffuse and Specular+ Diffuse Specular+ paths

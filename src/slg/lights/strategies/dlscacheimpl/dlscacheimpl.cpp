@@ -289,13 +289,19 @@ void DirectLightSamplingCache::ComputeCacheEntryReceivedLuminance(
 		float receivedLuminance = 0.f;
 		boost::circular_buffer<float> entryReceivedLuminancePreviousStep(currentWarmUpSamples, 0.f);
 
-		u_int pass = 0;
-		for (; pass < params.entry.maxPasses; ++pass) {
-			receivedLuminance += SampleLight(visibilityParticle, light, pass, scene);
+		u_int samplesTaken = 0;
+		for (u_int pass = 0; pass < params.entry.maxPasses; ++pass) {
+			// pass + 1: RadicalInverse(0, *) == 0.f would pin the first
+			// sample of every (entry, light) pair to the (0,0,0) corner
+			receivedLuminance += SampleLight(visibilityParticle, light, pass + 1, scene);
+			++samplesTaken;
 
-			const float currentStepValue = receivedLuminance / pass;
+			// samplesTaken == pass + 1: receivedLuminance / pass would
+			// divide by zero on the first pass and overestimate the mean
+			// by (k+1)/k when the convergence break fires
+			const float currentStepValue = receivedLuminance / samplesTaken;
 
-			if (pass > currentWarmUpSamples) {
+			if (samplesTaken > currentWarmUpSamples) {
 				// Convergence test, check if it is time to stop sampling
 				// this light source. Using an 1% threshold.
 
@@ -311,14 +317,14 @@ void DirectLightSamplingCache::ComputeCacheEntryReceivedLuminance(
 			}
 
 			entryReceivedLuminancePreviousStep.push_back(currentStepValue);
-		
+
 #ifdef WIN32
 			// Work around Windows bad scheduling
 			std::this_thread::yield();
 #endif
 		}
 
-		entryReceivedLuminance[lightIndex] = receivedLuminance / pass;
+		entryReceivedLuminance[lightIndex] = receivedLuminance / samplesTaken;
 
 		// For some Debugging
 		//SLG_LOG("Light #" << lightIndex << ": " << entryReceivedLuminance[lightIndex] <<	" (pass " << pass << ")");
@@ -498,9 +504,29 @@ void DirectLightSamplingCache::Build(SceneConstRef scn) {
 			// Load the cache from the file
 			LoadPersistentCache(params.persistent.fileName);
 
-			return;
+			// Validate against the CURRENT scene: the per-entry light
+			// distributions are indexed by lightSceneIndex, so a cache
+			// written for a different light set would sample out-of-range
+			// indices (OOB) or weight the wrong lights. Rebuild instead.
+			const u_int lightCount = scn.GetLightSources().GetSize();
+			bool valid = (cacheEntriesBVH != nullptr);
+			for (const DLSCacheEntry &entry : cacheEntries) {
+				if (entry.lightsDistribution &&
+						(entry.lightsDistribution->GetCount() != lightCount)) {
+					valid = false;
+					break;
+				}
+			}
+			if (valid)
+				return;
+
+			SLG_LOG("WARNING: persistent DirectLightSamplingCache does not match "
+					"the scene light count - rebuilding it");
+			cacheEntries.clear();
+			delete cacheEntriesBVH;
+			cacheEntriesBVH = nullptr;
 		}
-		
+
 		// The file doesn't exist so I have to go trough normal pre-processing
 	}
 

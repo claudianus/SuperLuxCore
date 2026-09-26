@@ -159,71 +159,12 @@ LightSourcePtr LightStrategyRestirDI::SampleLights(
 		SceneConstRef scene,
 		const float u, const Point &p, const Normal &n,
 		const bool isVolume, float *pdf) const {
-	// Reservoir sampling over effectiveCandidateCount light candidates.
-	// NOTE: M (the RIS proposal count in the W-output weight below) is
-	// the TOTAL number of draws, including candidates culled to zero
-	// target - they contribute 0 to wSum but still count in M.
-	//
-	// Stage 2: the target weight now includes the light's
-	// IsAlwaysInShadow() test where the light source can answer it
-	// cheaply (e.g. a sun behind a closed room). Candidates that are
-	// provably in shadow get zero weight and can never win the
-	// reservoir, so shadow rays are only spent on lights that can
-	// actually contribute.
-
-	LightSourcePtr reservoirLight = nullptr;
-	float reservoirPdf = 0.f;
-	float reservoirTarget = 0.f;
-	float wSum = 0.f;
-
-	static thread_local u_int acceptCounter = 0;
-	const u_int acceptSeed = AcceptSeed(u, acceptCounter++);
-
-	const u_int candCount = effectiveCandidateCount;
-	for (u_int i = 0; i < candCount; ++i) {
-		// Deterministic low-discrepanance offset from the base sample u
-		const float u_i = fmod(u + i * (1.f / candCount), 1.f);
-
-		float candidatePdf;
-		LightSourcePtr candidate = LightStrategyLogPower::SampleLights(
-				scene, u_i, p, n, isVolume, &candidatePdf);
-
-		if (!candidate || candidatePdf <= 0.f)
-			continue;
-
-		// Target weight: 1/pdf from the source distribution, zeroed for
-		// candidates provably occluded at this shade point
-		float targetWeight = 1.f / candidatePdf;
-		if (candidate->IsAlwaysInShadow(scene, p, n))
-			targetWeight = 0.f;
-		if (targetWeight <= 0.f)
-			continue;
-
-		wSum += targetWeight;
-
-		// Weighted reservoir update (single-pass algorithm from the
-		// ReSTIR paper): accept candidate i with prob w_i / wSum
-		const float accept = targetWeight / wSum;
-		const float r = AcceptRand(acceptSeed, i);
-		if (!reservoirLight || r < accept) {
-			reservoirLight = candidate;
-			reservoirPdf = candidatePdf;
-			reservoirTarget = targetWeight;
-		}
-	}
-
-	if (reservoirLight) {
-		if (pdf) {
-			// Same RIS output weight as SampleLightsBSDF() (Stage 5):
-			// pickPdf = q * target * M / wSum, with M = the total number
-			// of proposal draws. Here the target is 1/q so the product
-			// reduces to M / wSum.
-			*pdf = reservoirPdf * reservoirTarget * effectiveCandidateCount / wSum;
-		}
-		return reservoirLight;
-	}
-
-	// No candidate worked out (e.g. no lights) - fall back to the parent
+	// Without a BSDF there is no contribution target to resample
+	// against: the old flat-target reservoir (w = 1/q, i.e. p-hat = 1)
+	// converges to a UNIFORM light pick compensated by W = wSum/M -
+	// strictly worse than the log-power proposal it draws from, and it
+	// still pays effectiveCandidateCount proposal evaluations for it.
+	// Plain log-power sampling is the better proposal here.
 	return LightStrategyLogPower::SampleLights(
 			scene, u, p, n, isVolume, pdf);
 }

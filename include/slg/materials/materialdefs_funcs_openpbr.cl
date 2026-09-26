@@ -737,7 +737,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 
 	BSDFEvent event;
 	float pdfW;
-	const float3 f = OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir,
+	float3 f = OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir,
 			&event, &pdfW MATERIALS_PARAM);
 	if (pdfW <= 0.f) {
 		MATERIAL_SAMPLE_RETURN_BLACK;

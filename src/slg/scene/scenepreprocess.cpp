@@ -68,6 +68,28 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 		// Rebuild the data set
 		dataSet = std::make_unique<DataSet>(ctx);
 
+		// Native curve primitives (Metal HWRT) must be disabled on meshes
+		// used as light sources: light sampling draws points on the
+		// triangle tessellation, so the intersected surface has to be the
+		// same geometry or the larger round tube self-occludes shadow
+		// rays toward the sampled points (see ExtTriangleMesh::
+		// SetCurvePrimitivesEnabled). Recomputed on every data set build:
+		// reset all, then disable for any object that emits light (a mesh
+		// shared by multiple objects stays disabled if any is a source).
+		for (u_int i = 0; i < objDefs.GetSize(); ++i) {
+			if (ExtTriangleMesh *mesh = const_cast<ExtTriangleMesh *>(
+					ExtTriangleMesh::FromMesh(&objDefs.GetSceneObject(i).GetExtMesh())))
+				mesh->SetCurvePrimitivesEnabled(true);
+		}
+		for (u_int i = 0; i < objDefs.GetSize(); ++i) {
+			const SceneObject &so = objDefs.GetSceneObject(i);
+			if (so.GetMaterial().IsLightSource()) {
+				if (ExtTriangleMesh *mesh = const_cast<ExtTriangleMesh *>(
+						ExtTriangleMesh::FromMesh(&so.GetExtMesh())))
+					mesh->SetCurvePrimitivesEnabled(false);
+			}
+		}
+
 		// Add all objects
 		for (u_int i = 0; i < objDefs.GetSize(); ++i)
 			dataSet->Add(objDefs.GetSceneObject(i).GetExtMesh());

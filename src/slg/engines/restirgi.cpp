@@ -87,12 +87,15 @@ Spectrum GI_ProxyHitRadiance(
 
 	auto &lightStrategy = scene.GetLightSources().GetIlluminateLightStrategy();
 	float pickPdf;
+	// Landing shade normal: the DLSC lookup keys cache entries on it
+	// (GetLandingShadeN, matching SampleLightsBSDF/DirectHit MIS)
+	const Normal landingNormal = x2bsdf.hitPoint.GetLandingShadeN();
 	LightSourcePtr light = lightStrategy.SampleLights(scene,
 			GIRandom(seed, 0x72u), x2bsdf.hitPoint.p,
-			x2bsdf.hitPoint.geometryN, x2bsdf.IsVolume(), &pickPdf);
+			landingNormal, x2bsdf.IsVolume(), &pickPdf);
 	if (light && (pickPdf > 0.f) &&
 			!light->IsAlwaysInShadow(scene, x2bsdf.hitPoint.p,
-					x2bsdf.hitPoint.geometryN)) {
+					landingNormal)) {
 		Ray shadowRay;
 		float directPdfW;
 		const Spectrum lightRadiance = light->Illuminate(scene, x2bsdf,

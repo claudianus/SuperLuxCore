@@ -32,10 +32,14 @@ using namespace slg;
 
 ImageMapUPtr ImageMapResizeMinMemPolicy::ApplyResizePolicy(const std::string &fileName,
 		const ImageMapConfig &imgCfg, bool &toApply) const {
-	auto im = std::make_unique<ImageMap>(fileName, imgCfg);
-
-	const u_int width = im->GetWidth();
-	const u_int height = im->GetHeight();
+	// Header-only probe first: when the image exceeds minSize, load it
+	// already at the probe resolution. The ctor picks the smallest mip
+	// level covering the hint (tx files) or streams decode+downscale
+	// through a tile-cached ImageBuf (plain files) — either way the
+	// full-resolution pixels never materialize in heap.
+	const pair<u_int, u_int> size = ImageMap::GetSize(fileName);
+	const u_int width = size.first;
+	const u_int height = size.second;
 
 	if (Max(width, height) > minSize) {
 		u_int newWidth, newHeight;
@@ -47,19 +51,20 @@ ImageMapUPtr ImageMapResizeMinMemPolicy::ApplyResizePolicy(const std::string &fi
 			newHeight = minSize;
 		}
 
-		SDL_LOG("Scaling probe ImageMap: " << im->GetName() << " [from " << width << "x" << height <<
+		SDL_LOG("Scaling probe ImageMap: " << fileName << " [from " << width << "x" << height <<
 				" to " << newWidth << "x" << newHeight <<"]");
 
+		auto im = std::make_unique<ImageMap>(fileName, imgCfg, newWidth, newHeight);
 		im->SetUpInstrumentation(width, height, imgCfg);
-		im->Resize(newWidth, newHeight);
-		im->Preprocess();
-
 
 		toApply = true;
-	} else
-		toApply = false;
+		return im;
+	} else {
+		auto im = std::make_unique<ImageMap>(fileName, imgCfg);
 
-	return im;
+		toApply = false;
+		return im;
+	}
 }
 
 //------------------------------------------------------------------------------
