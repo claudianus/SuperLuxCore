@@ -113,7 +113,12 @@ OPENCL_FORCE_INLINE void BSDF_InitVolume(
 
 	const float3 hitPointP = rayOrig + t * rayDir;
 	VSTORE3F(hitPointP, &bsdf->hitPoint.p.x);
-	const float3 geometryN = -rayDir;
+	// Normalize the incoming direction: a non-unit ray.d makes the frame
+	// non-orthonormal (Frame_SetFromZ does not normalize) and every
+	// following sampled direction inherits a quadratic magnitude error -
+	// long random-walk volume paths collapse to a zero vector or blow up
+	// to Inf/NaN.
+	const float3 geometryN = -normalize(rayDir);
 	VSTORE3F(geometryN, &bsdf->hitPoint.fixedDir.x);
 
 	bsdf->sceneObjectIndex = NULL_INDEX;

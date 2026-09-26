@@ -137,13 +137,20 @@ void BSDF::Init(
 	// The ray context is set later by Scene::Intersect()
 	hitPoint.SetRayContext(0, NONE, nullptr, 0.f);
 
+	// Normalize the incoming direction: a non-unit ray.d makes the frame
+	// non-orthonormal (SetFromZ does not normalize) and every following
+	// sampled direction inherits a quadratic magnitude error - long
+	// random-walk volume paths then collapse to a zero vector or blow up
+	// to Inf/NaN.
+	const Vector rayDir = Normalize(ray.d);
+
 	hitPoint.p = ray(t);
-	hitPoint.fixedDir = -ray.d;
+	hitPoint.fixedDir = -rayDir;
 
 	sceneObject = nullptr;
 	material = &volume;
 
-	hitPoint.geometryN = Normal(-ray.d);
+	hitPoint.geometryN = Normal(-rayDir);
 	hitPoint.interpolatedN = hitPoint.geometryN;
 	hitPoint.shadeN = hitPoint.geometryN;
 

@@ -108,8 +108,18 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 	// Check if there is volume scatter event
 	if (rayVolumeIndex != NULL_INDEX) {
 		// This applies volume transmittance too
-		// Note: by using passThrough here, I introduce subtle correlation
-		// between scattering events and pass-through events
+		//
+		// The flight distance/ratio-tracking sample needs its own draw:
+		// passThrough is stored on the hit point as passThroughEvent
+		// (surface lobe selection, stochastic transparency, volume pick)
+		// and reusing it correlates the escape decision
+		// (u > 1-exp(-sigmaS*t)) with those choices - e.g. a matched-IOR
+		// glass shell reflects ~1/4 of all escaping walks back inside
+		// as ~zero-weight zombies.
+		Seed volSeed;
+		Rnd_InitFloat(passThrough, &volSeed);
+		const float scatterU = Rnd_FloatValue(&volSeed);
+
 		float3 connectionEmission = BLACK;
 
 		float t;
@@ -120,13 +130,13 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			*connectionThroughput *= Volume_TransmittanceEstimate(
 					&mats[rayVolumeIndex], ray,
 					hit ? rayHit->t : ray->maxt,
-					passThrough, tmpHitPoint
+					scatterU, tmpHitPoint
 					TEXTURES_PARAM);
 			t = -1.f;
 		} else {
 			t = Volume_Scatter(&mats[rayVolumeIndex], ray,
 					hit ? rayHit->t : ray->maxt,
-					passThrough, volInfo->scatteredStart,
+					scatterU, volInfo->scatteredStart,
 					connectionThroughput, &connectionEmission,
 					tmpHitPoint
 					TEXTURES_PARAM);

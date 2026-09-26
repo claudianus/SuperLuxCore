@@ -464,10 +464,16 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 										(1.f - wP) * bouncePdfW;
 							}
 
-							if (directLightDepthInfo.GetRRDepth() >= rrDepth) {
-								// Russian Roulette
-								bouncePdfW *= RenderEngine::RussianRouletteProb(bsdfEval, rrImportanceCap);
-							}
+							// The competing bounce density must not include the
+							// Russian Roulette continuation probability: RR is a
+							// survival process orthogonal to direction sampling and
+							// the analog-hit weights (lastBSDFPdfW) don't carry it
+							// either. Folding it only into the DL side made the MIS
+							// weights asymmetric; it also used bsdfEval instead of
+							// the continuation probability (bsdfSample = eval/pdf),
+							// which inflated interior NEE at volume vertices by
+							// ~1/cap for conservative media (+48% measured on a
+							// null-bounded sphere in a white furnace).
 
 							// Account for material transparency
 							bouncePdfW *= light->GetAvgPassThroughTransparency();

@@ -923,12 +923,17 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			// (analytic for clear/homogeneous volumes, ratio tracking for
 			// heterogeneous ones) instead of sampling a binary scattering
 			// event: much lower variance for direct lighting through media.
-			*connectionThroughput *= rayVolume->TransmittanceEstimate(*ray, passThrough);
+			*connectionThroughput *= rayVolume->TransmittanceEstimate(*ray, rng.floatValue());
 		} else if (rayVolume) {
 			// This applies volume transmittance too
 			//
-			// Note: by using passThrough here, I introduce subtle correlation
-			// between scattering events and pass-through events
+			// The flight distance needs its own draw: passThrough is stored
+			// on the hit point as passThroughEvent (surface lobe selection,
+			// stochastic transparency, volume pick) and reusing it here
+			// correlates the escape decision (u > 1-exp(-sigmaS*t)) with
+			// those choices - e.g. a matched-IOR glass shell reflects ~1/4
+			// of all escaping walks back inside as ~zero-weight zombies.
+			const float scatterU = rng.floatValue();
 			Spectrum emis;
 			float t;
 			const HomogeneousVolume *homoVol = (!equiangularLightPoints.empty()) ?
@@ -937,12 +942,12 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				// Equiangular + transmittance MIS distance sampling
 				// (Kulla & Fajardo, EGSR 2012) with contribution-aware
 				// light selection
-				t = homoVol->ScatterEquiangular(*ray, passThrough,
+				t = homoVol->ScatterEquiangular(*ray, scatterU,
 						volInfo->IsScatteredStart(),
 						equiangularLightPoints, equiangularLightLuminances,
 						connectionThroughput, &emis);
 			} else
-				t = rayVolume->Scatter(*ray, passThrough, volInfo->IsScatteredStart(),
+				t = rayVolume->Scatter(*ray, scatterU, volInfo->IsScatteredStart(),
 						connectionThroughput, &emis);
 
 			// Add the volume emitted light to the appropriate light group
