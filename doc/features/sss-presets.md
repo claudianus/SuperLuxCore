@@ -52,8 +52,8 @@ Semantics:
 - `subsurfaceradius` is in **scene units** — for meters-scaled scenes
   the table values are already correct; rescale for other units.
 - A preset alone also enables the implicit SSS volume (no explicit
-  `subsurfaceradius` needed), subject to `subsurfaceweight` > 0 and no
-  user-defined `volume.interior`.
+  `subsurfaceradius` needed) — the gate only requires `subsurfaceweight`
+  to be defined and `volume.interior` to be unset.
 - Unknown names are a parse error, not a silent fallback.
 
 ## Test scenes / validation

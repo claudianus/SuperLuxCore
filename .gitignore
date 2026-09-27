@@ -105,3 +105,8 @@ CMakeUserPresets.json
 .vscode/
 tags
 kernel_source_device_*.cl
+
+###########################
+# Loose render artifacts dumped at the repo root by dev-tools runs
+/image.png*
+/emissive-direct.hdr*
