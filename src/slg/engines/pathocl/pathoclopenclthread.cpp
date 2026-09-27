@@ -201,6 +201,13 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				((engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 				1u : 0u));
 		for (u_int i = 0; i < iterations; ++i) {
+			// Mid-batch abort check: each iteration is ~10ms of queued
+			// work, so a scene edit/stop arriving here would otherwise
+			// wait for the whole remaining batch (up to 128 iterations)
+			// to drain before being applied
+			if (stop_token.stop_requested())
+				break;
+
 			// Trace rays (tail slots hold the ReSTIR visibility
 			// candidate shadow rays)
 			intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff, raySlotCount);

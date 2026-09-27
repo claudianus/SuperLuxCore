@@ -45,3 +45,40 @@ Measured fill order (720p, heavy scene, band coverage over time):
 - Validation: dev-tools/e51_viewport_infill.py — RTPATHOCL 720p first
   pass raw ≈11–16% → infill ≈88%, 16/16 cells; PATHOCL+LT/RTPATHCPU/
   BIDIRCPU invariants (infill ≥ raw, finite, sane).
+
+## Update — adaptive, temporal, smoothing (2026-09)
+
+- `TILEPATHSAMPLER` GPU kernel: `filmNoise`-driven probabilistic skip
+  inside `TilePathSampler_Init` rank-1 lattice walk (rejects jittered
+  retry until a qualifying pixel or attempt cap; lattice index still
+  advances so coverage ordering is preserved). Fields added to
+  `slg::ocl::Sampler::tilepath` (adaptiveStrength,
+  adaptiveUserImportanceWeight). `sampler.tilepath.adaptive.*` props.
+- `RTPATHCPUSAMPLER`: same skip rule against `channel_NOISE` on the
+  per-sample walk (floor kept: `max(noise, 1-strength)`).
+- `VIEWPORT_TEMPORAL` plugin: snapshots display RGB + `POSITION`
+  channel + reprojects each history pixel's world position into the
+  current camera whenever `viewport.edit.cameraonly` metadata is 1.
+  Camera transforms are serialized into film metadata by
+  `RenderSession::PublishViewportCamera()` at Start/EndSceneEdit —
+  metadata survives `Film::Reset()`.
+- `VIEWPORT_SMOOTH` plugin: à-trous (steps 1/2/4) edge-aware filter on
+  pixels with radiance weight < minsamps; converged pixels passthrough.
+- Gotchas discovered:
+  - `scene.Parse("scene.camera.*")` does NOT register CAMERA_EDIT —
+    only `Camera::Translate/Rotate*` via `scene.GetCamera()` (the path
+    Blender uses). Property-level camera edits therefore skip the fast
+    path AND temporal reuse.
+  - `sampleResult->depth` is a ray parameter, not camera-space
+    distance: don't unproject with it, use the `POSITION` channel +
+    `Camera::ProjectPointToFilm` math instead.
+  - PATHOCL kernels never write `sampleResult->depth/position` →
+    DEPTH/POSITION are all-inf on that engine; temporal/smooth
+    silently no-op there. RTPATHOCL/RTPATHCPU/PATHCPU/BIDIRCPU fill
+    them (98%+ finite in cornell).
+  - Updating the history camera tag unconditionally on every Apply is a
+    bug: the first post-edit Apply rewrites it before the film reset
+    lands, disabling the warp exactly when needed. World positions are
+    camera-independent, so no history camera needs storing at all.
+- `stats.renderengine.pass.eye` / `.light` separate eye and light
+  passes; light samples go to the screen-normalized channel.

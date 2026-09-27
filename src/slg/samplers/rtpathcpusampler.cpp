@@ -137,7 +137,8 @@ RTPathCPUSampler::RTPathCPUSampler(
 	SamplerSharedDataSPtr samplerSharedData
 ) :
 	Sampler(rnd, flm, flmSplatter, true),
-	sharedData(dynamic_pointer_cast<RTPathCPUSamplerSharedData>(samplerSharedData))
+	sharedData(dynamic_pointer_cast<RTPathCPUSamplerSharedData>(samplerSharedData)),
+	adaptiveStrength(0.f)
 {
 	film = flm;
 	// Disable denoiser statistics collection
@@ -206,22 +207,36 @@ void RTPathCPUSampler::NextPixel() {
 			linesDone = 0;
 		}
 	} else {
-		// Normal rendering
-		++currentX;
+		// Normal rendering. With adaptiveStrength > 0 the walk keeps
+		// skipping forward while the candidate pixel looks converged
+		// (same floor semantics as the other adaptive samplers: every
+		// pixel keeps a 1-strength acceptance probability).
+		for (u_int tries = 0; ; ) {
+			++currentX;
 
-		if (currentX >= sharedData->filmSubRegionWidth) {
-			currentX = 0;
-			++linesDone;
-			++currentY;
+			if (currentX >= sharedData->filmSubRegionWidth) {
+				currentX = 0;
+				++linesDone;
+				++currentY;
 
-			if ((currentY >= sharedData->filmSubRegionHeight) || (linesDone == engine->zoomFactor)) {
-				// This should be done as atomic operation but it is only for statistics
-				film->AddSampleCount(threadIndex, sharedData->filmSubRegionWidth * linesDone, 0.0);
+				if ((currentY >= sharedData->filmSubRegionHeight) || (linesDone == engine->zoomFactor)) {
+					// This should be done as atomic operation but it is only for statistics
+					film->AddSampleCount(threadIndex, sharedData->filmSubRegionWidth * linesDone, 0.0);
 
-				myStep = sharedData->step.fetch_add(1);
-				currentY = (myStep * engine->zoomFactor) % frameHeight;
-				linesDone = 0;
+					myStep = sharedData->step.fetch_add(1);
+					currentY = (myStep * engine->zoomFactor) % frameHeight;
+					linesDone = 0;
+				}
 			}
+
+			if ((adaptiveStrength <= 0.f) || !film->channel_NOISE)
+				break;
+
+			const auto &pc = sharedData->pixelRenderSequence[currentX + currentY * sharedData->filmSubRegionWidth];
+			const float noise = *film->channel_NOISE->GetPixel(pc.x, pc.y);
+			const float threshold = Max(std::isinf(noise) ? 1.f : noise, 1.f - adaptiveStrength);
+			if ((rndGen->floatValue() <= threshold) || (++tries >= 8))
+				break;
 		}
 	}
 }
@@ -285,7 +300,10 @@ PropertiesUPtr RTPathCPUSampler::ToProperties(const Properties &cfg) {
 
 SamplerUPtr RTPathCPUSampler::FromProperties(const Properties &cfg, const RandomGeneratorUPtr & rndGen,
 		FilmPtr film, const FilmSampleSplatterUPtr& flmSplatter, SamplerSharedDataSPtr sharedData) {
-	return std::make_unique<RTPathCPUSampler>(rndGen, film, flmSplatter, sharedData);
+	auto s = std::make_unique<RTPathCPUSampler>(rndGen, film, flmSplatter, sharedData);
+	s->adaptiveStrength = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.adaptive.strength")).Get<double>(), 0.0, .95);
+	return s;
 }
 
 slg::ocl::Sampler *RTPathCPUSampler::FromPropertiesOCL(const Properties &cfg) {
@@ -294,14 +312,18 @@ slg::ocl::Sampler *RTPathCPUSampler::FromPropertiesOCL(const Properties &cfg) {
 }
 
 void RTPathCPUSampler::AddRequiredChannels(Film::FilmChannels &channels, const luxrays::Properties &cfg) {
-	// No additional channels required
+	// Noise-guided steady sequence needs the film NOISE channel
+	const float str = cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.adaptive.strength")).Get<double>();
+	if (str > 0.f)
+		channels.insert(Film::NOISE);
 }
 
 PropertiesUPtr RTPathCPUSampler::GetDefaultProps() {
 	auto props = std::make_unique<Properties>();
 	*props <<
 			Sampler::GetDefaultProps() <<
-			Property("sampler.type")(GetObjectTag());
+			Property("sampler.type")(GetObjectTag()) <<
+			Property("sampler.rtpathcpusampler.adaptive.strength")(0.f);
 
 	return props;
 }

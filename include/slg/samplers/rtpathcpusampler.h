@@ -125,6 +125,9 @@ private:
 	u_int myStep, frameHeight;
 	u_int currentX, currentY, linesDone;
 	bool firstFrameDone;
+	// Viewport adaptive sampling: noise-guided rejection over the
+	// steady shuffled sequence (0 disables)
+	float adaptiveStrength;
 };
 
 }

@@ -48,6 +48,8 @@ namespace OCIO = OCIO_NAMESPACE;
 #include "slg/film/imagepipeline/plugins/objectidmask.h"
 #include "slg/film/imagepipeline/plugins/vignetting.h"
 #include "slg/film/imagepipeline/plugins/viewportinfill.h"
+#include "slg/film/imagepipeline/plugins/viewportsmooth.h"
+#include "slg/film/imagepipeline/plugins/viewporttemporal.h"
 #include "slg/film/imagepipeline/plugins/coloraberration.h"
 #include "slg/film/imagepipeline/plugins/premultiplyalpha.h"
 #include "slg/film/imagepipeline/plugins/mist.h"
@@ -731,7 +733,13 @@ ImagePipeline *Film::CreateImagePipeline(const Properties &props, const string &
 			} else if (type == "NOP") {
 				imagePipeline->AddPlugin(new NopPlugin());
 			} else if (type == "VIEWPORT_INFILL") {
-				imagePipeline->AddPlugin(new ViewportInfillPlugin());
+				imagePipeline->AddPlugin(new ViewportInfillPlugin(
+					props.Get(Property(prefix + ".ltblend")(.5)).Get<float>()));
+			} else if (type == "VIEWPORT_TEMPORAL") {
+				imagePipeline->AddPlugin(new ViewportTemporalPlugin());
+			} else if (type == "VIEWPORT_SMOOTH") {
+				imagePipeline->AddPlugin(new ViewportSmoothPlugin(
+					props.Get(Property(prefix + ".minsamps")(8.0)).Get<float>()));
 			} else if (type == "GAMMA_CORRECTION") {
 				imagePipeline->AddPlugin(new GammaCorrectionPlugin(
 					props.Get(Property(prefix + ".value")(2.2)).Get<double>(),

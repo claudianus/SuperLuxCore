@@ -138,19 +138,28 @@ slg::ocl::Sampler *TilePathSampler::FromPropertiesOCL(const Properties &cfg) {
 	slg::ocl::Sampler *oclSampler = new slg::ocl::Sampler();
 
 	oclSampler->type = slg::ocl::TILEPATHSAMPLER;
+	oclSampler->tilepath.adaptiveStrength = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.strength")).Get<double>(), 0.0, .95);
+	oclSampler->tilepath.adaptiveUserImportanceWeight =
+			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.userimportanceweight")).Get<float>();
 
 	return oclSampler;
 }
 
 void TilePathSampler::AddRequiredChannels(Film::FilmChannels &channels, const luxrays::Properties &cfg) {
-	// No additional channels required
+	// Noise-guided lattice sampling needs the film NOISE channel
+	const float str = cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.strength")).Get<double>();
+	if (str > 0.f)
+		channels.insert(Film::NOISE);
 }
 
 PropertiesUPtr TilePathSampler::GetDefaultProps() {
 	auto props = std::make_unique<Properties>();
 	*props <<
 			Sampler::GetDefaultProps() <<
-			Property("sampler.type")(GetObjectTag());
+			Property("sampler.type")(GetObjectTag()) <<
+			Property("sampler.tilepath.adaptive.strength")(0.f) <<
+			Property("sampler.tilepath.adaptive.userimportanceweight")(.75f);
 
 	return props;
 }

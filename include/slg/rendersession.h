@@ -79,6 +79,10 @@ protected:
 	bool HasPeriodicFilmSave();
 	bool HasResumeRenderingSave();
 
+	// Publishes camera transforms + edit-type flag into film metadata
+	// for the VIEWPORT_TEMPORAL imagepipeline plugin
+	void PublishViewportCamera(const bool cameraOnly);
+
 	bool NeedPeriodicFilmOutputsSave(const bool force = false);
 	bool NeedPeriodicFilmSave(const bool force = false);
 	bool NeedResumeRenderingSave(const bool force = false);

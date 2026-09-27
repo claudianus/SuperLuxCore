@@ -17,11 +17,13 @@
  ***************************************************************************/
 
 #include <mutex>
+#include <sstream>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/serialization/shared_ptr.hpp>
 
 #include "slg/rendersession.h"
 #include "slg/renderstate.h"
+#include "slg/cameras/camera.h"
 #include "luxrays/utils/safesave.h"
 
 using namespace std;
@@ -83,6 +85,8 @@ void RenderSession::Start() {
 	}
 
 	renderEngine->Start(*film, &filmMutex);
+
+	PublishViewportCamera(true);
 }
 
 void RenderSession::Stop() {
@@ -109,7 +113,50 @@ void RenderSession::EndSceneEdit() {
 			film->Reset();
 	}
 
+	PublishViewportCamera(editActions.HasOnly(CAMERA_EDIT));
+
 	renderEngine->EndSceneEdit(editActions);
+}
+
+void RenderSession::PublishViewportCamera(const bool cameraOnly) {
+	// Camera reprojection data for the VIEWPORT_TEMPORAL imagepipeline
+	// plugin. The plugin warps the previous frame into not-yet-sampled
+	// pixels after camera edits; non-camera edits invalidate the history
+	// instead (warped colors would be wrong). Film metadata survives
+	// Film::Reset(), so the plugin can read it after the render
+	// restarts. The plugin keeps its own history camera, so only the
+	// current transforms are published here.
+	if (!film)
+		return;
+
+	const Camera &cam = renderConfig.GetScene().GetCamera();
+	const Transform &rtoC = cam.GetRasterToCamera(0);
+	const Transform &ctoW = cam.GetCameraToWorld(0);
+
+	auto matToString = [](const Matrix4x4 &m) {
+		std::ostringstream ss;
+		ss.precision(9);
+		for (u_int r = 0; r < 4; ++r)
+			for (u_int c = 0; c < 4; ++c)
+				ss << m.m[r][c] << " ";
+		return ss.str();
+	};
+
+	film->SetMetadata("viewport.cam.rtoc", matToString(rtoC.GetMatrix()));
+	film->SetMetadata("viewport.cam.ctow", matToString(ctoW.GetMatrix()));
+	film->SetMetadata("viewport.cam.wtor",
+			matToString((ctoW * rtoC).GetMatrix().Inverse()));
+	film->SetMetadata("viewport.cam.wtoc",
+			matToString(ctoW.GetMatrix().Inverse()));
+	film->SetMetadata("viewport.cam.persp",
+			(cam.GetType() == Camera::PERSPECTIVE) ? "1" : "0");
+	{
+		std::ostringstream ss;
+		ss.precision(9);
+		ss << cam.clipHither;
+		film->SetMetadata("viewport.cam.hither", ss.str());
+	}
+	film->SetMetadata("viewport.edit.cameraonly", cameraOnly ? "1" : "0");
 }
 
 void RenderSession::Pause() {

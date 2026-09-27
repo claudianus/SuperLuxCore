@@ -187,6 +187,11 @@ typedef struct {
 			float largeMutationProbability, imageMutationRange;
 			unsigned int maxRejects;
 		} metropolis;
+		// TILEPATHSAMPLER (RTPATHOCL/TILEPATHOCL): noise-guided rejection
+		// over the coverage lattice, same threshold semantics as sobol
+		struct {
+			float adaptiveStrength, adaptiveUserImportanceWeight;
+		} tilepath;
 	};
 } Sampler;
 

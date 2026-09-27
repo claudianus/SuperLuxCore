@@ -65,6 +65,7 @@ ask for.
 | CB'15 hybrid SSS remap (S2) | [../engineering/openpbr-sss-findings.md](../engineering/openpbr-sss-findings.md) | this branch | `dev-tools/e48_sss_cb15_parity.py` | CPU/OCL/Metal |
 | Sellmeier 3-term dispersion (S4) | [dispersion.md](dispersion.md) | this branch | `dev-tools/e49_sellmeier_dispersion.py` | CPU/OCL/Metal |
 | Viewport instant coverage (lattice + infill) | [viewport-instant-coverage.md](viewport-instant-coverage.md) | this branch | `dev-tools/e51_viewport_infill.py` | CPU/OCL/Metal |
+| Viewport adaptive + temporal reuse + smoothing | [viewport-adaptive-temporal.md](viewport-adaptive-temporal.md) | this branch | `dev-tools/e52_viewport_adaptive_temporal.py` | CPU/OCL/Metal |
 | Turquin/Schlick multi-scatter (roughglass, carpaint, disney) | [multiscatter.md](multiscatter.md) | this branch | `dev-tools/e50_multibounce_parity.py`, `e50_visual_showcase.py` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.

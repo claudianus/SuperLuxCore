@@ -34,14 +34,14 @@ using namespace slg;
 
 BOOST_CLASS_EXPORT_IMPLEMENT(slg::ViewportInfillPlugin)
 
-ViewportInfillPlugin::ViewportInfillPlugin() {
+ViewportInfillPlugin::ViewportInfillPlugin(const float ltb) : ltBlend(ltb) {
 }
 
 ViewportInfillPlugin::~ViewportInfillPlugin() {
 }
 
 ImagePipelinePlugin *ViewportInfillPlugin::Copy() const {
-	return new ViewportInfillPlugin();
+	return new ViewportInfillPlugin(ltBlend);
 }
 
 void ViewportInfillPlugin::Apply(Film &film, const u_int index) {
@@ -63,14 +63,24 @@ void ViewportInfillPlugin::Apply(Film &film, const u_int index) {
 				coverage[j] += src[j * 4 + 3];
 		}
 	}
+	// Light-tracing-only pixels: a splat landed but no eye path has
+	// confirmed the pixel yet. They count as coverage (they carry real
+	// light) but are also the isolated "speckle" sources a viewport user
+	// sees, so they get blended toward the neighbourhood below.
+	vector<char> ltOnly;
 	if (film.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED)) {
+		ltOnly.assign(pixelCount, 0);
 		for (u_int g = 0; g < groupCount; ++g) {
 			const float *src = film.channel_RADIANCE_PER_SCREEN_NORMALIZEDs[g]->GetPixels();
 			#pragma omp parallel for
 			for (int j = 0; j < (int)pixelCount; ++j) {
 				const float *p = &src[j * 3];
-				if (coverage[j] <= 0.f && (p[0] != 0.f || p[1] != 0.f || p[2] != 0.f))
-					coverage[j] = 1.f;
+				if (p[0] != 0.f || p[1] != 0.f || p[2] != 0.f) {
+					if (coverage[j] <= 0.f) {
+						coverage[j] = 1.f;
+						ltOnly[j] = 1;
+					}
+				}
 			}
 		}
 	}
@@ -133,6 +143,36 @@ void ViewportInfillPlugin::Apply(Film &film, const u_int index) {
 				pixels[j * 3 + 1] = s[1] / s[3];
 				pixels[j * 3 + 2] = s[2] / s[3];
 				break;
+			}
+		}
+	}
+
+	// Speckle softening for light-tracing-only pixels: blend the splat
+	// toward the surrounding fill colour so a lone splat reads as a
+	// soft contribution instead of a 1 px high-energy dot. The pixel's
+	// own contribution is subtracted from every pyramid texel - an
+	// isolated speckle keeps walking levels until a real neighbourhood
+	// exists, so it always gets attenuated.
+	if ((ltBlend > 0.f) && !ltOnly.empty()) {
+		const float own = 1.f - ltBlend;
+		#pragma omp parallel for
+		for (int j = 0; j < (int)pixelCount; ++j) {
+			if (!ltOnly[j])
+				continue;
+			const float ownR = pixels[j * 3], ownG = pixels[j * 3 + 1], ownB = pixels[j * 3 + 2];
+			u_int x = j % width, y = j / width;
+			for (u_int l = 1; l < levelCount; ++l) {
+				x = Min(x / 2, pyr[l].w - 1);
+				y = Min(y / 2, pyr[l].h - 1);
+				const float *s = &pyr[l].v[(y * pyr[l].w + x) * 4];
+				const float nbhdW = s[3] - 1.f; // exclude self
+				if (nbhdW > .5f) {
+					const float inv = ltBlend / nbhdW;
+					pixels[j * 3]     = own * ownR + (s[0] - ownR) * inv;
+					pixels[j * 3 + 1] = own * ownG + (s[1] - ownG) * inv;
+					pixels[j * 3 + 2] = own * ownB + (s[2] - ownB) * inv;
+					break;
+				}
 			}
 		}
 	}

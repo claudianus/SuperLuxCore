@@ -16,8 +16,8 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
-#ifndef _SLG_VIEWPORTINFILL_PLUGIN_H
-#define	_SLG_VIEWPORTINFILL_PLUGIN_H
+#ifndef _SLG_VIEWPORTSMOOTH_PLUGIN_H
+#define	_SLG_VIEWPORTSMOOTH_PLUGIN_H
 
 #include <boost/serialization/version.hpp>
 #include <boost/archive/binary_iarchive.hpp>
@@ -30,23 +30,21 @@
 namespace slg {
 
 //------------------------------------------------------------------------------
-// ViewportInfillPlugin reconstructs display pixels that have no accumulated
-// samples yet (weight == 0) from the neighbourhood of covered
-// pixels via a pull-push pyramid, so a sparse pass produces a coherent
-// image that dissolves in instead of leaving black/stale holes. Only the
-// IMAGEPIPELINE display buffer is touched - the film's own accumulation
-// channels stay honest and filled pixels are replaced the moment real
-// samples land.
+// ViewportSmoothPlugin: SVGF-lite edge-aware à-trous filtering for
+// not-yet-converged pixels in interactive viewport rendering.
 //
-// ltBlend additionally softens light-tracing-only pixels: splats that
-// landed without any eye-path coverage show up as isolated speckles in
-// early passes, so they are blended toward the surrounding filled colour.
+// Pixels whose accumulated weight is below `minSamps` are filtered with
+// 3 à-trous iterations guided by the DEPTH and AVG_SHADING_NORMAL
+// channels, so geometric edges survive while sparse-sample noise melts
+// away. Converged pixels keep their raw samples; the film's own
+// accumulation channels are never touched (display-side only, like
+// VIEWPORT_INFILL). Runs on the linear HDR buffer before tonemapping.
 //------------------------------------------------------------------------------
 
-class ViewportInfillPlugin : public ImagePipelinePlugin {
+class ViewportSmoothPlugin : public ImagePipelinePlugin {
 public:
-	ViewportInfillPlugin(const float ltBlend = 0.5f);
-	virtual ~ViewportInfillPlugin();
+	ViewportSmoothPlugin(const float minSamps = 8.f);
+	virtual ~ViewportSmoothPlugin();
 
 	virtual ImagePipelinePlugin *Copy() const;
 
@@ -57,16 +55,16 @@ public:
 private:
 	template<class Archive> void serialize(Archive &ar, const u_int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImagePipelinePlugin);
-		ar & ltBlend;
+		ar & minSamps;
 	}
 
-	float ltBlend;
+	float minSamps;
 };
 
 }
 
-BOOST_CLASS_VERSION(slg::ViewportInfillPlugin, 2)
+BOOST_CLASS_VERSION(slg::ViewportSmoothPlugin, 1)
 
-BOOST_CLASS_EXPORT_KEY(slg::ViewportInfillPlugin)
+BOOST_CLASS_EXPORT_KEY(slg::ViewportSmoothPlugin)
 
-#endif /* _SLG_VIEWPORTINFILL_PLUGIN_H */
+#endif /* _SLG_VIEWPORTSMOOTH_PLUGIN_H */

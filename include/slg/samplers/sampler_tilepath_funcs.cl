@@ -132,7 +132,38 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 	// coset when gcd(A, pixelCount) > 1, so the epoch offset shifts the
 	// coset once per full cycle - every pixel is reached within gcd
 	// cycles. 64-bit math keeps i*A exact.
-	const uint pix = (uint)(((ulong)i * 0x9E3779B1ul + epoch) % pixelCount);
+	uint pix = (uint)(((ulong)i * 0x9E3779B1ul + epoch) % pixelCount);
+
+	// Viewport adaptive sampling: walk the lattice forward while the
+	// picked pixel looks converged. Same acceptance semantics as the
+	// sobol adaptive scheme - noisy pixels are picked with probability
+	// ~1, converged ones with floor (1 - adaptiveStrength) - so the
+	// unbiased every-pixel-coverage property is preserved while compute
+	// concentrates on variance (glass, caustics, glossy).
+	__constant const Sampler *sampler = &taskConfig->sampler;
+	const float adaptiveStrength = sampler->tilepath.adaptiveStrength;
+	if (filmNoise && (adaptiveStrength > 0.f)) {
+		uint px = pix % samplerSharedData->tileWidth;
+		uint py = pix / samplerSharedData->tileWidth;
+		for (uint tries = 0; tries < 8; ++tries) {
+			const uint fx = samplerSharedData->tileStartX + px;
+			const uint fy = samplerSharedData->tileStartY + py;
+			float noise = filmNoise[fx + fy * filmWidth];
+			float threshold = isinf(noise) ? 1.f : noise;
+			if (filmUserImportance) {
+				const float ui = filmUserImportance[fx + fy * filmWidth];
+				threshold = (ui > 0.f) ?
+						mix(threshold, ui, sampler->tilepath.adaptiveUserImportanceWeight) : 0.f;
+			}
+			threshold = fmax(threshold, 1.f - adaptiveStrength);
+			if (Rnd_FloatValue(seed) <= threshold)
+				break;
+			// Step to the next lattice element (scattered position)
+			pix = (pix + 0x9E3779B1u) % pixelCount;
+			px = pix % samplerSharedData->tileWidth;
+			py = pix / samplerSharedData->tileWidth;
+		}
+	}
 
 	const uint pixelX = pix % samplerSharedData->tileWidth;
 	const uint pixelY = pix / samplerSharedData->tileWidth;
