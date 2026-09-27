@@ -166,6 +166,10 @@ public:
 	) = 0;
 	virtual u_int GetKernelWorkGroupSize(HardwareDeviceKernelRPtr kernel) = 0;
 
+	// True when GetKernel()/GetKernelWorkGroupSize() may run concurrently on the
+	// same program from several threads (lets engines compile kernels in parallel)
+	virtual bool HasThreadSafeKernelCreation() const { return false; }
+
 	virtual void SetKernelArg(HardwareDeviceKernelRPtr kernel,
 			const u_int index, const size_t size, const void *arg) = 0;
 protected:

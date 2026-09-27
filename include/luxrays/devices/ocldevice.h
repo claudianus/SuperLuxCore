@@ -308,6 +308,9 @@ public:
 		const std::string &kernelName
 	) override;
 	virtual u_int GetKernelWorkGroupSize(HardwareDeviceKernelRPtr kernel) override;
+	// clCreateKernel/clGetKernelWorkGroupInfo are thread-safe per the
+	// OpenCL spec (clSetKernelArg is the only non-thread-safe call)
+	virtual bool HasThreadSafeKernelCreation() const override { return true; }
 	virtual void SetKernelArg(
 			HardwareDeviceKernelRPtr kernel,
 			const u_int index, const size_t size, const void *arg) override;

@@ -158,6 +158,10 @@ protected:
 	void *binaryArchive;     // id<MTLBinaryArchive> (retained) or null
 	std::string archivePath;
 	bool archiveDirty;
+	// MTLBinaryArchive mutation is not thread-safe: serializes
+	// addComputePipelineFunctionsWithDescriptor across the parallel
+	// GetKernel() workers (the PSO compile itself stays outside)
+	std::mutex archiveMutex;
 };
 
 //------------------------------------------------------------------------------
@@ -217,6 +221,9 @@ public:
 		const std::string &kernelName
 	) override;
 	virtual u_int GetKernelWorkGroupSize(HardwareDeviceKernelRPtr kernel) override;
+	// PSO creation is thread-safe; the binary archive is serialized on a
+	// per-program mutex inside GetKernel()
+	virtual bool HasThreadSafeKernelCreation() const override { return true; }
 	virtual void SetKernelArg(HardwareDeviceKernelRPtr kernel,
 			const u_int index, const size_t size, const void *arg) override;
 

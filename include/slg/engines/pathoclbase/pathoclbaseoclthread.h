@@ -215,12 +215,6 @@ protected:
 	void SetKernelArgs();
 
 
-	std::tuple<luxrays::HardwareDeviceKernelUPtr, size_t> CompileKernel(
-		luxrays::HardwareIntersectionDeviceRef device,
-		luxrays::HardwareDeviceProgramRef program,
-		const std::string &name
-	);
-
 	void EnqueueAdvancePathsKernel();
 	void EnqueueAdvancePathsWavefront();
 

@@ -21,6 +21,7 @@
 #include <limits>
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
+#include <future>
 #include <mutex>
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -51,28 +52,6 @@ using namespace slg;
 //------------------------------------------------------------------------------
 // PathOCLBaseOCLRenderThread kernels related methods
 //------------------------------------------------------------------------------
-
-std::tuple<HardwareDeviceKernelUPtr, size_t>
-PathOCLBaseOCLRenderThread::CompileKernel(
-		HardwareIntersectionDeviceRef device,
-		HardwareDeviceProgramRef program,
-		const std::string &name
-) {
-	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Compiling " << name << " Kernel");
-	size_t workGroupSize;
-	auto kernel = device.GetKernel(program, name.c_str());
-
-	if (device.GetDeviceDesc().GetForceWorkGroupSize() > 0) {
-		workGroupSize = device.GetDeviceDesc().GetForceWorkGroupSize();
-	}
-	else {
-		workGroupSize = device.GetKernelWorkGroupSize(kernel);
-		SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] "
-				<< name << " workgroup size: " << workGroupSize);
-	}
-
-	return std::make_tuple(std::move(kernel), workGroupSize);
-}
 
 void PathOCLBaseOCLRenderThread::GetKernelParamters(
 	std::vector<std::string> &params,
@@ -369,53 +348,47 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 
 	auto program = intersectionDevice.CompileProgram(kernelsParameters, kernelSource, "PathOCL kernel");
 
-	std::tuple<HardwareDeviceKernelUPtr&, size_t&, const char *>
-	kernels[] = {
-		{filmClearKernel, filmClearWorkGroupSize, "Film_Clear"},
-		{initSeedKernel, initWorkGroupSize, "InitSeed"},
-		{initKernel, initWorkGroupSize, "Init"},
+	// One job list for the whole kernel set: base kernels, the
+	// AdvancePaths micro-kernels and the conditional light /
+	// vertex-connection / merge sets. Each job's backend compile
+	// (clCreateKernel / MTLComputePipelineState creation - ~7s per
+	// AdvancePaths variant on Apple OpenCL/Metal) is independent, so
+	// devices with thread-safe kernel creation run them concurrently.
+	struct KernelCompileJob {
+		HardwareDeviceKernelUPtr *kernel;
+		// Non-null only for the base kernels (member targets)
+		size_t *workGroupSize;
+		// AdvancePaths kernels fold into advancePathsWorkGroupSize
+		bool advancePaths;
+		const char *name;
 	};
+	vector<KernelCompileJob> jobs = {
+		{&filmClearKernel, &filmClearWorkGroupSize, false, "Film_Clear"},
+		{&initSeedKernel, &initWorkGroupSize, false, "InitSeed"},
+		{&initKernel, &initWorkGroupSize, false, "Init"},
 
-	for (auto& [kernel, workGroupSize, name] : kernels) {
-		std::tie(kernel, workGroupSize) = CompileKernel(intersectionDevice, *program, name);
-	}
-
-
-	// AdvancePaths kernel (Micro-Kernels)
-	std::tuple<HardwareDeviceKernelUPtr&, const char *>
-	microKernels[] = {
-		{advancePathsKernel_MK_RT_NEXT_VERTEX, "AdvancePaths_MK_RT_NEXT_VERTEX"},
-		{advancePathsKernel_MK_HIT_NOTHING, "AdvancePaths_MK_HIT_NOTHING"},
-		{advancePathsKernel_MK_HIT_OBJECT, "AdvancePaths_MK_HIT_OBJECT"},
-		{advancePathsKernel_MK_RT_DL, "AdvancePaths_MK_RT_DL"},
-		{advancePathsKernel_MK_RT_RESTIR, "AdvancePaths_MK_RT_RESTIR"},
-		{advancePathsKernel_MK_RT_GI_BOUNCE, "AdvancePaths_MK_RT_GI_BOUNCE"},
-		{advancePathsKernel_MK_RT_GI_RESOLVE, "AdvancePaths_MK_RT_GI_RESOLVE"},
-		{advancePathsKernel_MK_DL_ILLUMINATE, "AdvancePaths_MK_DL_ILLUMINATE"},
-		{advancePathsKernel_MK_DL_SAMPLE_BSDF, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
-		{advancePathsKernel_MK_MNEE_NEXT_VERTEX, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
-		{advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, "AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY"},
-		{advancePathsKernel_MK_SPLAT_SAMPLE, "AdvancePaths_MK_SPLAT_SAMPLE"},
-		{advancePathsKernel_MK_NEXT_SAMPLE, "AdvancePaths_MK_NEXT_SAMPLE"},
-		{advancePathsKernel_MK_GENERATE_CAMERA_RAY, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
+		// AdvancePaths kernel (Micro-Kernels)
+		{&advancePathsKernel_MK_RT_NEXT_VERTEX, nullptr, true, "AdvancePaths_MK_RT_NEXT_VERTEX"},
+		{&advancePathsKernel_MK_HIT_NOTHING, nullptr, true, "AdvancePaths_MK_HIT_NOTHING"},
+		{&advancePathsKernel_MK_HIT_OBJECT, nullptr, true, "AdvancePaths_MK_HIT_OBJECT"},
+		{&advancePathsKernel_MK_RT_DL, nullptr, true, "AdvancePaths_MK_RT_DL"},
+		{&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"},
+		{&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"},
+		{&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"},
+		{&advancePathsKernel_MK_DL_ILLUMINATE, nullptr, true, "AdvancePaths_MK_DL_ILLUMINATE"},
+		{&advancePathsKernel_MK_DL_SAMPLE_BSDF, nullptr, true, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
+		{&advancePathsKernel_MK_MNEE_NEXT_VERTEX, nullptr, true, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
+		{&advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, nullptr, true, "AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY"},
+		{&advancePathsKernel_MK_SPLAT_SAMPLE, nullptr, true, "AdvancePaths_MK_SPLAT_SAMPLE"},
+		{&advancePathsKernel_MK_NEXT_SAMPLE, nullptr, true, "AdvancePaths_MK_NEXT_SAMPLE"},
+		{&advancePathsKernel_MK_GENERATE_CAMERA_RAY, nullptr, true, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
 		// Wavefront per-state queue builder (B2/E3): refills the queues
 		// from taskState->state once per iteration; the histogram kernel
 		// counts the per-(state, lambda) population for the host prefix.
-		{advancePathsKernel_BuildQueues, "AdvancePaths_BuildQueues"},
-		{advancePathsKernel_BucketHistogram, "AdvancePaths_BucketHistogram"},
-		{advancePathsKernel_QueuePrefix, "AdvancePaths_QueuePrefix"},
+		{&advancePathsKernel_BuildQueues, nullptr, true, "AdvancePaths_BuildQueues"},
+		{&advancePathsKernel_BucketHistogram, nullptr, true, "AdvancePaths_BucketHistogram"},
+		{&advancePathsKernel_QueuePrefix, nullptr, true, "AdvancePaths_QueuePrefix"},
 	};
-
-	advancePathsWorkGroupSize = std::numeric_limits<size_t>::max();
-
-	for (auto& [microKernel, name] : microKernels) {
-		// Compile kernel
-		auto [kernel, workGroupSize] = CompileKernel(intersectionDevice, *program, name);
-
-		// Assign to class members
-		microKernel = std::move(kernel);
-		advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
-	}
 
 	// GPU light tracing state machine (MK_LIGHT_INIT <->
 	// MK_LIGHT_VERTEX). Compiled only when a light-task population
@@ -425,17 +398,8 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// AGX::ComputeContext::performEnqueueKernel even with the feature
 	// disabled, because the kernels were enqueued unconditionally).
 	if (renderEngine->lightTaskCount > 0) {
-		std::tuple<HardwareDeviceKernelUPtr&, const char *> lightKernels[] = {
-			{advancePathsKernel_MK_LIGHT_INIT, "AdvancePaths_MK_LIGHT_INIT"},
-			{advancePathsKernel_MK_LIGHT_VERTEX, "AdvancePaths_MK_LIGHT_VERTEX"},
-		};
-
-		for (auto& [microKernel, name] : lightKernels) {
-			auto [kernel, workGroupSize] = CompileKernel(intersectionDevice, *program, name);
-
-			microKernel = std::move(kernel);
-			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
-		}
+		jobs.push_back({&advancePathsKernel_MK_LIGHT_INIT, nullptr, true, "AdvancePaths_MK_LIGHT_INIT"});
+		jobs.push_back({&advancePathsKernel_MK_LIGHT_VERTEX, nullptr, true, "AdvancePaths_MK_LIGHT_VERTEX"});
 	}
 
 	// Vertex connection (M6): eye-state kernel, compiled only when the
@@ -444,25 +408,75 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// light path infos + vertex cache (2 extra args, not the full
 	// KERNEL_ARGS_LIGHT tail - same Apple argument-limit concern).
 	if (renderEngine->taskConfig.pathTracer.vertexConnect.enabled) {
-		auto [kernel, workGroupSize] = CompileKernel(intersectionDevice,
-				*program, "AdvancePaths_MK_VC_CONNECT");
-		advancePathsKernel_MK_VC_CONNECT = std::move(kernel);
-		advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
+		jobs.push_back({&advancePathsKernel_MK_VC_CONNECT, nullptr, true, "AdvancePaths_MK_VC_CONNECT"});
 
 		// Vertex merging (M7): the spatial hash over the vertex cache is
 		// rebuilt every iteration (reset counters, re-insert all current
 		// vertices) so bucket placement always matches the positions the
 		// connect pass sees this iteration.
 		if (renderEngine->taskConfig.pathTracer.vertexConnect.mergeEnable) {
-			auto [k1, w1] = CompileKernel(intersectionDevice,
-					*program, "AdvancePaths_VCResetMergeHash");
-			advancePathsKernel_VCResetMergeHash = std::move(k1);
-			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, w1);
-			auto [k2, w2] = CompileKernel(intersectionDevice,
-					*program, "AdvancePaths_VCBuildMergeHash");
-			advancePathsKernel_VCBuildMergeHash = std::move(k2);
-			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, w2);
+			jobs.push_back({&advancePathsKernel_VCResetMergeHash, nullptr, true, "AdvancePaths_VCResetMergeHash"});
+			jobs.push_back({&advancePathsKernel_VCBuildMergeHash, nullptr, true, "AdvancePaths_VCBuildMergeHash"});
 		}
+	}
+
+	const bool parallelCompile = intersectionDevice.HasThreadSafeKernelCreation() &&
+			(jobs.size() > 1);
+	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Compiling " << jobs.size()
+			<< " kernels " << (parallelCompile ? "in parallel" : "sequentially"));
+
+	// Log-free compile core (SLG_LOG stays on this thread: it is not
+	// thread-safe). The per-job clock measures the backend compile, not
+	// the time spent queued behind other workers.
+	auto compileJob = [&](const KernelCompileJob &job) {
+		const double t0 = WallClockTime();
+		HardwareDeviceKernelUPtr kernel = intersectionDevice.GetKernel(*program, job.name);
+		size_t workGroupSize;
+		if (intersectionDevice.GetDeviceDesc().GetForceWorkGroupSize() > 0)
+			workGroupSize = intersectionDevice.GetDeviceDesc().GetForceWorkGroupSize();
+		else
+			workGroupSize = intersectionDevice.GetKernelWorkGroupSize(kernel);
+		return std::make_tuple(std::move(kernel), workGroupSize, WallClockTime() - t0);
+	};
+	typedef std::tuple<HardwareDeviceKernelUPtr, size_t, double> KernelCompileResult;
+	vector<KernelCompileResult> results(jobs.size());
+
+	if (parallelCompile) {
+		vector<std::future<KernelCompileResult>> futures;
+		futures.reserve(jobs.size());
+		for (const KernelCompileJob &job : jobs)
+			futures.push_back(std::async(std::launch::async, compileJob, std::cref(job)));
+
+		// Join EVERY worker before propagating a failure: a still-running
+		// async holds a reference to program and must not outlive it.
+		std::exception_ptr firstException;
+		for (size_t i = 0; i < futures.size(); ++i) {
+			try {
+				results[i] = futures[i].get();
+			} catch (...) {
+				if (!firstException)
+					firstException = std::current_exception();
+			}
+		}
+		if (firstException)
+			std::rethrow_exception(firstException);
+	} else {
+		for (size_t i = 0; i < jobs.size(); ++i)
+			results[i] = compileJob(jobs[i]);
+	}
+
+	// Assign results + log on this thread only (workers are gone)
+	advancePathsWorkGroupSize = std::numeric_limits<size_t>::max();
+	for (size_t i = 0; i < jobs.size(); ++i) {
+		auto &[kernel, workGroupSize, elapsed] = results[i];
+		*jobs[i].kernel = std::move(kernel);
+		if (jobs[i].workGroupSize)
+			*jobs[i].workGroupSize = workGroupSize;
+		if (jobs[i].advancePaths)
+			advancePathsWorkGroupSize = std::min(advancePathsWorkGroupSize, workGroupSize);
+		SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Compiled "
+				<< jobs[i].name << " Kernel: " << u_int(elapsed * 1000.0)
+				<< "ms, workgroup size " << workGroupSize);
 	}
 
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex

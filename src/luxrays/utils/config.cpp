@@ -51,6 +51,12 @@ std::filesystem::path GetEnvPath(const string &name) {
 }
 
 std::filesystem::path GetCacheDir() {
+	// Dev/CI override: point every backend cache (ocl_kernel_cache,
+	// cuda_kernel_cache, ...) at a throwaway directory without touching
+	// the user's real caches
+	const std::filesystem::path envCacheDir = GetEnvPath("SUPERLUXCORE_CACHE_DIR");
+	if (!envCacheDir.empty())
+		return envCacheDir;
 
 #if defined(__linux__)
 	// std::filesystem::temp_directory_path() is usually mapped to /tmp and

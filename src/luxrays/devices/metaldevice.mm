@@ -121,6 +121,15 @@ MetalDevice::MetalDevice(const Context & context,
 	[(__bridge id<MTLDevice>)device retain];
 	queue = (__bridge void *)[(__bridge id<MTLDevice>)device newCommandQueue];
 	deviceName = desc.GetName() + " MetalIntersect";
+
+	// Let Metal overlap PSO builds across threads: the PathOCL engines
+	// create their ~20 kernels concurrently on cold caches
+	if (@available(macOS 13.3, *)) {
+		id<MTLDevice> dev = (__bridge id<MTLDevice>)device;
+		dev.shouldMaximizeConcurrentCompilation = YES;
+		LR_LOG(deviceContext, "[" << deviceName << "] maximumConcurrentCompilationTaskCount: "
+				<< dev.maximumConcurrentCompilationTaskCount);
+	}
 }
 
 MetalDevice::~MetalDevice() {
@@ -229,15 +238,23 @@ static bool RunCL2MSL(const Context &ctx,
 		if (envCacheDir)
 			cacheDir = envCacheDir;
 		else {
-			const char *home = getenv("HOME");
-			if (home)
+			// SUPERLUXCORE_CACHE_DIR redirects every backend cache to a
+			// throwaway root (dev/CI cold benchmarks); the metal/ subdir
+			// keeps the same layout as ocl_kernel_cache
+			const char *envSlcCache = getenv("SUPERLUXCORE_CACHE_DIR");
+			if (envSlcCache && envSlcCache[0])
+				cacheDir = string(envSlcCache) + "/metal";
+			else {
+				const char *home = getenv("HOME");
+				if (home)
 #if defined(__APPLE__)
-				cacheDir = string(home) + "/Library/Caches/LuxCoreRender/metal";
+					cacheDir = string(home) + "/Library/Caches/LuxCoreRender/metal";
 #else
-				cacheDir = string(home) + "/.cache/luxcore/metal";
+					cacheDir = string(home) + "/.cache/luxcore/metal";
 #endif
-			else
-				cacheDir = "/tmp/luxcore_metal_cache";
+				else
+					cacheDir = "/tmp/luxcore_metal_cache";
+			}
 		}
 	}
 
@@ -571,6 +588,10 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	auto [kernel, metalDeviceKernel] =
 		CreateUniquePtr<HardwareDeviceKernel, MetalDeviceKernel>();
 
+	// GetKernel may run on InitKernels' std::async workers (raw
+	// std::threads with no NSAutoreleasePool): drain every autoreleased
+	// ObjC temporary inside this scope.
+	@autoreleasepool {
 	auto& metalDeviceProgram = dynamic_cast<MetalDeviceProgramRef>(program);
 
 	id<MTLLibrary> lib = (__bridge id<MTLLibrary>)metalDeviceProgram.library;
@@ -585,7 +606,9 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 
 	// Create the pipeline through the binary archive when available: a
 	// pipeline stored there deserializes in milliseconds instead of the
-	// 3-4s a cold compile of an AdvancePaths variant takes.
+	// 3-4s a cold compile of an AdvancePaths variant takes. Pipeline
+	// creation is thread-safe (same call pattern as Blender Cycles'
+	// Metal backend).
 	NSError *err = nil;
 	id<MTLComputePipelineState> pso;
 	MTLComputePipelineDescriptor *pd = [[MTLComputePipelineDescriptor alloc] init];
@@ -613,9 +636,10 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	// Entries already present report an error here: ignored.
 	if (archive) {
 		NSError *aerr = nil;
-		// The result is deliberately ignored: entries already in the
-		// archive report an error, and a fresh archive is written back
-		// once per key (see archiveDirty in CompileProgram).
+		// MTLBinaryArchive is not thread-safe: serialize the add across
+		// the parallel GetKernel workers (near-instant vs the compile).
+		// The result is deliberately ignored for the reasons above.
+		std::lock_guard<std::mutex> lock(metalDeviceProgram.archiveMutex);
 		[archive addComputePipelineFunctionsWithDescriptor:pd error:&aerr];
 	}
 
@@ -626,13 +650,16 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 			metalDeviceProgram.layoutJson);
 
 	// Measure the scalar bundle layout with Metal's own offsetof via
-	// the generated probe kernel (no padding guesses)
+	// the generated probe kernel (no padding guesses). Concurrent-safe:
+	// it only builds its own tiny PSO and command buffer on the shared
+	// (thread-safe) queue.
 	{
 		id<MTLDevice> probeDev = (__bridge id<MTLDevice>)device;
 		id<MTLCommandQueue> probeQueue = (__bridge id<MTLCommandQueue>)queue;
 		RunLayoutProbe(metalDeviceKernel.marsh, kernelName, lib,
 				probeDev, probeQueue);
 	}
+	}   // @autoreleasepool
 
 	return std::move(kernel);
 }
