@@ -10,6 +10,8 @@
 #
 # Run from the repo root after a Release build:
 #   python3.13 dev-tools/e47_charlie_sheen_parity.py
+#
+# Env: SUPERLUXCORE_BACKENDS=cpu,opencl,metal (leg subset, default all).
 
 import os
 import sys
@@ -30,6 +32,11 @@ WIDTH, HEIGHT = 320, 240
 SPP = 32
 TASK_COUNT = 8192
 RENDER_TIMEOUT_S = 300
+
+# SUPERLUXCORE_BACKENDS: comma-separated leg subset (default all three).
+BACKENDS = {b.strip() for b in
+        os.environ.get("SUPERLUXCORE_BACKENDS", "cpu,opencl,metal").split(",")
+        if b.strip()}
 
 
 def device_mask(want_type):
@@ -100,19 +107,26 @@ opencl.task.count = {TASK_COUNT}
 def main():
     scene = parse_scene("scenes/charlie/charlie.scn")
     legs = {}
-    legs["PATHCPU"] = render(scene, "PATHCPU")
+    if "cpu" in BACKENDS:
+        legs["PATHCPU"] = render(scene, "PATHCPU")
 
-    for dtype in ("METAL_GPU", "OPENCL_GPU"):
+    for dtype, tag in (("METAL_GPU", "metal"), ("OPENCL_GPU", "opencl")):
+        if tag not in BACKENDS:
+            continue
         mask = device_mask(dtype)
         if mask:
             legs[f"PATHOCL-{dtype}"] = render(scene, "PATHOCL", mask)
 
-    ref = legs["PATHCPU"].mean(axis=2)
-    print(f"PATHCPU mean luminance: {ref.mean():.5f} "
+    if not legs:
+        print("SKIP: no backends requested/available")
+        return
+    ref_name = "PATHCPU" if "PATHCPU" in legs else next(iter(legs))
+    ref = legs[ref_name].mean(axis=2)
+    print(f"{ref_name} mean luminance: {ref.mean():.5f} "
           f"(sanity: non-black={ref.mean() > 1e-3})")
     ok_all = ref.mean() > 1e-3
     for name, img in legs.items():
-        if name == "PATHCPU":
+        if name == ref_name:
             continue
         lum = img.mean(axis=2)
         ratio = lum.mean() / max(ref.mean(), 1e-9)

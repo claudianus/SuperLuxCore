@@ -34,6 +34,9 @@
 #
 # Run from the repo root:
 #   python3.13 dev-tools/e21_backend_parity_test.py
+#
+# Env: SUPERLUXCORE_SCENES=cornell,luxball (scene-tag subset, default all);
+#      SUPERLUXCORE_BACKENDS=cpu,opencl,metal (leg subset, default all).
 
 import os
 import sys
@@ -62,6 +65,17 @@ SCENES = [
     ("hair",          "scenes/strands/hair.scn"),
     ("luxball",       "scenes/luxball/luxball.scn"),
 ]
+
+# SUPERLUXCORE_SCENES: comma-separated scene-tag subset for dev-loop scoping.
+_scene_filter = os.environ.get("SUPERLUXCORE_SCENES", "")
+if _scene_filter.strip():
+    _want = {t.strip() for t in _scene_filter.split(",") if t.strip()}
+    SCENES = [s for s in SCENES if s[0] in _want]
+
+# SUPERLUXCORE_BACKENDS: comma-separated leg subset (default all three).
+BACKENDS = {b.strip() for b in
+        os.environ.get("SUPERLUXCORE_BACKENDS", "cpu,opencl,metal").split(",")
+        if b.strip()}
 
 results = []
 
@@ -144,13 +158,13 @@ def main():
     print(f"Cross-backend parity sweep ({len(SCENES)} scenes, "
           f"{WIDTH}x{HEIGHT} @ {SPP}spp)\n", flush=True)
 
-    ocl_mask = device_mask("OPENCL_GPU")
-    mtl_mask = device_mask("METAL_GPU")
-    print(f"  devices: OPENCL_GPU={ocl_mask} METAL_GPU={mtl_mask}",
-          flush=True)
-    if not ocl_mask or not mtl_mask:
-        print("SKIP: need both an OpenCL GPU and a Metal GPU device",
-              flush=True)
+    ocl_mask = device_mask("OPENCL_GPU") if "opencl" in BACKENDS else None
+    mtl_mask = device_mask("METAL_GPU") if "metal" in BACKENDS else None
+    print(f"  backends: {sorted(BACKENDS)} devices: "
+          f"OPENCL_GPU={ocl_mask} METAL_GPU={mtl_mask}", flush=True)
+    if ("opencl" in BACKENDS and not ocl_mask) or \
+            ("metal" in BACKENDS and not mtl_mask):
+        print("SKIP: a requested GPU backend has no device", flush=True)
         return
 
     for tag, rel in SCENES:
@@ -160,58 +174,69 @@ def main():
             record(f"{tag}.parse", True,
                    f"SKIP (scene parse failed: {str(e)[:60]})")
             continue
-        try:
-            cpu, _ = render(scene, "PATHCPU")
-        except Exception as e:
-            record(f"{tag}.cpu", True,
-                   f"SKIP (PATHCPU render failed: {str(e)[:60]})")
-            cpu = None
-        try:
-            ocl, ocl_dev = render(scene, "PATHOCL", sel=ocl_mask)
-        except Exception as e:
-            record(f"{tag}.ocl", True,
-                   f"SKIP (OpenCL render failed: {str(e)[:60]})")
-            continue
-        try:
-            mtl, mtl_dev = render(scene, "PATHOCL", sel=mtl_mask)
-        except Exception as e:
-            record(f"{tag}.mtl", True,
-                   f"SKIP (Metal render failed: {str(e)[:60]})")
+        cpu = ocl = mtl = None
+        ocl_dev = mtl_dev = set()
+        leg_failed = False
+        if "cpu" in BACKENDS:
+            try:
+                cpu, _ = render(scene, "PATHCPU")
+            except Exception as e:
+                record(f"{tag}.cpu", True,
+                       f"SKIP (PATHCPU render failed: {str(e)[:60]})")
+        if "opencl" in BACKENDS:
+            try:
+                ocl, ocl_dev = render(scene, "PATHOCL", sel=ocl_mask)
+            except Exception as e:
+                record(f"{tag}.ocl", True,
+                       f"SKIP (OpenCL render failed: {str(e)[:60]})")
+                leg_failed = True
+        if "metal" in BACKENDS:
+            try:
+                mtl, mtl_dev = render(scene, "PATHOCL", sel=mtl_mask)
+            except Exception as e:
+                record(f"{tag}.mtl", True,
+                       f"SKIP (Metal render failed: {str(e)[:60]})")
+                leg_failed = True
+        if leg_failed or (ocl is None and mtl is None and cpu is None):
             continue
 
-        print(f"  [{tag}] cpu={cpu.mean():.4f} ocl={ocl.mean():.4f} "
-              f"mtl={mtl.mean():.4f}", flush=True)
+        means = " ".join(f"{n}={i.mean():.4f}" for n, i in
+                (("cpu", cpu), ("ocl", ocl), ("mtl", mtl)) if i is not None)
+        print(f"  [{tag}] {means}", flush=True)
         record(f"{tag}.device-assert",
-               any("Metal" in d for d in mtl_dev) and
-               any("OpenCL" in d for d in ocl_dev),
+               (ocl is None or any("OpenCL" in d for d in ocl_dev)) and
+               (mtl is None or any("Metal" in d for d in mtl_dev)),
                f"mtl={sorted(mtl_dev)} ocl={sorted(ocl_dev)}")
         record(f"{tag}.finite",
-               np.isfinite(mtl).all() and np.isfinite(ocl).all() and
-               (cpu is None or np.isfinite(cpu).all()),
+               all(np.isfinite(i).all()
+                   for i in (cpu, ocl, mtl) if i is not None),
                "all pixels finite")
 
-        # Per-pixel ratio on pixels bright enough to matter: black
-        # background pixels make 0/eps ratios meaningless (a scene that
-        # is half-black reports p50=0 even when identical).
-        floor = max(float(ocl.mean()) * 0.05, 1e-6)
-        lit = ocl > floor
-        if lit.any():
-            r = mtl[lit] / ocl[lit]
-            p50 = float(np.percentile(r, 50))
-            p99 = float(np.percentile(r, 99))
-            hot = float(np.mean(np.abs(mtl[lit] - ocl[lit]) /
-                                ocl[lit] > 0.30))
-            record(f"{tag}.mtl-vs-ocl-pixel",
-                   0.95 < p50 < 1.05 and 0.80 < p99 < 1.30 and
-                   hot < 0.01,
-                   f"lit-pixel ratio p50={p50:.3f} p99={p99:.3f} "
-                   f">30%-diff fraction={hot * 100:.2f}%")
-        else:
-            record(f"{tag}.mtl-vs-ocl-pixel", True,
-                   "SKIP (no pixels above 5% of mean)")
+        if ocl is not None and mtl is not None:
+            # Per-pixel ratio on pixels bright enough to matter: black
+            # background pixels make 0/eps ratios meaningless (a scene
+            # that is half-black reports p50=0 even when identical).
+            floor = max(float(ocl.mean()) * 0.05, 1e-6)
+            lit = ocl > floor
+            if lit.any():
+                r = mtl[lit] / ocl[lit]
+                p50 = float(np.percentile(r, 50))
+                p99 = float(np.percentile(r, 99))
+                hot = float(np.mean(np.abs(mtl[lit] - ocl[lit]) /
+                                    ocl[lit] > 0.30))
+                record(f"{tag}.mtl-vs-ocl-pixel",
+                       0.95 < p50 < 1.05 and 0.80 < p99 < 1.30 and
+                       hot < 0.01,
+                       f"lit-pixel ratio p50={p50:.3f} p99={p99:.3f} "
+                       f">30%-diff fraction={hot * 100:.2f}%")
+            else:
+                record(f"{tag}.mtl-vs-ocl-pixel", True,
+                       "SKIP (no pixels above 5% of mean)")
 
         if cpu is not None:
             for name, img in (("ocl", ocl), ("mtl", mtl)):
+                if img is None:
+                    continue
                 record(f"{tag}.{name}-vs-cpu-mean",
                        abs(float(img.mean()) - float(cpu.mean())) /
                        max(float(cpu.mean()), 1e-12) < 0.10,

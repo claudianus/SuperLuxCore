@@ -16,6 +16,9 @@
 #
 # Run from the repo root:
 #   python3.13 dev-tools/e49_sellmeier_dispersion.py
+#
+# Env: SUPERLUXCORE_BACKENDS=cpu,opencl,metal (leg subset, default all);
+#      E49_OCL_DEV overrides the PATHOCL opencl.devices.select mask.
 
 import os
 import sys
@@ -33,6 +36,39 @@ SPP = 96
 RENDER_TIMEOUT_S = 900
 OCL_DEV = os.environ.get("E49_OCL_DEV", "")
 
+# SUPERLUXCORE_BACKENDS: comma-separated leg subset (default all three).
+BACKENDS = {b.strip() for b in
+        os.environ.get("SUPERLUXCORE_BACKENDS", "cpu,opencl,metal").split(",")
+        if b.strip()}
+
+
+def select_mask(want_type):
+    pysuperluxcore.Init()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
+    mask = ""
+    i = 0
+    while True:
+        try:
+            t = descs.Get(f"opencl.device.{i}.type").GetString()
+        except Exception:
+            break
+        mask += "1" if t == want_type else "0"
+        i += 1
+    return mask or None
+
+
+def legs():
+    """Requested render legs as (name, engine, sel) in preference order."""
+    out = []
+    if "cpu" in BACKENDS:
+        out.append(("cpu", "PATHCPU", None))
+    for name, dtype in (("opencl", "OPENCL_GPU"), ("metal", "METAL_GPU")):
+        if name in BACKENDS:
+            mask = OCL_DEV or select_mask(dtype)
+            if mask:
+                out.append((name, "PATHOCL", mask))
+    return out
+
 CAMERA = """
 scene.camera.lookat.orig = -2.78 1.6 3.28
 scene.camera.lookat.target = -2.78 2.76 3.28
@@ -46,9 +82,10 @@ scene.lights.env.gain = 1.0 1.0 1.0
 """
 
 
-def render(props_str, engine, seed=17):
+def render(props_str, engine, sel=None, seed=17):
     cfg = pysuperluxcore.Properties()
-    extra = f'opencl.devices.select = "{OCL_DEV}"' if OCL_DEV else ""
+    dev = sel if sel is not None else OCL_DEV
+    extra = f'opencl.devices.select = "{dev}"' if dev else ""
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -99,23 +136,31 @@ def chroma(img):
 
 
 def parity(name, props, tol=0.15):
-    cpu = render(props, "PATHCPU")
-    gpu = render(props, "PATHOCL")
-    if not np.isfinite(cpu).all() or not np.isfinite(gpu).all():
+    engines = legs()
+    if not engines:
+        print(f"SKIP: {name} (no backends requested/available)")
+        return None
+    imgs = [(n, render(props, eng, sel)) for n, eng, sel in engines]
+    if not all(np.isfinite(i).all() for _, i in imgs):
         print(f"FAIL: NaN/inf in {name}")
         sys.exit(1)
-    cl, gl = cpu.mean(axis=2), gpu.mean(axis=2)
-    mask = (cl > 1e-3) & (gl > 1e-3)
-    if not mask.any():
-        print(f"FAIL: {name} rendered black")
-        sys.exit(1)
-    ratio = np.abs(cl[mask] - gl[mask]) / np.maximum(cl[mask], gl[mask])
-    print(f"{name}: cpu mean {cl[mask].mean():.4f} gpu {gl[mask].mean():.4f} "
-          f"rel.mean {ratio.mean():.4f} p95 {np.percentile(ratio, 95):.4f}")
-    if ratio.mean() > tol:
-        print(f"FAIL: {name} CPU/GPU parity out of tolerance")
-        sys.exit(1)
-    return cpu
+    ref_name, ref_img = imgs[0]
+    rl = ref_img.mean(axis=2)
+    for leg_name, img in imgs[1:]:
+        cl, gl = rl, img.mean(axis=2)
+        mask = (cl > 1e-3) & (gl > 1e-3)
+        if not mask.any():
+            print(f"FAIL: {name} rendered black")
+            sys.exit(1)
+        ratio = np.abs(cl[mask] - gl[mask]) / np.maximum(cl[mask], gl[mask])
+        print(f"{name}: {ref_name} mean {cl[mask].mean():.4f} {leg_name} "
+              f"{gl[mask].mean():.4f} rel.mean {ratio.mean():.4f} "
+              f"p95 {np.percentile(ratio, 95):.4f}")
+        if ratio.mean() > tol:
+            print(f"FAIL: {name} {leg_name}/{ref_name} parity out of "
+                  "tolerance")
+            sys.exit(1)
+    return ref_img
 
 
 def main():
@@ -139,7 +184,10 @@ scene.materials.ball.exteriorior = 1.0
 """)
 
     img_sell = parity("glass sellmeier N-SF6", sell)
-    img_plain = render(plain, "PATHCPU")
+    if img_sell is None:
+        sys.exit(0)
+    ref_engine, ref_sel = legs()[0][1:3]
+    img_plain = render(plain, ref_engine, ref_sel)
     sat_sell, frac_sell = chroma(img_sell)
     sat_plain, frac_plain = chroma(img_plain)
     print(f"sellmeier: mean {img_sell.mean():.3f} sat {sat_sell:.3f} "

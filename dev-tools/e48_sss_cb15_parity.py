@@ -12,6 +12,9 @@
 #
 # Run from the repo root:
 #   python3.13 dev-tools/e48_sss_cb15_parity.py
+#
+# Env: SUPERLUXCORE_BACKENDS=cpu,opencl,metal (leg subset, default all);
+#      E48_OCL_DEV overrides the PATHOCL opencl.devices.select mask.
 
 import os
 import sys
@@ -29,10 +32,31 @@ SPP = 128
 RENDER_TIMEOUT_S = 900
 OCL_DEV = os.environ.get("E48_OCL_DEV", "")
 
+# SUPERLUXCORE_BACKENDS: comma-separated leg subset (default all three).
+BACKENDS = {b.strip() for b in
+        os.environ.get("SUPERLUXCORE_BACKENDS", "cpu,opencl,metal").split(",")
+        if b.strip()}
 
-def render(scene, engine, seed=17):
+
+def select_mask(want_type):
+    pysuperluxcore.Init()
+    descs = pysuperluxcore.GetOpenCLDeviceDescs()
+    mask = ""
+    i = 0
+    while True:
+        try:
+            t = descs.Get(f"opencl.device.{i}.type").GetString()
+        except Exception:
+            break
+        mask += "1" if t == want_type else "0"
+        i += 1
+    return mask or None
+
+
+def render(scene, engine, sel=None, seed=17):
     cfg = pysuperluxcore.Properties()
-    extra = f'opencl.devices.select = "{OCL_DEV}"' if OCL_DEV else ""
+    dev = sel if sel is not None else OCL_DEV
+    extra = f'opencl.devices.select = "{dev}"' if dev else ""
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -94,7 +118,7 @@ def parse(props_str):
     return scene
 
 
-def cb15_furnace(albedo, mfp=0.05, g=0.0, ior=1.0, engine="PATHCPU"):
+def cb15_furnace(albedo, mfp=0.05, g=0.0, ior=1.0, engine="PATHCPU", sel=None):
     return render(parse(f"""{CAMERA}
 scene.volumes.sss.type = homogeneous
 scene.volumes.sss.ior = {ior}
@@ -112,7 +136,7 @@ scene.materials.ball.exteriorior = 1.0
 scene.materials.ball.volume.interior = sss
 scene.objects.ball.material = ball
 scene.objects.ball.ply = scenes/cornell/sphere-mid.ply
-{FURNACE}"""), engine)
+{FURNACE}"""), engine, sel)
 
 
 def expect(name, img, target, tol=0.15):
@@ -130,7 +154,26 @@ def expect(name, img, target, tol=0.15):
     return mean
 
 
+def legs():
+    """Requested render legs as (name, engine, sel) in preference order."""
+    out = []
+    if "cpu" in BACKENDS:
+        out.append(("cpu", "PATHCPU", None))
+    for name, dtype in (("opencl", "OPENCL_GPU"), ("metal", "METAL_GPU")):
+        if name in BACKENDS:
+            mask = OCL_DEV or select_mask(dtype)
+            if mask:
+                out.append((name, "PATHOCL", mask))
+    return out
+
+
 def main():
+    engines = legs()
+    if not engines:
+        print("SKIP: no backends requested/available")
+        return
+    ref_name, ref_engine, ref_sel = engines[0]
+
     # Albedo round-trip under the CB15 inversion. Index-matched (ior=1)
     # cases reduce to the exact vdH remap. Refractive interior (ior=1.4,
     # surface ior matched so Fresnel trapping is real) uses the
@@ -139,24 +182,28 @@ def main():
     # vs the plain vdH remap (0.243 vs 0.170 measured at A=0.3) rather
     # than eliminating it; looser tolerance there.
     for a in (1.0, 0.8, 0.5, 0.3):
-        expect(f"cb15 furnace A={a}", cb15_furnace(a), a)
-        expect(f"cb15 furnace A={a} ior=1.4", cb15_furnace(a, ior=1.4), a,
-                tol=0.25)
+        expect(f"cb15 furnace A={a}",
+               cb15_furnace(a, engine=ref_engine, sel=ref_sel), a)
+        expect(f"cb15 furnace A={a} ior=1.4",
+               cb15_furnace(a, ior=1.4, engine=ref_engine, sel=ref_sel), a,
+               tol=0.25)
 
     # Anisotropy defold: same requested albedo out of g=0.6.
-    expect("cb15 furnace A=0.5 g=0.6", cb15_furnace(0.5, g=0.6), 0.5)
+    expect("cb15 furnace A=0.5 g=0.6",
+           cb15_furnace(0.5, g=0.6, engine=ref_engine, sel=ref_sel), 0.5)
 
-    # CPU/GPU parity (Newton-solve mirror in volume_funcs.cl).
-    cpu = cb15_furnace(0.5, engine="PATHCPU")
-    gpu = cb15_furnace(0.5, engine="PATHOCL")
-    cl, gl = cpu.mean(axis=2), gpu.mean(axis=2)
-    mask = cl > 1e-3
-    ratio = np.abs(cl[mask] - gl[mask]) / np.maximum(cl[mask], gl[mask])
-    print(f"cb15 parity: mean rel. error {ratio.mean():.4f}, "
-          f"p95 {np.percentile(ratio, 95):.4f}")
-    if ratio.mean() > 0.15:
-        print("FAIL: CPU/GPU parity out of tolerance")
-        sys.exit(1)
+    # Cross-backend parity (Newton-solve mirror in volume_funcs.cl): each
+    # requested leg vs the first (cpu when present).
+    ref = cb15_furnace(0.5, engine=ref_engine, sel=ref_sel).mean(axis=2)
+    for name, engine, sel in engines[1:]:
+        gpu = cb15_furnace(0.5, engine=engine, sel=sel).mean(axis=2)
+        mask = ref > 1e-3
+        ratio = np.abs(ref[mask] - gpu[mask]) / np.maximum(ref[mask], gpu[mask])
+        print(f"cb15 parity {name}-vs-{ref_name}: mean rel. error "
+              f"{ratio.mean():.4f}, p95 {np.percentile(ratio, 95):.4f}")
+        if ratio.mean() > 0.15:
+            print(f"FAIL: {name}/{ref_name} parity out of tolerance")
+            sys.exit(1)
 
     print("PASS")
 

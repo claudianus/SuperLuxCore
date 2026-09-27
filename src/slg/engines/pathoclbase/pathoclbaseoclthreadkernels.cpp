@@ -420,8 +420,11 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		}
 	}
 
+	// SUPERLUXCORE_SERIAL_KERNELS (set, non-empty): escape hatch for
+	// debugging/driver issues - forces the sequential compile loop.
+	const char *serialKernelsEnv = getenv("SUPERLUXCORE_SERIAL_KERNELS");
 	const bool parallelCompile = intersectionDevice.HasThreadSafeKernelCreation() &&
-			(jobs.size() > 1);
+			(jobs.size() > 1) && !(serialKernelsEnv && *serialKernelsEnv);
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Compiling " << jobs.size()
 			<< " kernels " << (parallelCompile ? "in parallel" : "sequentially"));
 
