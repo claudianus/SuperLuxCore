@@ -36,7 +36,7 @@ SPP = 128
 RENDER_TIMEOUT_S = 900
 # PATHOCL device mask; length must match the enumerated device count
 # (1 device -> "1"). Override with E35_OCL_DEV on multi-GPU machines.
-OCL_DEV = os.environ.get("E35_OCL_DEV", "1")
+OCL_DEV = os.environ.get("E35_OCL_DEV", "")
 
 
 def render(scene, engine, seed=17):
@@ -45,7 +45,7 @@ def render(scene, engine, seed=17):
     # would hide reflectance differences in a white furnace. Deep pathdepth
     # for the random walk: volume scatter vertices are DIFFUSE events, so
     # the per-type depth must be raised too (defaults: diffuse/glossy 4).
-    extra = f'opencl.devices.select = "{OCL_DEV}"' if engine == "PATHOCL" else ""
+    extra = f'opencl.devices.select = "{OCL_DEV}"' if OCL_DEV else ""
     cfg.SetFromString(f"""
 film.width = {WIDTH}
 film.height = {HEIGHT}
@@ -175,8 +175,12 @@ scene.objects.ball.ply = scenes/cornell/sphere-mid.ply
 
 def glass_furnace(albedo, ior, mfp=0.05, engine="PATHCPU"):
     # Reference: same SSS volume behind a glass boundary at a given IOR.
+    # sssprofile=cb15 matches the profile the OpenPBR implicit SSS
+    # volume uses (OpenPBR subsurface_radius is a diffusion radius).
     return render(parse(f"""{CAMERA}
 scene.volumes.sss.type = homogeneous
+scene.volumes.sss.ior = {ior}
+scene.volumes.sss.sssprofile = cb15
 scene.volumes.sss.sssalbedo = {albedo} {albedo} {albedo}
 scene.volumes.sss.sssmfp = {mfp} {mfp} {mfp}
 scene.volumes.sss.asymmetry = 0.0 0.0 0.0
