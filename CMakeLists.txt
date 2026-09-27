@@ -231,9 +231,12 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
 # Additional dependencies for luxcoreui
-find_package(imgui)
-find_package(glfw3)
-find_package(imguifiledialog)
+option(LUXCORE_BUILD_UI "Build the luxcoreui sample application" ON)
+if(LUXCORE_BUILD_UI)
+	find_package(imgui)
+	find_package(glfw3)
+	find_package(imguifiledialog)
+endif()
 
 # Documentation
 find_package(Doxygen)
@@ -379,7 +382,9 @@ endif()
 
 add_subdirectory(samples/luxcoreconsole)
 
-add_subdirectory(samples/luxcoreui)
+if(LUXCORE_BUILD_UI)
+	add_subdirectory(samples/luxcoreui)
+endif()
 
 
 ################################################################################
