@@ -18,6 +18,7 @@
 
 #include "slg/engines/lightcpu/lightcpu.h"
 #include "slg/engines/lightcpu/lightcpurenderstate.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/cameras/camera.h"
 
 using namespace luxrays;

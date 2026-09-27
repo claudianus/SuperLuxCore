@@ -19,7 +19,10 @@
 #include "luxrays/core/dataset.h"
 #include "luxrays/core/intersectiondevice.h"
 #include "slg/core/sdl.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/cameras/camera.h"
 #include "slg/lights/pointlight.h"
 #include "slg/lights/spotlight.h"
@@ -76,13 +79,13 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 		// SetCurvePrimitivesEnabled). Recomputed on every data set build:
 		// reset all, then disable for any object that emits light (a mesh
 		// shared by multiple objects stays disabled if any is a source).
-		for (u_int i = 0; i < objDefs.GetSize(); ++i) {
+		for (u_int i = 0; i < objDefs->GetSize(); ++i) {
 			if (ExtTriangleMesh *mesh = const_cast<ExtTriangleMesh *>(
-					ExtTriangleMesh::FromMesh(&objDefs.GetSceneObject(i).GetExtMesh())))
+					ExtTriangleMesh::FromMesh(&objDefs->GetSceneObject(i).GetExtMesh())))
 				mesh->SetCurvePrimitivesEnabled(true);
 		}
-		for (u_int i = 0; i < objDefs.GetSize(); ++i) {
-			const SceneObject &so = objDefs.GetSceneObject(i);
+		for (u_int i = 0; i < objDefs->GetSize(); ++i) {
+			const SceneObject &so = objDefs->GetSceneObject(i);
 			if (so.GetMaterial().IsLightSource()) {
 				if (ExtTriangleMesh *mesh = const_cast<ExtTriangleMesh *>(
 						ExtTriangleMesh::FromMesh(&so.GetExtMesh())))
@@ -91,8 +94,8 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 		}
 
 		// Add all objects
-		for (u_int i = 0; i < objDefs.GetSize(); ++i)
-			dataSet->Add(objDefs.GetSceneObject(i).GetExtMesh());
+		for (u_int i = 0; i < objDefs->GetSize(); ++i)
+			dataSet->Add(objDefs->GetSceneObject(i).GetExtMesh());
 
 		dataSet->Preprocess();
 
@@ -151,11 +154,11 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 			editActions.Has(LIGHTS_EDIT) ||
 			editActions.Has(LIGHT_TYPES_EDIT) ||
 			editActions.Has(IMAGEMAPS_EDIT)) {
-		lightDefs.Preprocess(*this, useRTMode);
+		lightDefs->Preprocess(*this, useRTMode);
 	}
 
 	// And for visibility maps
-	lightDefs.UpdateVisibilityMaps(*this, useRTMode);
+	lightDefs->UpdateVisibilityMaps(*this, useRTMode);
 
 	//--------------------------------------------------------------------------
 	// Collect the point-ish lights eligible for equiangular distance
@@ -165,8 +168,8 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 
 	equiangularLightPoints.clear();
 	equiangularLightLuminances.clear();
-	for (u_int i = 0; i < lightDefs.GetSize(); ++i) {
-		auto& light = lightDefs.GetLightSource(i);
+	for (u_int i = 0; i < lightDefs->GetSize(); ++i) {
+		auto& light = lightDefs->GetLightSource(i);
 		Point pos;
 		switch (light.GetType()) {
 			case TYPE_POINT:
@@ -241,8 +244,8 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 void Scene::PreprocessVolumes(const BBox &sceneBBox) {
 	// Check if there is anything to do
 	bool hasTrackingVolume = false;
-	for (u_int i = 0; i < matDefs.GetSize(); ++i) {
-		auto& m = matDefs.GetMaterial(i);
+	for (u_int i = 0; i < matDefs->GetSize(); ++i) {
+		auto& m = matDefs->GetMaterial(i);
 		if ((m.GetType() == HETEROGENEOUS_VOL) &&
 				static_cast<const HeterogeneousVolume &>(m).IsDeltaTracking()) {
 			hasTrackingVolume = true;
@@ -255,8 +258,8 @@ void Scene::PreprocessVolumes(const BBox &sceneBBox) {
 	std::unordered_map<const Volume *, BBox> interiorDomains;
 	std::unordered_set<const Volume *> unboundedVolumes;
 
-	for (u_int i = 0; i < objDefs.GetSize(); ++i) {
-		auto& obj = objDefs.GetSceneObject(i);
+	for (u_int i = 0; i < objDefs->GetSize(); ++i) {
+		auto& obj = objDefs->GetSceneObject(i);
 		auto& mat = obj.GetMaterial();
 
 		if (auto v = mat.GetInteriorVolume())
@@ -269,8 +272,8 @@ void Scene::PreprocessVolumes(const BBox &sceneBBox) {
 	if (defaultWorldVolume)
 		unboundedVolumes.insert(&*defaultWorldVolume);
 
-	for (u_int i = 0; i < matDefs.GetSize(); ++i) {
-		auto& m = matDefs.GetMaterial(i);
+	for (u_int i = 0; i < matDefs->GetSize(); ++i) {
+		auto& m = matDefs->GetMaterial(i);
 		if (m.GetType() != HETEROGENEOUS_VOL)
 			continue;
 		auto& hv = static_cast<HeterogeneousVolume &>(m);

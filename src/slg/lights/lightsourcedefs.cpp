@@ -21,7 +21,10 @@
 #include <boost/algorithm/string/predicate.hpp>
 
 #include "slg/lights/light.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/lights/trianglelight.h"
 #include "slg/lights/strategies/logpower.h"
 #include "slg/usings.h"

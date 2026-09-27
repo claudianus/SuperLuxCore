@@ -18,6 +18,7 @@
 
 #include "slg/engines/pathcpu/pathcpu.h"
 #include "slg/engines/pathcpu/pathcpurenderstate.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/film/filters/filter.h"
 #include "slg/samplers/sobol.h"
 #include "slg/samplers/metropolis.h"

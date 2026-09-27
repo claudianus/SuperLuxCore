@@ -22,6 +22,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <memory>
 
 #include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/core/geometry/bsphere.h"
@@ -31,12 +32,18 @@
 #include "slg/usings.h"
 #include "slg/utils/pathinfo.h"
 #include "slg/editaction.h"
-#include "slg/lights/lightsourcedefs.h"
+#include "slg/bsdf/bsdfevents.h"
 #include "slg/shapes/strands.h"
-#include "slg/textures/texturedefs.h"
-#include "slg/materials/materialdefs.h"
-#include "slg/scene/sceneobjectdefs.h"
 #include "slg/scene/colorspaceconverters.h"
+#include "slg/scene/extmeshcache.h"
+#include "slg/imagemap/imagemapcache.h"
+
+// NOTE: texDefs/matDefs/objDefs/lightDefs are held by unique_ptr so this
+// header only needs forward declarations of the *Definitions classes
+// (provided by slg/usings.h DECLARE_SUBTYPES). Translation units that use
+// them must include the matching header themselves:
+//   slg/textures/texturedefs.h, slg/materials/materialdefs.h,
+//   slg/scene/sceneobjectdefs.h, slg/lights/lightsourcedefs.h
 
 namespace luxrays {
 	class cyHairFile;
@@ -257,17 +264,17 @@ public:
 		return *camera;
 	}
 
-	auto& GetTextures() { return texDefs; }
-	const auto& GetTextures() const { return texDefs; }
+	auto& GetTextures() { return *texDefs; }
+	const auto& GetTextures() const { return *texDefs; }
 
-	auto& GetMaterials() { return matDefs; }
-	const auto& GetMaterials() const { return matDefs; }
+	auto& GetMaterials() { return *matDefs; }
+	const auto& GetMaterials() const { return *matDefs; }
 
-	auto& GetObjects() { return objDefs; }
-	const auto& GetObjects() const { return objDefs; }
+	auto& GetObjects() { return *objDefs; }
+	const auto& GetObjects() const { return *objDefs; }
 
-	auto& GetLightSources() { return lightDefs; }
-	const auto& GetLightSources() const { return lightDefs; }
+	auto& GetLightSources() { return *lightDefs; }
+	const auto& GetLightSources() const { return *lightDefs; }
 
 	// World positions of point-ish lights eligible for equiangular
 	// distance sampling (built by Scene::Preprocess)
@@ -337,10 +344,13 @@ protected:
 	ExtMeshCache extMeshCache; // Mesh objects cache
 	ImageMapCache imgMapCache; // Image maps cache
 
-	TextureDefinitions texDefs; // Texture definitions
-	MaterialDefinitions matDefs; // Material definitions
-	SceneObjectDefinitions objDefs; // SceneObject definitions
-	LightSourceDefinitions lightDefs; // LightSource definitions
+	// Definition containers are held by unique_ptr so this header only
+	// needs their forward declarations (see include note above). They are
+	// allocated in Scene::Init() and are never null for a live Scene.
+	TextureDefinitionsUPtr texDefs; // Texture definitions
+	MaterialDefinitionsUPtr matDefs; // Material definitions
+	SceneObjectDefinitionsUPtr objDefs; // SceneObject definitions
+	LightSourceDefinitionsUPtr lightDefs; // LightSource definitions
 
 	// Light linking: named group -> bit index (insertion order = bit order)
 	std::unordered_map<std::string, u_int> linkGroupTable;

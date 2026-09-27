@@ -19,6 +19,8 @@
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include "slg/engines/pathoclbase/compiledscene.h"
+#include "slg/materials/materialdefs.h"
+#include "slg/scene/sceneobjectdefs.h"
 
 using namespace std;
 using namespace luxrays;

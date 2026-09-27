@@ -18,6 +18,8 @@
 
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/materials/glass.h"
 #include <memory>
 

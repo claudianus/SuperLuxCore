@@ -21,6 +21,7 @@
 #include "luxrays/utils/thread.h"
 
 #include "slg/engines/bakecpu/bakecpu.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/volumes/volume.h"
 #include "slg/utils/varianceclamping.h"
 #include "slg/film/imagepipeline/plugins/bakemapmargin.h"

@@ -22,7 +22,10 @@
 #include <boost/format.hpp>
 
 #include "luxrays/usings.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/textures/constfloat.h"
 #include "slg/textures/constfloat3.h"
 
@@ -58,9 +61,9 @@ void Scene::ParseVolumes(const Properties &props) {
 		// in matDefs too.
 		auto newMat = CreateVolume(volID, volName, props);
 
-		if (matDefs.IsMaterialDefined(volName)) {
+		if (matDefs->IsMaterialDefined(volName)) {
 			// A replacement for an existing material
-			MaterialConstRef oldMatRef = matDefs.GetMaterial(volName);
+			MaterialConstRef oldMatRef = matDefs->GetMaterial(volName);
 
 			// Check if it is not a volume
 			if (!dynamic_cast<const Volume *>(&oldMatRef))
@@ -69,12 +72,12 @@ void Scene::ParseVolumes(const Properties &props) {
 			// Volumes can not be a (directly sampled) light source
 			//const bool wasLightSource = oldMat->IsLightSource();
 
-			auto [newMatRef, oldMatPtr] = matDefs.DefineMaterial(std::move(newMat));
+			auto [newMatRef, oldMatPtr] = matDefs->DefineMaterial(std::move(newMat));
 			assert(oldMatRef == *oldMatPtr);
 
 			// Replace old material direct references with new one
-			objDefs.UpdateMaterialReferences(oldMatRef, newMatRef);
-			//lightDefs.UpdateMaterialReferences(oldMat, newMat);
+			objDefs->UpdateMaterialReferences(oldMatRef, newMatRef);
+			//lightDefs->UpdateMaterialReferences(oldMat, newMat);
 
 			// Check also the camera volume
 			if (camera)
@@ -83,7 +86,7 @@ void Scene::ParseVolumes(const Properties &props) {
 					static_cast<const Volume &>(newMatRef)
 				);
 			// Check also the light source volumes
-			lightDefs.UpdateVolumeReferences(
+			lightDefs->UpdateVolumeReferences(
 				static_cast<const Volume &>(oldMatRef),
 				static_cast<Volume &>(newMatRef)
 			);
@@ -99,13 +102,13 @@ void Scene::ParseVolumes(const Properties &props) {
 			moveToTrash(std::move(oldMatPtr));
 		} else {
 			// Only a new Material
-			matDefs.DefineMaterial(std::move(newMat));
+			matDefs->DefineMaterial(std::move(newMat));
 		}
 	}
 
 	if (props.IsDefined("scene.world.volume.default")) {
 		const string volName = props.Get("scene.world.volume.default").Get<string>();
-		MaterialConstRef m = matDefs.GetMaterial(volName);
+		MaterialConstRef m = matDefs->GetMaterial(volName);
 		auto* v = dynamic_cast<const Volume *>(&m);
 		if (!v)
 			throw runtime_error(volName + " is not a volume and can not be used for default world volume");

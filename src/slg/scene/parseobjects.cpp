@@ -17,6 +17,9 @@
  ***************************************************************************/
 
 #include "slg/scene/scene.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/utils/filenameresolver.h"
 
 using namespace std;
@@ -56,9 +59,9 @@ void Scene::ParseObjects(const Properties &props) {
 		if (objName == "")
 			throw runtime_error("Syntax error in " + key);
 
-		if (objDefs.IsSceneObjectDefined(objName)) {
+		if (objDefs->IsSceneObjectDefined(objName)) {
 			// A replacement for an existing object
-			auto& oldObj = objDefs.GetSceneObject(objName);
+			auto& oldObj = objDefs->GetSceneObject(objName);
 			const bool wasLightSource = oldObj.GetMaterial().IsLightSource();
 
 			// Check if the old object was a light source
@@ -66,22 +69,22 @@ void Scene::ParseObjects(const Properties &props) {
 				editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 
 				// Delete all old triangle lights
-				lightDefs.DeleteLightSourceStartWith(Scene::EncodeTriangleLightNamePrefix(oldObj.GetName()));
+				lightDefs->DeleteLightSourceStartWith(Scene::EncodeTriangleLightNamePrefix(oldObj.GetName()));
 			}
 		}
 
 		// In order to have harlequin colors with OBJECT_ID output
 		const u_int objID = NameToObjectID(objName);
 		auto objptr = CreateObject(objID, objName, props);
-		//SceneObjectRef obj = objDefs.DefineSceneObject(objptr);
-		auto [obj, oldObjPtr] = objDefs.DefineSceneObject(std::move(objptr));
+		//SceneObjectRef obj = objDefs->DefineSceneObject(objptr);
+		auto [obj, oldObjPtr] = objDefs->DefineSceneObject(std::move(objptr));
 
 		// Check if it is a light source
 		auto& mat = obj.GetMaterial();
 		if (mat.IsLightSource()) {
 			SDL_LOG("The " << objName << " object is a light sources with " << obj.GetExtMesh().GetTotalTriangleCount() << " triangles");
 
-			objDefs.DefineIntersectableLights(lightDefs, obj);
+			objDefs->DefineIntersectableLights(*lightDefs, obj);
 		}
 
 		++objCount;
@@ -106,9 +109,9 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 		throw runtime_error("Syntax error in object material reference: " + objName);
 
 	// Get the material
-	if (!matDefs.IsMaterialDefined(matName))
+	if (!matDefs->IsMaterialDefined(matName))
 		throw runtime_error("Unknown material: " + matName);
-	MaterialRef mat = matDefs.GetMaterial(matName);
+	MaterialRef mat = matDefs->GetMaterial(matName);
 
 	// Get the mesh
 	string shapeName;
@@ -244,7 +247,7 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 
 void Scene::DuplicateObject(const std::string &srcObjName, const std::string &dstObjName,
 		const luxrays::Transform &trans, const u_int dstObjID) {
-	auto& srcObj = objDefs.GetSceneObject(srcObjName);
+	auto& srcObj = objDefs->GetSceneObject(srcObjName);
 
 	// Check the type of mesh
 	std::string instanceShapeName;
@@ -298,7 +301,7 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 	dstObj->SetLinkGroups(srcObj.GetLinkGroupMask(), srcObj.GetLinkExclude());
 
 	dstObj->SetName(dstObjName);
-	auto [dstObjRef, oldObjPtr] = objDefs.DefineSceneObject(std::move(dstObj));
+	auto [dstObjRef, oldObjPtr] = objDefs->DefineSceneObject(std::move(dstObj));
 
 	// Check if it is a light source
 	auto& mat = dstObjRef.GetMaterial();
@@ -308,7 +311,7 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 			<< dstObjRef.GetExtMesh().GetTotalTriangleCount() << " triangles"
 		);
 
-		objDefs.DefineIntersectableLights(lightDefs, dstObjRef);
+		objDefs->DefineIntersectableLights(*lightDefs, dstObjRef);
 	}
 
 	editActions.AddActions(GEOMETRY_EDIT);
@@ -316,7 +319,7 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 
 void Scene::DuplicateObject(const std::string &srcObjName, const std::string &dstObjName,
 		const MotionSystem &ms, const u_int dstObjID) {
-	auto& srcObj = objDefs.GetSceneObject(srcObjName);
+	auto& srcObj = objDefs->GetSceneObject(srcObjName);
 
 	// Check the type of mesh
 	std::string motionShapeName;
@@ -368,14 +371,14 @@ void Scene::DuplicateObject(const std::string &srcObjName, const std::string &ds
 	dstObj->SetLinkGroups(srcObj.GetLinkGroupMask(), srcObj.GetLinkExclude());
 
 	dstObj->SetName(dstObjName);
-	auto [dstObjRef, oldObjPtr] = objDefs.DefineSceneObject(std::move(dstObj));
+	auto [dstObjRef, oldObjPtr] = objDefs->DefineSceneObject(std::move(dstObj));
 
 	// Check if it is a light source
 	MaterialConstRef mat = dstObjRef.GetMaterial();
 	if (mat.IsLightSource()) {
 		SDL_LOG("The " << dstObjName << " object is a light sources with " << dstObjRef.GetExtMesh().GetTotalTriangleCount() << " triangles");
 
-		objDefs.DefineIntersectableLights(lightDefs, dstObjRef);
+		objDefs->DefineIntersectableLights(*lightDefs, dstObjRef);
 	}
 
 	editActions.AddActions(GEOMETRY_EDIT);

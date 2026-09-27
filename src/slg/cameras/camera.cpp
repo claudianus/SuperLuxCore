@@ -21,6 +21,7 @@
 #include "slg/core/sdl.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/cameras/camera.h"
 
 using namespace std;

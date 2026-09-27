@@ -28,6 +28,7 @@
 
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
+#include "slg/scene/sceneobjectdefs.h"
 
 using namespace std;
 using namespace luxrays;

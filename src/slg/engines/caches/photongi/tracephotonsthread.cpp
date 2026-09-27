@@ -23,6 +23,7 @@
 #include "luxrays/utils/thread.h"
 
 #include "slg/scene/scene.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/caches/photongi/tracephotonsthread.h"

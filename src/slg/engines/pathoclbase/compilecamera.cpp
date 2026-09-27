@@ -26,6 +26,7 @@
 
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
+#include "slg/materials/materialdefs.h"
 
 #include "slg/cameras/orthographic.h"
 #include "slg/cameras/perspective.h"

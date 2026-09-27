@@ -30,6 +30,7 @@
 
 #include "slg/samplers/sobol.h"
 #include "slg/lights/strategies/dlscacheimpl/dlscacheimpl.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/lights/strategies/dlscacheimpl/dlscoctree.h"
 #include "slg/lights/strategies/dlscacheimpl/dlscbvh.h"
 #include "slg/utils/film2sceneradius.h"

@@ -21,6 +21,7 @@
 #include "slg/samplers/tilepathsampler.h"
 #include "slg/engines/tilepathcpu/tilepathcpu.h"
 #include "slg/engines/tilepathcpu/tilepathcpurenderstate.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/samplers/sobol.h"
 

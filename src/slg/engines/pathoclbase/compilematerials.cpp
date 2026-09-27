@@ -27,6 +27,8 @@
 #include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
+#include "slg/materials/materialdefs.h"
+#include "slg/textures/texturedefs.h"
 
 #include "slg/textures/constfloat.h"
 #include "slg/textures/constfloat3.h"

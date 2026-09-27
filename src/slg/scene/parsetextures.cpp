@@ -24,6 +24,8 @@
 #include <boost/format.hpp>
 
 #include "slg/scene/scene.h"
+#include "slg/materials/materialdefs.h"
+#include "slg/textures/texturedefs.h"
 #include "slg/utils/filenameresolver.h"
 
 #include "slg/textures/band.h"
@@ -107,7 +109,7 @@ void Scene::ParseTextures(const Properties &props) {
 		if (texName == "")
 			throw runtime_error("Syntax error in texture definition: " + texName);
 
-		if (texDefs.IsTextureDefined(texName)) {
+		if (texDefs->IsTextureDefined(texName)) {
 			SDL_LOG("Texture re-definition: " << texName);
 		} else {
 			SDL_LOG("Texture definition: " << texName);
@@ -118,9 +120,9 @@ void Scene::ParseTextures(const Properties &props) {
 		if ((tex->GetType() == IMAGEMAP) || (tex->GetType() == DENSITYGRID_TEX))
 			editActions.AddAction(IMAGEMAPS_EDIT);
 
-		if (texDefs.IsTextureDefined(texName)) {
+		if (texDefs->IsTextureDefined(texName)) {
 			// A replacement for an existing texture
-			auto& oldTex = texDefs.GetTexture(texName);
+			auto& oldTex = texDefs->GetTexture(texName);
 
 			// FresnelTexture can be replaced only with other FresnelTexture
 			if (
@@ -132,13 +134,13 @@ void Scene::ParseTextures(const Properties &props) {
 				);
 			}
 
-			auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(std::move(tex)));
-			matDefs.UpdateTextureReferences(*oldTexPtr, newTexRef);
+			auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(std::move(tex)));
+			matDefs->UpdateTextureReferences(*oldTexPtr, newTexRef);
 			moveToTrash(std::move(oldTexPtr));
 
 		} else {
 			// Only a new texture
-			auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(std::move(tex)));
+			auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(std::move(tex)));
 			moveToTrash(std::move(oldTexPtr));
 		}
 	}
@@ -481,7 +483,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		const Property &tempProp = props.Get(Property(propName + ".temperature")(6500.0));
 		const bool normalize = props.Get(Property(propName + ".normalize")(false)).Get<bool>();
 
-		if (texDefs.IsTextureDefined(tempProp.GetValuesString())) {
+		if (texDefs->IsTextureDefined(tempProp.GetValuesString())) {
 			// Textured temperature (e.g. a densitygrid temperature channel):
 			// eval per-point, nominal falls back to the mid-range.
 			auto &tempTex = GetTexture(tempProp);
@@ -790,8 +792,8 @@ Spectrum Scene::GetColor(const luxrays::Property &prop) {
 TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 	const string &name = prop.GetValuesString();
 
-	if (texDefs.IsTextureDefined(name))
-		return texDefs.GetTexture(name);
+	if (texDefs->IsTextureDefined(name))
+		return texDefs->GetTexture(name);
 	else {
 		// Check if it is an implicit declaration of a constant texture
 		try {
@@ -806,7 +808,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 		
 						auto tex = std::make_unique<ConstFloatTexture>(v);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -816,7 +818,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 
 						auto tex = std::make_unique<ConstFloat3Texture>(c);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture3"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -830,7 +832,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 		
 						auto tex = std::make_unique<ConstFloatTexture>(v);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -841,7 +843,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 
 						auto tex= std::make_unique<ConstFloat3Texture>(c);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture3"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -856,7 +858,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 		
 						auto tex= std::make_unique<ConstFloatTexture>(v);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -868,7 +870,7 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 
 						auto tex= std::make_unique<ConstFloat3Texture>(c);
 						tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture3"));
-						auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+						auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 						moveToTrash(std::move(oldTexPtr));
 						return newTexRef;
@@ -892,14 +894,14 @@ TextureRef Scene::GetTexture(const luxrays::Property &prop) {
 			if (floats.size() == 1) {
 				auto tex= std::make_unique<ConstFloatTexture>(floats.at(0));
 				tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture"));
-				auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+				auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 				moveToTrash(std::move(oldTexPtr));
 				return newTexRef;
 			} else if (floats.size() == 3) {
 				auto tex= std::make_unique<ConstFloat3Texture>(Spectrum(floats.at(0), floats.at(1), floats.at(2)));
 				tex->SetName(NamedObject::GetUniqueName("Implicit-ConstFloatTexture3"));
-				auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(tex));
+				auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(tex));
 
 				moveToTrash(std::move(oldTexPtr));
 				return newTexRef;

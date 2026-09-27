@@ -28,7 +28,11 @@
 #include "luxrays/core/color/color.h"
 #include "luxrays/usings.h"
 #include "slg/materials/material.h"
+#include "slg/materials/materialdefs.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
+#include "slg/textures/texturedefs.h"
 #include "slg/textures/constfloat.h"
 #include "slg/textures/constfloat3.h"
 #include "slg/textures/fresnel/fresnelpreset.h"
@@ -91,8 +95,8 @@ void Scene::ParseMaterials(const Properties &props) {
 		if (matName == "")
 			throw runtime_error("Syntax error in material definition: " + matName);
 
-		if (matDefs.IsMaterialDefined(matName)) {
-			auto& oldMat = matDefs.GetMaterial(matName);
+		if (matDefs->IsMaterialDefined(matName)) {
+			auto& oldMat = matDefs->GetMaterial(matName);
 			cachedIsLightSource[&oldMat] = oldMat.IsLightSource();
 		}
 	}
@@ -104,7 +108,7 @@ void Scene::ParseMaterials(const Properties &props) {
 		if (matName == "")
 			throw runtime_error("Syntax error in material definition: " + matName);
 
-		if (matDefs.IsMaterialDefined(matName)) {
+		if (matDefs->IsMaterialDefined(matName)) {
 			SDL_LOG("Material re-definition: " << matName);
 		} else {
 			SDL_LOG("Material definition: " << matName);
@@ -117,12 +121,12 @@ void Scene::ParseMaterials(const Properties &props) {
 				(((u_int)(RadicalInverse(index + 1, 5) * 255.f + .5f)) << 16);
 		auto newMat = CreateMaterial(matID, matName, props);
 
-		if (matDefs.IsMaterialDefined(matName)) {
+		if (matDefs->IsMaterialDefined(matName)) {
 			//// A replacement for an existing material
-			//auto& oldMat = matDefs.GetMaterial(matName);
+			//auto& oldMat = matDefs->GetMaterial(matName);
 
 			// Add to material list
-			auto [newMatRef, oldMatPtr] = matDefs.DefineMaterial(std::move(newMat));
+			auto [newMatRef, oldMatPtr] = matDefs->DefineMaterial(std::move(newMat));
 			auto& oldMatRef = *oldMatPtr;
 
 			// The mat should not be a volume: let's check it
@@ -136,14 +140,14 @@ void Scene::ParseMaterials(const Properties &props) {
 
 			// If old material was emitting light, delete all TriangleLight
 			if (cachedIsLightSource[&oldMatRef])
-				lightDefs.DeleteLightSourceByMaterial(oldMatRef);
+				lightDefs->DeleteLightSourceByMaterial(oldMatRef);
 
 			// Replace old material direct references with new one
-			objDefs.UpdateMaterialReferences(oldMatRef, newMatRef);
+			objDefs->UpdateMaterialReferences(oldMatRef, newMatRef);
 
 			// If new material is emitting light, create all TriangleLight
 			if (newMatRef.IsLightSource())
-				objDefs.DefineIntersectableLights(lightDefs, newMatRef);
+				objDefs->DefineIntersectableLights(*lightDefs, newMatRef);
 
 			// Check if the old material was or the new material is a light source
 			if (cachedIsLightSource[&oldMatRef] || newMatRef.IsLightSource())
@@ -153,7 +157,7 @@ void Scene::ParseMaterials(const Properties &props) {
 		} else {
 
 			// Only a new Material
-			auto [newMatRef, oldMatPtr] = matDefs.DefineMaterial(std::move(newMat));
+			auto [newMatRef, oldMatPtr] = matDefs->DefineMaterial(std::move(newMat));
 			assert(!oldMatPtr);
 			// Check if the new material is a light source
 			if (newMatRef.IsLightSource())
@@ -249,7 +253,7 @@ MaterialUPtr Scene::CreateMaterial(
 	auto constTex3 = [&](const Spectrum &v) -> TextureConstPtr {
 		auto tex = std::make_unique<ConstFloat3Texture>(v);
 		tex->SetName(NamedObject::GetUniqueName("Implicit-Const"));
-		auto [ref, old] = texDefs.DefineTexture(std::move(tex));
+		auto [ref, old] = texDefs->DefineTexture(std::move(tex));
 		moveToTrash(std::move(old));
 		return TextureConstPtr(&ref);
 	};
@@ -330,7 +334,7 @@ MaterialUPtr Scene::CreateMaterial(
             auto implBumpTex = std::make_unique<NormalMapTexture>(*normalTex, scale);
 			implBumpTex->SetName(NamedObject::GetUniqueName("Implicit-NormalMapTexture"));
 
-			auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(implBumpTex));
+			auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(implBumpTex));
             bumpTex = TextureConstPtr(&newTexRef);
 			moveToTrash(std::move(oldTexPtr));
         }
@@ -433,8 +437,8 @@ MaterialUPtr Scene::CreateMaterial(
 			kr, kt, exteriorIor, interiorIor, filmThickness, filmIor
 		);
 	} else if (matType == "mix") {
-		auto& matA = matDefs.GetMaterial(parseString("material1", "mat1"));
-		auto& matB = matDefs.GetMaterial(parseString("material2", "mat2"));
+		auto& matA = matDefs->GetMaterial(parseString("material1", "mat1"));
+		auto& matB = matDefs->GetMaterial(parseString("material2", "mat2"));
 		auto mix = parseTex("amount", {.5f});
 
 		auto mixMat = std::make_unique<MixMaterial>(
@@ -499,7 +503,7 @@ MaterialUPtr Scene::CreateMaterial(
 			FresnelTextureUPtr presetTex = AllocFresnelPresetTex(props, propName);
 			const auto texname = NamedObject::GetUniqueName(matName + "-Implicit-FresnelPreset");
 			presetTex->SetName(texname);
-			auto [newTexRef, oldTexPtr] = texDefs.DefineTexture(std::move(presetTex));
+			auto [newTexRef, oldTexPtr] = texDefs->DefineTexture(std::move(presetTex));
 			auto refpreset = FresnelTextureConstPtr(
 				dynamic_cast<const FresnelTexture *>(std::addressof(newTexRef))
 			);
@@ -732,7 +736,7 @@ MaterialUPtr Scene::CreateMaterial(
 			useGgx
 		);
 	} else if (matType == "glossycoating") {
-		MaterialConstRef matBase = matDefs.GetMaterial(parseString("base", ""));
+		MaterialConstRef matBase = matDefs->GetMaterial(parseString("base", ""));
 		auto ks = parseTex("ks", {.5f, .5f, .5f});
 		auto nu = parseTex("uroughness", {.1f});
 		auto nv = parseTex("vroughness", {.1f});
@@ -883,7 +887,7 @@ MaterialUPtr Scene::CreateMaterial(
 				(wantSSSVol || wantTransVol)) {
 			auto defineTex = [&](TextureUPtr tex) -> TexturePtr {
 				tex->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolTex"));
-				auto [ref, old] = texDefs.DefineTexture(std::move(tex));
+				auto [ref, old] = texDefs->DefineTexture(std::move(tex));
 				moveToTrash(std::move(old));
 				return TexturePtr(&ref);
 			};
@@ -926,7 +930,7 @@ MaterialUPtr Scene::CreateMaterial(
 				true /* equiangular */, sssAlbedo, sssMfp,
 				wantSSSVol ? 1 : 0);
 			vol->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolume"));
-			auto [volRef, oldVol] = matDefs.DefineMaterial(std::move(vol));
+			auto [volRef, oldVol] = matDefs->DefineMaterial(std::move(vol));
 			moveToTrash(std::move(oldVol));
 			mat->SetInteriorVolume(dynamic_cast<const Volume &>(volRef));
 		}
@@ -1009,8 +1013,8 @@ MaterialUPtr Scene::CreateMaterial(
 			kr, spacing, roughness, fillFactor, orientation,
 			center, centerU, centerV, blaze, maxOrder);
 	} else if (matType == "twosided") {
-		MaterialConstRef frontMat = matDefs.GetMaterial(parseString("frontmaterial", "front"));
-		MaterialConstRef backMat = matDefs.GetMaterial(parseString("backmaterial", "back"));
+		MaterialConstRef frontMat = matDefs->GetMaterial(parseString("frontmaterial", "front"));
+		MaterialConstRef backMat = matDefs->GetMaterial(parseString("backmaterial", "back"));
 
 		auto twoSided = std::make_unique<TwoSidedMaterial>(
 			frontTransparencyTex,
@@ -1095,7 +1099,7 @@ MaterialUPtr Scene::CreateMaterial(
 	// Interior volumes
 	if (props.IsDefined(propName + ".volume.interior")) {
 		const string volName = parseString("volume.interior", "vol1");
-		MaterialConstRef m = matDefs.GetMaterial(volName);
+		MaterialConstRef m = matDefs->GetMaterial(volName);
 		try {
 			auto& v = dynamic_cast<const Volume&>(m);
 			mat->SetInteriorVolume(v);
@@ -1111,7 +1115,7 @@ MaterialUPtr Scene::CreateMaterial(
 	// Exterior volumes
 	if (props.IsDefined(propName + ".volume.exterior")) {
 		const string volName = parseString("volume.exterior", "vol2");
-		auto& m = matDefs.GetMaterial(volName);
+		auto& m = matDefs->GetMaterial(volName);
 		try {
 			auto& v = dynamic_cast<const Volume&>(m);
 			mat->SetExteriorVolume(v);

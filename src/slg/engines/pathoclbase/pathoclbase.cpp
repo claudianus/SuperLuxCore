@@ -47,6 +47,7 @@
 #include "slg/kernels/kernels.h"
 #include "slg/renderconfig.h"
 #include "slg/film/filters/filter.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 
 #include "luxcore/cfg.h"

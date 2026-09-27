@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/lights/strategies/power.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 #include "slg/samplers/random.h"
 

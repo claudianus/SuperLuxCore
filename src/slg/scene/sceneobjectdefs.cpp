@@ -20,6 +20,8 @@
 
 #include "luxrays/usings.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/lights/trianglelight.h"
 #include "slg/usings.h"
 

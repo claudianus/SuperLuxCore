@@ -18,6 +18,7 @@
 
 #include "slg/lights/strategies/logpower.h"
 #include "luxrays/utils/properties.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 #include <memory>
 

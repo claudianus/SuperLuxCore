@@ -19,7 +19,9 @@
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include "slg/engines/pathoclbase/compiledscene.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/lights/strategies/restirdi.h"
+#include "slg/scene/sceneobjectdefs.h"
 
 using namespace std;
 using namespace luxrays;

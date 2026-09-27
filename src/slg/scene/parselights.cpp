@@ -23,6 +23,8 @@
 
 #include "luxrays/usings.h"
 #include "slg/imagemap/imagemap.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
 
 #include "slg/lights/constantinfinitelight.h"
@@ -52,19 +54,19 @@ void Scene::ParseLights(const Properties &props) {
 	if (props.HaveNames("scene.skylight")) {
 		// Parse all syntax
 		auto newLight = CreateLightSource("scene.skylight", props);
-		lightDefs.DefineLightSource(std::move(newLight));
+		lightDefs->DefineLightSource(std::move(newLight));
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}
 	if (props.HaveNames("scene.infinitelight")) {
 		// Parse all syntax
 		auto newLight = CreateLightSource("scene.infinitelight", props);
-		lightDefs.DefineLightSource(std::move(newLight));
+		lightDefs->DefineLightSource(std::move(newLight));
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}
 	if (props.HaveNames("scene.sunlight")) {
 		// Parse all syntax
 		auto newLight = CreateLightSource("scene.sunlight", props);
-		lightDefs.DefineLightSource(std::move(newLight));
+		lightDefs->DefineLightSource(std::move(newLight));
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}
 
@@ -80,7 +82,7 @@ void Scene::ParseLights(const Properties &props) {
 		if (lightName == "")
 			throw runtime_error("Syntax error in light definition: " + lightName);
 
-		if (lightDefs.IsLightSourceDefined(lightName)) {
+		if (lightDefs->IsLightSourceDefined(lightName)) {
 			SDL_LOG("Light re-definition: " << lightName);
 		} else {
 			SDL_LOG("Light definition: " << lightName);
@@ -96,7 +98,7 @@ void Scene::ParseLights(const Properties &props) {
 
 		// Move to container. This MUST be the last statement of the block.
 		// Afterwards, access to newLight is undefined behavior.
-		lightDefs.DefineLightSource(std::move(newLight));
+		lightDefs->DefineLightSource(std::move(newLight));
 	}
 
 	editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
@@ -477,7 +479,7 @@ LightSourceUPtr Scene::CreateLightSource(const string &name, const luxrays::Prop
 	}
 
 	if (props.IsDefined(propName + ".volume")) {
-		auto& vol = matDefs.GetMaterial(props.Get(propName + ".volume").Get<string>());
+		auto& vol = matDefs->GetMaterial(props.Get(propName + ".volume").Get<string>());
 		try {
 			lightSource->volume = dynamic_cast<const Volume *>(std::addressof(vol));
 		} catch (std::bad_cast&) {

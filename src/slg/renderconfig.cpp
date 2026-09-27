@@ -55,6 +55,7 @@
 #include "slg/engines/tilepathcpu/tilepathcpu.h"
 #include "slg/engines/tilepathocl/tilepathocl.h"
 #include "slg/lights/strategies/lightstrategyregistry.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/utils/filenameresolver.h"
 
 using namespace std;

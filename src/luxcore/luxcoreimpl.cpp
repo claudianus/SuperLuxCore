@@ -42,6 +42,8 @@
 #include "slg/engines/rtpathocl/rtpathocl.h"
 #include "slg/engines/filesaver/filesaver.h"
 #include "slg/film/imagepipeline/plugins/intel_oidn.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "luxcore/luxcore.h"
 #include "slg/usings.h"
 #include "luxcore/luxcoreimpl.h"

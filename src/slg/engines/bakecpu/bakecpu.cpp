@@ -21,6 +21,8 @@
 
 #include "slg/engines/bakecpu/bakecpu.h"
 #include "slg/engines/bakecpu/bakecpurenderstate.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/samplers/metropolis.h"
 #include "slg/film/filters/filter.h"

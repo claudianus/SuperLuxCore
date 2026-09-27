@@ -31,6 +31,7 @@
 #include "slg/engines/bidircpu/bidircpu.h"
 #include "slg/cameras/camera.h"
 #include "slg/lights/light.h"
+#include "slg/lights/lightsourcedefs.h"
 
 using namespace std;
 using namespace luxrays;

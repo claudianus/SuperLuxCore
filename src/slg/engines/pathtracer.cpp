@@ -30,6 +30,8 @@
 #include "slg/lights/spherelight.h"
 #include "slg/lights/trianglelight.h"
 #include "slg/scene/sceneobject.h"
+#include "slg/scene/sceneobjectdefs.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/usings.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/engines/caches/photongi/photongicache.h"

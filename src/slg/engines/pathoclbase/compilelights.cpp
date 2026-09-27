@@ -28,6 +28,7 @@
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
 
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/lights/strategies/distributionlightstrategy.h"
 #include "slg/lights/constantinfinitelight.h"
 #include "slg/lights/distantlight.h"

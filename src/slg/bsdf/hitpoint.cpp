@@ -18,6 +18,7 @@
 
 #include "slg/bsdf/hitpoint.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/utils/pathdepthinfo.h"
 
 using namespace luxrays;

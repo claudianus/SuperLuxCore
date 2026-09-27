@@ -31,6 +31,7 @@
 #include <nlohmann/json.hpp>
 
 #include "slg/engines/filesaver/filesaver.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/textures/imagemaptex.h"
 
 using namespace std;

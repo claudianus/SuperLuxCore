@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/lights/strategies/uniform.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 
 using namespace std;

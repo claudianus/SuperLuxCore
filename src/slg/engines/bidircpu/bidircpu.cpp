@@ -18,6 +18,7 @@
 
 #include "slg/engines/bidircpu/bidircpu.h"
 #include "slg/engines/bidircpu/bidircpurenderstate.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/samplers/sobol.h"
 #include "slg/cameras/camera.h"
 #include "slg/utils/varianceclamping.h"

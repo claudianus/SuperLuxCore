@@ -18,17 +18,20 @@
 
 #include "luxrays/core/dataset.h"
 #include "luxrays/core/intersectiondevice.h"
+#include "slg/lights/lightsourcedefs.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 
 using namespace std;
 using namespace luxrays;
 using namespace slg;
 
 void Scene::UpdateObjectTransformation(const string &objName, const Transform &trans) {
-	if (!objDefs.IsSceneObjectDefined(objName))
+	if (!objDefs->IsSceneObjectDefined(objName))
 		throw runtime_error("Unknown object in Scene::UpdateObjectTransformation(): " + objName);
 
-	auto& obj = objDefs.GetSceneObject(objName);
+	auto& obj = objDefs->GetSceneObject(objName);
 	auto& mesh = obj.GetExtMesh();
 
 	try {
@@ -45,7 +48,7 @@ void Scene::UpdateObjectTransformation(const string &objName, const Transform &t
 		// Have to update all light sources using this mesh
 		const string prefix = Scene::EncodeTriangleLightNamePrefix(obj.GetName());
 		for (u_int i = 0; i < mesh.GetTotalTriangleCount(); ++i)
-			lightDefs.GetLightSource(prefix + ToString(i)).Preprocess();
+			lightDefs->GetLightSource(prefix + ToString(i)).Preprocess();
 
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}
@@ -53,30 +56,30 @@ void Scene::UpdateObjectTransformation(const string &objName, const Transform &t
 
 void Scene::UpdateObjectMaterial(const string &objName, const string &matName) {
 
-	if (!objDefs.IsSceneObjectDefined(objName))
+	if (!objDefs->IsSceneObjectDefined(objName))
 		throw runtime_error("Unknown object in Scene::UpdateObjectMaterial(): " + objName);
-	if (!matDefs.IsMaterialDefined(matName))
+	if (!matDefs->IsMaterialDefined(matName))
 		throw runtime_error("Unknown material in Scene::UpdateObjectMaterial(): " + matName);
 
-	auto& obj = objDefs.GetSceneObject(objName);
+	auto& obj = objDefs->GetSceneObject(objName);
 
 	// Check if the object is a light source
 	if (obj.GetMaterial().IsLightSource()) {
 		// Delete all old triangle lights
-		lightDefs.DeleteLightSourceStartWith(Scene::EncodeTriangleLightNamePrefix(obj.GetName()));
+		lightDefs->DeleteLightSourceStartWith(Scene::EncodeTriangleLightNamePrefix(obj.GetName()));
 
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}
 	
 	// Get the material
-	auto& mat = matDefs.GetMaterial(matName);
+	auto& mat = matDefs->GetMaterial(matName);
 	obj.SetMaterial(mat);
 	
 	// Check if the object is now a light source
 	if (mat.IsLightSource()) {
 		SDL_LOG("The " << objName << " object is a light sources with " << obj.GetExtMesh().GetTotalTriangleCount() << " triangles");
 
-		objDefs.DefineIntersectableLights(lightDefs, obj);
+		objDefs->DefineIntersectableLights(*lightDefs, obj);
 
 		editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
 	}

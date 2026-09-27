@@ -22,6 +22,7 @@
 #include "slg/shapes/displacement.h"
 #include "luxrays/core/trianglemesh.h"
 #include "slg/scene/scene.h"
+#include "slg/textures/texture.h"
 
 using namespace std;
 using namespace luxrays;

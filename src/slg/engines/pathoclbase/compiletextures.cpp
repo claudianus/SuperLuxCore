@@ -27,6 +27,7 @@
 
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/kernels/kernels.h"
+#include "slg/textures/texturedefs.h"
 
 #include "slg/textures/band.h"
 #include "slg/textures/bevel.h"

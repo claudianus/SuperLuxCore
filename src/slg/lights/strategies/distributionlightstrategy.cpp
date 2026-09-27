@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/lights/strategies/distributionlightstrategy.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 #include <memory>
 

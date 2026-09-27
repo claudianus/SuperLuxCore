@@ -22,7 +22,9 @@
 #include "slg/cameras/perspective.h"
 #include "slg/cameras/orthographic.h"
 #include "slg/cameras/stereo.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/scene/scene.h"
+#include "slg/volumes/volume.h"
 #include "slg/utils/filenameresolver.h"
 
 using namespace std;
@@ -205,7 +207,7 @@ CameraUPtr Scene::CreateCamera(const Properties &props) {
 
 	camera->autoVolume = props.Get(Property("scene.camera.autovolume.enable")(true)).Get<bool>();
 	if (!camera->autoVolume && props.IsDefined("scene.camera.volume")) {
-		MaterialConstRef vol = matDefs.GetMaterial(props.Get("scene.camera.volume").Get<string>());
+		MaterialConstRef vol = matDefs->GetMaterial(props.Get("scene.camera.volume").Get<string>());
 		try {
 			camera->SetVolume(dynamic_cast<const Volume&>(vol));
 		} catch (std::bad_cast&) {

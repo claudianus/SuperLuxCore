@@ -525,35 +525,60 @@ Verdict: <15% gain — kept only the hygiene-level cleanups (all safe).
 Further per-edge trimming is exhausted: remaining material.h TUs
 genuinely use Material/BSDF definitions.
 
-## Structural options for a deeper cut (NOT implemented)
+## Structural options for a deeper cut
 
 1. **Split `material.h` into `material_types.h` + `material_base.h` +
-   `material.h`.** `MaterialType` / `MaterialEmissionDLSType` enums +
-   `Material`'s vtable-pure interface (decls only, no inline) vs. the
-   members-heavy class body. Most consumers call `material->IsLightSource()`
-   etc. — they'd still need the full class, so payoff is modest; the real
-   win would be a *handle-level* header exposing only `MaterialRef`/
-   `MaterialType` (used by scene.h/renderengine.h declarations). Est:
-   10-20% of material.h-touch TUs.
-2. **`BSDF` in its own light-weight TU boundary.** bsdf.h is the biggest
-   cluster multiplier (171 TUs): it must inline-call Material, so any TU
-   creating a BSDF needs everything. Moving BSDF's hot inline accessors to
-   a `bsdf_inline.h` leaf and keeping `bsdf.h` decl-only lets light paths
-   (pathtracer etc.) still inline while edit/serialize TUs skip the
-   material cluster. Est: 20-40 TUs; touches the hottest shading code —
-   measure perf before/after.
-3. **Break `scene.h`'s by-value ownership.** `Scene` holds
-   `MaterialDefinitions`/`TextureDefinitions`/`SceneObjectDefinitions`/
-   `LightSourceDefinitions` by value → any scene.h TU pays the full
-   cluster. `unique_ptr<>` members move the cost to scene.cpp only.
-   ABI/API-neutral for callers, but requires touching every inline
-   `matDefs` accessor (~getter bodies move to scene.cpp). Est: scene.h's
-   140 TUs stop dragging material.h unless they also need it — the
-   biggest single structural win (potentially −40-60 material.h TUs).
-4. **`observer_ptr`/`reference_wrapper` audit.** Many headers hold
-   `std::reference_wrapper<T>`/`observer_ptr<T>` members that only need
-   fwd decls — same pattern as the camera.h fix, but applied
-   systematically with IWYU tooling.
+   `material.h`.** (NOT implemented) `MaterialType` /
+   `MaterialEmissionDLSType` enums + `Material`'s vtable-pure interface
+   (decls only, no inline) vs. the members-heavy class body. Most
+   consumers call `material->IsLightSource()` etc. — they'd still need
+   the full class, so payoff is modest; the real win would be a
+   *handle-level* header exposing only `MaterialRef`/`MaterialType`
+   (used by scene.h/renderengine.h declarations). Est: 10-20% of
+   material.h-touch TUs.
+2. **`BSDF` in its own light-weight TU boundary.** (NOT implemented)
+   bsdf.h is the biggest cluster multiplier (171 TUs): it must
+   inline-call Material, so any TU creating a BSDF needs everything.
+   Moving BSDF's hot inline accessors to a `bsdf_inline.h` leaf and
+   keeping `bsdf.h` decl-only lets light paths (pathtracer etc.) still
+   inline while edit/serialize TUs skip the material cluster. Est:
+   20-40 TUs; touches the hottest shading code — measure perf
+   before/after.
+3. **Break `scene.h`'s by-value ownership — DONE.** `Scene::texDefs`/
+   `matDefs`/`objDefs`/`lightDefs` are now `TextureDefinitionsUPtr` etc.
+   (`std::unique_ptr`, allocated in `Scene::Init()`), so scene.h needs
+   only the `DECLARE_SUBTYPES` forward declarations from `slg/usings.h`
+   and drops `lightsourcedefs.h`/`texturedefs.h`/`materialdefs.h`/
+   `sceneobjectdefs.h`. `~Scene()` was already out-of-line so
+   unique_ptr-of-incomplete-type is safe; Scene was already
+   non-copyable (`std::mutex trashMtx`) so no copy-ctor work was
+   needed. Accessor API unchanged (`return *texDefs`); scene.h also had
+   to honestly include `extmeshcache.h`, `imagemapcache.h` (by-value
+   members were piggybacking on the defs' transitive includes!) and
+   `bsdf/bsdfevents.h` (`NONE` default arg).
+   Measured (`touch include/slg/scene/scene.h && ninja … pysuperluxcore
+   luxcoreconsole`, deps via `ninja -t deps`):
+   - TUs pulling the defs cluster via scene.h: materialdefs.h
+     **140 → 13**, texturedefs.h **140 → 5**, sceneobjectdefs.h
+     **140 → 19**, lightsourcedefs.h **140 → 32** — all survivors are
+     genuine consumers (src/slg/scene/*.cpp, pathoclbase/compile*,
+     light strategies, luxcoreimpl).
+   - A TU including ONLY scene.h no longer sees material.h/texture.h/
+     light.h/sceneobject.h/volume.h/trianglelight.h/lightstrategy.h at
+     all (verified with `clang -M` on a minimal TU).
+   - scene.h-touch rebuild: 145 tasks both before/after (the TU count
+     is unchanged — each TU just compiles less), wall **26.2s → 23.3s
+     (−11%)**, user **4m36s → 4m08s (−10%)**.
+   - 42 TUs needed explicit defs includes added (8 scene-internal
+     files also had `.` → `->` member-access conversions) — including
+     latent include bugs this exposed: `lightsourcedefs.cpp` and
+     `sceneobjectdefs.cpp` never included their own headers (they
+     compiled only because scene.h supplied the class decls).
+   `parity-regression.sh`: PASS. No new warnings.
+4. **`observer_ptr`/`reference_wrapper` audit.** (NOT implemented) Many
+   headers hold `std::reference_wrapper<T>`/`observer_ptr<T>` members
+   that only need fwd decls — same pattern as the camera.h fix, but
+   applied systematically with IWYU tooling.
 5. **ccache (orthogonal, recommended).** Not installed. Would turn the
    remaining rebuilds into cache hits for unchanged content and help all
    configs/branches. `brew install ccache`, then configure with

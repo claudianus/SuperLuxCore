@@ -20,6 +20,7 @@
 #include "slg/samplers/sobolsequence.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/core/dataset.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
 
