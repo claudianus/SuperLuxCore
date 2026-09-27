@@ -138,6 +138,19 @@ public:
 			const unsigned int index, const bool executeImagePipeline) = 0;
 	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
 			const unsigned int index, const bool executeImagePipeline) = 0;
+
+	// Binding-facing variants: the capacity check and the output write
+	// must be atomic wrt a session film replacement, otherwise a resize
+	// landing between the caller's size query and the write overflows
+	// the caller's buffer. The default implementation is correct for
+	// films that are never swapped (standalone); FilmImplSession fuses
+	// check+write under filmMutex.
+	virtual void GetOutputFloat(const FilmOutputType type, float *buffer,
+			const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes);
+	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
+			const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes);
 	void UpdateOutputFloat(const FilmOutputType type, const float *buffer,
 			const unsigned int index, const bool executeImagePipeline) = 0;
 	void UpdateOutputUInt(const FilmOutputType type, const unsigned int *buffer,
@@ -238,6 +251,12 @@ public:
 			const unsigned int index, const bool executeImagePipeline) override;
 	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
 			const unsigned int index, const bool executeImagePipeline) override;
+	virtual void GetOutputFloat(const FilmOutputType type, float *buffer,
+			const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes) override;
+	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
+			const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes) override;
 	void UpdateOutputFloat(const FilmOutputType type, const float *buffer,
 			const unsigned int index, const bool executeImagePipeline) override;
 
@@ -259,6 +278,31 @@ public:
 	virtual bool HasDoneAsyncExecuteImagePipeline() override;
 
 	virtual void ApplyOIDN(const u_int index) override;
+
+	// The query surface below reaches the session film through
+	// GetSLGFilm(), i.e. a dereference of RenderSession::film. The
+	// session replaces that Film on resize/restart under filmMutex, so
+	// every one of these must hold the same lock for the duration of
+	// the call to rule out a use-after-free on the swapped-out object.
+	virtual unsigned int GetWidth() const override;
+	virtual unsigned int GetHeight() const override;
+	virtual luxrays::PropertiesUPtr GetStats() const override;
+	virtual float GetFilmY(const unsigned int imagePipelineIndex) const override;
+	virtual void Clear() override;
+	virtual void AddFilm(LuxFilmConstRef film) override;
+	virtual void AddFilm(LuxFilmConstRef film,
+			const unsigned int srcOffsetX, const unsigned int srcOffsetY,
+			const unsigned int srcWidth, const unsigned int srcHeight,
+			const unsigned int dstOffsetX, const unsigned int dstOffsetY) override;
+	virtual void SaveOutput(const std::string &fileName,
+			const FilmOutputType type, luxrays::PropertiesRPtr props) const override;
+	virtual double GetTotalSampleCount() const override;
+	virtual size_t GetOutputSize(const FilmOutputType type) const override;
+	virtual bool HasOutput(const FilmOutputType type) const override;
+	virtual unsigned int GetOutputCount(const FilmOutputType type) const override;
+	virtual unsigned int GetRadianceGroupCount() const override;
+	virtual bool HasChannel(const FilmChannelType type) const override;
+	virtual unsigned int GetChannelCount(const FilmChannelType type) const override;
 
 	RenderSessionImplRef renderSession;  // Back link, read/write
 

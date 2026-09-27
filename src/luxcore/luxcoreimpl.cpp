@@ -261,6 +261,38 @@ unsigned int FilmImpl::GetRadianceGroupCount() const {
 	return result;
 }
 
+void FilmImpl::GetOutputFloat(const FilmOutputType type, float *buffer,
+		const unsigned int index, const bool executeImagePipeline,
+		const size_t bufferCapacityBytes) {
+	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
+
+	// Standalone films are never swapped out, so a check followed by the
+	// plain write is already atomic here
+	const size_t outputSize = GetOutputSize(type) * sizeof(float);
+	if (bufferCapacityBytes < outputSize)
+		throw runtime_error("Not enough space in the buffer of Film::GetOutputFloat() method: " +
+				ToString(bufferCapacityBytes) + " instead of " + ToString(outputSize));
+
+	GetOutputFloat(type, buffer, index, executeImagePipeline);
+
+	API_END();
+}
+
+void FilmImpl::GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
+		const unsigned int index, const bool executeImagePipeline,
+		const size_t bufferCapacityBytes) {
+	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
+
+	const size_t outputSize = GetOutputSize(type) * sizeof(unsigned int);
+	if (bufferCapacityBytes < outputSize)
+		throw runtime_error("Not enough space in the buffer of Film::GetOutputUInt() method: " +
+				ToString(bufferCapacityBytes) + " instead of " + ToString(outputSize));
+
+	GetOutputUInt(type, buffer, index, executeImagePipeline);
+
+	API_END();
+}
+
 void FilmImpl::UpdateOutputUInt(const FilmOutputType type, const unsigned int *buffer,
 		const unsigned int index, const bool executeImagePipeline) {
 	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
@@ -330,6 +362,53 @@ void FilmImplSession::GetOutputUInt(const FilmOutputType type, unsigned int *buf
 	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
 
 	renderSession.GetSLGRenderSession().film->GetOutput<u_int>(
+		static_cast<slg::FilmOutputs::FilmOutputType>(type),
+		buffer, index, executeImagePipeline
+	);
+
+	API_END();
+}
+
+void FilmImplSession::GetOutputFloat(const FilmOutputType type, float *buffer,
+		const unsigned int index, const bool executeImagePipeline,
+		const size_t bufferCapacityBytes) {
+	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
+
+	// Capacity check and write under one hold of filmMutex: the session
+	// film can be replaced by a resize between the caller's own size
+	// query and this write, growing the output size past the buffer
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+
+	slg::Film &film = *renderSession.GetSLGRenderSession().film;
+	const size_t outputSize = film.GetOutputSize(
+			static_cast<slg::FilmOutputs::FilmOutputType>(type)) * sizeof(float);
+	if (bufferCapacityBytes < outputSize)
+		throw runtime_error("Not enough space in the buffer of Film::GetOutputFloat() method: " +
+				ToString(bufferCapacityBytes) + " instead of " + ToString(outputSize));
+
+	film.GetOutput<float>(
+		static_cast<slg::FilmOutputs::FilmOutputType>(type),
+		buffer, index, executeImagePipeline
+	);
+
+	API_END();
+}
+
+void FilmImplSession::GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
+		const unsigned int index, const bool executeImagePipeline,
+		const size_t bufferCapacityBytes) {
+	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+
+	slg::Film &film = *renderSession.GetSLGRenderSession().film;
+	const size_t outputSize = film.GetOutputSize(
+			static_cast<slg::FilmOutputs::FilmOutputType>(type)) * sizeof(unsigned int);
+	if (bufferCapacityBytes < outputSize)
+		throw runtime_error("Not enough space in the buffer of Film::GetOutputUInt() method: " +
+				ToString(bufferCapacityBytes) + " instead of " + ToString(outputSize));
+
+	film.GetOutput<u_int>(
 		static_cast<slg::FilmOutputs::FilmOutputType>(type),
 		buffer, index, executeImagePipeline
 	);
@@ -476,6 +555,157 @@ void FilmImplSession::ApplyOIDN(const u_int index) {
 	oidn.Apply(*renderSession.GetSLGRenderSession().film, index);
 
 	API_END();
+}
+
+unsigned int FilmImplSession::GetWidth() const {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const unsigned int result = FilmImpl::GetWidth();
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+unsigned int FilmImplSession::GetHeight() const {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const unsigned int result = FilmImpl::GetHeight();
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+PropertiesUPtr FilmImplSession::GetStats() const {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	PropertiesUPtr result = FilmImpl::GetStats();
+
+	API_RETURN("{}", ToArgString(result));
+	return result;
+}
+
+float FilmImplSession::GetFilmY(const u_int imagePipelineIndex) const {
+	API_BEGIN("{}", imagePipelineIndex);
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const float result = FilmImpl::GetFilmY(imagePipelineIndex);
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+void FilmImplSession::Clear() {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	FilmImpl::Clear();
+
+	API_END();
+}
+
+void FilmImplSession::AddFilm(FilmConstRef film) {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	FilmImpl::AddFilm(film);
+
+	API_END();
+}
+
+void FilmImplSession::AddFilm(FilmConstRef film,
+		const u_int srcOffsetX, const u_int srcOffsetY,
+		const u_int srcWidth, const u_int srcHeight,
+		const u_int dstOffsetX, const u_int dstOffsetY) {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	FilmImpl::AddFilm(film, srcOffsetX, srcOffsetY,
+			srcWidth, srcHeight, dstOffsetX, dstOffsetY);
+
+	API_END();
+}
+
+void FilmImplSession::SaveOutput(const string &fileName, const FilmOutputType type,
+		PropertiesRPtr props) const {
+	API_BEGIN("{}, {}, {}", ToArgString(fileName), ToArgString(type), ToArgString(*props));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	FilmImpl::SaveOutput(fileName, type, props);
+
+	API_END();
+}
+
+double FilmImplSession::GetTotalSampleCount() const {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const double result = FilmImpl::GetTotalSampleCount();
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+size_t FilmImplSession::GetOutputSize(const FilmOutputType type) const {
+	API_BEGIN("{}", ToArgString(type));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const size_t result = FilmImpl::GetOutputSize(type);
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+bool FilmImplSession::HasOutput(const FilmOutputType type) const {
+	API_BEGIN("{}", ToArgString(type));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const bool result = FilmImpl::HasOutput(type);
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+unsigned int FilmImplSession::GetOutputCount(const FilmOutputType type) const {
+	API_BEGIN("{}", ToArgString(type));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const unsigned int result = FilmImpl::GetOutputCount(type);
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+unsigned int FilmImplSession::GetRadianceGroupCount() const {
+	API_BEGIN_NOARGS();
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const unsigned int result = FilmImpl::GetRadianceGroupCount();
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+bool FilmImplSession::HasChannel(const FilmChannelType type) const {
+	API_BEGIN("{}", ToArgString(type));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const bool result = FilmImpl::HasChannel(type);
+
+	API_RETURN("{}", result);
+	return result;
+}
+
+unsigned int FilmImplSession::GetChannelCount(const FilmChannelType type) const {
+	API_BEGIN("{}", ToArgString(type));
+
+	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
+	const unsigned int result = FilmImpl::GetChannelCount(type);
+
+	API_RETURN("{}", result);
+	return result;
 }
 
 void FilmImplSession::SaveOutputs() const {

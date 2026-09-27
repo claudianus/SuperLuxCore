@@ -188,6 +188,54 @@
   Verified by instrumenting the row wrap pre-fix (`currentY` reached
   177..191 on a 177-tall film under zf 16→1 toggling) — silent under
   the fix. Regression: `testrtpathcpudynres.py`.
+- **Film merge kernels off-by-one (`gid > W*H`, the GPU viewport
+  crash)**: all four kernels in `film_mergesamplebuffer_funcs.cl` used
+  `if (gid > filmWidth * filmHeight) return;` while the launch range is
+  `RoundUp(pixelCount, 256)` — so whenever `pixelCount % 256 != 0` the
+  work-item at `gid == pixelCount` survives the guard and reads/writes
+  one pixel (12 B) past `hw_IMAGEPIPELINE`/`hw_mergeBuffer`. Device-side
+  OOB on every `GetOutputFloat` in the HW pipeline (RTPATHOCL picks the
+  render device for `film.hwDeviceName`, so viewport readback always
+  hits it); on Apple Silicon unified memory that can stomp adjacent
+  allocations — matching the observed Blender gizmo-list corruption
+  (`wm_gizmogroup_find_intersected_gizmo` dying on `gz->next`, not a
+  render thread). Fix: `>=`. Regression: `testrtpathoclfilmresize.py`
+  uses a 257x257 film (`pixelCount % 256 == 1`, the worst tail case).
+- **`RenderSession::film` replacement raced readers (UAF + uninit
+  window)**: the `Parse()` resize branch and re-`Start()` swapped the
+  `FilmUPtr` with no `filmMutex` held while `FilmImplSession` readers
+  dereference `film->` under it. Worse, `AllocFilm()` returns a Film
+  that is only `Init()`ed inside the engine's `Start()` (`InitFilm`) —
+  publishing the pointer early exposed a channel-less film ("Film
+  Output not available"). Fix: allocate into a local, run
+  `PreprocessCamera` + `EndFilmEdit` (which Inits it), then swap under
+  `filmMutex`. The lock must NOT span `EndFilmEdit` (takes
+  `engineMutex`, and `UpdateFilm()` orders `engineMutex → filmMutex` —
+  inversion deadlock). `PublishViewportCamera` also writes the
+  `filmMetadata` `std::map` that `ViewportTemporalPlugin::Apply` reads
+  via `GetMetadata()` — now covered by `filmMutex` too.
+- **`FilmImplSession` query methods skipped `filmMutex`**: `GetWidth`,
+  `GetStats`, `HasOutput`, `GetOutputSize`, etc. all evaluate
+  `*session.film` through `GetSLGFilm()`. Unlocked, that races the swap
+  (unique_ptr store vs load). They now lock in `FilmImplSession` and
+  delegate to the `FilmImpl::` base, which dispatches back into the
+  session's `GetSLGFilm()` — no recursion on the mutex.
+- **Binding size-check TOCTOU**: `Film_GetOutputFloat1` queried
+  `GetOutputSize` and called `GetOutput` in two separate lock holds —
+  a resize growing the film between them overflowed the caller's
+  buffer. `FilmImpl` gained `GetOutputFloat/UInt(..., capacityBytes)`
+  overloads; `FilmImplSession` fuses the capacity check + write under
+  one `filmMutex` hold (standalone films keep check-then-write).
+  `RenderConfig.GetScene()` also needed `py::return_value_policy::
+  reference` + `keep_alive` under `py::smart_holder` (was the "non-
+  copyable SceneImpl" error breaking testsceneeditrendering).
+- **`Exception Codes: 0x0, 0x0` in Blender crash reports is Blender's
+  own handler** — the real signal/far fields are zeroed, so a "far=0"
+  looking report is NOT proof of a NULL deref. Disassemble the crash
+  offset instead: ours was `ldr x19, [x19]` = `gz->next` after a
+  successful `gz->type`/`test_select` — i.e. the gizmo memory was
+  unmapped/corrupted mid-loop, pointing at heap corruption from another
+  thread rather than a null field.
 - **`Properties::SetFromString("x = true")` reads back as false.**
   `Property::Get<bool>` on a string value goes through
   `FromString<bool>` (`istringstream >> bool` without `boolalpha`), so

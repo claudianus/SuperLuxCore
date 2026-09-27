@@ -75,16 +75,28 @@ RenderSession::~RenderSession() {
 }
 
 void RenderSession::Start() {
+	// Allocate the replacement film first but publish it only after the
+	// engine's Start() has initialized it (InitFilm): readers evaluate
+	// film-> under filmMutex and must never observe a channel-less,
+	// still-initializing Film
+	FilmUPtr newFilm;
 	if (film->IsInitiliazed()) {
 		// I need to allocate a new film because the current one has already been
 		// used. For instance, it can happen when stopping and starting the
 		// same session.
-
-		// Create the new film
-		film = renderConfig.AllocFilm();
+		newFilm = renderConfig.AllocFilm();
 	}
+	Film &startedFilm = newFilm ? *newFilm : *film;
 
-	renderEngine->Start(*film, &filmMutex);
+	renderEngine->Start(startedFilm, &filmMutex);
+
+	if (newFilm) {
+		// filmMutex covers the film pointer swap + destruction of the old
+		// Film: FilmImplSession readers evaluate film-> under this lock,
+		// so an unlocked swap was a use-after-free window
+		std::unique_lock<std::mutex> lock(filmMutex);
+		film = std::move(newFilm);
+	}
 
 	PublishViewportCamera(true);
 }
@@ -123,6 +135,11 @@ void RenderSession::EndSceneEdit() {
 }
 
 void RenderSession::PublishViewportCamera(const bool cameraOnly) {
+	// filmMutex serializes the filmMetadata std::map writes against
+	// FilmImplSession readers: the image pipeline's GetMetadata() lookups
+	// run under the same lock inside Apply().
+	std::unique_lock<std::mutex> lock(filmMutex);
+
 	// Camera reprojection data for the VIEWPORT_TEMPORAL imagepipeline
 	// plugin. The plugin warps the previous frame into not-yet-sampled
 	// pixels after camera edits; non-camera edits invalidate the history
@@ -287,13 +304,29 @@ void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 		// Update render config properties
 		renderConfig.UpdateFilmProperties(*props);
 
-		// Create the new film
-		film = renderConfig.AllocFilm();
+		// Create the new film. It is NOT published to session->film yet:
+		// the Film is initialized inside the engine's Start() (InitFilm),
+		// so installing the pointer here would let readers observe a film
+		// with no channels at all.
+		FilmUPtr newFilm = renderConfig.AllocFilm();
 
 		// I have to update the camera
-		renderConfig.GetScene().PreprocessCamera(film->GetWidth(), film->GetHeight(), film->GetSubRegion());
+		renderConfig.GetScene().PreprocessCamera(newFilm->GetWidth(), newFilm->GetHeight(), newFilm->GetSubRegion());
 
-		renderEngine->EndFilmEdit(*film, &filmMutex);
+		// The engine keeps a FilmRef to the heap object; moving the
+		// unique_ptr afterwards does not invalidate it
+		renderEngine->EndFilmEdit(*newFilm, &filmMutex);
+
+		{
+			// filmMutex covers the film pointer swap + destruction of the
+			// old Film: FilmImplSession readers evaluate film-> under this
+			// lock, so an unlocked swap was a use-after-free window. It
+			// must NOT be held across EndFilmEdit(): that acquires the
+			// engine mutex while UpdateFilm() takes the same two locks in
+			// the opposite order.
+			std::unique_lock<std::mutex> lock(filmMutex);
+			film = std::move(newFilm);
+		}
 
 		// The raster transform changed with the film size: republish
 		// so VIEWPORT_TEMPORAL does not warp with stale dimensions

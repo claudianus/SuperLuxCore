@@ -751,9 +751,11 @@ static void Film_GetOutputFloat1(
         {
           // GetOutput runs a full film download + the image pipeline: release
           // the GIL so viewport callers can run it on a worker thread without
-          // freezing Blender's UI thread.
+          // freezing Blender's UI thread. The capacity-checked overload fuses
+          // the buffer-size validation with the write under filmMutex, so a
+          // session film resize landing in between can not overflow the view.
           py::gil_scoped_release release;
-          film.GetOutput<float>(type, buffer, index, executeImagePipeline);
+          film.GetOutputFloat(type, buffer, index, executeImagePipeline, (size_t)view.len);
         }
 
         PyBuffer_Release(&view);
@@ -788,7 +790,8 @@ static void Film_GetOutputFloat1(
 
             {
               py::gil_scoped_release release;
-              film.GetOutput<float>(type, bglBuffer->buf.asfloat, index, executeImagePipeline);
+              film.GetOutputFloat(type, bglBuffer->buf.asfloat, index, executeImagePipeline,
+                  bglBuffer->dimensions[0] * sizeof(float));
             }
           } else
             throw std::runtime_error("Not enough space in the Blender bgl.Buffer of Film.GetOutputFloat() method: " +
@@ -841,7 +844,7 @@ static void Film_GetOutputUInt1(
 
         {
           py::gil_scoped_release release;
-          film.GetOutput<unsigned int>(type, buffer, index, executeImagePipeline);
+          film.GetOutputUInt(type, buffer, index, executeImagePipeline, (size_t)view.len);
         }
 
         PyBuffer_Release(&view);
@@ -2904,7 +2907,10 @@ PYBIND11_MODULE(pysuperluxcore, m) {
         return self.GetProperties()->Clone();
     })
     .def("GetProperty", &luxcore::detail::RenderConfigImpl::GetProperty)
-    .def("GetScene", &RenderConfig_GetScene)
+    // The returned scene is a non-owning reference into the config:
+    // keep the config alive while the wrapper is in use.
+    .def("GetScene", &RenderConfig_GetScene,
+         py::return_value_policy::reference, py::keep_alive<0, 1>())
     .def("HasCachedKernels", &luxcore::detail::RenderConfigImpl::HasCachedKernels)
     .def("Parse", &luxcore::detail::RenderConfigImpl::Parse)
     .def("Delete", &luxcore::detail::RenderConfigImpl::Delete)
