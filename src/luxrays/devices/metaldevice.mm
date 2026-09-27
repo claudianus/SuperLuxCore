@@ -982,6 +982,12 @@ void MetalDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,
 		dynamic_cast<const MetalDeviceBuffer *>(buff);
 	assert(metalBuff);
 
+	// The copy is a plain host memcpy: size must fit the allocation or
+	// this is a device-buffer overflow that Metal's shared storage would
+	// otherwise let slide silently into an MTLBuffer range violation.
+	if (size > metalBuff->size)
+		throw std::runtime_error("MetalDevice::EnqueueReadBuffer() size exceeds buffer capacity");
+
 	// Shared storage: the host pointer IS the buffer contents, but the
 	// kernels that produced it may still be executing. OpenCL's async
 	// read defers the copy through the in-order queue; with a plain
@@ -998,6 +1004,9 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 	const MetalDeviceBuffer *metalBuff =
 		dynamic_cast<const MetalDeviceBuffer *>(buff);
 	assert(metalBuff);
+
+	if (size > metalBuff->size)
+		throw std::runtime_error("MetalDevice::EnqueueWriteBuffer() size exceeds buffer capacity");
 
 	// Shared storage: this memcpy IS the transfer, executed on the host
 	// right now - unlike OpenCL's async write, which the in-order queue

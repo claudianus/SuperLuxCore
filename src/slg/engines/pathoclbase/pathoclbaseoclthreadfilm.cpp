@@ -628,7 +628,44 @@ u_int PathOCLBaseOCLRenderThread::ThreadFilm::SetFilmKernelArgs(HardwareIntersec
 	return argIndex;
 }
 
-void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDeviceRef intersectionDevice) {
+void PathOCLBaseOCLRenderThread::ThreadFilm::WriteEngineFilmChannel(
+		HardwareIntersectionDeviceRef intersectionDevice,
+		HardwareDeviceBuffer *buff, const float *enginePixels,
+		GenericFrameBuffer<1, 0, float> *stagingChannel,
+		const u_int tileX, const u_int tileY) const {
+	if (!enginePixels)
+		return;
+
+	const u_int engineWidth = engineFilm->GetWidth();
+	const u_int engineHeight = engineFilm->GetHeight();
+	const u_int tileWidth = film->GetWidth();
+	const u_int tileHeight = film->GetHeight();
+
+	if ((tileX == 0) && (tileY == 0) &&
+			(engineWidth == tileWidth) && (engineHeight == tileHeight)) {
+		intersectionDevice.EnqueueWriteBuffer(buff, CL_FALSE,
+				buff->GetSize(), enginePixels);
+		return;
+	}
+
+	// Repack the tile overlap into the thread film channel (same layout
+	// as the device buffer); the padding keeps the previous contents of
+	// the thread channel, it is never merged back into the engine film.
+	float *dst = stagingChannel->GetPixels();
+	const u_int copyWidth = Min(tileWidth, engineWidth - Min(tileX, engineWidth));
+	const u_int copyHeight = Min(tileHeight, engineHeight - Min(tileY, engineHeight));
+	for (u_int y = 0; y < copyHeight; ++y)
+		memcpy(dst + y * tileWidth,
+				enginePixels + (tileY + y) * engineWidth + tileX,
+				copyWidth * sizeof(float));
+
+	intersectionDevice.EnqueueWriteBuffer(buff, CL_FALSE,
+			buff->GetSize(), dst);
+}
+
+void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(
+		HardwareIntersectionDeviceRef intersectionDevice,
+		const u_int tileX, const u_int tileY) {
 	// Async. transfer of the Film buffers
 
 	for (u_int i = 0; i < channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.size(); ++i) {
@@ -885,11 +922,9 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 		// This may look wrong but CONVERGENCE channel is compute by the engine
 		// film convergence test on the CPU so I write instead of read (to
 		// synchronize the content).
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_CONVERGENCE_Buff,
-			CL_FALSE,
-			channel_CONVERGENCE_Buff->GetSize(),
-			engineFilm->channel_CONVERGENCE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_CONVERGENCE_Buff,
+				engineFilm->channel_CONVERGENCE ? engineFilm->channel_CONVERGENCE->GetPixels() : nullptr,
+				film->channel_CONVERGENCE.get(), tileX, tileY);
 	}
 	if (channel_MATERIAL_ID_COLOR_Buff) {
 		intersectionDevice.EnqueueReadBuffer(
@@ -916,20 +951,16 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 		// This may look wrong but NOISE channel is compute by the engine
 		// film noise estimation on the CPU so I write instead of read (to
 		// synchronize the content).
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_NOISE_Buff,
-			CL_FALSE,
-			channel_NOISE_Buff->GetSize(),
-			engineFilm->channel_NOISE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_NOISE_Buff,
+				engineFilm->channel_NOISE ? engineFilm->channel_NOISE->GetPixels() : nullptr,
+				film->channel_NOISE.get(), tileX, tileY);
 	}
 	if (channel_USER_IMPORTANCE_Buff) {
 		// This may look wrong but USER_IMPORTANCE channel is like NOISE channel
 		// so I write instead of read (to synchronize the content).
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_USER_IMPORTANCE_Buff,
-			CL_FALSE,
-			channel_USER_IMPORTANCE_Buff->GetSize(),
-			engineFilm->channel_USER_IMPORTANCE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_USER_IMPORTANCE_Buff,
+				engineFilm->channel_USER_IMPORTANCE ? engineFilm->channel_USER_IMPORTANCE->GetPixels() : nullptr,
+				film->channel_USER_IMPORTANCE.get(), tileX, tileY);
 	}
 	if (channel_VARIANCE_Buff) {
 		intersectionDevice.EnqueueReadBuffer(
@@ -1006,7 +1037,9 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(HardwareIntersectionDevice
 	}
 }
 
-void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDeviceRef intersectionDevice) {
+void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(
+		HardwareIntersectionDeviceRef intersectionDevice,
+		const u_int tileX, const u_int tileY) {
 	// Async. transfer of the Film buffers
 
 	for (u_int i = 0; i < channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.size(); ++i) {
@@ -1263,11 +1296,9 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDevice
 		// The CONVERGENCE channel is compute by the engine
 		// film convergence test on the CPU so I write the engine film, not the
 		// thread film.
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_CONVERGENCE_Buff,
-			CL_FALSE,
-			channel_CONVERGENCE_Buff->GetSize(),
-			engineFilm->channel_CONVERGENCE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_CONVERGENCE_Buff,
+				engineFilm->channel_CONVERGENCE ? engineFilm->channel_CONVERGENCE->GetPixels() : nullptr,
+				film->channel_CONVERGENCE.get(), tileX, tileY);
 	}
 	if (channel_MATERIAL_ID_COLOR_Buff) {
 		intersectionDevice.EnqueueWriteBuffer(
@@ -1294,20 +1325,16 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(HardwareIntersectionDevice
 		// The NOISE channel is compute by the engine
 		// film noise estimation on the CPU so I write the engine film, not the
 		// thread film.
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_NOISE_Buff,
-			CL_FALSE,
-			channel_NOISE_Buff->GetSize(),
-			engineFilm->channel_NOISE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_NOISE_Buff,
+				engineFilm->channel_NOISE ? engineFilm->channel_NOISE->GetPixels() : nullptr,
+				film->channel_NOISE.get(), tileX, tileY);
 	}
 	if (channel_USER_IMPORTANCE_Buff) {
 		// The USER_IMPORTANCE channel is like NOISE channel
 		// so I write the engine film, not the thread film.
-		intersectionDevice.EnqueueWriteBuffer(
-			channel_USER_IMPORTANCE_Buff,
-			CL_FALSE,
-			channel_USER_IMPORTANCE_Buff->GetSize(),
-			engineFilm->channel_USER_IMPORTANCE->GetPixels());
+		WriteEngineFilmChannel(intersectionDevice, channel_USER_IMPORTANCE_Buff,
+				engineFilm->channel_USER_IMPORTANCE ? engineFilm->channel_USER_IMPORTANCE->GetPixels() : nullptr,
+				film->channel_USER_IMPORTANCE.get(), tileX, tileY);
 	}
 	if (channel_VARIANCE_Buff) {
 		intersectionDevice.EnqueueWriteBuffer(

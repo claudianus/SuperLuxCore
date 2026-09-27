@@ -40,7 +40,7 @@ public:
 		TileCoord() { }
 		TileCoord(const u_int xs, const u_int ys,
 				const u_int w, const u_int h) :
-				x(xs), y(ys), width(w), height(w) { }
+				x(xs), y(ys), width(w), height(h) { }
 		friend class boost::serialization::access;
 
 		u_int x, y, width, height;

@@ -161,8 +161,10 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 		EnqueueAdvancePathsKernel();
 	}
 
-	// Async. transfer of the Film buffers
-	threadFilms[filmIndex]->RecvFilm(intersectionDevice);
+	// Async. transfer of the Film buffers (the tile coord lets the
+	// engine-channel uploads map tile-local layout onto the film region)
+	threadFilms[filmIndex]->RecvFilm(intersectionDevice,
+			tileWork.GetCoord().x, tileWork.GetCoord().y);
 
 	// GPU light tracing: snapshot this work's taskStats for the light
 	// sample count. The Init kernel resets the counters at the start of

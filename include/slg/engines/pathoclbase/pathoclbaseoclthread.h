@@ -93,8 +93,15 @@ public:
 		void ClearFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice,
 			luxrays::HardwareDeviceKernelRPtr filmClearKernel,
 			const size_t filmClearWorkGroupSize);
-		void RecvFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice);
-		void SendFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice);
+		// tileX/tileY: origin of this thread film inside the engine film.
+		// RTPATHOCL pads the tile width up to a multiple of the resolution
+		// reduction and TILEPATHOCL threads cover tile sub-rectangles, so
+		// the thread film can be wider than (or offset inside) the engine
+		// film - the engine-channel uploads need the origin to repack rows.
+		void RecvFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice,
+				const u_int tileX = 0, const u_int tileY = 0);
+		void SendFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice,
+				const u_int tileX = 0, const u_int tileY = 0);
 
 		FilmRef GetFilm() { return *film; }
 		FilmConstRef GetFilm() const { return *film; }
@@ -161,6 +168,19 @@ public:
 		luxrays::HardwareDeviceBuffer *denoiser_HistoImage_Buff;
 
 	private:
+		// Upload a CPU-computed engine film channel (CONVERGENCE, NOISE,
+		// USER_IMPORTANCE) into the device buffer. The device buffer
+		// follows the thread-film layout; when that differs from the
+		// engine film layout the copy is repacked row-by-row through the
+		// thread film channel instead of a flat buff->GetSize() memcpy
+		// (which would over-read the engine channel and misalign rows).
+		void WriteEngineFilmChannel(
+				luxrays::HardwareIntersectionDeviceRef intersectionDevice,
+				luxrays::HardwareDeviceBuffer *buff,
+				const float *enginePixels,
+				GenericFrameBuffer<1, 0, float> *stagingChannel,
+				const u_int tileX, const u_int tileY) const;
+
 		FilmUPtr film;
 		FilmPtr engineFilm;
 		PathOCLBaseOCLRenderThread *renderThread;

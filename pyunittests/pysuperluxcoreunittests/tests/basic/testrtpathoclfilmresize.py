@@ -193,3 +193,65 @@ class TestRTPathOCLFilmResize(LuxCoreTest):
 		finally:
 			stop.set()
 			session.Stop()
+
+	def test_padded_tile_width_engine_channel_uploads(self):
+		# RTPATHOCL rounds the tile width up to a multiple of the
+		# resolution reduction (rtpath.resolutionreduction, default 4):
+		# film.width 1915 -> thread film/device buffers 1916 wide while
+		# the engine film channels stay 1915 wide. The CONVERGENCE, NOISE
+		# and USER_IMPORTANCE uploads in ThreadFilm::SendFilm/RecvFilm
+		# used to memcpy the device-buffer size straight out of the
+		# engine channel - a heap over-read that crashed inside
+		# MetalDevice::EnqueueWriteBuffer (observed as a Blender crash
+		# right after switching the viewport to GPU).
+		#
+		# This test enables all three CPU-computed channels via film
+		# outputs and runs a film 1 pixel short of the reduction
+		# multiple: before the fix the very first RecvFilm read ~4.5KB
+		# past each host channel.
+		if not LuxCoreHasOpenCL():
+			self.skipTest("requires OpenCL")
+
+		scene = self._scene()
+		cfg = pysuperluxcore.Properties().SetFromString("""
+			renderengine.type = RTPATHOCL
+			sampler.type = TILEPATHSAMPLER
+			rtpath.resolutionreduction = 4
+			film.width = 1915
+			film.height = 240
+			film.outputs.0.type = RGB_IMAGEPIPELINE
+			film.outputs.0.filename = rgb.png
+			film.outputs.1.type = CONVERGENCE
+			film.outputs.1.filename = conv.exr
+			film.outputs.2.type = NOISE
+			film.outputs.2.filename = noise.exr
+			film.outputs.3.type = USER_IMPORTANCE
+			film.outputs.3.filename = uimp.exr
+			film.imagepipelines.0.type = NOP
+			batch.haltspp = 0
+			batch.halttime = 0
+			batch.haltthreshold = -1
+			""")
+
+		session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, scene))
+		try:
+			session.Start()
+
+			# Give the render threads several film-transfer cycles: the
+			# uploads run inside RecvFilm on every tile work
+			for _ in range(4):
+				time.sleep(0.25)
+				data, w, h = self._readback_once(session)
+				self.assertEqual((w, h), (1915, 240))
+			self.assertTrue(self._sample_count(session) > 0)
+
+			# Read back the CPU-computed channels too: the outputs keep
+			# those channels allocated, which is what sends them through
+			# the (previously out-of-bounds) upload path every RecvFilm
+			for outType in (pysuperluxcore.FilmOutputType.CONVERGENCE,
+					pysuperluxcore.FilmOutputType.NOISE,
+					pysuperluxcore.FilmOutputType.USER_IMPORTANCE):
+				values = array('f', bytes(1915 * 240 * 4))
+				session.GetFilm().GetOutputFloat(outType, values, 0, True)
+		finally:
+			session.Stop()

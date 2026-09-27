@@ -20,3 +20,4 @@ docs live in `doc/features/` (see its README for the index).
 | [progressive-fill-order.md](progressive-fill-order.md) | Progressive fill order (viewport) |
 | [diffraction.md](diffraction.md) | Diffraction grating material — implementation notes |
 | [kernel-compile-performance.md](kernel-compile-performance.md) | Cold GPU kernel-compile time: parallel GetKernel, cache layout, benchmark gotchas |
+| [threadfilm-transfers.md](threadfilm-transfers.md) | ThreadFilm SendFilm/RecvFilm layout mismatch — padded tile widths vs engine film (RTPATHOCL Metal crash) |
