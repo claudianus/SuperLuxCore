@@ -309,7 +309,7 @@ public:
 
 	// Light linking: allocate a stable bit index for a link group name
 	// (max 64 groups). Throws if the table overflows.
-	u_int32_t GetLinkGroupBit(const std::string &name);
+	u_int GetLinkGroupBit(const std::string &name);
 	// Parse a comma-separated group list ("a, b,c") into a bit mask.
 	u_longlong ParseLinkGroupMask(const std::string &csv);
 	// Inverse: mask -> comma-separated group names (ToProperties).
@@ -343,7 +343,7 @@ protected:
 	LightSourceDefinitions lightDefs; // LightSource definitions
 
 	// Light linking: named group -> bit index (insertion order = bit order)
-	std::unordered_map<std::string, u_int32_t> linkGroupTable;
+	std::unordered_map<std::string, u_int> linkGroupTable;
 	std::vector<std::string> linkGroupNames;
 
 	// World positions of point-ish lights eligible for equiangular

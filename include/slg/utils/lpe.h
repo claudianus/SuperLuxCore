@@ -26,6 +26,9 @@
 
 #include <string>
 #include <vector>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 #include <boost/serialization/array_wrapper.hpp>
 #include <boost/serialization/string.hpp>
@@ -90,11 +93,22 @@ struct LPEExpression {
 	}
 };
 
+// Count trailing zeros of a nonzero mask (MSVC has no __builtin_ctz).
+inline u_int LPECtz(u_int m) {
+#if defined(_MSC_VER)
+	unsigned long idx;
+	_BitScanForward(&idx, m);
+	return (u_int)idx;
+#else
+	return (u_int)__builtin_ctz(m);
+#endif
+}
+
 // NFA state-set step: OR the delta rows of every live state.
 inline u_int LPEStep(const LPEAutomaton &aut, const u_int states, const u_int sym) {
 	u_int out = 0;
 	for (u_int m = states; m; m &= m - 1) {
-		const u_int s = (u_int)__builtin_ctz(m);
+		const u_int s = LPECtz(m);
 		out |= aut.delta[s][sym];
 	}
 	return out;

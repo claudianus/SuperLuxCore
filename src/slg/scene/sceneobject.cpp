@@ -70,7 +70,7 @@ PropertiesUPtr SceneObject::ToProperties(const ExtMeshCache &extMeshCache,
 	// Light linking
 	if (linkGroupNames) {
 		string csv;
-		for (u_int32_t i = 0; i < linkGroupNames->size(); ++i) {
+		for (u_int i = 0; i < linkGroupNames->size(); ++i) {
 			if (linkGroupMask & (1ull << i)) {
 				if (!csv.empty())
 					csv += ",";

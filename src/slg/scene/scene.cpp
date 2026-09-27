@@ -1087,7 +1087,7 @@ string Scene::GetCryptomatteManifest(const bool useObjectNames) const {
 	return manifest;
 }
 
-u_int32_t Scene::GetLinkGroupBit(const std::string &name) {
+u_int Scene::GetLinkGroupBit(const std::string &name) {
 	// Insertion order = bit order, so the same name always resolves to the
 	// same bit within a scene definition (also across ToProperties
 	// re-parsing, since group names are re-emitted and re-parsed in the
@@ -1099,7 +1099,7 @@ u_int32_t Scene::GetLinkGroupBit(const std::string &name) {
 	if (linkGroupNames.size() >= 64)
 		throw std::runtime_error("Too many light link groups (maximum is 64): \"" + name + "\"");
 
-	const u_int32_t bit = linkGroupNames.size();
+	const u_int bit = linkGroupNames.size();
 	linkGroupTable[name] = bit;
 	linkGroupNames.push_back(name);
 
@@ -1121,7 +1121,7 @@ u_longlong Scene::ParseLinkGroupMask(const std::string &csv) {
 
 std::string Scene::LinkGroupMaskToString(const u_longlong mask) const {
 	std::string csv;
-	for (u_int32_t i = 0; i < linkGroupNames.size(); ++i) {
+	for (u_int i = 0; i < linkGroupNames.size(); ++i) {
 		if (mask & (1ull << i)) {
 			if (!csv.empty())
 				csv += ",";
