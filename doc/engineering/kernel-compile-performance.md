@@ -361,3 +361,136 @@ waits (no deadlock).
 - cl2msl profile (cProfile, top-25 cumulative): `/tmp/cl2msl_profile.txt` —
   ~85% of translation time is `propagate_gid()` inside
   `rule_kernel_buffer_attrs()` (regex `re.search` over function bodies).
+
+---
+
+# C++ incremental-rebuild fan-out (header hygiene)
+
+Separate topic from GPU kernels: wall time after `touch`ing a project
+header, Ninja Multi-Config `out/build`, Release config, post-PCH baseline
+(`src/pch/stable_pch.hpp` already covers luxrays/boost/std — 446 TUs).
+
+## Method
+
+`ninja -C out/build -f build-Release.ninja -t deps` dumps the `.ninja_deps`
+log; count, per project header, how many Release `.o` files list it as a
+dependency. A per-TU "root" model (the .cpp's direct includes + dep-headers
+unreachable from other dep-headers) attributes each dependency to the
+carrier header(s) that deliver it — this tells you which include edge to
+cut instead of guessing.
+
+## Top-20 fan-out headers (Release TUs, 598 total)
+
+| TUs | header |
+|----:|--------|
+| 446 | src/pch/stable_pch.hpp (PCH) |
+| 403 | include/luxrays/utils/utils.h |
+| 400 | include/luxrays/luxrays.h (+ luxrays_types.cl) |
+| 386 | include/luxrays/utils/serializationutils.h |
+| 370 | include/luxrays/core/geometry/vector.h |
+| 369 | include/luxrays/core/color/color.h |
+| 368 | include/luxrays/utils/observer_ptr.h |
+| 366 | include/luxrays/utils/exportdefs.h |
+| 365 | include/luxrays/utils/properties.h |
+| 359 | include/luxrays/utils/strutils.h |
+| 355 | include/luxrays/core/geometry/point.h + utils/buffer.h |
+| 351 | include/luxrays/core/geometry/normal.h |
+| 347 | geometry/{bbox,bsphere,matrix4x4,uv}.h + epsilon.h |
+| 344 | include/luxrays/utils/proputils.h |
+| 342 | geometry/{matrix4x4op,transform,triangle,quaternion}.h |
+| 340 | include/luxrays/core/trianglemesh.h |
+| 324 | include/slg/usings.h |
+| 309 | include/slg/slg.h |
+| 302 | include/slg/bsdf/bsdfevents.h |
+| 279 | include/slg/film/filters/filter.h |
+| 262-271 | imagemap.h / mapping.h / hitpoint.h / texture.h / colorspace / sdl |
+| 197 | include/slg/materials/material.h |
+| 172-178 | volume.h / light.h / sceneobject.h / bsdf.h / extmeshcache.h |
+
+(every boost header sits at 454 — all-or-nothing via the PCH.)
+
+## Why material.h fans out to 197 TUs
+
+material.h sits in a dense cluster with bsdf.h / volume.h / light.h /
+trianglelight.h / sceneobject.h / scene.h / materialdefs.h — all of them
+include it **legitimately**: `Volume : public Material`, `bsdf.h` calls
+`material->*()` inline, `light.h` calls `lightMaterial->*()` inline,
+`materialdefs.h` needs `dynamic_cast<MaterialConstRef>`, `scene.h` owns a
+`MaterialDefinitions` member by value. Measured sole-carrier contribution
+of each gateway is small: sceneobject.h→material.h alone delivers **0**
+unique TUs (every consumer also has light.h/bsdf.h/volume.h in its set).
+The fan-out is an emergent property of ~40 mid-level headers each
+correctly pulling the cluster — per-edge cuts give <10%.
+
+## Applied (kept — pure include hygiene, zero semantics)
+
+- `cameras/camera.h`: dropped `volumes/volume.h` — only `VolumeConstPtr`/
+  `VolumeConstRef` used; `slg/usings.h` already provided the aliases.
+- `film/sampleresult.h`, `utils/pathdepthinfo.h`: `bsdf/bsdf.h` →
+  `bsdf/bsdfevents.h` (they only need the `BSDFEvent` typedef).
+- `samplers/sampler.h`: added `luxrays/core/namedobject.h` (its base class
+  was only ever satisfied transitively!) + `using luxrays::ocl::Seed` for
+  sampler_types.cl.
+- `utils/pathinfo.h`: fwd `class BSDF` + `using luxrays::ocl::Normal`.
+- `utils/pathvolumeinfo.h`: fwd `class BSDF` + `bsdf/hitpoint.h`
+  (`HitPoint` is a `typedef struct HitPoint_t` — cannot be fwd-declared
+  cleanly; hitpoint.h is luxrays-only and reaches neither material.h nor
+  texture.h).
+- `scene/scene.cpp`, `imagemap/resizepolicies/calcoptsize.cpp`: explicit
+  `bsdf/bsdf.h` (both instantiate/use `BSDF` — were piggybacking on the
+  sampleresult.h transitive include).
+
+Hidden coupling discovered: `*_types.cl` files inside `namespace slg::ocl`
+depend on `using luxrays::ocl::*` declarations injected by *other* headers
+(hitpoint.h, mapping.h). Removing a cluster header exposed which headers
+were secretly not self-contained — fixed with explicit usings where needed.
+
+## Result
+
+`touch include/slg/materials/material.h && ninja … pysuperluxcore`:
+
+- TUs: **202 tasks → 185 (181 compile steps), −8.1%**
+- wall: 33.0s → ~35s (within noise; system had parallel load)
+- `texture.h` touch: 261 → 245 TUs (−6.1%), wall ~35→37s
+
+Verdict: <15% gain — kept only the hygiene-level cleanups (all safe).
+Further per-edge trimming is exhausted: remaining material.h TUs
+genuinely use Material/BSDF definitions.
+
+## Structural options for a deeper cut (NOT implemented)
+
+1. **Split `material.h` into `material_types.h` + `material_base.h` +
+   `material.h`.** `MaterialType` / `MaterialEmissionDLSType` enums +
+   `Material`'s vtable-pure interface (decls only, no inline) vs. the
+   members-heavy class body. Most consumers call `material->IsLightSource()`
+   etc. — they'd still need the full class, so payoff is modest; the real
+   win would be a *handle-level* header exposing only `MaterialRef`/
+   `MaterialType` (used by scene.h/renderengine.h declarations). Est:
+   10-20% of material.h-touch TUs.
+2. **`BSDF` in its own light-weight TU boundary.** bsdf.h is the biggest
+   cluster multiplier (171 TUs): it must inline-call Material, so any TU
+   creating a BSDF needs everything. Moving BSDF's hot inline accessors to
+   a `bsdf_inline.h` leaf and keeping `bsdf.h` decl-only lets light paths
+   (pathtracer etc.) still inline while edit/serialize TUs skip the
+   material cluster. Est: 20-40 TUs; touches the hottest shading code —
+   measure perf before/after.
+3. **Break `scene.h`'s by-value ownership.** `Scene` holds
+   `MaterialDefinitions`/`TextureDefinitions`/`SceneObjectDefinitions`/
+   `LightSourceDefinitions` by value → any scene.h TU pays the full
+   cluster. `unique_ptr<>` members move the cost to scene.cpp only.
+   ABI/API-neutral for callers, but requires touching every inline
+   `matDefs` accessor (~getter bodies move to scene.cpp). Est: scene.h's
+   140 TUs stop dragging material.h unless they also need it — the
+   biggest single structural win (potentially −40-60 material.h TUs).
+4. **`observer_ptr`/`reference_wrapper` audit.** Many headers hold
+   `std::reference_wrapper<T>`/`observer_ptr<T>` members that only need
+   fwd decls — same pattern as the camera.h fix, but applied
+   systematically with IWYU tooling.
+5. **ccache (orthogonal, recommended).** Not installed. Would turn the
+   remaining rebuilds into cache hits for unchanged content and help all
+   configs/branches. `brew install ccache`, then configure with
+   `-DCMAKE_C_COMPILER_LAUNCHER=ccache
+   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache` (or `CMAKE_<LANG>_COMPILER_LAUNCHER`
+   in CMakeUserPresets.json). Expected: near-instant rebuilds for
+   already-seen TUs; first touch still full cost. Do NOT bundle the
+   install into a source PR — it's a local toolchain setting.

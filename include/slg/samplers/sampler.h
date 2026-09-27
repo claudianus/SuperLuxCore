@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "luxrays/core/namedobject.h"
 #include "luxrays/core/randomgen.h"
 #include "luxrays/usings.h"
 #include "luxrays/utils/utils.h"
@@ -39,6 +40,7 @@ namespace slg {
 //------------------------------------------------------------------------------
 
 namespace ocl {
+using luxrays::ocl::Seed;
 #include "slg/samplers/sampler_types.cl"
 }
 

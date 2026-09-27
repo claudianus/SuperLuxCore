@@ -22,7 +22,7 @@
 #include <ostream>
 
 #include "slg/slg.h"
-#include "slg/bsdf/bsdf.h"
+#include "slg/bsdf/bsdfevents.h"
 
 namespace slg {
 

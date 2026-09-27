@@ -24,7 +24,6 @@
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/core/geometry/motionsystem.h"
 #include "luxrays/utils/mc.h"
-#include "slg/volumes/volume.h"
 
 #include "slg/imagemap/imagemapcache.h"
 

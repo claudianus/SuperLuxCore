@@ -18,7 +18,7 @@
 
 #include "luxrays/core/color/spectrumgroup.h"
 
-#include "slg/bsdf/bsdf.h"
+#include "slg/bsdf/bsdfevents.h"
 #include "slg/film/film.h"
 
 #ifndef _SLG_SAMPLERESULT_H
@@ -28,6 +28,10 @@ namespace slg {
 
 // OpenCL data types
 namespace ocl {
+using luxrays::ocl::Point;
+using luxrays::ocl::Normal;
+using luxrays::ocl::UV;
+using luxrays::ocl::Spectrum;
 #include "slg/film/sampleresult_types.cl"
 }
 

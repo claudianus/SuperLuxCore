@@ -23,6 +23,7 @@
 
 #include "luxrays/usings.h"
 #include "slg/slg.h"
+#include "slg/bsdf/hitpoint.h"
 
 namespace slg {
 
@@ -39,6 +40,7 @@ namespace ocl {
 
 #define PATHVOLUMEINFO_SIZE 8
 
+class BSDF;
 class Volume;
 
 class PathVolumeInfo {

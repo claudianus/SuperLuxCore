@@ -42,6 +42,7 @@
 #include "luxrays/utils/murmurhash.h"
 #include "luxrays/utils/properties.h"
 #include "luxrays/utils/utils.h"
+#include "slg/bsdf/bsdf.h"
 #include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/editaction.h"
 #include "slg/imagemap/imagemap.h"

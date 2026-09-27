@@ -30,12 +30,15 @@ namespace slg {
 
 // OpenCL data types
 namespace ocl {
+using luxrays::ocl::Normal;
 #include "slg/utils/pathinfo_types.cl"
 }
 
 //------------------------------------------------------------------------------
 // PathInfo
 //------------------------------------------------------------------------------
+
+class BSDF;
 
 class PathInfo {
 public:

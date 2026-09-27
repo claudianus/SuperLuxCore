@@ -21,6 +21,7 @@
 
 #include "luxrays/utils/thread.h"
 
+#include "slg/bsdf/bsdf.h"
 #include "slg/samplers/sampler.h"
 #include "slg/samplers/sobol.h"
 #include "slg/scene/scene.h"
