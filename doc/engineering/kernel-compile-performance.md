@@ -103,6 +103,120 @@ produced is byte-identical to the verified standalone output.
 New profile: `/tmp/cl2msl_profile_new.txt` (top entry is now
 `rule_kernel_buffer_attrs` at 2.2s, mostly `_fn_spans`/`re.sub`).
 
+## Dev/test env knobs (2026-09-27)
+
+- `SUPERLUXCORE_SERIAL_KERNELS` (set, non-empty): escape hatch in
+  `PathOCLBaseOCLRenderThread::InitKernels()` — forces the sequential
+  kernel-compile loop for debugging/driver issues. Verified on e47
+  (fresh `SUPERLUXCORE_CACHE_DIR`): "Compiling 20 kernels sequentially"
+  vs "in parallel", both runs PASS.
+- `SUPERLUXCORE_BACKENDS=cpu,opencl,metal` (comma subset, default all):
+  render-leg scoping in `dev-tools/e21_backend_parity_test.py`,
+  `e47_charlie_sheen_parity.py`, `e48_sss_cb15_parity.py`,
+  `e49_sellmeier_dispersion.py`. The parity ref is the first available
+  leg (cpu when listed). This is the dev-loop mitigation for OpenCL's
+  ~42s cold cost — skip it during iteration, parity still testable on
+  demand.
+- `SUPERLUXCORE_SCENES=<tag,…>` (e21 only): scene-tag subset.
+- Verified: `SUPERLUXCORE_BACKENDS=cpu,metal SUPERLUXCORE_SCENES=cornell
+  e21` runs exactly PATHCPU + PATHOCL-Metal, ALL PASS.
+
+## e21 parallel-compile causality verdict (2026-09-27)
+
+Question: are the mtl-vs-ocl pixel-tail gate failures (media, bump,
+luxball) caused by parallel `clCreateKernel`? Ran
+`SUPERLUXCORE_SCENES=media,bump,luxball` on the same Debug build,
+serial vs parallel (kernel content is identical either way):
+
+| leg | serial >30%-diff (p50/p99) | parallel >30%-diff (p50/p99) |
+|---|---|---|
+| media | 8.94% (0.992/2.192) | 2.79% (1.000/1.458) |
+| bump | 2.08% (1.000/1.472) | 1.22% (1.000/1.228) |
+| luxball | 2.67% (0.999/3.428) | 1.94% (1.000/1.405) |
+
+Same three scenes fail in both modes with the same signature — p50
+≈ 1.0 (bulk pixel parity) plus a >30%-diff tail above the 1% gate;
+means agree within ~0.5% everywhere. Tail magnitudes move run to run
+(PATHCPU/GPU sample ordering is nondeterministic), so the spread is
+noise on top of a real, persistent Metal-vs-OpenCL per-pixel tail.
+**Verdict: parallel kernel creation is NOT responsible.** The tail is
+a genuine backend divergence (or stochastic sampler tail) on these
+scenes, not a compile-order artifact. Left as-is per findings; no
+workaround applied.
+
+## Apple OpenCL residual cold cost
+
+After parallel clCreateKernel the OpenCL leg still costs ~42s cold:
+`clBuildProgram` (~12s) plus per-kernel codegen that is largely
+serialized driver-internally despite 17-20 concurrent callers
+(per-kernel elapsed inflates under contention; the wall gain was the
+2x seen above — the remaining serialization is inside Apple's
+OpenCL-on-Metal translator and is not fixable from our side).
+Mitigation: `SUPERLUXCORE_BACKENDS` scoping during dev.
+
+## C++ TU header fan-out (PCH, 2026-09-27)
+
+Different axis from the rest of this doc: C++ translation-unit compile
+time, not GPU-kernel cold start. A typical TU parses ~2000+ includes
+(mostly libc++ + Boost) before reaching project code; e.g. touching
+`include/slg/materials/material.h` recompiles ~197 TUs.
+
+Mechanism: `src/pch/stable_pch.hpp` — a private umbrella of *stable*
+headers only (C library, libc++, frequently-used Boost) under
+`#ifdef __cplusplus`. Applied per target via
+`target_precompile_headers(<t> PRIVATE
+${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)` on `luxrays`, `slg-core`,
+`slg-film`, `luxcore`, `luxcore_static`. CMake generates
+`cmake_pch.hxx` + `.pch` per target per config and clang consumes it via
+`-Xclang -include-pch`. PRIVATE means it never leaks into dependent
+targets' compile lines. No `REUSE_FROM` — the targets compile with
+different flags, so each gets its own PCH object. No LuxCore headers in
+the umbrella: they change under development and would invalidate the
+whole PCH per edit. ObjC++ `.mm` sources are already isolated in
+`luxrays_metalobj` (no PCH attached); the C source
+`deps/volk/volk.c` inside `luxrays` consumes a no-op C-mode PCH thanks to
+the `__cplusplus` guard.
+
+Measured (Release, Ninja Multi-Config, Apple M5 Pro, healthy
+`.ninja_deps`; incremental = touch header → `ninja -f build-Release.ninja
+pysuperluxcore`):
+
+| touch | edges | baseline wall | PCH wall | paired TU CPU |
+|---|---|---|---|---|
+| materials/material.h | 197 | 36.99s | 29.6–30.05s | 782,996 → 625,720 ms (−20.1%) |
+| textures/texture.h | 261 | —¹ | 34.84s | —¹ |
+
+¹ The pre-PCH texture.h number was taken while `.ninja_deps` was still
+corrupt (see gotcha below — every build degenerated toward a full
+rebuild), so no trustworthy baseline exists for it; ~84s was observed
+in that contaminated regime.
+
+- Median per-TU compile: 1787ms → 1143ms (−36%).
+- Warning delta: zero — 3278 warnings both runs, identical 123-type set.
+- Gates: `dev-tools/parity-regression.sh` ALL PASS (CPU + GPU);
+  `e47_charlie_sheen_parity.py` METAL_GPU + OPENCL_GPU both PASS.
+- Decision: **kept** (−20% wall/CPU vs the 15% keep gate).
+
+Failed experiment — do not retry blindly: adding
+`embree4/rtcore*.h`, `Imath/*.h`, `OpenImageIO/image_span.h` to the
+umbrella (each pulled by ~1170 TUs via `bvhbuild.h`/`imagemap.h`) made
+things *worse*: paired TU CPU 626,816 → 640,775 ms (+2.2%). A fatter PCH
+costs more to mmap/symbol-load per TU than the extra parsing saves.
+Keep the umbrella to libc++ + Boost.
+
+Caveats:
+
+- The first build after `stable_pch.hpp` or compile flags change pays one
+  extra edge per target (the `.pch` itself, ~2–4s) — amortised
+  immediately.
+- `.ninja_deps` corruption predates this work: a killed ninja truncated
+  the deps log mid-record ("premature end of file; recovering"), making
+  every subsequent build ignore deps and rebuild ~everything. Fixed by
+  truncating at the last valid record. See the never-kill-ninja gotcha.
+- `ccache` is not installed on this machine; PCH and ccache are
+  orthogonal (PCH cuts parse, ccache skips whole TUs) — installing it
+  would stack on top of this win.
+
 ## Gotchas
 
 - **Apple's shader caches are uid-scoped, not HOME-scoped.** The OS-level

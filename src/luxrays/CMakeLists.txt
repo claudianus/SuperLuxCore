@@ -261,6 +261,16 @@ target_link_libraries(luxrays PRIVATE
   boost::boost
   OpenMP::OpenMP_CXX
 )
+# Stable system/Boost precompiled header: a typical TU parses ~2000+
+# includes (mostly STL + Boost) before reaching project code; seeding
+# them once per target cuts per-TU parse time measurably. The umbrella
+# header deliberately excludes all LuxCore headers (they change under
+# development) so the PCH stays valid across project edits. The ObjC++
+# .mm sources live in the separate luxrays_metalobj target (no PCH) and
+# the C source deps/volk/volk.c gets a no-op C-mode PCH via the header's
+# __cplusplus guard. See doc/engineering/kernel-compile-performance.md.
+target_precompile_headers(luxrays PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
 if(APPLE)
   target_link_libraries(luxrays PRIVATE
     "-framework Metal"

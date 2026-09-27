@@ -77,6 +77,15 @@ include_directories(${PROJECT_SOURCE_DIR}/deps/bcd-1.1/include)
 add_library(luxcore SHARED ${LUXCORE_SRC} "${generated_header_dir}/cfg.h")
 add_library(luxcore_static STATIC ${LUXCORE_SRC} "${generated_header_dir}/cfg.h")
 
+# Stable system/Boost precompiled header — same umbrella as
+# luxrays/slg-core (see src/luxrays/CMakeLists.txt note and
+# doc/engineering/kernel-compile-performance.md). Per-target PCH rather
+# than REUSE_FROM: the two targets compile with different flags.
+target_precompile_headers(luxcore PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
+target_precompile_headers(luxcore_static PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
+
 target_link_libraries(luxcore PRIVATE
     onetbb::onetbb
     oidn::oidn

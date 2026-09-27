@@ -549,6 +549,12 @@ else()
   target_link_libraries(slg-core PRIVATE OpenMP::OpenMP_CXX)
 endif(APPLE)
 
+# Stable system/Boost precompiled header — see the matching note in
+# src/luxrays/CMakeLists.txt and doc/engineering/kernel-compile-performance.md.
+# Largest fan-out target (~280 TUs): the biggest incremental win.
+target_precompile_headers(slg-core PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
+
 #############################################################################
 #
 # SLG Kernels library
@@ -781,6 +787,10 @@ target_link_libraries(slg-film PRIVATE
     openimageio::openimageio
     OpenMP::OpenMP_CXX
 )
+
+# Same stable system/Boost PCH as slg-core — see note above.
+target_precompile_headers(slg-film PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
 
 ###########################################################################
 #
