@@ -160,3 +160,11 @@
   `metal` rejects `.msl` as a linker input) and `xcrun -sdk macosx
   metal -c /tmp/m.metal`.
 
+- **Manual `ninja` runs need the conan env**: `luxparse.y` regenerates via
+  the Conan bison 3.8.2 binary, which execs GNU m4 found through the
+  `M4` env var. Without it, macOS `/usr/bin/m4` (BSD) dies mid-grammar
+  and bison exits with SIGPIPE (code=141) and NO diagnostic. Source
+  `out/build/generators/conanbuild.sh` before invoking ninja directly
+  (it exports `M4`, `BISON_PKGDATADIR`, and puts the Conan ninja/bison
+  on PATH). Symptom: `[BISON][luxbison]` `FAILED: [code=141]` with
+  empty output after a reconfigure forces the parser regen.

@@ -216,9 +216,14 @@ Caveats:
   the deps log mid-record ("premature end of file; recovering"), making
   every subsequent build ignore deps and rebuild ~everything. Fixed by
   truncating at the last valid record. See the never-kill-ninja gotcha.
-- `ccache` is not installed on this machine; PCH and ccache are
-  orthogonal (PCH cuts parse, ccache skips whole TUs) — installing it
-  would stack on top of this win.
+- `sccache` 0.17 measured and REJECTED under the PCH build (see
+  "Structural options #5" update): CMake implements PCH via `-Xclang
+  -include-pch/-pth`, which sccache cannot cache — 612/614 calls were
+  pass-through ("Can't handle UnknownFlag arguments with -Xclang").
+  And even without PCH, a touched header changes every dependent TU's
+  preprocessed hash → incremental builds always miss; a compiler cache
+  only pays off for clean/branch-switch rebuilds. `luxmake config` now
+  wires a launcher only when `SUPERLUXCORE_CCACHE=1` is set explicitly.
 
 ## Vulkan (MoltenVK) parallel `GetKernel` + persistent pipeline cache (2026-09-27)
 
@@ -579,11 +584,13 @@ genuinely use Material/BSDF definitions.
    headers hold `std::reference_wrapper<T>`/`observer_ptr<T>` members
    that only need fwd decls — same pattern as the camera.h fix, but
    applied systematically with IWYU tooling.
-5. **ccache (orthogonal, recommended).** Not installed. Would turn the
-   remaining rebuilds into cache hits for unchanged content and help all
-   configs/branches. `brew install ccache`, then configure with
-   `-DCMAKE_C_COMPILER_LAUNCHER=ccache
-   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache` (or `CMAKE_<LANG>_COMPILER_LAUNCHER`
-   in CMakeUserPresets.json). Expected: near-instant rebuilds for
-   already-seen TUs; first touch still full cost. Do NOT bundle the
-   install into a source PR — it's a local toolchain setting.
+5. **Compiler cache — MEASURED, opt-in only.** sccache 0.17 installed
+   and benchmarked 2026-09-27: 612/614 compile calls non-cacheable
+   ("Can't handle UnknownFlag arguments with -Xclang" — CMake passes
+   PCH through `-Xclang -include-pch`, unsupported by sccache). The two
+   cacheable TUs were the PCH-less C sources. It also cannot help the
+   common incremental case (touched header → new preprocessed hash →
+   guaranteed miss); its win would only be clean rebuilds and
+   Debug↔Release/branch switches, at the cost of dropping PCH.
+   Kept as opt-in: `SUPERLUXCORE_CCACHE=1` makes `luxmake config` pass
+   `CMAKE_{C,CXX}_COMPILER_LAUNCHER` when sccache/ccache is on PATH.
