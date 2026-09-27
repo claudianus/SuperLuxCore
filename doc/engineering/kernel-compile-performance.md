@@ -18,8 +18,10 @@ merge-hash sets).
 
 - `HardwareDevice::HasThreadSafeKernelCreation()` (default false). True for
   `OpenCLDevice` (clCreateKernel/clGetKernelWorkGroupInfo are thread-safe per
-  spec; only clSetKernelArg is not) and `MetalDevice` (PSO creation is
-  thread-safe; see below). CUDA/Vulkan stay sequential.
+  spec; only clSetKernelArg is not), `MetalDevice` (PSO creation is
+  thread-safe; see below) and `VulkanDevice` (see the Vulkan section — the
+  shared pipeline cache is internally synchronized, merges are mutex-gated).
+  CUDA stays sequential.
 - `PathOCLBaseOCLRenderThread::InitKernels()` collects one job list (base +
   micro + the same conditional light/VC/merge sets as before), then either
   launches every job with `std::async(std::launch::async)` — joining ALL
@@ -35,9 +37,10 @@ merge-hash sets).
 - `MetalDevice::GetKernel()` runs its whole body in an `@autoreleasepool`:
   the async workers are raw std::threads with no NSAutoreleasePool.
 - `SUPERLUXCORE_CACHE_DIR` env: `luxrays::GetCacheDir()` returns it verbatim
-  (=> `$DIR/ocl_kernel_cache`, `$DIR/cuda_kernel_cache`) and the Metal
-  translation/archive dir becomes `$DIR/metal` — honest cold/dev/CI runs
-  without touching the user's real caches.
+  (=> `$DIR/ocl_kernel_cache`, `$DIR/cuda_kernel_cache`), the Metal
+  translation/archive dir becomes `$DIR/metal`, and the whole per-user
+  Vulkan tree becomes `$DIR/luxcore/{vkcache,vktools}` — honest cold/dev/CI
+  runs without touching the user's real caches.
 
 ## Measured after-numbers (cold at every level)
 
@@ -217,6 +220,117 @@ Caveats:
   orthogonal (PCH cuts parse, ccache skips whole TUs) — installing it
   would stack on top of this win.
 
+## Vulkan (MoltenVK) parallel `GetKernel` + persistent pipeline cache (2026-09-27)
+
+### Thread-safety audit of `VulkanDevice::GetKernel()`
+
+- `vkCreateDescriptorSetLayout/PipelineLayout/ShaderModule`,
+  `vkCreateBuffer`, `vkAllocateMemory`, `vkBindBufferMemory`,
+  `vkMapMemory`, `vkCreateComputePipelines`: all take only `VkDevice` +
+  per-call parameters; device-scope calls are implicitly synchronized per
+  spec §3.6 ("all commands support being called concurrently ... certain
+  parameters ... are defined to be externally synchronized").
+- `kern->*` fields: `VulkanDeviceKernel` is `make_unique` per call; every
+  handle (pipeline, layouts, descPool, buffers, module) is owned by that
+  kernel and freed in `~VulkanDeviceKernel`. Program/SPIR-V inputs are
+  per-call too.
+- `cmdPool`/`openCmd`/`queue` (externally synchronized objects) are NOT
+  touched by `GetKernel()`: module-constant and POD blobs are
+  HOST_VISIBLE+HOST_COHERENT and filled via `vkMapMemory` memcpy — no
+  command buffer or queue submit, so no upload lock is needed.
+- `pipeCache` (persisted to `vkcache/vkpipe-<uuid>.bin`): the only shared
+  object — see below.
+- `GetKernelWorkGroupSize()` returns the baked `kern->localSizeX`; no
+  device calls.
+
+### Pipeline cache: the spec reading that decided the design
+
+- `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT` is an opt-OUT,
+  not an enabler: "all commands that modify the created VkPipelineCache
+  will be externally synchronized" — the implementation "may skip any
+  unnecessary processing needed to support simultaneous modification".
+  It transfers the sync duty to the app; it does NOT make concurrent
+  access safe.
+- `vkCreateComputePipelines` VUID only requires external sync of
+  `pipelineCache` when the cache was created with that flag. Ours is
+  flag-less ⇒ concurrent creates are legal per spec.
+- MoltenVK reality (`MVKPipeline.mm`): the flag maps to
+  `_isExternallySynchronized`; a flag-less cache serializes the whole
+  `getShaderLibrary()` under `_shaderCacheLock` — including the
+  SPIR-V → MSL → MTLLibrary compile. Sharing one cache would be
+  spec-legal but would serialize exactly the work we want in parallel.
+- `vkMergePipelineCaches`: dstCache needs external sync unless created
+  with `VK_PIPELINE_CACHE_CREATE_INTERNALLY_SYNCHRONIZED_MERGE_BIT_KHR`;
+  MoltenVK's merge iterates the shared `_shaderCache` unlocked.
+
+### Design implemented (all documented inline in vkdevice.cpp `GetKernel`)
+
+1. Warm-hit probe on the shared persistent `pipeCache` with
+   `VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`
+   (`pipelineCreationCacheControl` — core in 1.3, the EXT struct covers
+   older drivers), under `pipeCacheMutex` shared_lock: a hit builds the
+   pipeline from a lookup-only pass, and readers still overlap.
+2. Miss → compile on a private UNSEEDED `VkPipelineCache`: its internal
+   lock is uncontended ⇒ true parallel compiles. Seeding it with the
+   persisted blob was rejected — MoltenVK eagerly loads/recompiles every
+   cached MSL at `vkCreatePipelineCache`, so a ~129MB seed would replay
+   per worker.
+3. Success → `vkMergePipelineCaches` into the shared cache under
+   `pipeCacheMutex` unique_lock (exclusive writer ⇒ satisfies the
+   dstCache VUID; can never overlap a probe). Next run is warm.
+4. Any failure → the original 4× MoltenVK-nondeterminism retry loop on
+   the shared cache (also a shared reader) — retry semantics preserved.
+
+`HasThreadSafeKernelCreation()` now returns true for `VulkanDevice`.
+
+### Measured (Apple M5 Pro, `dev-tools/vulkan-regression.sh --full`,
+`scenes/parity/emissive-direct`, PATHOCL = 20 kernels)
+
+| run | kernel-compile phase | notes |
+|---|---|---|
+| cold parallel (fresh `SUPERLUXCORE_CACHE_DIR=/tmp/slc_vk_cold`) | **1,271,162ms (~21.2min)** | per-kernel sum 3,711s (contention-inflated); longest pole `MK_MNEE_NEXT_VERTEX` 616s |
+| cold sequential — TRUE cold (`SUPERLUXCORE_SERIAL_KERNELS=1`, SPV-seeded but `vkpipe`-cold `/tmp/slc_vk_seq2`, `com.apple.metal*` moved aside) | **1,845,818ms (~30.8min)** | per-kernel sum = wall (uncontended) ⇒ parallel wall win ≈ **1.45×** |
+| app-cold sequential (same but OS shader cache warm) | **757,727ms (~12.6min)** | `com.apple.metal` is uid-scoped, NOT redirected — same gotcha as the Metal runs; MSL→MTL lib compiles hit the OS cache |
+| warm parallel (same cache root as cold parallel) | **823ms** | all 20 probes warm-hit; MergeSampleBuffersOCL 1ms |
+
+Honest read: 20-way parallel creation still overlaps real work
+(the MTLCompiler-service XPC pipeline accepts concurrent requests), but
+contention roughly doubles the summed per-kernel cost — the serial run's
+own per-kernel numbers are ~2× the app-cold-warm run's and ~half the
+parallel-contended ones. Judge all of it by "Kernels compilation time".
+
+Cold parallel per-kernel ms (from `emissive-vk.log`):
+`Film_Clear` 77 · `InitSeed` 50 · `Init` 1003 · `RT_NEXT_VERTEX` 344511 ·
+`HIT_NOTHING` 631 · `HIT_OBJECT` 432537 · `RT_DL` 342398 · `RT_RESTIR`
+249893 · `RT_GI_BOUNCE` 344232 · `RT_GI_RESOLVE` 314889 · `DL_ILLUMINATE`
+376506 · `DL_SAMPLE_BSDF` 286382 · `MNEE_NEXT_VERTEX` 616014 ·
+`GENERATE_NEXT_VERTEX_RAY` 398762 · `SPLAT_SAMPLE` 836 · `NEXT_SAMPLE`
+138 · `GENERATE_CAMERA_RAY` 894 · `BuildQueues` 51 · `BucketHistogram` 49 ·
+`QueuePrefix` 49.
+
+Validation: ALL VULKAN REGRESSION CASES PASSED on every run — cold
+parallel, warm parallel, OS-warm serial, true-cold serial (Stage A
+intersect 15/15, Stage B centre pixel 4.0000 / 3.9844 / 4.0000 / 4.0000
+vs 4.0±0.20, Stage C AS rebuild). No crashes, no validation errors, no
+new MoltenVK warnings; parallel workers sampled inside MTLCompiler XPC
+waits (no deadlock).
+
+### `SUPERLUXCORE_CACHE_DIR` → `luxcore/` Vulkan tree
+
+- `luxrays::GetVulkanLuxCoreDir()` (vkdevice.cpp): `$DIR/luxcore` when the
+  env is set, else `~/.luxcore`; `GetVulkanLuxCoreDirs()` appends the real
+  `~/.luxcore` as a read-only fallback so the `vktools` toolchain (clspv,
+  glslangValidator, libMoltenVK.dylib) still resolves from a benchmark
+  root that has no tools of its own.
+- Applied at: clspv lookup, MoltenVK dylib candidates, the persistent
+  `pipeCachePath`, `CompileProgram`'s `.bc/.spv` dir, and
+  vkintersectiondevice.cpp's glslangValidator + `vkrt-intersect-*` shader
+  cache. `MkdirP` replaces the single-level `mkdir` (env roots can nest).
+- Verified: the env-scoped cold run wrote only under
+  `/tmp/slc_vk_cold/luxcore/vkcache` (~680MB); `~/.luxcore/vkcache` and
+  `~/.luxcore/vktools` were untouched (the real `vkpipe-*.bin` mtime
+  predates the run — only the earlier non-env Stage A wrote it).
+
 ## Gotchas
 
 - **Apple's shader caches are uid-scoped, not HOME-scoped.** The OS-level
@@ -240,6 +354,10 @@ Caveats:
 
 - Cold logs: `/tmp/e47_par_1.log`, `/tmp/e47_par_6.log`, `/tmp/e47_par_7.log`
 - Warm log: `/tmp/e47_warm2.log`; baseline: `/tmp/e47_cold.log`
+- Vulkan: cold parallel `/tmp/vk_par_cold_full.log`, warm
+  `/tmp/vk_warm_render.log` (+ `emissive-vk.png` in `/tmp/vk_warm_work/`),
+  sequential app-cold `/tmp/vk_seq_full.log`, sequential true-cold
+  `/tmp/vk_seq_oscold_full.log`
 - cl2msl profile (cProfile, top-25 cumulative): `/tmp/cl2msl_profile.txt` —
   ~85% of translation time is `propagate_gid()` inside
   `rule_kernel_buffer_attrs()` (regex `re.search` over function bodies).

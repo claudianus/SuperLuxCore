@@ -195,6 +195,19 @@ void VulkanIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBu
 	statsTotalDataParallelRayCount += rayCount;
 }
 
+// mkdir -p: with SUPERLUXCORE_CACHE_DIR the root may be several levels
+// deep and mkdir(2) does not create missing parents.
+static void MkdirP(const string &dir) {
+	string p;
+	for (size_t i = 1; i <= dir.size(); ++i) {
+		if (i == dir.size() || dir[i] == '/') {
+			p = dir.substr(0, i);
+			if (!p.empty())
+				mkdir(p.c_str(), 0755);
+		}
+	}
+}
+
 // glslangValidator compiles the ray-query compute shader (OpenCL C/clspv
 // cannot express rayQuery* SPIR-V ops). Resolution mirrors GetClspvPath():
 // env, then the bundled vktools tree, then PATH.
@@ -202,9 +215,8 @@ static string GetGlslangPath() {
 	const char *env = getenv("LUXRAYS_GLSLANG");
 	if (env && env[0])
 		return env;
-	const char *home = getenv("HOME");
-	if (home && home[0]) {
-		const string bundled = string(home) + "/.luxcore/vktools/bin/glslangValidator";
+	for (const string &root : GetVulkanLuxCoreDirs()) {
+		const string bundled = root + "/vktools/bin/glslangValidator";
 		if (access(bundled.c_str(), X_OK) == 0)
 			return bundled;
 	}
@@ -474,11 +486,10 @@ VulkanIntersectionDevice::VulkanRTAccel *VulkanIntersectionDevice::BuildRTAccel(
 	asWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 	vkUpdateDescriptorSets(dev, 1, &asWrite, 0, nullptr);
 
-	// Shader: glslangValidator -> vkcache, then vkCreateShaderModule
-	const string home = getenv("HOME") ? getenv("HOME") : "/tmp";
-	const string cacheDir = home + "/.luxcore/vkcache";
-	mkdir((home + "/.luxcore").c_str(), 0755);
-	mkdir(cacheDir.c_str(), 0755);
+	// Shader: glslangValidator -> vkcache, then vkCreateShaderModule.
+	// SUPERLUXCORE_CACHE_DIR-aware root (see GetVulkanLuxCoreDir).
+	const string cacheDir = GetVulkanLuxCoreDir() + "/vkcache";
+	MkdirP(cacheDir);
 	const string hash = oclKernelPersistentCache::HashString(string(kRTShaderSrc));
 	const string srcPath = cacheDir + "/vkrt-intersect-" + hash + ".comp";
 	const string spvPath = cacheDir + "/vkrt-intersect-" + hash + ".spv";

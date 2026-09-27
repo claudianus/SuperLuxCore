@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <thread>
@@ -60,6 +61,44 @@ static bool vulkanAvailable = false;
 
 namespace luxrays {
 
+string GetVulkanLuxCoreDir() {
+	// SUPERLUXCORE_CACHE_DIR=<dir> relocates the whole per-user Vulkan
+	// tree (vkcache + vktools) under <dir>/luxcore so dev/CI cold
+	// benchmarks never touch the user's real caches; the internal names
+	// are preserved.
+	const char *env = getenv("SUPERLUXCORE_CACHE_DIR");
+	if (env && env[0])
+		return string(env) + "/luxcore";
+	const char *home = getenv("HOME");
+	return (home && home[0]) ? string(home) + "/.luxcore" : "/tmp/.luxcore";
+}
+
+vector<string> GetVulkanLuxCoreDirs() {
+	vector<string> dirs = { GetVulkanLuxCoreDir() };
+	// vktools binaries are read-only: fall back to the real ~/.luxcore
+	// when the redirected root has no toolchain of its own.
+	const char *home = getenv("HOME");
+	if (home && home[0]) {
+		const string real = string(home) + "/.luxcore";
+		if (real != dirs.back())
+			dirs.push_back(real);
+	}
+	return dirs;
+}
+
+// mkdir -p: with SUPERLUXCORE_CACHE_DIR the root may be several levels
+// deep and mkdir(2) does not create missing parents.
+static void MkdirP(const string &dir) {
+	string p;
+	for (size_t i = 1; i <= dir.size(); ++i) {
+		if (i == dir.size() || dir[i] == '/') {
+			p = dir.substr(0, i);
+			if (!p.empty())
+				mkdir(p.c_str(), 0755);
+		}
+	}
+}
+
 // clspv binary used to translate the OpenCL kernel corpus to SPIR-V.
 static string GetClspvPath() {
 	const char *env = getenv("LUXRAYS_CLSPV");
@@ -68,9 +107,8 @@ static string GetClspvPath() {
 	// Bundled toolchain (dev-tools/vulkan-tools-install.sh): makes
 	// kernel compilation work for hosts launched without a developer
 	// PATH (GUI Blender, .app bundles, service processes).
-	const char *home = getenv("HOME");
-	if (home && home[0]) {
-		const string bundled = string(home) + "/.luxcore/vktools/bin/clspv";
+	for (const string &root : GetVulkanLuxCoreDirs()) {
+		const string bundled = root + "/vktools/bin/clspv";
 		if (access(bundled.c_str(), X_OK) == 0)
 			return bundled;
 	}
@@ -117,10 +155,8 @@ static vector<string> GetMoltenVKCandidates() {
 	if (env && env[0])
 		candidates.push_back(env);
 #if defined(__APPLE__)
-	const char *home = getenv("HOME");
-	if (home && home[0])
-		candidates.push_back(string(home) +
-				"/.luxcore/vktools/lib/libMoltenVK.dylib");
+	for (const string &root : GetVulkanLuxCoreDirs())
+		candidates.push_back(root + "/vktools/lib/libMoltenVK.dylib");
 	// Next to the module containing this code (wheel/site-packages)
 	Dl_info info;
 	if (dladdr((const void *)&GetMoltenVKCandidates, &info) && info.dli_fname) {
@@ -285,7 +321,7 @@ VulkanDeviceDescription::VulkanDeviceDescription(VkPhysicalDeviceHandle physDev,
 		maxStorageBuffersPerStage(64), maxBoundDescriptorSets(4),
 		maxStorageBufferRange(1u << 27),
 		hasRayQuery(false), hasAccelStruct(false), hasUnifiedMemory(false),
-		hasScalarBlockLayout(false) {
+		hasScalarBlockLayout(false), hasPipelineCreationCacheControl(false) {
 
 	VkPhysicalDeviceProperties props;
 	vkGetPhysicalDeviceProperties((VkPhysicalDevice)physDev, &props);
@@ -323,6 +359,29 @@ VulkanDeviceDescription::VulkanDeviceDescription(VkPhysicalDeviceHandle physDev,
 		for (const auto &e : exts)
 			if (!strcmp(e.extensionName, VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME))
 				hasScalarBlockLayout = true;
+	}
+
+	// pipelineCreationCacheControl: core feature on Vulkan 1.3+; the EXT
+	// struct covers older drivers (MoltenVK exposes it via 1.3). GetKernel
+	// uses it for the FAIL_ON_PIPELINE_COMPILE_REQUIRED warm-hit probe.
+	if (props.apiVersion >= VK_API_VERSION_1_3) {
+		VkPhysicalDeviceVulkan13Features v13{
+				VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+		VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+		f2.pNext = &v13;
+		vkGetPhysicalDeviceFeatures2((VkPhysicalDevice)physDev, &f2);
+		hasPipelineCreationCacheControl = (v13.pipelineCreationCacheControl == VK_TRUE);
+	} else {
+		for (const auto &e : exts) {
+			if (!strcmp(e.extensionName, VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME)) {
+				VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT pcc{
+						VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT};
+				VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+				f2.pNext = &pcc;
+				vkGetPhysicalDeviceFeatures2((VkPhysicalDevice)physDev, &f2);
+				hasPipelineCreationCacheControl = (pcc.pipelineCreationCacheControl == VK_TRUE);
+			}
+		}
 	}
 
 	// Unified memory heuristic (Apple / integrated)
@@ -537,11 +596,29 @@ void VulkanDevice::Start() {
 	VkPhysicalDeviceScalarBlockLayoutFeatures extSblF{
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
 	const bool api12 = devProps.apiVersion >= VK_API_VERSION_1_2;
+	const bool api13 = devProps.apiVersion >= VK_API_VERSION_1_3;
 	if (api12)
 		v12F.scalarBlockLayout = VK_TRUE;
 	else {
 		extSblF.scalarBlockLayout = VK_TRUE;
 		exts.push_back(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
+	}
+
+	// pipelineCreationCacheControl enables the
+	// FAIL_ON_PIPELINE_COMPILE_REQUIRED warm-hit probe GetKernel() runs
+	// during the parallel kernel-compile phase (see GetKernel). Queried
+	// into the description at enumeration; only chained when supported.
+	VkPhysicalDeviceVulkan13Features v13F{
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+	VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT pccF{
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT};
+	if (deviceDesc.hasPipelineCreationCacheControl) {
+		if (api13)
+			v13F.pipelineCreationCacheControl = VK_TRUE;
+		else {
+			pccF.pipelineCreationCacheControl = VK_TRUE;
+			exts.push_back(VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME);
+		}
 	}
 
 	VkPhysicalDeviceAccelerationStructureFeaturesKHR asF{
@@ -560,6 +637,10 @@ void VulkanDevice::Start() {
 	if (wantRT) {
 		asF.pNext = featTail; featTail = &asF;
 		rqF.pNext = featTail; featTail = &rqF;
+	}
+	if (deviceDesc.hasPipelineCreationCacheControl) {
+		if (api13) { v13F.pNext = featTail; featTail = &v13F; }
+		else { pccF.pNext = featTail; featTail = &pccF; }
 	}
 
 	VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -585,11 +666,9 @@ void VulkanDevice::Start() {
 	// from disk makes each kernel's pipeline creation a one-time event;
 	// cache hits skip shader compilation entirely on warm runs.
 	{
-		const string dir = string(getenv("HOME") ? getenv("HOME") : "/tmp") +
-				"/.luxcore/vkcache";
-		mkdir((string(getenv("HOME") ? getenv("HOME") : "/tmp") +
-				"/.luxcore").c_str(), 0755);
-		mkdir(dir.c_str(), 0755);
+		// SUPERLUXCORE_CACHE_DIR-aware root (see GetVulkanLuxCoreDir)
+		const string dir = GetVulkanLuxCoreDir() + "/vkcache";
+		MkdirP(dir);
 		pipeCachePath = dir + "/vkpipe-" + deviceDesc.pipelineCacheUUID + ".bin";
 
 		vector<char> seed;
@@ -893,10 +972,9 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 			oclKernelCache::ToOptsString(vkParams)) + "-" +
 			oclKernelPersistentCache::HashString(vkSource) + "-vk2";
 
-	const string cacheDir = string(getenv("HOME") ? getenv("HOME") : "/tmp") +
-			"/.luxcore/vkcache";
-	mkdir((string(getenv("HOME") ? getenv("HOME") : "/tmp") + "/.luxcore").c_str(), 0755);
-	mkdir(cacheDir.c_str(), 0755);
+	// SUPERLUXCORE_CACHE_DIR-aware root (see GetVulkanLuxCoreDir)
+	const string cacheDir = GetVulkanLuxCoreDir() + "/vkcache";
+	MkdirP(cacheDir);
 	const string bcPath = cacheDir + "/" + hash + ".bc";
 	const string srcPath = cacheDir + "/" + hash + ".cl";
 
@@ -1259,17 +1337,84 @@ HardwareDeviceKernelUPtr VulkanDevice::GetKernel(
 	cpi.stage.pName = kernelName.c_str();
 	cpi.stage.pSpecializationInfo = &specInfo;
 	cpi.layout = (VkPipelineLayout)kern->pipelineLayout;
-	// MoltenVK's SPIR-V -> MSL codegen is occasionally nondeterministic
-	// (observed: a rerun of an identical module emitted an undeclared
-	// identifier). Retry a few times before giving up; the pipeline cache
-	// above makes the successful result permanent across runs.
+
+	// Thread safety (InitKernels may run GetKernel on parallel workers —
+	// see HasThreadSafeKernelCreation): all vkCreate*/vkAllocateMemory/
+	// vkMapMemory calls here are device-scope and so implicitly
+	// synchronized per spec §3.6, and the kern/program objects are
+	// per-call. The one shared object is the persisted pipeCache:
+	//  - vkCreateComputePipelines' pipelineCache param is only externally
+	//    synchronized when the cache was created with
+	//    VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT
+	//    (VUID-vkCreateComputePipelines-pipelineCache-02873). That flag is
+	//    an opt-OUT of the driver's internal sync ("the implementation may
+	//    skip any unnecessary processing needed to support simultaneous
+	//    modification from multiple threads") — ours is flag-less, so
+	//    concurrent creates are legal. MoltenVK honors this by locking
+	//    _shaderCacheLock — which also serializes the whole SPIR-V -> MSL
+	//    -> MTLLibrary compile, so the warm-hit probe runs on the shared
+	//    cache but the miss compile must use a private one.
+	//  - vkMergePipelineCaches' dstCache does need external sync
+	//    (VUID-vkMergePipelineCaches-dstCache-10202); pipeCacheMutex makes
+	//    probes shared readers and merges exclusive writers, so a merge
+	//    can never overlap a lookup (MoltenVK's merge iterates the shared
+	//    _shaderCache unlocked).
 	VkResult prc = VK_ERROR_INITIALIZATION_FAILED;
-	for (int attempt = 0; attempt < 4; attempt++) {
-		prc = vkCreateComputePipelines((VkDevice)device,
-				(VkPipelineCache)pipeCache, 1, &cpi, nullptr,
-				(VkPipeline *)&kern->pipeline);
-		if (prc == VK_SUCCESS)
-			break;
+	if (deviceDesc.hasPipelineCreationCacheControl && pipeCache) {
+		// Warm-hit probe on the shared persistent cache: a hit builds the
+		// pipeline after a lookup-only cache pass; a miss reports
+		// VK_PIPELINE_COMPILE_REQUIRED without compiling. Readers share
+		// the mutex so warm probes still create PSOs in parallel.
+		cpi.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+		{
+			std::shared_lock<std::shared_mutex> plk(pipeCacheMutex);
+			prc = vkCreateComputePipelines((VkDevice)device,
+					(VkPipelineCache)pipeCache, 1, &cpi, nullptr,
+					(VkPipeline *)&kern->pipeline);
+		}
+		cpi.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+		if (prc != VK_SUCCESS) {
+			// Compile on a private empty cache: its _shaderCacheLock is
+			// uncontended, so parallel workers compile truly in parallel.
+			// (Seeding it with the persistent blob would make MoltenVK
+			// recompile every cached MSL once per worker; the entries are
+			// merged back into the shared cache on success instead.)
+			VkPipelineCache privCache = VK_NULL_HANDLE;
+			VkPipelineCacheCreateInfo pcci{
+					VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+			if (vkCreatePipelineCache((VkDevice)device, &pcci, nullptr,
+					&privCache) == VK_SUCCESS) {
+				for (int attempt = 0; attempt < 4; attempt++) {
+					prc = vkCreateComputePipelines((VkDevice)device,
+							privCache, 1, &cpi, nullptr,
+							(VkPipeline *)&kern->pipeline);
+					if (prc == VK_SUCCESS)
+						break;
+				}
+				if (prc == VK_SUCCESS) {
+					std::unique_lock<std::shared_mutex> plk(pipeCacheMutex);
+					vkMergePipelineCaches((VkDevice)device,
+							(VkPipelineCache)pipeCache, 1, &privCache);
+				}
+				vkDestroyPipelineCache((VkDevice)device, privCache, nullptr);
+			}
+		}
+	}
+	if (prc != VK_SUCCESS) {
+		// MoltenVK's SPIR-V -> MSL codegen is occasionally nondeterministic
+		// (observed: a rerun of an identical module emitted an undeclared
+		// identifier). Retry a few times before giving up; the pipeline cache
+		// above makes the successful result permanent across runs.
+		// Shared reader: keeps this create from racing a peer worker's
+		// vkMergePipelineCaches into the same pipeCache.
+		std::shared_lock<std::shared_mutex> plk(pipeCacheMutex);
+		for (int attempt = 0; attempt < 4; attempt++) {
+			prc = vkCreateComputePipelines((VkDevice)device,
+					(VkPipelineCache)pipeCache, 1, &cpi, nullptr,
+					(VkPipeline *)&kern->pipeline);
+			if (prc == VK_SUCCESS)
+				break;
+		}
 	}
 	VK_CHECK(prc);
 

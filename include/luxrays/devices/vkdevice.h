@@ -24,6 +24,7 @@
 // header (context.cpp, engines) need no Vulkan SDK.
 
 #include <map>
+#include <shared_mutex>
 #include <vector>
 #include <string>
 
@@ -82,6 +83,9 @@ public:
 	bool hasAccelStruct;
 	bool hasUnifiedMemory;
 	bool hasScalarBlockLayout;
+	// pipelineCreationCacheControl gates GetKernel's warm-hit probe
+	// (VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED)
+	bool hasPipelineCreationCacheControl;
 	std::string pipelineCacheUUID; // hex, for the on-disk pipeline cache key
 
 	friend class Context;
@@ -233,6 +237,12 @@ public:
 			HardwareDeviceProgramRef program,
 			const std::string &kernelName);
 	virtual u_int GetKernelWorkGroupSize(HardwareDeviceKernelRPtr kernel);
+	// GetKernel()/GetKernelWorkGroupSize() may run concurrently: every
+	// device call is device-scope (implicitly synchronized per spec §3.6),
+	// the kern/program objects are per-call, and the shared pipeline
+	// cache is internally synchronized (created flag-less); merges into
+	// it are serialized on pipeCacheMutex (see GetKernel).
+	virtual bool HasThreadSafeKernelCreation() const override { return true; }
 	virtual void SetKernelArg(HardwareDeviceKernelRPtr kernel,
 			const u_int index, const size_t size, const void *arg);
 	virtual void EnqueueKernel(HardwareDeviceKernelRPtr kernel,
@@ -278,8 +288,24 @@ protected:
 	VkCommandBufferHandle openCmd;
 	VkPipelineCacheHandle pipeCache;
 	std::string pipeCachePath;
+	// Guards the shared pipeCache during parallel kernel creation (see
+	// GetKernel): cache reads (the warm-hit probe) are shared readers;
+	// vkMergePipelineCaches' dstCache is the exclusive writer — the spec
+	// requires external sync for dstCache (VUID-vkMergePipelineCaches-
+	// dstCache-10202) and MoltenVK's merge walks the cache unlocked.
+	std::shared_mutex pipeCacheMutex;
 	bool hasRayTracing;
 };
+
+// Root of the per-user LuxCore Vulkan tree ("~/.luxcore": vkcache +
+// vktools). SUPERLUXCORE_CACHE_DIR=<dir> relocates it to "<dir>/luxcore"
+// for dev/CI cold benchmarks; the internal names are preserved.
+std::string GetVulkanLuxCoreDir();
+
+// Toolchain lookup roots: the (possibly redirected) root first, then the
+// real ~/.luxcore — vktools binaries are read-only, so a benchmark root
+// with no tools of its own still resolves the installed toolchain.
+std::vector<std::string> GetVulkanLuxCoreDirs();
 
 }
 #endif
