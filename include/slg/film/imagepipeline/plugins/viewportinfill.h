@@ -57,7 +57,10 @@ public:
 private:
 	template<class Archive> void serialize(Archive &ar, const u_int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImagePipelinePlugin);
-		ar & ltBlend;
+		if (version >= 2)
+			ar & ltBlend;
+		else
+			ltBlend = 0.5f;
 	}
 
 	float ltBlend;

@@ -100,6 +100,13 @@ public:
 	void SetRenderEngine(RTPathCPURenderEngine *engine);
 	void Reset(FilmPtr flm);
 
+	// True once this sampler finished its coarse first-frame pass; the
+	// render thread uses it to hold back hybrid light paths until the
+	// instant-coverage phase is over (engine->firstFrameDone is not a
+	// substitute: it is only set inside WaitNewFrame, which hosts like
+	// Blender never call)
+	bool IsFirstFrameDone() const { return firstFrameDone; }
+
 	//--------------------------------------------------------------------------
 	// Static methods used by SamplerRegistry
 	//--------------------------------------------------------------------------
@@ -128,6 +135,9 @@ private:
 	// Viewport adaptive sampling: noise-guided rejection over the
 	// steady shuffled sequence (0 disables)
 	float adaptiveStrength;
+	// Viewport foveation: geometric importance scaling the adaptive
+	// acceptance - screen-centre bias times a near-depth gain
+	float foveaStrength, foveaRadius, foveaDepthScale;
 };
 
 }

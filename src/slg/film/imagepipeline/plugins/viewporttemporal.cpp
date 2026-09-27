@@ -107,6 +107,10 @@ void ViewportTemporalPlugin::Apply(Film &film, const u_int index) {
 					coverage[j] = 1.f;
 			}
 		}
+	u_int uncovered = 0;
+	#pragma omp parallel for reduction(+ : uncovered)
+	for (int j = 0; j < (int)pixelCount; ++j)
+		uncovered += (coverage[j] <= 0.f) ? 1u : 0u;
 
 	//------------------------------------------------------------------
 	// Forward-warp the history frame into the current camera. Each
@@ -117,18 +121,23 @@ void ViewportTemporalPlugin::Apply(Film &film, const u_int index) {
 	// until real samples land, uncovered pixels keep showing their
 	// reprojected history instead of black. Non-camera edits keep
 	// history from being trusted at all (stale material colors).
+	// A fully covered frame skips the splat entirely - it is the
+	// dominant per-refresh cost at high resolution.
 
 	const bool historyUsable = hasHistory && camData && cameraOnly &&
-			(histW == width) && (histH == height);
+			(histW == width) && (histH == height) && (uncovered > 0);
 
 	if (historyUsable) {
-		// Pass 1: splat each history pixel into the new frame; the
-		// nearest camera-space depth wins the slot (CAS min)
-		auto warpZ = std::make_unique<std::atomic<float>[]>(pixelCount);
+		// Pass 1: splat each history pixel into the new frame. Depth and
+		// source index are packed into one 64-bit CAS word - IEEE-754
+		// floats compare correctly as unsigned ints when cz > 0 (hither
+		// guarantee) - so the winning depth and its colour can never be
+		// torn by a separate source-index write
+		constexpr unsigned long long KEY_EMPTY = ~0ull;
+		auto warpKey = std::make_unique<std::atomic<unsigned long long>[]>(pixelCount);
 		for (u_int i = 0; i < pixelCount; ++i)
-			warpZ[i].store(numeric_limits<float>::infinity());
+			warpKey[i].store(KEY_EMPTY);
 
-		vector<int> warpSrc(pixelCount, -1); // hist pixel index winning each slot
 		#pragma omp parallel for
 		for (int i = 0; i < (int)pixelCount; ++i) {
 			const float wx = histPos[i * 3], wy = histPos[i * 3 + 1],
@@ -155,17 +164,17 @@ void ViewportTemporalPlugin::Apply(Film &film, const u_int index) {
 			if ((nx < 0) || (nx >= (int)width) || (ny < 0) || (ny >= (int)height))
 				continue;
 
+			u_int zbits;
+			memcpy(&zbits, &cz, sizeof(zbits));
+			const unsigned long long key =
+					((unsigned long long)zbits << 32) | (unsigned long long)(u_int)i;
+
 			const u_int j = ny * width + nx;
-			float old = warpZ[j].load();
-			bool won = false;
-			while (cz < old) {
-				if (warpZ[j].compare_exchange_weak(old, cz)) {
-					won = true;
+			unsigned long long old = warpKey[j].load();
+			while (key < old) {
+				if (warpKey[j].compare_exchange_weak(old, key))
 					break;
-				}
 			}
-			if (won)
-				warpSrc[j] = i; // winning depth wrote us (races are benign)
 		}
 
 		// Pass 2: fill uncovered display pixels from the winning history
@@ -174,9 +183,10 @@ void ViewportTemporalPlugin::Apply(Film &film, const u_int index) {
 		for (int j = 0; j < (int)pixelCount; ++j) {
 			if (coverage[j] > 0.f)
 				continue;
-			const int s = warpSrc[j];
-			if (s < 0)
+			const unsigned long long k = warpKey[j].load();
+			if (k == KEY_EMPTY)
 				continue;
+			const u_int s = (u_int)(k & 0xffffffffull);
 			for (u_int c = 0; c < 3; ++c)
 				pixels[j * 3 + c] = histRGB[s * 3 + c];
 		}
@@ -208,7 +218,7 @@ void ViewportTemporalPlugin::Apply(Film &film, const u_int index) {
 				}
 			}
 		}
-			histW = width;
+		histW = width;
 		histH = height;
 		hasHistory = true;
 	} else

@@ -6723,6 +6723,7 @@ __kernel void Init(
 	const bool validSample = Sampler_Init(taskConfig,
 			filmNoise,
 			filmUserImportance,
+			filmDepth,
 			filmWidth, filmHeight,
 			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3
 			SAMPLER_PARAM);

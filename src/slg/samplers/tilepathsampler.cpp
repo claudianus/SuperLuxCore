@@ -142,6 +142,12 @@ slg::ocl::Sampler *TilePathSampler::FromPropertiesOCL(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.strength")).Get<double>(), 0.0, .95);
 	oclSampler->tilepath.adaptiveUserImportanceWeight =
 			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.userimportanceweight")).Get<float>();
+	oclSampler->tilepath.foveaStrength = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.fovea.strength")).Get<double>(), 0.0, .95);
+	oclSampler->tilepath.foveaRadius = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.fovea.radius")).Get<double>(), 0.01, 1.0);
+	oclSampler->tilepath.foveaDepthScale = Max(0.0,
+			cfg.Get(GetDefaultProps()->Get("sampler.tilepath.fovea.depthscale")).Get<double>());
 
 	return oclSampler;
 }
@@ -151,6 +157,10 @@ void TilePathSampler::AddRequiredChannels(Film::FilmChannels &channels, const lu
 	const float str = cfg.Get(GetDefaultProps()->Get("sampler.tilepath.adaptive.strength")).Get<double>();
 	if (str > 0.f)
 		channels.insert(Film::NOISE);
+	// The foveation depth term reads the first-hit DEPTH channel
+	const float dScale = cfg.Get(GetDefaultProps()->Get("sampler.tilepath.fovea.depthscale")).Get<double>();
+	if (dScale > 0.0)
+		channels.insert(Film::DEPTH);
 }
 
 PropertiesUPtr TilePathSampler::GetDefaultProps() {
@@ -159,7 +169,10 @@ PropertiesUPtr TilePathSampler::GetDefaultProps() {
 			Sampler::GetDefaultProps() <<
 			Property("sampler.type")(GetObjectTag()) <<
 			Property("sampler.tilepath.adaptive.strength")(0.f) <<
-			Property("sampler.tilepath.adaptive.userimportanceweight")(.75f);
+			Property("sampler.tilepath.adaptive.userimportanceweight")(.75f) <<
+			Property("sampler.tilepath.fovea.strength")(0.f) <<
+			Property("sampler.tilepath.fovea.radius")(.4f) <<
+			Property("sampler.tilepath.fovea.depthscale")(0.f);
 
 	return props;
 }

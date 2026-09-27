@@ -113,9 +113,13 @@ void RenderSession::EndSceneEdit() {
 			film->Reset();
 	}
 
-	PublishViewportCamera(editActions.HasOnly(CAMERA_EDIT));
-
+	// Publish the camera AFTER the engine-side scene preprocessing:
+	// parsed cameras are created with a dummy 100x100 raster and
+	// Preprocess() inside EndSceneEdit() is what updates them to the
+	// real film resolution, so the warp matrices would be broken here
 	renderEngine->EndSceneEdit(editActions);
+
+	PublishViewportCamera(editActions.HasOnly(CAMERA_EDIT));
 }
 
 void RenderSession::PublishViewportCamera(const bool cameraOnly) {
@@ -290,6 +294,10 @@ void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 		renderConfig.GetScene().PreprocessCamera(film->GetWidth(), film->GetHeight(), film->GetSubRegion());
 
 		renderEngine->EndFilmEdit(*film, &filmMutex);
+
+		// The raster transform changed with the film size: republish
+		// so VIEWPORT_TEMPORAL does not warp with stale dimensions
+		PublishViewportCamera(false);
 	} else {
 		std::unique_lock<std::mutex> lock(filmMutex);
 		film->Parse(props);

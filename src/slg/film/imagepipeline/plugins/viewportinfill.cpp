@@ -68,22 +68,34 @@ void ViewportInfillPlugin::Apply(Film &film, const u_int index) {
 	// light) but are also the isolated "speckle" sources a viewport user
 	// sees, so they get blended toward the neighbourhood below.
 	vector<char> ltOnly;
+	u_int ltOnlyCount = 0;
 	if (film.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED)) {
 		ltOnly.assign(pixelCount, 0);
 		for (u_int g = 0; g < groupCount; ++g) {
 			const float *src = film.channel_RADIANCE_PER_SCREEN_NORMALIZEDs[g]->GetPixels();
-			#pragma omp parallel for
+			#pragma omp parallel for reduction(+ : ltOnlyCount)
 			for (int j = 0; j < (int)pixelCount; ++j) {
 				const float *p = &src[j * 3];
 				if (p[0] != 0.f || p[1] != 0.f || p[2] != 0.f) {
 					if (coverage[j] <= 0.f) {
 						coverage[j] = 1.f;
 						ltOnly[j] = 1;
+						++ltOnlyCount;
 					}
 				}
 			}
 		}
 	}
+	u_int holeCount = 0;
+	#pragma omp parallel for reduction(+ : holeCount)
+	for (int j = 0; j < (int)pixelCount; ++j)
+		holeCount += (coverage[j] <= 0.f) ? 1u : 0u;
+
+	// Converged frame: nothing to fill and no LT splats to soften. On a
+	// 4K viewport the pyramid build below costs hundreds of ms per
+	// pipeline run, so this early-out is significant once converged
+	if ((holeCount == 0) && (ltOnlyCount == 0))
+		return;
 
 	// Pull: premultiplied pyramid levels {r, g, b, w}
 	struct Level {
@@ -105,7 +117,9 @@ void ViewportInfillPlugin::Apply(Film &film, const u_int index) {
 	}
 	while (pyr.back().w > 4 || pyr.back().h > 4) {
 		const Level &src = pyr.back();
-		const u_int dw = Max(1u, src.w / 2), dh = Max(1u, src.h / 2);
+		// Ceiling halving keeps the odd tail row/column reachable:
+		// floor halving would orphan them from the pyramid forever
+		const u_int dw = Max(1u, (src.w + 1) / 2), dh = Max(1u, (src.h + 1) / 2);
 		Level dst{ dw, dh, vector<float>((size_t)dw * dh * 4) };
 		#pragma omp parallel for
 		for (int y = 0; y < (int)dh; ++y) {

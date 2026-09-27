@@ -168,3 +168,14 @@
   (it exports `M4`, `BISON_PKGDATADIR`, and puts the Conan ninja/bison
   on PATH). Symptom: `[BISON][luxbison]` `FAILED: [code=141]` with
   empty output after a reconfigure forces the parser regen.
+
+- **`Properties::SetFromString("x = true")` reads back as false.**
+  `Property::Get<bool>` on a string value goes through
+  `FromString<bool>` (`istringstream >> bool` without `boolalpha`), so
+  the word "true" fails to parse and yields `false` - silently.
+  Everything read from a .cfg text must use `= 1`/`= 0`; real bools only
+  survive when set programmatically (Python `True`, C++ `Property(n,
+  true)`). This silently disabled `path.lighttracing.enable` and
+  `path.hybridbackforward.enable` in e51/e52 test configs - the tests
+  "passed" while never exercising the feature. Grep test files for
+  `= true` before trusting them.

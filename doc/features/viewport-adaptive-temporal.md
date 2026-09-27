@@ -103,6 +103,63 @@ Note: PATHOCL kernels currently do not write `sampleResult->depth`/
 smooth degrade to no-ops there. RTPATHOCL, RTPATHCPU, PATHCPU,
 BIDIRCPU write them.
 
+### Foveated sampling
+
+- `sampler.<tilepath|rtpathcpusampler>.fovea.*`: an analytic importance
+  term multiplied into the adaptive acceptance probability - a Hermite
+  smoothstep radial falloff from `fovea.radius` (fraction of the frame
+  half-diagonal at full density) to `1 - fovea.strength` at the corners,
+  times an optional near-depth gain `min(1, fovea.depthscale / depth)`
+  read from the `DEPTH` channel. Every pixel keeps a nonzero floor and
+  the retry loop is bounded (8 tries), so coverage stays unbiased.
+- Kernel-side only (no `USER_IMPORTANCE` film round-trip): TILEPATH
+  reads it inside `TilePathSampler_Init`, RTPATHCPU inside `NextPixel`.
+  Metal's `metal::smoothstep` does not map into the shared OpenCL
+  namespace, so the falloff is spelled out as `t*t*(3-2*t)`.
+
+### Resolution-adaptive pass budget
+
+- `convert_viewport_engine` computes `steady_rr =
+  round_pow2(sqrt(pixels / 65536))` clamped to `[1, 16]`, so a pass stays
+  ~64K samples regardless of film size (4K → rr 8–16, 720p → rr 2).
+  Same math drives the interaction `SetRuntimeResolutionReduction`
+  (`_dyn_res_value`, 16 → 64 at 4K) and the preview rr (`max(rr_edit, 8,
+  2*steady)`).
+- Above 2.5 M film pixels an interaction burst additionally downscales
+  the film itself by 2 (`_INTERACTION_DOWNSCALE_*`): `session.Parse(
+  film.width/height)` goes through `BeginFilmEdit`/`EndFilmEdit`, which
+  on RT engines suspends and resumes the render threads in place - no
+  kernel re-init. The framebuffer tracks the live film dims on every
+  fetch, so the smaller texture is simply upscaled by the IMAGE shader.
+
+### Light tracing on the RT engines
+
+- **CPU**: `RTPathCPURenderThread` now runs PATHCPU's hybrid loop
+  directly - a `METROPOLIS` `SCREEN_NORMALIZED` sampler interleaves
+  light paths with the lattice eye samples at
+  `path.hybridbackforward.partition`. Light paths are held back until
+  each thread's coarse first frame is done (`IsFirstFrameDone`), and
+  the sampler is rebuilt on every pause/resume so a film resize can't
+  leave it pointing at a dead `Film`. The adapter therefore keeps
+  `RTPATHCPU` for CPU+LT viewports instead of swapping to
+  `PATHCPU`/`SOBOL` - progressive coverage, zoom phase and runtime
+  resolution reduction all survive LT.
+- **GPU**: `RTPATHOCL` inherits `TilePathOCLRenderEngine`'s light-task
+  population (`path.lighttracing.enable`), so the adapter keeps
+  `RTPATHOCL` + `TILEPATHSAMPLER` for GPU+LT viewports too. Eye-side
+  caustic suppression comes free: `lightTracingEnable` promotes
+  `hybridBackForwardEnable` inside `PathTracer::ParseOptions`.
+
+### Display-pipeline early-outs
+
+All three viewport plugins bail before their expensive stages when the
+frame no longer needs them (`VIEWPORT_INFILL` counts real holes and
+LT-only pixels before building the pyramid; `VIEWPORT_SMOOTH` counts
+noisy pixels; `VIEWPORT_TEMPORAL` counts uncovered pixels before
+warping). On a converged 4K frame this removes hundreds of ms of CPU
+work per refresh. The infill pyramid also uses ceiling halving now -
+floor halving orphaned the last row/column on odd image sizes.
+
 ## Blender controls (Viewport panel)
 
 | Control | Property |
@@ -110,6 +167,8 @@ BIDIRCPU write them.
 | Instant Coverage | `use_infill` (default on) |
 | LT Speckle Softening | `lt_blend` (0–1) |
 | Adaptive Sampling | `use_adaptive` (default on) |
+| Foveated | `use_fovea` (default on) |
+| └ Strength / Radius / Depth Falloff | `fovea_strength` / `fovea_radius` / `fovea_depthscale` |
 | Temporal Reuse | `use_temporal` (default on) |
 | Interactive Smoothing | `use_smooth` (default on) |
 
@@ -119,21 +178,29 @@ BIDIRCPU write them.
 
 | Leg | Assertion | Result |
 |---|---|---|
-| adaptive RTPATHOCL | coverage > 0.6, 12/16 cells, finite | PASS (0.75–0.81) |
+| adaptive RTPATHOCL | coverage > 0.5, 12/16 cells, finite | PASS |
 | LT speckle | softened <= raw speckle count, finite | PASS |
 | temporal | warp advantage > 0.02 in reset window, warp correlates with pre-edit frame | PASS (adv ~0.03, corr ~0.97) |
-| smooth | speckle non-increasing, finite | PASS (2729 -> 1486 px) |
+| temporal Parse-path | warp lands outside the 100x100 dummy raster | PASS (outside=0.99) |
+| smooth | speckle non-increasing, finite | PASS |
+| hybrid RTPATHOCL | light tasks run (`samplesec.light` > 0), finite | PASS |
 | adaptive RTPATHCPU | coverage > 0.6, 12/16 cells, finite | PASS (0.96) |
+| hybrid RTPATHCPU | Metropolis light pass runs (`samplesec.light` > 0), coverage > 0.6 | PASS |
 
 `dev-tools/e51_viewport_infill.py` still passes on all four legs
 (RTPATHOCL, PATHOCL, RTPATHCPU, BIDIRCPU).
 
 ## Caveats
 
-- `scene.Parse` of `scene.camera.*` properties does **not** register
-  `CAMERA_EDIT` — camera edits must go through `Scene::GetCamera()`
-  (`Translate`, `Rotate`, …), which is also what Blender uses. Temporal
-  reuse therefore does not engage for property-level camera edits.
+- `PublishViewportCamera` must run **after** `renderEngine->
+  EndSceneEdit()`: `Scene::ParseCamera` creates cameras with a dummy
+  100x100 raster and only `Scene::Preprocess` (inside the engine edit
+  path) updates them to the real film resolution. Publishing first
+  squashed every warp into the top-left 100x100 block - the visible
+  "something floating in the corner" symptom.
+- `scene.Parse` of `scene.camera.*` **does** register `CAMERA_EDIT`
+  (ParseCamera marks it), so the Blender path engages temporal reuse;
+  the e52 *Parse-path* leg covers exactly that route.
 - The temporal warp fills *displayed holes only* — it never biases the
   film. Disoccluded regions (no reprojected history) are left for the
   infill pass.

@@ -196,7 +196,7 @@ def main():
             ok_all &= run_leg(scene, "PATHOCL", "SOBOL", mask,
                               width=1280, height=720,
                               extra_props="""
-path.lighttracing.enable = true
+path.lighttracing.enable = 1
 path.lighttracing.taskfraction = 0.3
 """)
 

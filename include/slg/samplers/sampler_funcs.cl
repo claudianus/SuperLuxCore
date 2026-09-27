@@ -135,6 +135,7 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global float *filmNoise,
 		__global float *filmUserImportance,
+		__global float *filmDepth,
 		const uint filmWidth, const uint filmHeight,
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
@@ -168,6 +169,7 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 			return TilePathSampler_Init(taskConfig,
 					filmNoise,
 					filmUserImportance,
+					filmDepth,
 					filmWidth, filmHeight,
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3

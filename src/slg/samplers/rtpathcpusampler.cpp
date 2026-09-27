@@ -138,7 +138,8 @@ RTPathCPUSampler::RTPathCPUSampler(
 ) :
 	Sampler(rnd, flm, flmSplatter, true),
 	sharedData(dynamic_pointer_cast<RTPathCPUSamplerSharedData>(samplerSharedData)),
-	adaptiveStrength(0.f)
+	adaptiveStrength(0.f), foveaStrength(0.f), foveaRadius(.4f),
+	foveaDepthScale(0.f)
 {
 	film = flm;
 	// Disable denoiser statistics collection
@@ -229,12 +230,39 @@ void RTPathCPUSampler::NextPixel() {
 				}
 			}
 
-			if ((adaptiveStrength <= 0.f) || !film->channel_NOISE)
+			const bool useAdaptive = (adaptiveStrength > 0.f) && film->channel_NOISE;
+			const bool useFovea = foveaStrength > 0.f;
+			if (!useAdaptive && !useFovea)
 				break;
 
 			const auto &pc = sharedData->pixelRenderSequence[currentX + currentY * sharedData->filmSubRegionWidth];
-			const float noise = *film->channel_NOISE->GetPixel(pc.x, pc.y);
-			const float threshold = Max(std::isinf(noise) ? 1.f : noise, 1.f - adaptiveStrength);
+			float threshold = 1.f;
+			if (useAdaptive) {
+				const float noise = *film->channel_NOISE->GetPixel(pc.x, pc.y);
+				threshold = Max(std::isinf(noise) ? 1.f : noise, 1.f - adaptiveStrength);
+			}
+			if (useFovea) {
+				// Same geometric importance as the OCL tilepath: radial
+				// falloff to 1-strength at the frame corners, times a
+				// near-depth gain when foveaDepthScale is set
+				const float scx = .5f * (sharedData->filmSubRegion[0] + sharedData->filmSubRegion[1]);
+				const float scy = .5f * (sharedData->filmSubRegion[2] + sharedData->filmSubRegion[3]);
+				const float rw = sharedData->filmSubRegion[1] - sharedData->filmSubRegion[0];
+				const float rh = sharedData->filmSubRegion[3] - sharedData->filmSubRegion[2];
+				const float invHalfDiag = 2.f / Max(1.f, sqrtf(rw * rw + rh * rh));
+				const float dx = (pc.x + .5f - scx) * invHalfDiag;
+				const float dy = (pc.y + .5f - scy) * invHalfDiag;
+				const float r = sqrtf(dx * dx + dy * dy);
+				// smoothstep(foveaRadius, 1, r)
+				const float t = Clamp((r - foveaRadius) / Max(1e-6f, 1.f - foveaRadius), 0.f, 1.f);
+				float imp = 1.f - foveaStrength * (t * t * (3.f - 2.f * t));
+				if (film->channel_DEPTH && (foveaDepthScale > 0.f)) {
+					const float d = *film->channel_DEPTH->GetPixel(pc.x, pc.y);
+					if (std::isfinite(d))
+						imp *= Min(1.f, foveaDepthScale / Max(d, 1e-3f));
+				}
+				threshold *= imp;
+			}
 			if ((rndGen->floatValue() <= threshold) || (++tries >= 8))
 				break;
 		}
@@ -303,6 +331,12 @@ SamplerUPtr RTPathCPUSampler::FromProperties(const Properties &cfg, const Random
 	auto s = std::make_unique<RTPathCPUSampler>(rndGen, film, flmSplatter, sharedData);
 	s->adaptiveStrength = Clamp(
 			cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.adaptive.strength")).Get<double>(), 0.0, .95);
+	s->foveaStrength = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.fovea.strength")).Get<double>(), 0.0, .95);
+	s->foveaRadius = Clamp(
+			cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.fovea.radius")).Get<double>(), 0.01, 1.0);
+	s->foveaDepthScale = Max(0.0,
+			cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.fovea.depthscale")).Get<double>());
 	return s;
 }
 
@@ -316,6 +350,10 @@ void RTPathCPUSampler::AddRequiredChannels(Film::FilmChannels &channels, const l
 	const float str = cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.adaptive.strength")).Get<double>();
 	if (str > 0.f)
 		channels.insert(Film::NOISE);
+	// The foveation depth term reads the first-hit DEPTH channel
+	const float dScale = cfg.Get(GetDefaultProps()->Get("sampler.rtpathcpusampler.fovea.depthscale")).Get<double>();
+	if (dScale > 0.0)
+		channels.insert(Film::DEPTH);
 }
 
 PropertiesUPtr RTPathCPUSampler::GetDefaultProps() {
@@ -323,7 +361,10 @@ PropertiesUPtr RTPathCPUSampler::GetDefaultProps() {
 	*props <<
 			Sampler::GetDefaultProps() <<
 			Property("sampler.type")(GetObjectTag()) <<
-			Property("sampler.rtpathcpusampler.adaptive.strength")(0.f);
+			Property("sampler.rtpathcpusampler.adaptive.strength")(0.f) <<
+			Property("sampler.rtpathcpusampler.fovea.strength")(0.f) <<
+			Property("sampler.rtpathcpusampler.fovea.radius")(.4f) <<
+			Property("sampler.rtpathcpusampler.fovea.depthscale")(0.f);
 
 	return props;
 }

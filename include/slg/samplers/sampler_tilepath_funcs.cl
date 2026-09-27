@@ -89,6 +89,7 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global float *filmNoise,
 		__global float *filmUserImportance,
+		__global float *filmDepth,
 		const uint filmWidth, const uint filmHeight,
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3
@@ -142,20 +143,53 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 	// concentrates on variance (glass, caustics, glossy).
 	__constant const Sampler *sampler = &taskConfig->sampler;
 	const float adaptiveStrength = sampler->tilepath.adaptiveStrength;
-	if (filmNoise && (adaptiveStrength > 0.f)) {
+	const float foveaStrength = sampler->tilepath.foveaStrength;
+	const bool useAdaptive = filmNoise && (adaptiveStrength > 0.f);
+	const bool useFovea = foveaStrength > 0.f;
+	if (useAdaptive || useFovea) {
+		// Foveation constants: importance falls off from the subregion
+		// centre to 1-strength at the corners (hermite cubic), optionally
+		// multiplied by a near-depth gain so close geometry keeps full
+		// density while the distance fades
+		const float scx = .5f * (filmSubRegion0 + filmSubRegion1);
+		const float scy = .5f * (filmSubRegion2 + filmSubRegion3);
+		const float invHalfDiag = 2.f / max(1.f,
+				sqrt((float)(Sqr(filmSubRegion1 - filmSubRegion0) +
+						Sqr(filmSubRegion3 - filmSubRegion2))));
+		const float invFoveaW = 1.f / max(1e-5f, 1.f - sampler->tilepath.foveaRadius);
+		const float foveaR = sampler->tilepath.foveaRadius;
+		const float foveaDS = sampler->tilepath.foveaDepthScale;
 		uint px = pix % samplerSharedData->tileWidth;
 		uint py = pix / samplerSharedData->tileWidth;
 		for (uint tries = 0; tries < 8; ++tries) {
 			const uint fx = samplerSharedData->tileStartX + px;
 			const uint fy = samplerSharedData->tileStartY + py;
-			float noise = filmNoise[fx + fy * filmWidth];
-			float threshold = isinf(noise) ? 1.f : noise;
-			if (filmUserImportance) {
-				const float ui = filmUserImportance[fx + fy * filmWidth];
-				threshold = (ui > 0.f) ?
-						mix(threshold, ui, sampler->tilepath.adaptiveUserImportanceWeight) : 0.f;
+			float threshold = 1.f;
+			if (useAdaptive) {
+				float noise = filmNoise[fx + fy * filmWidth];
+				threshold = isinf(noise) ? 1.f : noise;
+				if (filmUserImportance) {
+					const float ui = filmUserImportance[fx + fy * filmWidth];
+					threshold = (ui > 0.f) ?
+							mix(threshold, ui, sampler->tilepath.adaptiveUserImportanceWeight) : 0.f;
+				}
+				threshold = fmax(threshold, 1.f - adaptiveStrength);
 			}
-			threshold = fmax(threshold, 1.f - adaptiveStrength);
+			if (useFovea) {
+				const float dx = (fx + .5f - scx) * invHalfDiag;
+				const float dy = (fy + .5f - scy) * invHalfDiag;
+				const float r = sqrt(dx * dx + dy * dy);
+				// Hermite smoothstep - portable (metal::smoothstep does not
+				// map into the shared OpenCL namespace)
+				const float t = clamp((r - foveaR) * invFoveaW, 0.f, 1.f);
+				float imp = 1.f - foveaStrength * (t * t * (3.f - 2.f * t));
+				if (filmDepth && (foveaDS > 0.f)) {
+					const float d = filmDepth[fx + fy * filmWidth];
+					if (isfinite(d))
+						imp *= min(1.f, foveaDS / max(d, 1e-3f));
+				}
+				threshold *= imp;
+			}
 			if (Rnd_FloatValue(seed) <= threshold)
 				break;
 			// Step to the next lattice element (scattered position)

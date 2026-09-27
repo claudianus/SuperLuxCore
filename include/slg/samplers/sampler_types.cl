@@ -191,6 +191,11 @@ typedef struct {
 		// over the coverage lattice, same threshold semantics as sobol
 		struct {
 			float adaptiveStrength, adaptiveUserImportanceWeight;
+			// Viewport foveation: geometric importance scaling the
+			// acceptance probability - screen-center bias (radius =
+			// fraction of the half-diagonal at full weight) times a
+			// near-depth gain (depthScale world units, 0 disables)
+			float foveaStrength, foveaRadius, foveaDepthScale;
 		} tilepath;
 	};
 } Sampler;

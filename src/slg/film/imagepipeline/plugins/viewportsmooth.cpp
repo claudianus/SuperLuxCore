@@ -76,9 +76,16 @@ void ViewportSmoothPlugin::Apply(Film &film, const u_int index) {
 
 	// Which pixels are noisy enough to filter (real but low samples)?
 	vector<char> noisy(pixelCount, 0);
-	#pragma omp parallel for
-	for (int j = 0; j < (int)pixelCount; ++j)
+	u_int noisyCount = 0;
+	#pragma omp parallel for reduction(+ : noisyCount)
+	for (int j = 0; j < (int)pixelCount; ++j) {
 		noisy[j] = (weight[j] > 0.f) && (weight[j] < minSamps);
+		noisyCount += noisy[j] ? 1u : 0u;
+	}
+	// Converged frame: the à-trous passes below are the dominant
+	// per-refresh cost at high resolution, so bail early
+	if (noisyCount == 0)
+		return;
 
 	vector<float> cur(img->GetPixels(), img->GetPixels() + pixelCount * 3);
 	vector<float> nxt(pixelCount * 3, 0.f);
