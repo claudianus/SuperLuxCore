@@ -52,7 +52,7 @@ u_int LightStrategyRestirDI::GetThreadGridIndex() const {
 	// hash the thread id into a stable slot in [0, grids.size())
 	static thread_local const size_t tid = std::hash<std::thread::id>()(
 			std::this_thread::get_id());
-	return (u_int)(tid % Max(1ul, grids.size()));
+	return (u_int)(tid % Max(static_cast<size_t>(1), grids.size()));
 }
 
 LightStrategyRestirDI::ReservoirGrid *LightStrategyRestirDI::GetThreadGrid() const {

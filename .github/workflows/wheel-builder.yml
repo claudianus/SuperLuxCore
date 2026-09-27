@@ -381,6 +381,10 @@ jobs:
           CIBW_TEST_COMMAND_LINUX: pysuperluxcoretest
           CIBW_TEST_COMMAND_WINDOWS: pysuperluxcoretest
           CIBW_TEST_COMMAND_MACOS: pysuperluxcoretest
+          # macos-15-intel runners are GPU-less VMs: the smoke test aborts
+          # inside MTLLoader (no target architecture), though the wheel is
+          # fine on real Intel Macs with Metal-capable GPUs.
+          CIBW_TEST_SKIP: ${{ matrix.os == 'macos-15-intel' && '*macosx_x86_64' || '' }}
           CIBW_CONTAINER_ENGINE: >
             docker;
             create_args:
