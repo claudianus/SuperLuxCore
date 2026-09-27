@@ -735,6 +735,10 @@ void CompiledScene::CompileMaterials() {
 					mat->glass.cauchyBTex = scene.GetTextures().GetTextureIndex(gm.GetCauchyB());
 				else
 					mat->glass.cauchyBTex = NULL_INDEX;
+				mat->glass.sellmeierBTex = gm.GetSellmeierB() ?
+						scene.GetTextures().GetTextureIndex(gm.GetSellmeierB()) : NULL_INDEX;
+				mat->glass.sellmeierCTex = gm.GetSellmeierC() ?
+						scene.GetTextures().GetTextureIndex(gm.GetSellmeierC()) : NULL_INDEX;
 				if (gm.GetFilmThickness())
 					mat->glass.filmThicknessTexIndex = scene.GetTextures().GetTextureIndex(gm.GetFilmThickness());
 				else
@@ -843,6 +847,10 @@ void CompiledScene::CompileMaterials() {
 				auto nvTex = m2m.GetNv();
 				mat->metal2.nuTexIndex = scene.GetTextures().GetTextureIndex(nuTex);
 				mat->metal2.nvTexIndex = scene.GetTextures().GetTextureIndex(nvTex);
+				if (m2m.GetEdgeTint())
+					mat->metal2.edgeTintTexIndex = scene.GetTextures().GetTextureIndex(m2m.GetEdgeTint());
+				else
+					mat->metal2.edgeTintTexIndex = NULL_INDEX;
 				mat->metal2.multibounce = m2m.IsMultibounce() ? 1 : 0;
 				mat->metal2.useGgx = m2m.IsGgx() ? 1 : 0;
 				break;
@@ -865,6 +873,10 @@ void CompiledScene::CompileMaterials() {
 					mat->roughglass.cauchyBTex = scene.GetTextures().GetTextureIndex(rgm.GetCauchyB());
 				else
 					mat->roughglass.cauchyBTex = NULL_INDEX;
+				mat->roughglass.sellmeierBTex = rgm.GetSellmeierB() ?
+						scene.GetTextures().GetTextureIndex(rgm.GetSellmeierB()) : NULL_INDEX;
+				mat->roughglass.sellmeierCTex = rgm.GetSellmeierC() ?
+						scene.GetTextures().GetTextureIndex(rgm.GetSellmeierC()) : NULL_INDEX;
 
 				auto nuTex = rgm.GetNu();
 				auto nvTex = rgm.GetNv();
@@ -879,6 +891,7 @@ void CompiledScene::CompileMaterials() {
 					mat->roughglass.filmIorTexIndex = scene.GetTextures().GetTextureIndex(rgm.GetFilmIOR());
 				else
 					mat->roughglass.filmIorTexIndex = NULL_INDEX;
+				mat->roughglass.multibounce = rgm.IsMultibounce() ? 1 : 0;
 				mat->roughglass.useGgx = rgm.IsGgx() ? 1 : 0;
 				break;
 			}
@@ -891,6 +904,11 @@ void CompiledScene::CompileMaterials() {
 				mat->velvet.p2TexIndex = scene.GetTextures().GetTextureIndex(vm.GetP2());
 				mat->velvet.p3TexIndex = scene.GetTextures().GetTextureIndex(vm.GetP3());
 				mat->velvet.thicknessTexIndex = scene.GetTextures().GetTextureIndex(vm.GetThickness());
+				if (vm.GetSheenRoughness())
+					mat->velvet.sheenRoughnessTexIndex = scene.GetTextures().GetTextureIndex(vm.GetSheenRoughness());
+				else
+					mat->velvet.sheenRoughnessTexIndex = NULL_INDEX;
+				mat->velvet.useCharlie = vm.IsCharlie() ? 1 : 0;
 				break;
 			}
 			case CLOTH: {
@@ -922,6 +940,7 @@ void CompiledScene::CompileMaterials() {
 				mat->carpaint.R3TexIndex = scene.GetTextures().GetTextureIndex(cm.R3);
 				mat->carpaint.KaTexIndex = scene.GetTextures().GetTextureIndex(cm.Ka);
 				mat->carpaint.depthTexIndex = scene.GetTextures().GetTextureIndex(cm.depth);
+				mat->carpaint.multibounce = cm.IsMultibounce() ? 1 : 0;
 				mat->carpaint.useGgx = cm.IsGgx() ? 1 : 0;
 				break;
 			}
@@ -995,6 +1014,10 @@ void CompiledScene::CompileMaterials() {
 				mat->disney.anisotropicTexIndex = scene.GetTextures().GetTextureIndex(dm.GetAnisotropic());
 				mat->disney.sheenTexIndex = scene.GetTextures().GetTextureIndex(dm.GetSheen());
 				mat->disney.sheenTintTexIndex = scene.GetTextures().GetTextureIndex(dm.GetSheenTint());
+				if (dm.GetSheenRoughness())
+					mat->disney.sheenRoughnessTexIndex = scene.GetTextures().GetTextureIndex(dm.GetSheenRoughness());
+				else
+					mat->disney.sheenRoughnessTexIndex = NULL_INDEX;
 				if (dm.GetFilmAmount())
 					mat->disney.filmAmountTexIndex = scene.GetTextures().GetTextureIndex(dm.GetFilmAmount());
 				else
@@ -1017,6 +1040,11 @@ void CompiledScene::CompileMaterials() {
 					mat->disney.cauchyBTexIndex = scene.GetTextures().GetTextureIndex(dm.GetCauchyB());
 				else
 					mat->disney.cauchyBTexIndex = NULL_INDEX;
+				mat->disney.sellmeierBTexIndex = dm.GetSellmeierB() ?
+						scene.GetTextures().GetTextureIndex(dm.GetSellmeierB()) : NULL_INDEX;
+				mat->disney.sellmeierCTexIndex = dm.GetSellmeierC() ?
+						scene.GetTextures().GetTextureIndex(dm.GetSellmeierC()) : NULL_INDEX;
+				mat->disney.multibounce = dm.IsMultibounce() ? 1 : 0;
 				break;
 			}
 			case TWOSIDED: {
@@ -1074,6 +1102,10 @@ void CompiledScene::CompileMaterials() {
 				mat->openpbr.transScatterTexIndex = ti(om.GetTransmissionScatter());
 				mat->openpbr.transScatterAnisoTexIndex = ti(om.GetTransmissionScatterAnisotropy());
 				mat->openpbr.dispersionTexIndex = ti(om.GetDispersion());
+				mat->openpbr.sellmeierBTexIndex = om.GetSellmeierB() ?
+						ti(om.GetSellmeierB()) : NULL_INDEX;
+				mat->openpbr.sellmeierCTexIndex = om.GetSellmeierC() ?
+						ti(om.GetSellmeierC()) : NULL_INDEX;
 				mat->openpbr.sssWeightTexIndex = ti(om.GetSubsurfaceWeight());
 				mat->openpbr.sssColorTexIndex = ti(om.GetSubsurfaceColor());
 				mat->openpbr.sssRadiusTexIndex = ti(om.GetSubsurfaceRadius());
@@ -1148,6 +1180,7 @@ void CompiledScene::CompileMaterials() {
 								scene.GetTextures().GetTextureIndex(hv.GetSSSAlbedoTexture()) : NULL_INDEX;
 						mat->volume.homogenous.sssMfpTexIndex = hv.IsSSSParametrized() ?
 								scene.GetTextures().GetTextureIndex(hv.GetSSSMfpTexture()) : NULL_INDEX;
+						mat->volume.homogenous.sssProfile = hv.GetSSSProfile();
 						break;
 					}
 					case HETEROGENEOUS_VOL: {

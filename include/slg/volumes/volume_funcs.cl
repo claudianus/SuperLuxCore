@@ -212,12 +212,56 @@ OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffs(__global const Volume *vol,
 	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
 }
 
+// "cb15" SSS parametrization, mirror of SSSRemapCB15 in homogenous.cpp:
+// requested albedo A is the measured external reflectance, inverted via
+// the vdH fit times the CB15 boundary ratio K(a,eta) = Rd(a,eta)/Rd(a,1)
+// (fixed-point iteration, helpers in materialdefs_funcs_generic.cl).
+// Pure vdH at eta<=1; Fresnel trapping compensation at eta>1. d is the
+// transport mfp.
+OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffsCB15(__global const Volume *vol,
+		__global const HitPoint *hitPoint, float3 *sigmaT, float3 *alpha
+		TEXTURES_PARAM_DECL) {
+	const float3 A = clamp(Texture_GetSpectrumValue(
+			vol->volume.homogenous.sssAlbedoTexIndex, hitPoint
+			TEXTURES_PARAM), 1e-4f, 0.999f);
+	const float3 mfp = Texture_GetSpectrumValue(
+			vol->volume.homogenous.sssMfpTexIndex, hitPoint
+			TEXTURES_PARAM);
+	const float3 g = clamp(Texture_GetSpectrumValue(
+			vol->volume.homogenous.gTexIndex, hitPoint
+			TEXTURES_PARAM), -0.99f, 0.99f);
+	const float eta = fmax(Texture_GetFloatValue(
+			vol->volume.iorTexIndex, hitPoint
+			TEXTURES_PARAM), 1.0001f);
+
+	for (int ch = 0; ch < 3; ++ch) {
+		const float Ad = (ch == 0) ? A.x : ((ch == 1) ? A.y : A.z);
+		const float gi = (ch == 0) ? g.x : ((ch == 1) ? g.y : g.z);
+		const float di = (ch == 0) ? mfp.x : ((ch == 1) ? mfp.y : mfp.z);
+
+		float al = SSSAlphaVanDeHulst(Ad, gi);
+		for (int i = 0; i < 6; ++i) {
+			const float k = clamp(SSSRdDiffusion(al, eta) /
+					fmax(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
+			al = SSSAlphaVanDeHulst(clamp(Ad / k, 1e-4f, 0.999f), gi);
+		}
+		const float st = (1.f / fmax(di, 1e-6f)) / fmax(1.f - gi * al, 1e-6f);
+		if (ch == 0) { alpha->x = al; sigmaT->x = st; }
+		else if (ch == 1) { alpha->y = al; sigmaT->y = st; }
+		else { alpha->z = al; sigmaT->z = st; }
+	}
+}
+
 OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaA(__global const Volume *vol, __global const HitPoint *hitPoint
 	TEXTURES_PARAM_DECL) {
 	if (vol->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
 		float3 sigmaT, alpha;
-		HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
-				TEXTURES_PARAM);
+		if (vol->volume.homogenous.sssProfile == 1)
+			HomogeneousVolume_SSSCoeffsCB15(vol, hitPoint, &sigmaT, &alpha
+					TEXTURES_PARAM);
+		else
+			HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
+					TEXTURES_PARAM);
 		return (WHITE - alpha) * sigmaT;
 	}
 
@@ -231,8 +275,12 @@ OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaS(__global const Volume *vol, 
 	TEXTURES_PARAM_DECL) {
 	if (vol->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
 		float3 sigmaT, alpha;
-		HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
-				TEXTURES_PARAM);
+		if (vol->volume.homogenous.sssProfile == 1)
+			HomogeneousVolume_SSSCoeffsCB15(vol, hitPoint, &sigmaT, &alpha
+					TEXTURES_PARAM);
+		else
+			HomogeneousVolume_SSSCoeffs(vol, hitPoint, &sigmaT, &alpha
+					TEXTURES_PARAM);
 		return alpha * sigmaT;
 	}
 

@@ -34,6 +34,7 @@ typedef struct {
 	float baseWeight, metalness, diffuseRoughness;
 	float specWeight, specRoughness, specAniso, specRotation, specIor;
 	float transWeight, transDepth, transScatterAniso, dispersion;
+	float3 sellB, sellC; // sellB.x < 0 = no Sellmeier (Cauchy fallback)
 	float sssWeight, sssRadius, sssAnisotropy;
 	float coatWeight, coatRoughness, coatAniso, coatRotation, coatIor,
 			coatDarkening;
@@ -67,6 +68,12 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->transScatter = Spectrum_Clamp(Texture_GetSpectrumValue(material->openpbr.transScatterTexIndex, hitPoint TEXTURES_PARAM));
 	p->transScatterAniso = clamp(Texture_GetFloatValue(material->openpbr.transScatterAnisoTexIndex, hitPoint TEXTURES_PARAM), -1.f, 1.f);
 	p->dispersion = fmax(Texture_GetFloatValue(material->openpbr.dispersionTexIndex, hitPoint TEXTURES_PARAM), 0.f);
+	p->sellB = (material->openpbr.sellmeierBTexIndex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->openpbr.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	p->sellC = (material->openpbr.sellmeierCTexIndex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->openpbr.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(0.f, 0.f, 0.f);
 
 	p->sssWeight = clamp(Texture_GetFloatValue(material->openpbr.sssWeightTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
 	p->sssColor = Spectrum_Clamp(Texture_GetSpectrumValue(material->openpbr.sssColorTexIndex, hitPoint TEXTURES_PARAM));
@@ -101,13 +108,14 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 
 // specular_ior/exterior ratio blended toward the coat interface IOR by the
 // coat coverage weight (specular_ior_ratio), with the TIR-preserving flip.
-OPENCL_FORCE_INLINE float OpenPBRMat_EtaS(__private const OpenPBRParams *p, const float cauchyB,
+OPENCL_FORCE_INLINE float OpenPBRMat_EtaS(__private const OpenPBRParams *p,
 		__global const HitPoint *hitPoint) {
 	const float nS =
 #if defined(SLG_SPECTRAL)
-		Spectral_DispersiveIOR(p->specIor, cauchyB, hitPoint);
+		Spectral_DispersiveIOR(p->specIor, p->dispersion, p->sellB, p->sellC,
+				hitPoint);
 #else
-		p->specIor;
+		Spectral_RefIOR(p->specIor, p->dispersion, p->sellB, p->sellC);
 #endif
 	const float etaSC = nS / p->coatIor;
 	const float coatTerm = (etaSC < 1.f) ? 1.f / etaSC : etaSC;
@@ -195,7 +203,8 @@ OPENCL_FORCE_INLINE float OpenPBRMat_ThinFilmR(const float cos1, const float n1,
 OPENCL_FORCE_INLINE float3 OpenPBRMat_FilmFresnel(__global const HitPoint *hitPoint,
 		const float cosI, const float etaFe, const float filmIor,
 		const float thicknessNm, const float3 n3r, const float3 n3i,
-		const bool conductor, const float dielectricN3, const float cauchyB) {
+		const bool conductor, const float dielectricN3, const float cauchyB,
+		const float3 sellB, const float3 sellC) {
 	const float nExt = filmIor / etaFe;
 	float3 F = BLACK;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
@@ -213,10 +222,9 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_FilmFresnel(__global const HitPoint *hitPo
 					(i == 0) ? n3i.x : ((i == 1) ? n3i.y : n3i.z));
 		else {
 			float nD = dielectricN3;
-#if defined(SLG_SPECTRAL)
-			if (cauchyB > 0.f)
-				nD = Spectral_WaveLength2IOR(lambda, dielectricN3, cauchyB);
-#endif
+			if (sellB.x >= 0.f || cauchyB > 0.f)
+				nD = Spectral_WaveLength2IORSellmeier(lambda, dielectricN3,
+						cauchyB, sellB, sellC);
 			n3 = MAKE_FLOAT2(nD, 0.f);
 		}
 		const float r = OpenPBRMat_ThinFilmR(cosI, nExt, filmIor, n3, thicknessNm, lambda);
@@ -238,9 +246,9 @@ OPENCL_FORCE_INLINE float OpenPBRMat_InteriorIor(__global const HitPoint *hitPoi
 		return Texture_GetFloatValue(hitPoint->interiorIorTexIndex, hitPoint
 				TEXTURES_PARAM);
 #if defined(SLG_SPECTRAL)
-	return Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint);
+	return Spectral_DispersiveIOR(p->specIor, p->dispersion, p->sellB, p->sellC, hitPoint);
 #else
-	return p->specIor;
+	return Spectral_RefIOR(p->specIor, p->dispersion, p->sellB, p->sellC);
 #endif
 }
 
@@ -276,14 +284,14 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalGlossyRefl(__global const HitPoint *hi
 	const float nFar = woAbove ?
 			(coat ? p->coatIor :
 #if defined(SLG_SPECTRAL)
-				Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint)
+				Spectral_DispersiveIOR(p->specIor, p->dispersion, p->sellB, p->sellC, hitPoint)
 #else
-				p->specIor
+				Spectral_RefIOR(p->specIor, p->dispersion, p->sellB, p->sellC)
 #endif
 			) :
 			p->extIor;
 	const float etaTI = (woAbove && !coat) ?
-			OpenPBRMat_EtaS(p, p->dispersion, hitPoint) : nFar / nNear;
+			OpenPBRMat_EtaS(p, hitPoint) : nFar / nNear;
 	if (fabs(etaTI - 1.f) < 1e-4f)
 		return BLACK;
 
@@ -296,7 +304,7 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalGlossyRefl(__global const HitPoint *hi
 				p->filmIor / p->coatIor);
 		const float3 Ffilm = OpenPBRMat_FilmFresnel(hitPoint, mu, etaFe,
 				p->filmIor, p->filmThickness, BLACK, BLACK, false,
-				p->specIor, p->dispersion);
+				p->specIor, p->dispersion, p->sellB, p->sellC);
 		const float Fnofilm = Microfacet_FresnelDielectricModulated(mu, etaTI, p->specWeight);
 		F = Lerp3(p->filmWeight, MAKE_FLOAT3(Fnofilm, Fnofilm, Fnofilm), Ffilm);
 	} else {
@@ -333,7 +341,8 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalMetal(__global const HitPoint *hitPoin
 				p->filmIor / p->coatIor);
 		F = Lerp3(p->filmWeight, Microfacet_FresnelF82(mu, F0, p->specColor),
 				OpenPBRMat_FilmFresnel(hitPoint, mu, etaFe, p->filmIor,
-						p->filmThickness, n3r, n3i, true, 0.f, 0.f));
+						p->filmThickness, n3r, n3i, true, 0.f, 0.f,
+						MAKE_FLOAT3(-1.f, 0.f, 0.f), BLACK));
 	} else
 		F = Microfacet_FresnelF82(mu, F0, p->specColor);
 
@@ -357,9 +366,9 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 			OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
 	const float nWi = (wo.z > 0.f) ?
 #if defined(SLG_SPECTRAL)
-			Spectral_DispersiveIOR(p->specIor, p->dispersion, hitPoint) :
+			Spectral_DispersiveIOR(p->specIor, p->dispersion, p->sellB, p->sellC, hitPoint) :
 #else
-			p->specIor :
+			Spectral_RefIOR(p->specIor, p->dispersion, p->sellB, p->sellC) :
 #endif
 			p->extIor;
 	const float eta = nWi / nWo;
@@ -458,7 +467,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 	const float impMetal = Spectrum_Filter(weights[OPENPBR_LOBE_METAL]) *
 			Spectrum_Filter(p->specWeight * Microfacet_FresnelF82(muF, F0, p->specColor));
 
-	const float etaS = OpenPBRMat_EtaS(p, p->dispersion, hitPoint);
+	const float etaS = OpenPBRMat_EtaS(p, hitPoint);
 	const float Fspec = Microfacet_FresnelDielectricModulated(muF, etaS, p->specWeight);
 	const float wDiel = rem * (1.f - p->metalness);
 
@@ -592,7 +601,7 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitP
 		}
 		if (frontSide && probs[OPENPBR_LOBE_DIFF] > 0.f) {
 			// Diffuse crosses the dielectric interface twice
-			const float etaS = OpenPBRMat_EtaS(p, p->dispersion, hitPoint);
+			const float etaS = OpenPBRMat_EtaS(p, hitPoint);
 			const float att = (1.f - Microfacet_FresnelDielectricModulated(muI, etaS, p->specWeight)) *
 					(1.f - Microfacet_FresnelDielectricModulated(fabs(wo.z), etaS, p->specWeight));
 			result += weights[OPENPBR_LOBE_DIFF] * att *
@@ -776,9 +785,9 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 					OpenPBRMat_InteriorIor(hitPoint, &p MATERIALS_PARAM);
 			const float nWi = (wo.z > 0.f) ?
 #if defined(SLG_SPECTRAL)
-					Spectral_DispersiveIOR(p.specIor, p.dispersion, hitPoint) :
+					Spectral_DispersiveIOR(p.specIor, p.dispersion, p.sellB, p.sellC, hitPoint) :
 #else
-					p.specIor :
+					Spectral_RefIOR(p.specIor, p.dispersion, p.sellB, p.sellC) :
 #endif
 					p.extIor;
 			const float eta = nWo / nWi; // n(fixed)/n(sampled)
@@ -839,7 +848,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 
 #if defined(SLG_SPECTRAL)
 	// Dispersive refraction terminates the secondary wavelengths
-	if (sampledTransmit && p.dispersion > 0.f)
+	if (sampledTransmit && (p.dispersion > 0.f || p.sellB.x >= 0.f))
 		f *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
 #endif
 

@@ -826,9 +826,8 @@ bool PathTracer::MNEEDirectSampling(
 		const float nt = ExtractInteriorIors(shadowBsdf.hitPoint, glassMat->GetInteriorIOR());
 		if (nt <= 0.f || nc <= 0.f)
 			return false;
-		const float cauchyB = glassMat->GetCauchyB() ?
-				glassMat->GetCauchyB()->GetFloatValue(shadowBsdf.hitPoint) : 0.f;
-		if (cauchyB > 0.f) {
+		const Dispersion disp = glassMat->GetDispersion(shadowBsdf.hitPoint);
+		if (disp.Active()) {
 			if (!Spectral::Current())
 				// No wavelength state on the path: a single IOR ratio
 				// cannot represent dispersion, keep skipping.
@@ -838,7 +837,7 @@ bool PathTracer::MNEEDirectSampling(
 			// wavelength of a dispersive transmission. The connect exists
 			// only for that bin, flagged for the hero collapse below.
 			dispersiveConnect = true;
-			etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+			etaVertex = DispersiveIOR(nt, disp) / nc;
 		} else
 			etaVertex = nt / nc;
 	} else
@@ -954,10 +953,9 @@ bool PathTracer::MNEEDirectSampling(
 		// cauchyB > 0 implies spectral transport (the gate above rejects
 		// otherwise), and the spectral branch evaluates the transmission
 		// at the same hero wavelength the manifold was solved for.
-		const float cauchyB = glassMat->GetCauchyB() ?
-				glassMat->GetCauchyB()->GetFloatValue(finalBsdf.hitPoint) : 0.f;
+		const Dispersion disp = glassMat->GetDispersion(finalBsdf.hitPoint);
 		specFactor = GlassMaterial::EvalSpecularTransmission(finalBsdf.hitPoint,
-				localFixedDir, 0.f, kt, nc, nt, cauchyB, &localSampledDir);
+				localFixedDir, 0.f, kt, nc, nt, disp, &localSampledDir);
 		specEvent = SPECULAR | TRANSMIT;
 	}
 	if (specFactor.Black()) {
@@ -1523,15 +1521,14 @@ static bool MneeChainVertexInit(MneeChainVertex &cv, const BSDF &bsdf) {
 		const float nt = ExtractInteriorIors(bsdf.hitPoint, cv.glassMat->GetInteriorIOR());
 		if (nt <= 0.f || nc <= 0.f)
 			return false;
-		const float cauchyB = cv.glassMat->GetCauchyB() ?
-				cv.glassMat->GetCauchyB()->GetFloatValue(bsdf.hitPoint) : 0.f;
-		if (cauchyB > 0.f) {
+		const Dispersion disp = cv.glassMat->GetDispersion(bsdf.hitPoint);
+		if (disp.Active()) {
 			if (!Spectral::Current())
 				// No wavelength state: keep ending the chain here.
 				return false;
 			// Hero-wavelength constraint IOR (see MNEEDirectSampling).
 			cv.dispersive = true;
-			cv.etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+			cv.etaVertex = DispersiveIOR(nt, disp) / nc;
 		} else
 			cv.etaVertex = nt / nc;
 		cv.specEvent |= TRANSMIT;
@@ -1888,11 +1885,10 @@ bool PathTracer::MNEEMultiDirectSampling(
 			Vector localSampledDir;
 			// Same hero-wavelength evaluation as the single vertex solver:
 			// a dispersive vertex is only reachable under spectral transport.
-			const float cauchyB = chain[i].glassMat->GetCauchyB() ?
-					chain[i].glassMat->GetCauchyB()->GetFloatValue(
-						chain[i].bsdf.hitPoint) : 0.f;
+			const Dispersion disp = chain[i].glassMat->GetDispersion(
+					chain[i].bsdf.hitPoint);
 			const Spectrum trans = GlassMaterial::EvalSpecularTransmission(
-					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt, cauchyB,
+					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt, disp,
 					&localSampledDir);
 			if (trans.Black())
 				return rej("tir");
@@ -2209,13 +2205,12 @@ bool PathTracer::LMNEEConnectToEye(
 				glassMat->GetInteriorIOR());
 		if (nt <= 0.f || nc <= 0.f)
 			{ LMNEE_REJ("ior"); return false; }
-		const float cauchyB = glassMat->GetCauchyB() ?
-				glassMat->GetCauchyB()->GetFloatValue(shadowBsdf.hitPoint) : 0.f;
-		if (cauchyB > 0.f) {
+		const Dispersion disp = glassMat->GetDispersion(shadowBsdf.hitPoint);
+		if (disp.Active()) {
 			if (!Spectral::Current())
 				{ LMNEE_REJ("disp-nospectral"); return false; }
 			dispersiveConnect = true;
-			etaVertex = DispersiveIOR(nt, cauchyB) / nc;
+			etaVertex = DispersiveIOR(nt, disp) / nc;
 		} else
 			etaVertex = nt / nc;
 	} else
@@ -2300,10 +2295,9 @@ bool PathTracer::LMNEEConnectToEye(
 				glassMat->GetInteriorIOR());
 		const Vector localFixedDir = finalBsdf.GetFrame().ToLocal(wi);
 		Vector localSampledDir;
-		const float cauchyB = glassMat->GetCauchyB() ?
-				glassMat->GetCauchyB()->GetFloatValue(finalBsdf.hitPoint) : 0.f;
+		const Dispersion disp = glassMat->GetDispersion(finalBsdf.hitPoint);
 		specFactor = GlassMaterial::EvalSpecularTransmission(finalBsdf.hitPoint,
-				localFixedDir, 0.f, kt, nc, nt, cauchyB, &localSampledDir);
+				localFixedDir, 0.f, kt, nc, nt, disp, &localSampledDir);
 		specEvent = SPECULAR | TRANSMIT;
 	}
 	if (specFactor.Black())
@@ -2469,12 +2463,11 @@ bool PathTracer::LMNEEMultiConnectToEye(
 					chain[i].glassMat->GetInteriorIOR());
 			const Vector localFixedDir = chain[i].bsdf.GetFrame().ToLocal(wi);
 			Vector localSampledDir;
-			const float cauchyB = chain[i].glassMat->GetCauchyB() ?
-					chain[i].glassMat->GetCauchyB()->GetFloatValue(
-						chain[i].bsdf.hitPoint) : 0.f;
+			const Dispersion disp = chain[i].glassMat->GetDispersion(
+					chain[i].bsdf.hitPoint);
 			const Spectrum trans = GlassMaterial::EvalSpecularTransmission(
 					chain[i].bsdf.hitPoint, localFixedDir, 0.f, kt, nc, nt,
-					cauchyB, &localSampledDir);
+					disp, &localSampledDir);
 			if (trans.Black())
 				{ LMNEE_REJ("ms-tir"); return false; }
 			specProduct *= trans;

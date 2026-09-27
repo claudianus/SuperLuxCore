@@ -3131,6 +3131,8 @@ OPENCL_FORCE_INLINE float3 Mnee_SpecFactor(__global const Material *mat,
 	float3 localSampledDir;
 	*specEvent = SPECULAR | TRANSMIT;
 	float cauchyB = 0.f;
+	float3 sellB = MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	float3 sellC = MAKE_FLOAT3(0.f, 0.f, 0.f);
 #if defined(SLG_SPECTRAL)
 	// Dispersive glass transmits at the path hero wavelength (the solver's
 	// vertex eta was derived from the same hero IOR); pass the real
@@ -3138,9 +3140,16 @@ OPENCL_FORCE_INLINE float3 Mnee_SpecFactor(__global const Material *mat,
 	if (mat->glass.cauchyBTex != NULL_INDEX)
 		cauchyB = Texture_GetFloatValue(mat->glass.cauchyBTex, hitPoint
 				TEXTURES_PARAM);
+	if (mat->glass.sellmeierBTex != NULL_INDEX &&
+			mat->glass.sellmeierCTex != NULL_INDEX) {
+		sellB = Texture_GetSpectrumValue(mat->glass.sellmeierBTex, hitPoint
+				TEXTURES_PARAM);
+		sellC = Texture_GetSpectrumValue(mat->glass.sellmeierCTex, hitPoint
+				TEXTURES_PARAM);
+	}
 #endif
 	return GlassMaterial_EvalSpecularTransmission(hitPoint, localFixedDir, 0.f,
-			kt, nc, nt, cauchyB, &localSampledDir);
+			kt, nc, nt, cauchyB, sellB, sellC, &localSampledDir);
 }
 
 // Exit transition of the MNEE sub-state machine (on success and failure):

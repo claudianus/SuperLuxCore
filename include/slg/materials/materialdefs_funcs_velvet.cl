@@ -68,12 +68,29 @@ OPENCL_FORCE_INLINE void VelvetMaterial_Evaluate(__global const Material* restri
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
+	const float3 kdVal = Texture_GetSpectrumValue(material->velvet.kdTexIndex, hitPoint TEXTURES_PARAM);
+	const float3 kd = Spectrum_Clamp(kdVal);
+
+	if (material->velvet.useCharlie) {
+		// Charlie sheen (EK'17): mirror backface by flipping z on both dirs
+		const float sgn = signbit(eyeDir.z) ? -1.f : 1.f;
+		const float3 wo = MAKE_FLOAT3(eyeDir.x, eyeDir.y, eyeDir.z * sgn);
+		const float3 wi = MAKE_FLOAT3(lightDir.x, lightDir.y, lightDir.z * sgn);
+		const float r = Texture_GetFloatValue(material->velvet.sheenRoughnessTexIndex,
+				hitPoint TEXTURES_PARAM);
+
+		const float3 result = kd * Charlie_EvalTimesCosI(wo, wi, r);
+		EvalStack_PushFloat3(result);
+		EvalStack_PushBSDFEvent(GLOSSY | REFLECT);
+		// pdf of the lightDir argument under the Charlie lobe
+		EvalStack_PushFloat(Charlie_Pdf(wo, wi, r));
+		return;
+	}
+
 	const float directPdfW = fabs(lightDir.z * M_1_PI_F);
 
 	const BSDFEvent event = DIFFUSE | REFLECT;
 
-	const float3 kdVal = Texture_GetSpectrumValue(material->velvet.kdTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 kd = Spectrum_Clamp(kdVal);
 	const float cosv = -dot(lightDir, eyeDir);
 
 	// Compute phase function
@@ -116,6 +133,31 @@ OPENCL_FORCE_INLINE void VelvetMaterial_Sample(__global const Material* restrict
 
 	if (fabs(fixedDir.z) < DEFAULT_COS_EPSILON_STATIC) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
+	}
+
+	if (material->velvet.useCharlie) {
+		const float sgn = signbit(fixedDir.z) ? -1.f : 1.f;
+		const float3 wo = MAKE_FLOAT3(fixedDir.x, fixedDir.y, fixedDir.z * sgn);
+		const float r = Texture_GetFloatValue(material->velvet.sheenRoughnessTexIndex,
+				hitPoint TEXTURES_PARAM);
+
+		float pdfC;
+		const float3 wiC = Charlie_Sample(wo, r, u0, u1, &pdfC);
+		if (!(pdfC > 0.f) || wiC.z <= 0.f) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float3 sampledDirC = MAKE_FLOAT3(wiC.x, wiC.y, wiC.z * sgn);
+
+		const float3 kdValC = Texture_GetSpectrumValue(material->velvet.kdTexIndex,
+				hitPoint TEXTURES_PARAM);
+		const float3 kdC = Spectrum_Clamp(kdValC);
+		const float3 resultC = kdC * (Charlie_EvalTimesCosI(wo, wiC, r) / pdfC);
+
+		EvalStack_PushFloat3(resultC);
+		EvalStack_PushFloat3(sampledDirC);
+		EvalStack_PushFloat(pdfC);
+		EvalStack_PushBSDFEvent(GLOSSY | REFLECT);
+		return;
 	}
 
 	float pdfW;

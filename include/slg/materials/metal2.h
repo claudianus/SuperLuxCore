@@ -33,11 +33,13 @@ public:
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
 			TextureConstPtr nn, TextureConstPtr kk, TextureConstPtr u, TextureConstPtr v,
-			const bool mbounce = false, const bool useGgx = false);
+			const bool mbounce = false, const bool useGgx = false,
+			TextureConstPtr edgeTint = nullptr);
 	Metal2Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
 			FresnelTextureConstPtr ft, TextureConstPtr u, TextureConstPtr v,
-			const bool mbounce = false, const bool useGgx = false);
+			const bool mbounce = false, const bool useGgx = false,
+			TextureConstPtr edgeTint = nullptr);
 
 	virtual MaterialType GetType() const { return METAL2; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
@@ -65,6 +67,7 @@ public:
 	TextureConstPtr GetK() const { return k; }
 	TextureConstPtr GetNu() const { return nu; }
 	TextureConstPtr GetNv() const { return nv; }
+	TextureConstPtr GetEdgeTint() const { return edgeTint; }
 	const bool IsGgx() const { return useGgx; }
 	const bool IsMultibounce() const { return multibounce; }
 
@@ -77,6 +80,10 @@ private:
 
 	TextureConstPtr nu;
 	TextureConstPtr nv;
+	// Optional artist-facing edge tint (OpenPBR F82-style): when set, the
+	// conductor (n, k) is Gulbrandsen-fitted from (F0, edgeTint) so the
+	// grazing-angle tint applies to single- and multi-bounce paths alike.
+	TextureConstPtr edgeTint;
 	const bool multibounce;
 	const bool useGgx;
 };

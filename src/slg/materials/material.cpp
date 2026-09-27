@@ -408,17 +408,66 @@ float slg::WaveLength2IOR(const float waveLength, const float IOR, const float B
 	return cauchyEq;
 }
 
+Dispersion slg::EvaluateDispersion(TextureConstPtr cauchyB,
+		TextureConstPtr sellmeierB, TextureConstPtr sellmeierC,
+		const HitPoint &hitPoint) {
+	Dispersion d;
+	if (sellmeierB && sellmeierC) {
+		const Spectrum b = sellmeierB->GetSpectrumValue(hitPoint);
+		const Spectrum c = sellmeierC->GetSpectrumValue(hitPoint);
+		for (u_int i = 0; i < 3; ++i) {
+			d.sellB[i] = b.c[i];
+			d.sellC[i] = c.c[i];
+		}
+		// GPU-parity sentinel: a negative B1 marks Sellmeier inactive,
+		// matching the sellB.x < 0 fallback on device
+		d.sellmeier = (d.sellB[0] >= 0.f);
+		if (!d.sellmeier && cauchyB)
+			d.cauchyB = cauchyB->GetFloatValue(hitPoint);
+	} else if (cauchyB)
+		d.cauchyB = cauchyB->GetFloatValue(hitPoint);
+	return d;
+}
+
+float slg::WaveLength2IORSellmeier(const float waveLength,
+		const float B[3], const float C[3]) {
+	// Sellmeier equation (waveLength nm -> um). The l2-C denominators can
+	// be negative (IR resonance terms at visible wavelengths): preserve
+	// their sign - clamping the magnitude only, never folding to +eps.
+	const float l2 = Sqr(waveLength * 1e-3f);
+	float n2 = 1.f;
+	for (int i = 0; i < 3; ++i) {
+		const float d = l2 - C[i];
+		n2 += B[i] * l2 / (fabsf(d) > 1e-9f ? d : copysignf(1e-9f, d));
+	}
+	return sqrtf(Max(n2, 1.f));
+}
+
 float slg::DispersiveIOR(const float nt, const float cauchyB) {
 	const PathWavelengths *sw = Spectral::Current();
-	return (sw && cauchyB > 0.f) ?
-		WaveLength2IOR(sw->w[sw->hero], nt, cauchyB) : nt;
+	if (cauchyB <= 0.f)
+		return nt;
+	// Spectral: hero-wavelength IOR. Non-spectral: 560nm reference so the
+	// effective index still drives refraction direction.
+	return WaveLength2IOR(sw ? sw->w[sw->hero] : 560.f, nt, cauchyB);
+}
+
+float slg::DispersiveIOR(const float nt, const Dispersion &disp) {
+	const PathWavelengths *sw = Spectral::Current();
+	return disp.Active() ?
+		disp.IOR(sw ? sw->w[sw->hero] : 560.f, nt) : nt;
 }
 
 Spectrum slg::DispersiveFresnelR(const float nt, const float nc,
 		const float cauchyB, const float cosTheta) {
 	const PathWavelengths *sw = Spectral::Current();
-	if (!(sw && cauchyB > 0.f))
-		return Spectrum(FresnelTexture::CauchyEvaluate(nt / nc, cosTheta));
+	if (!(sw && cauchyB > 0.f)) {
+		// Non-spectral: still use the 560nm effective IOR (see the
+		// Dispersion overload below)
+		const float nEff = (cauchyB > 0.f) ?
+				WaveLength2IOR(560.f, nt, cauchyB) : nt;
+		return Spectrum(FresnelTexture::CauchyEvaluate(nEff / nc, cosTheta));
+	}
 
 	// Per-bin dielectric Fresnel: each sampled wavelength sees its own IOR
 	Spectrum F(0.f);
@@ -426,6 +475,27 @@ Spectrum slg::DispersiveFresnelR(const float nt, const float nc,
 		if (sw->aliveMask & (1U << i))
 			F.c[i] = FresnelTexture::CauchyEvaluate(
 					WaveLength2IOR(sw->w[i], nt, cauchyB) / nc, cosTheta);
+	}
+	return F;
+}
+
+Spectrum slg::DispersiveFresnelR(const float nt, const float nc,
+		const Dispersion &disp, const float cosTheta) {
+	const PathWavelengths *sw = Spectral::Current();
+	if (!(sw && disp.Active())) {
+		// Non-spectral path: with dispersion active, evaluate at a fixed
+		// reference wavelength (560nm) so the scalar Fresnel still sees the
+		// effective IOR (essential for Sellmeier, where nt alone is not the
+		// physical index).
+		const float nEff = disp.Active() ? disp.IOR(560.f, nt) : nt;
+		return Spectrum(FresnelTexture::CauchyEvaluate(nEff / nc, cosTheta));
+	}
+
+	Spectrum F(0.f);
+	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+		if (sw->aliveMask & (1U << i))
+			F.c[i] = FresnelTexture::CauchyEvaluate(
+					disp.IOR(sw->w[i], nt) / nc, cosTheta);
 	}
 	return F;
 }

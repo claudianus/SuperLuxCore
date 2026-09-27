@@ -670,3 +670,89 @@ OPENCL_FORCE_INLINE float Zeltner_EvalTimesCosI(const float3 wo, const float3 wi
 		return 0.f;
 	return Zeltner_DirAlbedo(wo.z, rough) * Zeltner_Pdf(wo, wi, rough);
 }
+
+//------------------------------------------------------------------------------
+// Estevez-Kulla 2017 "Charlie" sheen (Production Friendly Microfacet Sheen
+// BRDF): exponentiated-sinusoid NDF + fitted correlated Smith masking.
+// Device mirror of microfacet.h / namespace charlie.
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float Charlie_NDF(const float cosThetaH, const float rough) {
+	const float r = clamp(rough, 0.05f, 1.f);
+	const float invR = 1.f / r;
+	const float sin2 = fmax(1.f - cosThetaH * cosThetaH, 1e-4f);
+	return (2.f + invR) * pow(sin2, invR * .5f) * (.5f * M_1_PI_F);
+}
+
+OPENCL_FORCE_INLINE float Charlie_Lambda(const float cosTheta, const float rough) {
+	const float alphaG = fmax(rough * rough, 1e-3f);
+	const float omas = Sqr(1.f - alphaG);
+	const float a = 21.5473f * (1.f - omas);
+	const float b = 3.82987f * (1.f - omas);
+	const float c = 0.19824f * (1.f - omas);
+	const float d = -1.97760f * (1.f - omas);
+	const float e = -4.32054f * (1.f - omas);
+	const float x = fabs(cosTheta);
+	const float xc = fmax(x, 1e-6f);
+	const float lX = a / (1.f + b * pow(xc, c)) + d * xc + e;
+	if (x < 0.5f)
+		return exp(lX);
+	// Reflect about x = 0.5
+	const float xm = fmax(1.f - x, 1e-6f);
+	const float lH = a / (1.f + b * pow(0.5f, c)) + d * 0.5f + e;
+	const float lM = a / (1.f + b * pow(xm, c)) + d * xm + e;
+	return exp(2.f * lH - lM);
+}
+
+OPENCL_FORCE_INLINE float Charlie_Visibility(const float nDotV, const float nDotL,
+		const float rough) {
+	return 1.f / ((1.f + Charlie_Lambda(nDotV, rough) + Charlie_Lambda(nDotL, rough)) *
+			4.f * nDotV * nDotL);
+}
+
+OPENCL_FORCE_INLINE float Charlie_Eval(const float3 wo, const float3 wi,
+		const float rough) {
+	if (wo.z <= 0.f || wi.z <= 0.f)
+		return 0.f;
+	const float3 wh = normalize(wo + wi);
+	return Charlie_NDF(wh.z, rough) * Charlie_Visibility(wo.z, wi.z, rough);
+}
+
+OPENCL_FORCE_INLINE float Charlie_EvalTimesCosI(const float3 wo, const float3 wi,
+		const float rough) {
+	return Charlie_Eval(wo, wi, rough) * wi.z;
+}
+
+OPENCL_FORCE_INLINE float Charlie_Pdf(const float3 wo, const float3 wi,
+		const float rough) {
+	if (wo.z <= 0.f || wi.z <= 0.f)
+		return 0.f;
+	const float3 wh = normalize(wo + wi);
+	const float voH = dot(wo, wh);
+	if (voH <= 0.f)
+		return 0.f;
+	return Charlie_NDF(wh.z, rough) * wh.z / (4.f * voH);
+}
+
+// Sample m ~ D(m) cos(theta_m) via inverse CDF (sin(theta) = u^(r/(2r+1))),
+// then reflect wo about m. pdf = 0 marks a below-horizon reject.
+OPENCL_FORCE_INLINE float3 Charlie_Sample(const float3 wo, const float rough,
+		const float u0, const float u1, __private float *pdf) {
+	const float r = clamp(rough, 0.05f, 1.f);
+	const float sinThetaH = pow(u0, r / (2.f * r + 1.f));
+	const float cosThetaH = sqrt(fmax(0.f, 1.f - sinThetaH * sinThetaH));
+	const float phi = 2.f * M_PI_F * u1;
+	const float3 wh = MAKE_FLOAT3(sinThetaH * cos(phi), sinThetaH * sin(phi), cosThetaH);
+	const float voH = dot(wo, wh);
+	if (voH <= 0.f) {
+		*pdf = 0.f;
+		return MAKE_FLOAT3(0.f, 0.f, -1.f);
+	}
+	const float3 wi = 2.f * voH * wh - wo;
+	if (wi.z <= 0.f) {
+		*pdf = 0.f;
+		return wi;
+	}
+	*pdf = Charlie_NDF(wh.z, r) * wh.z / (4.f * voH);
+	return wi;
+}

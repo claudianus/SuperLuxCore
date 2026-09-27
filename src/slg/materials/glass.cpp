@@ -33,10 +33,16 @@ GlassMaterial::GlassMaterial(TextureConstPtr frontTransp, TextureConstPtr backTr
 		TextureConstPtr emitted, TextureConstPtr bump,
 		TextureConstPtr refl, TextureConstPtr trans,
 		TextureConstPtr exteriorIorFact, TextureConstPtr interiorIorFact,
-		TextureConstPtr B, TextureConstPtr filmThickness, TextureConstPtr filmIor) :
+		TextureConstPtr B, TextureConstPtr sellB, TextureConstPtr sellC,
+		TextureConstPtr filmThickness, TextureConstPtr filmIor) :
 			Material(frontTransp, backTransp, emitted, bump),
 			Kr(refl), Kt(trans), exteriorIor(exteriorIorFact), interiorIor(interiorIorFact),
-			cauchyB(B), filmThickness(filmThickness), filmIor(filmIor) {
+			cauchyB(B), sellmeierB(sellB), sellmeierC(sellC),
+			filmThickness(filmThickness), filmIor(filmIor) {
+}
+
+Dispersion GlassMaterial::GetDispersion(const HitPoint &hitPoint) const {
+	return EvaluateDispersion(cauchyB, sellmeierB, sellmeierC, hitPoint);
 }
 
 Spectrum GlassMaterial::Evaluate(const HitPoint &hitPoint,
@@ -103,7 +109,7 @@ static Spectrum WaveLength2RGB(const float waveLength) {
 
 Spectrum GlassMaterial::EvalSpecularReflection(const HitPoint &hitPoint,
 		const Vector &localFixedDir, const Spectrum &kr,
-		const float nc, const float nt, const float cauchyB,
+		const float nc, const float nt, const Dispersion &disp,
 		Vector *localSampledDir,
 		const float localFilmThickness, const float localFilmIor) {
 	if (kr.Black())
@@ -114,8 +120,8 @@ Spectrum GlassMaterial::EvalSpecularReflection(const HitPoint &hitPoint,
 
 	// Per-bin Fresnel under dispersion: each sampled wavelength reflects at
 	// its own IOR (grazing-angle color separation). Reduces to the scalar
-	// CauchyEvaluate when spectral transport is off or cauchyB == 0.
-	const Spectrum result = kr * DispersiveFresnelR(nt, nc, cauchyB, cosTheta);
+	// CauchyEvaluate when spectral transport is off or dispersion inactive.
+	const Spectrum result = kr * DispersiveFresnelR(nt, nc, disp, cosTheta);
 
 	if (localFilmThickness > 0.f) {
 		const Spectrum filmColor = CalcFilmColor(localFixedDir, localFilmThickness, localFilmIor);
@@ -126,7 +132,7 @@ Spectrum GlassMaterial::EvalSpecularReflection(const HitPoint &hitPoint,
 
 Spectrum GlassMaterial::EvalSpecularTransmission(const HitPoint &hitPoint,
 		const Vector &localFixedDir, const float u0,
-		const Spectrum &kt, const float nc, const float nt, const float cauchyB,
+		const Spectrum &kt, const float nc, const float nt, const Dispersion &disp,
 		Vector *localSampledDir) {
 	if (kt.Black())
 		return Spectrum();
@@ -134,20 +140,20 @@ Spectrum GlassMaterial::EvalSpecularTransmission(const HitPoint &hitPoint,
 	// Compute transmitted ray direction
 	Spectrum lkt;
 	float lnt;
-	if (cauchyB > 0.f) {
+	if (disp.Active()) {
 		const PathWavelengths *sw = Spectral::Current();
 		if (sw) {
 			// Hero-wavelength dispersion (S2): refract at the path's hero
 			// wavelength; kt stays in spectral bins (no RGB tint). The
 			// bin collapse happens in Sample() once the transmit branch
 			// is actually picked.
-			lnt = WaveLength2IOR(sw->w[sw->hero], nt, cauchyB);
+			lnt = disp.IOR(sw->w[sw->hero], nt);
 			lkt = kt;
 		} else {
 			// Select the wavelength to sample
 			const float waveLength = Lerp(u0, 380.f, 780.f);
 
-			lnt = WaveLength2IOR(waveLength, nt, cauchyB);
+			lnt = disp.IOR(waveLength, nt);
 
 			lkt = kt * WaveLength2RGB(waveLength);
 		}
@@ -192,17 +198,17 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 	const float nc = ExtractExteriorIors(hitPoint, exteriorIor);
 	const float nt = ExtractInteriorIors(hitPoint, interiorIor);
 
-	const float cauchyBValue = cauchyB ? cauchyB->GetFloatValue(hitPoint) : 0.f;
+	const Dispersion disp = GetDispersion(hitPoint);
 
 	Vector transLocalSampledDir; 
 	const Spectrum trans = EvalSpecularTransmission(hitPoint, localFixedDir, u0,
-			kt, nc, nt, cauchyBValue, &transLocalSampledDir);
+			kt, nc, nt, disp, &transLocalSampledDir);
 	
 	const float localFilmThickness = filmThickness ? filmThickness->GetFloatValue(hitPoint) : 0.f;
 	const float localFilmIor = (localFilmThickness > 0.f && filmIor) ? filmIor->GetFloatValue(hitPoint) : 1.f;
 	Vector reflLocalSampledDir;
 	const Spectrum refl = EvalSpecularReflection(hitPoint, localFixedDir,
-			kr, nc, nt, cauchyBValue, &reflLocalSampledDir, localFilmThickness, localFilmIor);
+			kr, nc, nt, disp, &reflLocalSampledDir, localFilmThickness, localFilmIor);
 
 	// Decide to transmit or reflect
 	float threshold;
@@ -237,7 +243,7 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 		result = trans;
 		// Dispersive refraction terminates the secondary wavelengths:
 		// the surviving hero bin carries the path (uniform-pick weight).
-		if (cauchyBValue > 0.f)
+		if (disp.Active())
 			result *= Spectral::CollapseToHero();
 	} else {
 		// Reflect
@@ -273,6 +279,10 @@ void GlassMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  &
 		interiorIor->AddReferencedTextures(referencedTexs);
 	if (cauchyB)
 		cauchyB->AddReferencedTextures(referencedTexs);
+	if (sellmeierB)
+		sellmeierB->AddReferencedTextures(referencedTexs);
+	if (sellmeierC)
+		sellmeierC->AddReferencedTextures(referencedTexs);
 	if (filmThickness)
 		filmThickness->AddReferencedTextures(referencedTexs);
 	if (filmIor)
@@ -292,6 +302,10 @@ void GlassMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef n
 		interiorIor = &newTex;
 	if (cauchyB == &oldTex)
 		cauchyB = &newTex;
+	if (sellmeierB == &oldTex)
+		sellmeierB = &newTex;
+	if (sellmeierC == &oldTex)
+		sellmeierC = &newTex;
 	if (filmThickness == &oldTex)
 		filmThickness = &newTex;
 	if (filmIor == &oldTex)
@@ -311,6 +325,10 @@ PropertiesUPtr GlassMaterial::ToProperties(const ImageMapCache &imgMapCache, con
 		props->Set(Property("scene.materials." + name + ".interiorior")(interiorIor->GetSDLValue()));
 	if (cauchyB)
 		props->Set(Property("scene.materials." + name + ".cauchyb")(cauchyB->GetSDLValue()));
+	if (sellmeierB && sellmeierC) {
+		props->Set(Property("scene.materials." + name + ".sellmeierb")(sellmeierB->GetSDLValue()));
+		props->Set(Property("scene.materials." + name + ".sellmeierc")(sellmeierC->GetSDLValue()));
+	}
 	if (filmThickness)
 		props->Set(Property("scene.materials." + name + ".filmthickness")(filmThickness->GetSDLValue()));
 	if (filmIor)

@@ -93,6 +93,8 @@ typedef struct {
 	unsigned int ktTexIndex;
 	unsigned int exteriorIorTexIndex, interiorIorTexIndex;
 	unsigned int cauchyBTex;
+	unsigned int sellmeierBTex;
+	unsigned int sellmeierCTex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
 } GlassParam;
@@ -145,6 +147,7 @@ typedef struct {
 	unsigned int kTexIndex;
 	unsigned int nuTexIndex;
 	unsigned int nvTexIndex;
+	unsigned int edgeTintTexIndex;
 	int multibounce;
 	int useGgx;
 } Metal2Param;
@@ -154,10 +157,13 @@ typedef struct {
 	unsigned int ktTexIndex;
 	unsigned int exteriorIorTexIndex, interiorIorTexIndex;
 	unsigned int cauchyBTex;
+	unsigned int sellmeierBTex;
+	unsigned int sellmeierCTex;
 	unsigned int nuTexIndex;
 	unsigned int nvTexIndex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
+	int multibounce;
 	int useGgx;
 } RoughGlassParam;
 
@@ -167,6 +173,8 @@ typedef struct {
 	unsigned int p2TexIndex;
 	unsigned int p3TexIndex;
 	unsigned int thicknessTexIndex;
+	unsigned int sheenRoughnessTexIndex;
+	int useCharlie;
 } VelvetParam;
 
 typedef enum {
@@ -250,6 +258,7 @@ typedef struct {
 	unsigned int R3TexIndex;
 	unsigned int KaTexIndex;
 	unsigned int depthTexIndex;
+	int multibounce;
 	int useGgx;
 } CarPaintParam;
 
@@ -297,6 +306,7 @@ typedef struct {
 	unsigned int anisotropicTexIndex;
 	unsigned int sheenTexIndex;
 	unsigned int sheenTintTexIndex;
+	unsigned int sheenRoughnessTexIndex;
 	unsigned int filmAmountTexIndex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
@@ -304,6 +314,9 @@ typedef struct {
 	unsigned int transmissionRoughnessTexIndex;
 	unsigned int iorTexIndex;
 	unsigned int cauchyBTexIndex;
+	unsigned int sellmeierBTexIndex;
+	unsigned int sellmeierCTexIndex;
+	int multibounce;
 } DisneyParam;
 
 typedef struct {
@@ -347,6 +360,8 @@ typedef struct {
 	unsigned int transScatterTexIndex;
 	unsigned int transScatterAnisoTexIndex;
 	unsigned int dispersionTexIndex;
+	unsigned int sellmeierBTexIndex;
+	unsigned int sellmeierCTexIndex;
 	unsigned int sssWeightTexIndex;
 	unsigned int sssColorTexIndex;
 	unsigned int sssRadiusTexIndex;
@@ -400,6 +415,8 @@ typedef struct {
 	// the raw coefficient textures.
 	unsigned int sssAlbedoTexIndex;
 	unsigned int sssMfpTexIndex;
+	// 0 = van de Hulst/d'Eon remap (legacy), 1 = Christensen-Burley 2015
+	int sssProfile;
 } HomogenousVolumeParam;
 
 typedef struct {

@@ -43,6 +43,7 @@ OpenPBRMaterial::OpenPBRMaterial(
 	TextureConstPtr transWeight, TextureConstPtr transColor,
 	TextureConstPtr transDepth, TextureConstPtr transScatter,
 	TextureConstPtr transScatterAniso, TextureConstPtr dispersion,
+		TextureConstPtr sellmeierB, TextureConstPtr sellmeierC,
 	TextureConstPtr sssWeight, TextureConstPtr sssColor,
 	TextureConstPtr sssRadius, TextureConstPtr sssRadiusScale,
 	TextureConstPtr sssAnisotropy,
@@ -62,7 +63,8 @@ OpenPBRMaterial::OpenPBRMaterial(
 	SpecularRotation(specRotation), SpecularIor(specIor),
 	TransmissionWeight(transWeight), TransmissionColor(transColor),
 	TransmissionDepth(transDepth), TransmissionScatter(transScatter),
-	TransmissionScatterAniso(transScatterAniso), Dispersion(dispersion),
+	TransmissionScatterAniso(transScatterAniso), DispersionTex(dispersion),
+		SellmeierB(sellmeierB), SellmeierC(sellmeierC),
 	SubsurfaceWeight(sssWeight), SubsurfaceColor(sssColor),
 	SubsurfaceRadius(sssRadius), SubsurfaceRadiusScale(sssRadiusScale),
 	SubsurfaceAnisotropy(sssAnisotropy),
@@ -96,7 +98,7 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 	p.transDepth = Max(TransmissionDepth->GetFloatValue(hitPoint), 0.f);
 	p.transScatter = TransmissionScatter->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
 	p.transScatterAniso = Clamp(TransmissionScatterAniso->GetFloatValue(hitPoint), -1.f, 1.f);
-	p.dispersion = Max(Dispersion->GetFloatValue(hitPoint), 0.f);
+	p.disp = EvaluateDispersion(DispersionTex, SellmeierB, SellmeierC, hitPoint);
 
 	p.sssWeight = Clamp(SubsurfaceWeight->GetFloatValue(hitPoint), 0.f, 1.f);
 	p.sssColor = SubsurfaceColor->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
@@ -128,8 +130,8 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 // coat coverage weight (spec eq. specular_ior_ratio), with the TIR-preserving
 // ratio flip. Dispersion (Cauchy B) shifts the substrate IOR at the hero
 // wavelength.
-float OpenPBRMaterial::EtaS(const Params &p, const float cauchyB) const {
-	const float nS = DispersiveIOR(p.specIor, cauchyB);
+float OpenPBRMaterial::EtaS(const Params &p, const Dispersion &disp) const {
+	const float nS = DispersiveIOR(p.specIor, disp);
 	const float etaSC = nS / p.coatIor;
 	const float coatTerm = (etaSC < 1.f) ? 1.f / etaSC : etaSC;
 	return Lerp(p.coatWeight, nS / p.extIor, coatTerm);
@@ -137,7 +139,7 @@ float OpenPBRMaterial::EtaS(const Params &p, const float cauchyB) const {
 
 float OpenPBRMaterial::InteriorIor(const HitPoint &hitPoint, const Params &p) const {
 	return hitPoint.interiorVolume ? hitPoint.interiorVolume->GetIOR(hitPoint) :
-			DispersiveIOR(p.specIor, p.dispersion);
+			DispersiveIOR(p.specIor, p.disp);
 }
 
 //------------------------------------------------------------------------------
@@ -200,7 +202,7 @@ static float ThinFilmR(const float cos1, const float n1, const float n2,
 static Spectrum FilmFresnel(const HitPoint &hitPoint, const float cosI,
 		const float etaFe, const float filmIor, const float thicknessNm,
 		const Spectrum &n3r, const Spectrum &n3i, const bool conductor,
-		const float dielectricN3, const float cauchyB) {
+		const float dielectricN3, const Dispersion &disp) {
 	const float nExt = filmIor / etaFe;
 	const PathWavelengths *sw = Spectral::Current();
 	Spectrum F(0.f);
@@ -213,8 +215,8 @@ static Spectrum FilmFresnel(const HitPoint &hitPoint, const float cosI,
 		if (conductor)
 			n3 = cxf(n3r.c[i], n3i.c[i]);
 		else {
-			const float nD = (cauchyB > 0.f) ?
-					WaveLength2IOR(lambda, dielectricN3, cauchyB) : dielectricN3;
+			const float nD = (disp.Active()) ?
+					disp.IOR(lambda, dielectricN3) : dielectricN3;
 			n3 = cxf(nD, 0.f);
 		}
 		F.c[i] = ThinFilmR(cosI, nExt, filmIor, n3, thicknessNm, lambda);
@@ -260,9 +262,9 @@ Spectrum OpenPBRMaterial::EvalGlossyRefl(const HitPoint &hitPoint, const Params 
 	// side is the interior volume, the far side is the exterior medium.
 	const float nNear = woAbove ? p.extIor : InteriorIor(hitPoint, p);
 	const float nFar = woAbove ?
-			(coat ? p.coatIor : DispersiveIOR(p.specIor, p.dispersion)) :
+			(coat ? p.coatIor : DispersiveIOR(p.specIor, p.disp)) :
 			p.extIor;
-	const float etaTI = (woAbove && !coat) ? EtaS(p, p.dispersion) : nFar / nNear;
+	const float etaTI = (woAbove && !coat) ? EtaS(p, p.disp) : nFar / nNear;
 	if (fabsf(etaTI - 1.f) < 1e-4f)
 		return Spectrum(0.f); // index-matched interface: no reflection
 
@@ -275,7 +277,7 @@ Spectrum OpenPBRMaterial::EvalGlossyRefl(const HitPoint &hitPoint, const Params 
 				p.filmIor / p.coatIor);
 		const Spectrum Ffilm = FilmFresnel(hitPoint, mu, etaFe,
 				p.filmIor, p.filmThickness, Spectrum(0.f), Spectrum(0.f), false,
-				p.specIor, p.dispersion);
+				p.specIor, p.disp);
 		const float Fnofilm = FresnelDielectricModulated(mu, etaTI, p.specWeight);
 		F = Lerp(p.filmWeight, Fnofilm, Ffilm.Filter());
 	} else
@@ -310,7 +312,7 @@ Spectrum OpenPBRMaterial::EvalMetal(const HitPoint &hitPoint, const Params &p,
 				p.filmIor / p.coatIor);
 		F = Lerp(p.filmWeight, FresnelF82(mu, F0, p.specColor),
 				FilmFresnel(hitPoint, mu, etaFe, p.filmIor, p.filmThickness,
-						n3r, n3i, true, 0.f, 0.f));
+						n3r, n3i, true, 0.f, Dispersion()));
 	} else
 		F = FresnelF82(mu, F0, p.specColor);
 
@@ -331,7 +333,7 @@ Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 	// (specular_ior, dispersed); below the surface wo sits in the interior
 	// volume and wi exits into the exterior medium.
 	const float nWo = (wo.z > 0.f) ? p.extIor : InteriorIor(hitPoint, p);
-	const float nWi = (wo.z > 0.f) ? DispersiveIOR(p.specIor, p.dispersion) :
+	const float nWi = (wo.z > 0.f) ? DispersiveIOR(p.specIor, p.disp) :
 			p.extIor;
 	const float eta = nWi / nWo;
 	const float eta2 = eta * eta;
@@ -433,7 +435,7 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 			Spectrum(p.specWeight * FresnelF82(muF, F0, p.specColor)).Filter();
 
 	// Dielectric substrate: directional Fresnel splits reflection/refraction
-	const float etaS = EtaS(p, p.dispersion);
+	const float etaS = EtaS(p, p.disp);
 	const float Fspec = FresnelDielectricModulated(muF, etaS, p.specWeight);
 	const float wDiel = rem * (1.f - p.metalness);
 
@@ -567,7 +569,7 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 		}
 		if (frontSide && probs[LOBE_DIFF] > 0.f) {
 			// Diffuse is attenuated crossing the dielectric interface twice
-			const float etaS = EtaS(p, p.dispersion);
+			const float etaS = EtaS(p, p.disp);
 			const float att = (1.f - FresnelDielectricModulated(muI, etaS, p.specWeight)) *
 					(1.f - FresnelDielectricModulated(fabsf(wo.z), etaS, p.specWeight));
 			result += weights[LOBE_DIFF] * att *
@@ -699,7 +701,7 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 			// eta' = n(fixed side)/n(sampled side) = 1/eta of EvalBtdf
 			const float nWo = (wo.z > 0.f) ? p.extIor : InteriorIor(hitPoint, p);
 			const float nWi = (wo.z > 0.f) ?
-					DispersiveIOR(p.specIor, p.dispersion) : p.extIor;
+					DispersiveIOR(p.specIor, p.disp) : p.extIor;
 			const float eta = nWo / nWi;
 			if (fabsf(eta - 1.f) < 1e-4f) {
 				// Index-matched interface: straight pass-through delta
@@ -751,7 +753,7 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 		return Spectrum();
 
 	// Dispersive refraction keeps only the hero wavelength alive
-	if (sampledTransmit && p.dispersion > 0.f)
+	if (sampledTransmit && p.disp.Active())
 		return (f * Spectral::CollapseToHero()) / *pdfW;
 	return f / *pdfW;
 }
@@ -805,7 +807,9 @@ void OpenPBRMaterial::AddReferencedTextures(std::unordered_set<const Texture *> 
 	TransmissionDepth->AddReferencedTextures(referencedTexs);
 	TransmissionScatter->AddReferencedTextures(referencedTexs);
 	TransmissionScatterAniso->AddReferencedTextures(referencedTexs);
-	Dispersion->AddReferencedTextures(referencedTexs);
+	DispersionTex->AddReferencedTextures(referencedTexs);
+	SellmeierB->AddReferencedTextures(referencedTexs);
+	SellmeierC->AddReferencedTextures(referencedTexs);
 	SubsurfaceWeight->AddReferencedTextures(referencedTexs);
 	SubsurfaceColor->AddReferencedTextures(referencedTexs);
 	SubsurfaceRadius->AddReferencedTextures(referencedTexs);
@@ -844,7 +848,9 @@ void OpenPBRMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef
 	if (TransmissionDepth == &oldTex) TransmissionDepth = &newTex;
 	if (TransmissionScatter == &oldTex) TransmissionScatter = &newTex;
 	if (TransmissionScatterAniso == &oldTex) TransmissionScatterAniso = &newTex;
-	if (Dispersion == &oldTex) Dispersion = &newTex;
+	if (DispersionTex == &oldTex) DispersionTex = &newTex;
+	if (SellmeierB == &oldTex) SellmeierB = &newTex;
+	if (SellmeierC == &oldTex) SellmeierC = &newTex;
 	if (SubsurfaceWeight == &oldTex) SubsurfaceWeight = &newTex;
 	if (SubsurfaceColor == &oldTex) SubsurfaceColor = &newTex;
 	if (SubsurfaceRadius == &oldTex) SubsurfaceRadius = &newTex;
@@ -886,7 +892,9 @@ PropertiesUPtr OpenPBRMaterial::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.materials." + name + ".transmissiondepth")(TransmissionDepth->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".transmissionscatter")(TransmissionScatter->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".transmissionscatteranisotropy")(TransmissionScatterAniso->GetSDLValue()));
-	props->Set(Property("scene.materials." + name + ".dispersion")(Dispersion->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".dispersion")(DispersionTex->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".sellmeierb")(SellmeierB->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".sellmeierc")(SellmeierC->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfaceweight")(SubsurfaceWeight->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfacecolor")(SubsurfaceColor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfaceradius")(SubsurfaceRadius->GetSDLValue()));

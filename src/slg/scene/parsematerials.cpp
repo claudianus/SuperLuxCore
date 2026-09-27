@@ -20,8 +20,10 @@
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/format.hpp>
+#include <array>
 #include <optional>
 #include <typeinfo>
+#include <unordered_map>
 
 #include "luxrays/core/color/color.h"
 #include "luxrays/usings.h"
@@ -243,6 +245,57 @@ MaterialUPtr Scene::CreateMaterial(
 		SLG_LOG("WARNING: deprecated property " + propName + "." + std::string(suffix));
 	};
 
+	// Implicit const-float3 texture for generated values
+	auto constTex3 = [&](const Spectrum &v) -> TextureConstPtr {
+		auto tex = std::make_unique<ConstFloat3Texture>(v);
+		tex->SetName(NamedObject::GetUniqueName("Implicit-Const"));
+		auto [ref, old] = texDefs.DefineTexture(std::move(tex));
+		moveToTrash(std::move(old));
+		return TextureConstPtr(&ref);
+	};
+
+	// Sellmeier 3-term dispersion: n^2(l) = 1 + sum_i B_i l^2/(l^2-C_i)
+	// (l in um, C in um^2). Enabled by either:
+	//   <mat>.sellmeier = "N-BK7"|"N-SF6"|"N-SF10"|"F2"|"fusedsilica"|
+	//                     "diamond"|"water"      (named glass presets)
+	//   <mat>.sellmeierb = B1 B2 B3  and  <mat>.sellmeierc = C1 C2 C3
+	// When present it replaces the Cauchy-B model for that material.
+	// Preset sources: Schott catalogue coefficients; Malitson 1965
+	// (fused silica); Peter 1923 (diamond); Daimon-Masumura 2007 (water,
+	// strongest 3 of 4 terms).
+	static const std::unordered_map<string, std::array<float, 6>>
+			sellmeierPresets = {
+		{"N-BK7",      {1.03961212f, 0.231792344f, 1.01046945f,
+						0.00600069867f, 0.0200179144f, 103.560653f}},
+		{"N-SF6",      {1.72448482f, 0.390104889f, 1.04572858f,
+						0.0134871947f, 0.0569318095f, 118.557185f}},
+		{"N-SF10",     {1.61625977f, 0.259229334f, 1.07762317f,
+						0.0127534559f, 0.0581983954f, 116.607680f}},
+		{"F2",         {1.34533359f, 0.209073176f, 0.937357162f,
+						0.00997743871f, 0.0470450767f, 111.886764f}},
+		{"fusedsilica",{0.6961663f, 0.4079426f, 0.8974794f,
+						0.004679148f, 0.013512063f, 97.9340025f}},
+		{"diamond",    {0.3306f, 4.3356f, 0.f,
+						0.030625f, 0.011236f, 1.f}},
+		{"water",      {0.5684027565f, 0.1726177391f, 0.1130748688f,
+						0.0051018297f, 0.0182115394f, 10.69792721f}},
+	};
+	auto parseSellmeier = [&](TextureConstPtr &sellB, TextureConstPtr &sellC) {
+		sellB = nullptr;
+		sellC = nullptr;
+		if (isDefined("sellmeier")) {
+			const string name = parseString("sellmeier", "");
+			const auto it = sellmeierPresets.find(name);
+			if (it == sellmeierPresets.end())
+				throw std::runtime_error("Unknown Sellmeier glass preset: " + name);
+			sellB = constTex3(Spectrum(it->second[0], it->second[1], it->second[2]));
+			sellC = constTex3(Spectrum(it->second[3], it->second[4], it->second[5]));
+		} else if (isDefined("sellmeierb") && isDefined("sellmeierc")) {
+			sellB = parseTex("sellmeierb", {0.f, 0.f, 0.f});
+			sellC = parseTex("sellmeierc", {0.f, 0.f, 0.f});
+		}
+	};
+
 	// PARSING STARTS HERE
 	const string matType = parseString("type", "matte");
 	// For compatibility with the past
@@ -341,9 +394,12 @@ MaterialUPtr Scene::CreateMaterial(
 		if (isDefined("filmior"))
 			filmIor = parseTex("filmior", {1.5f});
 
+		TextureConstPtr sellB, sellC;
+		parseSellmeier(sellB, sellC);
+
 		mat = std::make_unique<GlassMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex, kr, kt,
-			exteriorIor, interiorIor, cauchyB, filmThickness, filmIor
+			exteriorIor, interiorIor, cauchyB, sellB, sellC, filmThickness, filmIor
 		);
 	} else if (matType == "archglass") {
 		auto kr = parseTex("kr", {1.f, 1.f, 1.f});
@@ -434,6 +490,9 @@ MaterialUPtr Scene::CreateMaterial(
 		auto nv = parseTex("vroughness", {.1f});
 		const auto multibounce = parseBool("multibounce", false);
 		const auto useGgx = parseString("distribution", "schlick") == "ggx";
+		// Optional F82-style edge tint: Gulbrandsen-refits (n,k) so the
+		// grazing tint stays consistent for single- and multi-bounce.
+		auto edgeTint = isDefined("edgetint") ? parseTex("edgetint", {1.f, 1.f, 1.f}) : TextureConstPtr();
 
 		TextureConstPtr n, k;
 		if (isDefined("preset") || isDefined("name")) {
@@ -454,7 +513,8 @@ MaterialUPtr Scene::CreateMaterial(
 				nu,
 				nv,
 				multibounce,
-				useGgx
+				useGgx,
+				edgeTint
 			);
 			moveToTrash(std::move(oldTexPtr));
 		} else if (isDefined("fresnel")) {
@@ -467,14 +527,15 @@ MaterialUPtr Scene::CreateMaterial(
 			auto fresnelTex = static_cast<const FresnelTexture *>(tex.get());
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				FresnelTextureConstPtr(fresnelTex), nu, nv, multibounce, useGgx
+				FresnelTextureConstPtr(fresnelTex), nu, nv, multibounce, useGgx,
+				edgeTint
 			);
 		} else {
 			n = parseTex("n", {.5f, .5f, .5f});
 			k = parseTex("k", {.5f, .5f, .5f});
 			mat = std::make_unique<Metal2Material>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				n, k, nu, nv, multibounce, useGgx
+				n, k, nu, nv, multibounce, useGgx, edgeTint
 			);
 		}
 	} else if (matType == "roughglass") {
@@ -512,10 +573,13 @@ MaterialUPtr Scene::CreateMaterial(
 			filmIor = parseTex("filmior", {1.5f});
 
 		const auto useGgx = parseString("distribution", "schlick") == "ggx";
+		const bool multibounce = parseBool("multibounce", false);
+		TextureConstPtr sellB, sellC;
+		parseSellmeier(sellB, sellC);
 		mat = std::make_unique<RoughGlassMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			kr, kt, exteriorIor, interiorIor, nu, nv, cauchyB, filmThickness, filmIor,
-			useGgx
+			kr, kt, exteriorIor, interiorIor, nu, nv, cauchyB, sellB, sellC,
+			filmThickness, filmIor, multibounce, useGgx
 		);
 	} else if (matType == "velvet") {
 		auto kd = parseTex("kd", {.5f, .5f, .5f});
@@ -523,10 +587,16 @@ MaterialUPtr Scene::CreateMaterial(
 		auto p2 = parseTex("p2", {20.0f});
 		auto p3 = parseTex("p3", {2.0f});
 		auto thickness = parseTex("thickness", {0.1f});
+		const string model = parseString("model", "legacy");
+		const bool useCharlie = (model == "charlie");
+		if (!useCharlie && model != "legacy")
+			SLG_LOG("WARNING: unknown velvet model '" << model << "', using legacy");
+		// Charlie mode requires the texture (legacy mode ignores it)
+		auto sheenRoughness = parseTex("sheenroughness", {0.5f});
 
 		mat = std::make_unique<VelvetMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			kd, p1, p2, p3, thickness
+			kd, p1, p2, p3, thickness, sheenRoughness, useCharlie
 		);
 	} else if (matType == "cloth") {
 		slg::ocl::ClothPreset preset = slg::ocl::DENIM;
@@ -563,6 +633,7 @@ MaterialUPtr Scene::CreateMaterial(
 		auto ka = parseTex("ka", {0.f, 0.f, 0.f});
 		auto d = parseTex("d", {0.f});
 		const auto useGgx = parseString("distribution", "schlick") == "ggx";
+		const bool multibounce = parseBool("multibounce", false);
 
 		string preset = parseString("preset", "");
 		if (preset != "") {
@@ -611,6 +682,7 @@ MaterialUPtr Scene::CreateMaterial(
 					TextureConstPtr(&r3),
 					ka,
 					d,
+					multibounce,
 					useGgx
 				);
 			}
@@ -631,7 +703,7 @@ MaterialUPtr Scene::CreateMaterial(
 			auto m3 = parseTex("m3", {cpData.m3});
 			mat = std::make_unique<CarPaintMaterial>(
 				frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-				kd, ks1, ks2, ks3, m1, m2, m3, r1, r2, r3, ka, d, useGgx
+				kd, ks1, ks2, ks3, m1, m2, m3, r1, r2, r3, ka, d, multibounce, useGgx
 			);
 		}
 	} else if (matType == "glossytranslucent") {
@@ -697,6 +769,12 @@ MaterialUPtr Scene::CreateMaterial(
 		auto anisotropic = parseTex("anisotropic", {0.f});
 		auto sheen = parseTex("sheen", {0.f});
 		auto sheenTint = parseTex("sheentint", {0.f});
+		// Estevez-Kulla "Charlie" microfacet sheen (opt-in): when the
+		// sheenroughness texture is present the legacy Schlick sheen lobe
+		// is replaced by the physical cloth sheen BRDF.
+		TextureConstPtr sheenRoughness = nullptr;
+		if (isDefined("sheenroughness"))
+			sheenRoughness = parseTex("sheenroughness", {0.5f});
 		// Integrated dielectric transmission lobe (Principled-style). When
 		// transmission > 0 the material refracts instead of only reflecting.
 		auto transmission = parseTex("transmission", {0.f});
@@ -721,12 +799,16 @@ MaterialUPtr Scene::CreateMaterial(
 		if (isDefined("filmior"))
 			filmIor = parseTex("filmior", {1.5f});
 
+		TextureConstPtr sellB, sellC;
+		parseSellmeier(sellB, sellC);
+		const bool multibounce = parseBool("multibounce", false);
 		mat = std::make_unique<DisneyMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
 			baseColor, subsurface, roughness, metallic,
 			specular, specularTint, clearcoat, clearcoatGloss, anisotropic,
-			sheen, sheenTint, filmAmount, filmThickness, filmIor,
-			transmission, transmissionRoughness, ior, cauchyB
+			sheen, sheenTint, sheenRoughness, filmAmount, filmThickness, filmIor,
+			transmission, transmissionRoughness, ior, cauchyB, sellB, sellC,
+			multibounce
 		);
 	} else if (matType == "openpbr") {
 		// ASWF OpenPBR Surface v1.1 (lobe-mixture approximation)
@@ -746,6 +828,8 @@ MaterialUPtr Scene::CreateMaterial(
 		auto transScatter = parseTex("transmissionscatter", {0.f, 0.f, 0.f});
 		auto transScatterAniso = parseTex("transmissionscatteranisotropy", {0.f});
 		auto dispersion = parseTex("dispersion", {0.f});
+		TextureConstPtr sellB, sellC;
+		parseSellmeier(sellB, sellC);
 		auto sssWeight = parseTex("subsurfaceweight", {0.f});
 		auto sssColor = parseTex("subsurfacecolor", {1.f, 1.f, 1.f});
 		auto sssRadius = parseTex("subsurfaceradius", {1.f});
@@ -771,7 +855,7 @@ MaterialUPtr Scene::CreateMaterial(
 			specWeight, specColor, specRoughness, specAniso,
 			specRotation, specIor,
 			transWeight, transColor, transDepth, transScatter,
-			transScatterAniso, dispersion,
+			transScatterAniso, dispersion, sellB, sellC,
 			sssWeight, sssColor, sssRadius, sssRadiusScale, sssAniso,
 			coatWeight, coatColor, coatRoughness, coatAniso,
 			coatRotation, coatIor, coatDarkening,
@@ -831,10 +915,16 @@ MaterialUPtr Scene::CreateMaterial(
 				g = transScatterAniso;
 			}
 
+			// CB15 profile for the SSS path: OpenPBR's subsurface_radius
+			// is defined as a diffusion radius (transport-corrected mfp)
+			// and the inversion folds in the dielectric boundary
+			// reflectance via the volume IOR - closer to the OpenPBR
+			// spec than the van de Hulst remap.
 			auto vol = std::make_unique<HomogeneousVolume>(
 				*specIor, nullptr, *sigmaA, *sigmaS, *g,
 				true /* multiScattering */, true /* HG phase */,
-				true /* equiangular */, sssAlbedo, sssMfp);
+				true /* equiangular */, sssAlbedo, sssMfp,
+				wantSSSVol ? 1 : 0);
 			vol->SetName(NamedObject::GetUniqueName("Implicit-OpenPBRVolume"));
 			auto [volRef, oldVol] = matDefs.DefineMaterial(std::move(vol));
 			moveToTrash(std::move(oldVol));

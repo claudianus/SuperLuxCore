@@ -34,7 +34,8 @@ public:
 			TexRef emitted, TexRef bump,
 			TexRef refl, TexRef trans,
 			TexRef exteriorIorFact, TexRef interiorIorFact,
-			TexRef B, 
+			TexRef B,
+			TexRef sellmeierB, TexRef sellmeierC,
 			TexRef filmThickness, TexRef filmIor);
 
 	virtual MaterialType GetType() const { return GLASS; }
@@ -63,18 +64,22 @@ public:
 	TexRef GetExteriorIOR() const { return exteriorIor; }
 	TexRef GetInteriorIOR() const { return interiorIor; }
 	TexRef GetCauchyB() const { return cauchyB; }
+	TexRef GetSellmeierB() const { return sellmeierB; }
+	TexRef GetSellmeierC() const { return sellmeierC; }
+	// Per-hit dispersion descriptor (Cauchy scalar or Sellmeier coeffs)
+	Dispersion GetDispersion(const HitPoint &hitPoint) const;
 	TexRef GetFilmThickness() const { return filmThickness; }
 	TexRef GetFilmIOR() const { return filmIor; }
 
 	static luxrays::Spectrum EvalSpecularReflection(const HitPoint &hitPoint,
 			const luxrays::Vector &localFixedDir,
 			const luxrays::Spectrum &kr, const float nc, const float nt,
-			const float cauchyB, luxrays::Vector *localSampledDir,
+			const Dispersion &disp, luxrays::Vector *localSampledDir,
 			const float localFilmThickness, const float localFilmIor);
 	static luxrays::Spectrum EvalSpecularTransmission(const HitPoint &hitPoint,
 			const luxrays::Vector &localFixedDir, const float u0,
 			const luxrays::Spectrum &kt,
-			const float nc, const float nt, const float cauchyB,
+			const float nc, const float nt, const Dispersion &disp,
 			luxrays::Vector *localSampledDir);
 
 private:
@@ -84,6 +89,8 @@ private:
 	TexRef exteriorIor;
 	TexRef interiorIor;
 	TexRef cauchyB;
+	TexRef sellmeierB;
+	TexRef sellmeierC;
 	TexRef filmThickness;
 	TexRef filmIor;
 };

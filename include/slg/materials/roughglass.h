@@ -36,7 +36,9 @@ public:
 			TexRef refl, TexRef trans,
 			TexRef exteriorIorFact, TexRef interiorIorFact,
 			TexRef u, TexRef v,
-			TexRef cauchyB, TexRef filmThickness, TexRef filmIor,
+			TexRef cauchyB, TexRef sellmeierB, TexRef sellmeierC,
+			TexRef filmThickness, TexRef filmIor,
+			const bool multibounce = false,
 			const bool useGgx = false);
 
 	virtual MaterialType GetType() const { return ROUGHGLASS; }
@@ -67,8 +69,12 @@ public:
 	TexRef GetNu() const { return nu; }
 	TexRef GetNv() const { return nv; }
 	TexRef GetCauchyB() const { return cauchyB; }
+	TexRef GetSellmeierB() const { return sellmeierB; }
+	TexRef GetSellmeierC() const { return sellmeierC; }
+	Dispersion GetDispersion(const HitPoint &hitPoint) const;
 	TexRef GetFilmThickness() const { return filmThickness; }
 	TexRef GetFilmIOR() const { return filmIor; }
+	const bool IsMultibounce() const { return multibounce; }
 	const bool IsGgx() const { return useGgx; }
 
 private:
@@ -79,8 +85,11 @@ private:
 	TexRef nu;
 	TexRef nv;
 	TexRef cauchyB;
+	TexRef sellmeierB;
+	TexRef sellmeierC;
 	TexRef filmThickness;
 	TexRef filmIor;
+	const bool multibounce;
 	const bool useGgx;
 };
 

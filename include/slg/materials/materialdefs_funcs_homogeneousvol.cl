@@ -48,6 +48,46 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_SSSCoeffs(
 	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
 }
 
+// "cb15" parametrization, mirror of HomogeneousVolume_SSSCoeffsCB15 in
+// volume_funcs.cl / SSSRemapCB15 in homogenous.cpp: A is the measured
+// external reflectance, inverted via the vdH fit times the CB15
+// diffusion boundary ratio K(a,eta) (fixed-point iteration); eta comes
+// from the volume IOR texture. d is the transport mfp.
+OPENCL_FORCE_INLINE void HomogeneousVolMaterial_SSSCoeffsCB15(
+		__global const Material* restrict material,
+		__global const HitPoint *hitPoint, float3 *sigmaT, float3 *alpha
+		MATERIALS_PARAM_DECL) {
+	const float3 A = clamp(Texture_GetSpectrumValue(
+			material->volume.homogenous.sssAlbedoTexIndex, hitPoint
+			TEXTURES_PARAM), 1e-4f, 0.999f);
+	const float3 mfp = Texture_GetSpectrumValue(
+			material->volume.homogenous.sssMfpTexIndex, hitPoint
+			TEXTURES_PARAM);
+	const float3 g = clamp(Texture_GetSpectrumValue(
+			material->volume.homogenous.gTexIndex, hitPoint
+			TEXTURES_PARAM), -0.99f, 0.99f);
+	const float eta = fmax(Texture_GetFloatValue(
+			material->volume.iorTexIndex, hitPoint
+			TEXTURES_PARAM), 1.0001f);
+
+	for (int ch = 0; ch < 3; ++ch) {
+		const float Ad = (ch == 0) ? A.x : ((ch == 1) ? A.y : A.z);
+		const float gi = (ch == 0) ? g.x : ((ch == 1) ? g.y : g.z);
+		const float di = (ch == 0) ? mfp.x : ((ch == 1) ? mfp.y : mfp.z);
+
+		float al = SSSAlphaVanDeHulst(Ad, gi);
+		for (int i = 0; i < 6; ++i) {
+			const float k = clamp(SSSRdDiffusion(al, eta) /
+					fmax(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
+			al = SSSAlphaVanDeHulst(clamp(Ad / k, 1e-4f, 0.999f), gi);
+		}
+		const float st = (1.f / fmax(di, 1e-6f)) / fmax(1.f - gi * al, 1e-6f);
+		if (ch == 0) { alpha->x = al; sigmaT->x = st; }
+		else if (ch == 1) { alpha->y = al; sigmaT->y = st; }
+		else { alpha->z = al; sigmaT->z = st; }
+	}
+}
+
 // sigma_s/sigma_a, honoring the SSS albedo parametrization when present.
 OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Coeffs(
 		__global const Material* restrict material,
@@ -55,8 +95,12 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_Coeffs(
 		MATERIALS_PARAM_DECL) {
 	if (material->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
 		float3 sigmaT, alpha;
-		HomogeneousVolMaterial_SSSCoeffs(material, hitPoint, &sigmaT, &alpha
-				MATERIALS_PARAM);
+		if (material->volume.homogenous.sssProfile == 1)
+			HomogeneousVolMaterial_SSSCoeffsCB15(material, hitPoint,
+					&sigmaT, &alpha MATERIALS_PARAM);
+		else
+			HomogeneousVolMaterial_SSSCoeffs(material, hitPoint,
+					&sigmaT, &alpha MATERIALS_PARAM);
 		*sigmaS = alpha * sigmaT;
 		*sigmaA = (WHITE - alpha) * sigmaT;
 	} else {

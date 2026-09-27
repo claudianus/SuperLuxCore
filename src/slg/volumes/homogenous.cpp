@@ -36,7 +36,8 @@ HomogeneousVolume::HomogeneousVolume(
 	TextureConstPtr emiTex,
 	TextureConstRef a, TextureConstRef s, TextureConstRef g,
 	const bool multiScat, const bool useHG, const bool equiang,
-	TextureConstPtr sssAlbedo, TextureConstPtr sssMfp
+	TextureConstPtr sssAlbedo, TextureConstPtr sssMfp,
+	const int sssProfile
 ) :
 	Volume(iorTex, emiTex),
 	schlickScatter(*this, g, useHG),
@@ -45,22 +46,66 @@ HomogeneousVolume::HomogeneousVolume(
 	sigmaA(a),
 	sigmaS(s),
 	sssAlbedoTex(sssAlbedo),
-	sssMfpTex(sssMfp)
+	sssMfpTex(sssMfp),
+	sssProfile(sssProfile)
 {}
 
-// SSS albedo parametrization: maps the diffuse surface albedo A and the
-// scattering mean free path d to the extinction sigma_t and the physical
-// single-scatter albedo alpha of the medium. Uses the closed-form
+// SSS albedo parametrization: maps the diffuse surface albedo A to the
+// physical single-scatter albedo alpha of the medium. Closed-form
 // inversion of d'Eon, "A Hitchhiker's Guide to Multiple Scattering"
 // v0.3.2, Eq. 53.7 (Cycles' "van de Hulst" random-walk SSS remap), which
-// folds the phase anisotropy g into alpha.
-static void SSSRemap(const float A, const float d, const float g,
-		float &sigmaT, float &alpha) {
+// folds the phase anisotropy g into alpha. Calibrated against exact
+// Monte-Carlo transport at a refractive-index-matched boundary.
+static float SSSAlphaVanDeHulst(const float A, const float g) {
 	const float x = 4.20863f * A + 4.09712f -
 			sqrtf(9.59217f + 41.6808f * A + 17.7126f * A * A);
 	const float s2 = x * x;
-	alpha = Clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+	return Clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+}
+
+// van de Hulst remap: d is the extinction mean free path (1/sigma_t).
+static void SSSRemapVanDeHulst(const float A, const float d, const float g,
+		float &sigmaT, float &alpha) {
+	alpha = SSSAlphaVanDeHulst(A, g);
 	sigmaT = 1.f / Max(d, 1e-6f);
+}
+
+// Jensen-Buhler/Christensen-Burley diffusion-theory diffuse reflectance
+// of a semi-infinite medium at interior IOR eta (Groenhuis-Ferry
+// boundary reflectance fit). NOTE: verified against the engine's own
+// random walk (dev-tools/e48) that this expression overshoots the true
+// transport reflectance by ~10% at matched boundaries, so it is only
+// used as the ratio K(a,eta) = Rd(a,eta)/Rd(a,1), which captures the
+// physically correct Fresnel-trapping correction direction/magnitude.
+static float SSSRdDiffusion(const float a, const float eta) {
+	const float e = Max(eta, 1.0001f);
+	const float rhoE = -1.4399f / (e * e) + .7099f / e + .6681f + .0636f * e;
+	const float Ab = (1.f + rhoE) / Max(1.f - rhoE, 1e-4f);
+	return .5f * a * (1.f + expf(-4.f / 3.f * Ab * sqrtf(3.f * (1.f - a))));
+}
+
+// "cb15" SSS parametrization: requested sssalbedo A is the *measured*
+// diffuse reflectance including the interior dielectric boundary, i.e.
+//   A = R_match(a) * K(a, eta)
+// solved by fixed-point iteration a <- vdHinv(A / K(a,eta)). For
+// eta <= 1 it collapses exactly to the van de Hulst remap. For eta > 1
+// TIR trapping lowers external reflectance (K < 1) and the solve raises
+// the physical single-scatter albedo to compensate, so the same
+// sssalbedo yields the same apparent reflectance regardless of volume
+// IOR. d reads as the transport mfp (1/sigma'_t), the Principled-radius
+// convention.
+static void SSSRemapCB15(const float A, const float d, const float g,
+		const float eta, float &sigmaT, float &alpha) {
+	const float Ad = Clamp(A, 1e-4f, 0.999f);
+	const float e = Max(eta, 1.0001f);
+	float al = SSSAlphaVanDeHulst(Ad, g);
+	for (int i = 0; i < 6; ++i) {
+		const float k = Clamp(SSSRdDiffusion(al, e) /
+				Max(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
+		al = SSSAlphaVanDeHulst(Clamp(A / k, 1e-4f, 0.999f), g);
+	}
+	alpha = al;
+	sigmaT = (1.f / Max(d, 1e-6f)) / Max(1.f - g * alpha, 1e-6f);
 }
 
 Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
@@ -68,9 +113,14 @@ Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
 	const Spectrum A = sssAlbedoTex->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
 	const Spectrum mfp = sssMfpTex->GetSpectrumValue(hitPoint).Clamp();
 	const Spectrum g = GetG().GetSpectrumValue(hitPoint).Clamp(-0.99f, 0.99f);
+	const float eta = GetIOR(hitPoint);
 	Spectrum sigmaT;
-	for (u_int i = 0; i < COLOR_SAMPLES; ++i)
-		SSSRemap(A.c[i], mfp.c[i], g.c[i], sigmaT.c[i], alpha.c[i]);
+	for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
+		if (sssProfile == 1)
+			SSSRemapCB15(A.c[i], mfp.c[i], g.c[i], eta, sigmaT.c[i], alpha.c[i]);
+		else
+			SSSRemapVanDeHulst(A.c[i], mfp.c[i], g.c[i], sigmaT.c[i], alpha.c[i]);
+	}
 	return sigmaT;
 }
 
@@ -384,6 +434,7 @@ PropertiesUPtr HomogeneousVolume::ToProperties() const {
 	if (sssAlbedoTex) {
 		props->Set(Property("scene.volumes." + name + ".sssalbedo")(sssAlbedoTex->GetSDLValue()));
 		props->Set(Property("scene.volumes." + name + ".sssmfp")(sssMfpTex->GetSDLValue()));
+		props->Set(Property("scene.volumes." + name + ".sssprofile")(sssProfile == 1 ? "cb15" : "vandehulst"));
 	}
 	props->Set(Property("scene.volumes." + name + ".multiscattering")(multiScattering));
 	props->Set(Property("scene.volumes." + name + ".phase")(schlickScatter.IsHGPhase() ? "hg" : "schlick"));

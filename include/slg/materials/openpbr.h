@@ -59,6 +59,7 @@ public:
 		TextureConstPtr transWeight, TextureConstPtr transColor,
 		TextureConstPtr transDepth, TextureConstPtr transScatter,
 		TextureConstPtr transScatterAniso, TextureConstPtr dispersion,
+		TextureConstPtr sellmeierB, TextureConstPtr sellmeierC,
 		TextureConstPtr sssWeight, TextureConstPtr sssColor,
 		TextureConstPtr sssRadius, TextureConstPtr sssRadiusScale,
 		TextureConstPtr sssAnisotropy,
@@ -113,7 +114,9 @@ public:
 	TextureConstPtr GetTransmissionDepth() const { return TransmissionDepth; }
 	TextureConstPtr GetTransmissionScatter() const { return TransmissionScatter; }
 	TextureConstPtr GetTransmissionScatterAnisotropy() const { return TransmissionScatterAniso; }
-	TextureConstPtr GetDispersion() const { return Dispersion; }
+	TextureConstPtr GetDispersion() const { return DispersionTex; }
+	TextureConstPtr GetSellmeierB() const { return SellmeierB; }
+	TextureConstPtr GetSellmeierC() const { return SellmeierC; }
 	TextureConstPtr GetSubsurfaceWeight() const { return SubsurfaceWeight; }
 	TextureConstPtr GetSubsurfaceColor() const { return SubsurfaceColor; }
 	TextureConstPtr GetSubsurfaceRadius() const { return SubsurfaceRadius; }
@@ -140,7 +143,8 @@ private:
 		luxrays::Spectrum sssColor, sssRadiusScale, coatColor, fuzzColor;
 		float baseWeight, metalness, diffuseRoughness;
 		float specWeight, specRoughness, specAniso, specRotation, specIor;
-		float transWeight, transDepth, transScatterAniso, dispersion;
+		float transWeight, transDepth, transScatterAniso;
+		Dispersion disp; // Cauchy-B or Sellmeier B/C, resolved per hit
 		float sssWeight, sssRadius, sssAnisotropy;
 		float coatWeight, coatRoughness, coatAniso, coatRotation, coatIor,
 				coatDarkening;
@@ -159,7 +163,7 @@ private:
 
 	// specular_ior / exterior ratio blended toward coat IOR by coat weight,
 	// with the spec's TIR-preserving ratio flip.
-	float EtaS(const Params &p, const float cauchyB) const;
+	float EtaS(const Params &p, const Dispersion &disp) const;
 
 	// Interior medium IOR as seen by a ray inside the object: the interior
 	// volume's when one is set (the parser's implicit SSS/transmission
@@ -194,7 +198,8 @@ private:
 	TextureConstPtr SpecularWeight, SpecularColor, SpecularRoughness,
 			SpecularAnisotropy, SpecularRotation, SpecularIor;
 	TextureConstPtr TransmissionWeight, TransmissionColor, TransmissionDepth,
-			TransmissionScatter, TransmissionScatterAniso, Dispersion;
+			TransmissionScatter, TransmissionScatterAniso, DispersionTex;
+	TextureConstPtr SellmeierB, SellmeierC;
 	TextureConstPtr SubsurfaceWeight, SubsurfaceColor, SubsurfaceRadius,
 			SubsurfaceRadiusScale, SubsurfaceAnisotropy;
 	TextureConstPtr CoatWeight, CoatColor, CoatRoughness, CoatAnisotropy,

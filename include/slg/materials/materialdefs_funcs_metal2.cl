@@ -43,6 +43,16 @@ OPENCL_FORCE_INLINE void Metal2Material_GetNK(__global const Material* restrict 
 		*n = clamp(Texture_GetSpectrumValue(material->metal2.nTexIndex, hitPoint TEXTURES_PARAM), .001f, INFINITY);
 		*k = clamp(Texture_GetSpectrumValue(material->metal2.kTexIndex, hitPoint TEXTURES_PARAM), .001f, INFINITY);
 	}
+
+	if (material->metal2.edgeTintTexIndex != NULL_INDEX) {
+		// F82-style edge tint: Gulbrandsen'14 refits (n, k) from
+		// (F(0), edge) so one physical conductor drives both the
+		// single-scatter F and the multi-bounce walk.
+		const float3 f0 = Spectrum_Clamp(FresnelGeneral_Evaluate(*n, *k, 1.f));
+		const float3 edge = Spectrum_Clamp(Texture_GetSpectrumValue(
+				material->metal2.edgeTintTexIndex, hitPoint TEXTURES_PARAM));
+		Microfacet_GulbrandsenNK(f0, edge, n, k);
+	}
 }
 
 OPENCL_FORCE_INLINE void Metal2Material_Albedo(__global const Material* restrict material,

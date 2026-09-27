@@ -38,7 +38,8 @@ public:
 		const bool useHG = false,
 		const bool useEquiangular = true,
 		TextureConstPtr sssAlbedo = nullptr,
-		TextureConstPtr sssMfp = nullptr);
+		TextureConstPtr sssMfp = nullptr,
+		const int sssProfile = 0);
 
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
@@ -88,6 +89,8 @@ public:
 	bool IsSSSParametrized() const { return sssAlbedoTex != nullptr; }
 	TextureConstPtr GetSSSAlbedoTexture() const { return sssAlbedoTex; }
 	TextureConstPtr GetSSSMfpTexture() const { return sssMfpTex; }
+	// 0 = van de Hulst/d'Eon remap (legacy), 1 = Christensen-Burley 2015
+	int GetSSSProfile() const { return sssProfile; }
 	bool IsMultiScattering() const { return multiScattering; }
 	bool IsHGPhase() const { return schlickScatter.IsHGPhase(); }
 	bool IsEquiangularEnabled() const { return equiangular; }
@@ -112,6 +115,7 @@ private:
 	const bool multiScattering;
 	const bool equiangular;
 	TextureConstPtr sssAlbedoTex, sssMfpTex;
+	const int sssProfile;
 };
 
 }

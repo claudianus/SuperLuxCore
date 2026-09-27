@@ -41,7 +41,8 @@ Metal2Material::Metal2Material(
 	TextureConstPtr u,
 	TextureConstPtr v,
 	const bool mbounce,
-	const bool useGgx
+	const bool useGgx,
+	TextureConstPtr edgeTint
 ) :
 	Material(frontTransp, backTransp, emitted, bump),
 	fresnelTex(nullptr),
@@ -49,6 +50,7 @@ Metal2Material::Metal2Material(
 	k(kk),
 	nu(u),
 	nv(v),
+	edgeTint(edgeTint),
 	multibounce(mbounce),
 	useGgx(useGgx)
 {
@@ -64,7 +66,8 @@ Metal2Material::Metal2Material(
 	TextureConstPtr u,
 	TextureConstPtr v,
 	const bool mbounce,
-	const bool useGgx)
+	const bool useGgx,
+	TextureConstPtr edgeTint)
 	:
 	Material(frontTransp, backTransp, emitted, bump),
 	fresnelTex(ft),
@@ -72,6 +75,7 @@ Metal2Material::Metal2Material(
 	k(nullptr),
 	nu(u),
 	nv(v),
+	edgeTint(edgeTint),
 	multibounce(mbounce),
 	useGgx(useGgx)
 {
@@ -102,11 +106,23 @@ void Metal2Material::GetNK(const HitPoint &hitPoint, Spectrum &nVal, Spectrum &k
 		nVal = n->GetSpectrumValue(hitPoint).Clamp(.001f);
 		kVal = k->GetSpectrumValue(hitPoint).Clamp(.001f);
 	}
+
+	if (edgeTint) {
+		// Gulbrandsen'14 (F0, edge) -> (n, k): refits the resolved conductor
+		// so the same edge tint drives the F term and the MS walk.
+		const Spectrum f0 = FresnelTexture::GeneralEvaluate(nVal, kVal, 1.f);
+		const Spectrum edge = edgeTint->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
+		GulbrandsenNK(f0.Clamp(0.f, 1.f), edge, nVal, kVal);
+	}
 }
 
 Spectrum Metal2Material::Albedo(const HitPoint &hitPoint) const {
 	Spectrum F;
-	if (fresnelTex)
+	if (edgeTint) {
+		Spectrum nV, kV;
+		GetNK(hitPoint, nV, kV);
+		F = FresnelTexture::GeneralEvaluate(nV, kV, 1.f);
+	} else if (fresnelTex)
 		F = fresnelTex->Evaluate(hitPoint, 1.f);
 	else {
 		// For compatibility with the past
@@ -149,7 +165,12 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 	}
 
 	Spectrum F;
-	if (fresnelTex)
+	if (edgeTint) {
+		// F82-style edge tint: use the Gulbrandsen-refitted conductor
+		Spectrum nV, kV;
+		GetNK(hitPoint, nV, kV);
+		F = FresnelTexture::GeneralEvaluate(nV, kV, cosWH);
+	} else if (fresnelTex)
 		F = fresnelTex->Evaluate(hitPoint, cosWH);
 	else {
 		// For compatibility with the past
@@ -216,7 +237,12 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 		return Spectrum();
 
 	Spectrum F;
-	if (fresnelTex)
+	if (edgeTint) {
+		// F82-style edge tint: use the Gulbrandsen-refitted conductor
+		Spectrum nV, kV;
+		GetNK(hitPoint, nV, kV);
+		F = FresnelTexture::GeneralEvaluate(nV, kV, cosWH);
+	} else if (fresnelTex)
 		F = fresnelTex->Evaluate(hitPoint, cosWH);
 	else {
 		// For compatibility with the past
@@ -295,6 +321,8 @@ void Metal2Material::AddReferencedTextures(std::unordered_set<const Texture *>  
 
 	nu->AddReferencedTextures(referencedTexs);
 	nv->AddReferencedTextures(referencedTexs);
+	if (edgeTint)
+		edgeTint->AddReferencedTextures(referencedTexs);
 }
 
 void Metal2Material::UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
@@ -315,6 +343,8 @@ void Metal2Material::UpdateTextureReferences(TextureConstRef oldTex, TextureRef 
 		nv = &newTex;
 		updateGlossiness = true;
 	}
+	if (edgeTint == &oldTex)
+		edgeTint = &newTex;
 	
 	if (updateGlossiness)
 		glossiness = ComputeGlossiness(nu, nv);
@@ -335,6 +365,8 @@ PropertiesUPtr Metal2Material::ToProperties(const ImageMapCache &imgMapCache, co
 	props->Set(Property("scene.materials." + name + ".vroughness")(nv->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".multibounce")(multibounce));
 	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
+	if (edgeTint)
+		props->Set(Property("scene.materials." + name + ".edgetint")(edgeTint->GetSDLValue()));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

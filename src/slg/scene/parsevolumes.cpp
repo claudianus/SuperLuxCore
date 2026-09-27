@@ -164,12 +164,18 @@ VolumeUPtr Scene::CreateVolume(const u_int defaultVolID, const string &volName, 
 		// the mean free path .sssmfp (d'Eon inversion inside the volume),
 		// so the parameters read as the artist-facing color and distance.
 		TextureConstPtr sssAlbedo = nullptr, sssMfp = nullptr;
+		// sssprofile: "vandehulst" (legacy d'Eon remap) or "cb15"
+		// (Christensen-Burley 2015 normalized-diffusion inversion; sssmfp
+		// then reads as the transport-corrected mean free path, the same
+		// convention as Principled-style subsurface radii)
+		const int sssProfile =
+				(props.Get(Property(propName + ".sssprofile")("vandehulst")).Get<string>() == "cb15") ? 1 : 0;
 		if (props.IsDefined(propName + ".sssalbedo")) {
 			sssAlbedo = TextureConstPtr(&GetTexture(props.Get(Property(propName + ".sssalbedo")(1.f, 1.f, 1.f))));
 			sssMfp = TextureConstPtr(&GetTexture(props.Get(Property(propName + ".sssmfp")(1.f, 1.f, 1.f))));
 		}
 
-		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering, useHG, useEquiangular, sssAlbedo, sssMfp);
+		vol = std::make_unique<HomogeneousVolume>(iorTex, emissionTex, absorption, scattering, asymmetry, multiScattering, useHG, useEquiangular, sssAlbedo, sssMfp, sssProfile);
 	} else if (volType == "heterogeneous") {
 		auto& absorption = GetTexture(props.Get(Property(propName + ".absorption")(0.f, 0.f, 0.f)));
 		auto& scattering = GetTexture(props.Get(Property(propName + ".scattering")(0.f, 0.f, 0.f)));

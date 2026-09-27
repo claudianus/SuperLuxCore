@@ -336,6 +336,54 @@ OPENCL_FORCE_INLINE float FresnelCauchy_Evaluate(const float eta, const float co
 			entering ? eta : 1.f / eta);
 }
 
+// SSS shared leaf helpers (CPU mirrors in homogenous.cpp): d'Eon
+// van-de-Hulst closed-form albedo inversion and the Jensen-Buhler/CB15
+// diffusion-theory reflectance used as the boundary ratio
+// K = Rd(a,eta)/Rd(a,1).
+OPENCL_FORCE_INLINE float SSSAlphaVanDeHulst(const float A, const float g) {
+	const float x = 4.20863f * A + 4.09712f -
+			sqrt(9.59217f + 41.6808f * A + 17.7126f * A * A);
+	const float s2 = x * x;
+	return clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
+}
+
+OPENCL_FORCE_INLINE float SSSRdDiffusion(const float a, const float eta) {
+	const float e = fmax(eta, 1.0001f);
+	const float rhoE = -1.4399f / (e * e) + .7099f / e + .6681f + .0636f * e;
+	const float Ab = (1.f + rhoE) / fmax(1.f - rhoE, 1e-4f);
+	return .5f * a * (1.f + exp(-4.f / 3.f * Ab * sqrt(3.f * (1.f - a))));
+}
+
+// Sellmeier 3-term: n^2(lambda_um) = 1 + sum_i B_i l^2/(l^2 - C_i).
+// sellB.x < 0 marks "no Sellmeier" (falls back to Cauchy via cauchyB).
+// Wavelength in nm; valid outside spectral transport too.
+OPENCL_FORCE_INLINE float Spectral_WaveLength2IORSellmeier(
+		const float waveLength, const float ior, const float cauchyB,
+		const float3 sellB, const float3 sellC) {
+	if (sellB.x < 0.f)
+		return ior + cauchyB / ((waveLength * 0.001f) * (waveLength * 0.001f));
+	const float l2 = waveLength * 0.001f * waveLength * 0.001f;
+	// l2-C denominators keep their sign (IR resonance terms are negative
+	// across the visible range) - clamp magnitude only, never to +eps.
+	const float dx = l2 - sellC.x;
+	const float dy = l2 - sellC.y;
+	const float dz = l2 - sellC.z;
+	float n2 = 1.f;
+	n2 += sellB.x * l2 / (fabs(dx) > 1e-9f ? dx : ((dx >= 0.f) ? 1e-9f : -1e-9f));
+	n2 += sellB.y * l2 / (fabs(dy) > 1e-9f ? dy : ((dy >= 0.f) ? 1e-9f : -1e-9f));
+	n2 += sellB.z * l2 / (fabs(dz) > 1e-9f ? dz : ((dz >= 0.f) ? 1e-9f : -1e-9f));
+	return sqrt(fmax(n2, 1.f));
+}
+
+// Effective scalar IOR at the 560nm reference wavelength for non-spectral
+// paths (Sellmeier defines n absolutely; Cauchy adds B/l^2 to the base IOR).
+OPENCL_FORCE_INLINE float Spectral_RefIOR(const float nt, const float cauchyB,
+		const float3 sellB, const float3 sellC) {
+	if (sellB.x < 0.f && cauchyB <= 0.f)
+		return nt;
+	return Spectral_WaveLength2IORSellmeier(560.f, nt, cauchyB, sellB, sellC);
+}
+
 #if defined(SLG_SPECTRAL)
 // Device mirrors of slg::WaveLength2IOR / DispersiveIOR /
 // DispersiveFresnelR (material.cpp): Cauchy IOR at the hero wavelength for
@@ -356,6 +404,19 @@ OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
 	return Spectral_WaveLength2IOR(hitPoint->spectralW[hero], nt, cauchyB);
 }
 
+// Dispersion-enabled variants: sellB.x < 0 -> Cauchy path via cauchyB
+// (unchanged behaviour), otherwise 3-term Sellmeier n(lambda).
+OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
+		const float cauchyB, const float3 sellB, const float3 sellC,
+		__global const HitPoint *hitPoint) {
+	if (sellB.x < 0.f && cauchyB <= 0.f)
+		return nt;
+	const uint hero = min((hitPoint->spectralHeroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
+			SLG_SPECTRAL_BINS - 1u);
+	return Spectral_WaveLength2IORSellmeier(hitPoint->spectralW[hero], nt,
+			cauchyB, sellB, sellC);
+}
+
 OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
 		const float nc, const float cauchyB, const float cosTheta,
 		__global const HitPoint *hitPoint) {
@@ -371,6 +432,27 @@ OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
 		if (aliveMask & (1u << i)) {
 			const float r = FresnelCauchy_Evaluate(
 					Spectral_WaveLength2IOR(hitPoint->spectralW[i], nt, cauchyB) / nc,
+					cosTheta);
+			if (i == 0) F.x = r; else if (i == 1) F.y = r; else F.z = r;
+		}
+	}
+	return F;
+}
+
+OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
+		const float nc, const float cauchyB, const float3 sellB,
+		const float3 sellC, const float cosTheta,
+		__global const HitPoint *hitPoint) {
+	if (sellB.x < 0.f)
+		return Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosTheta, hitPoint);
+
+	const uint aliveMask = hitPoint->spectralHeroAlive & SLG_SW_ALIVE_MASK;
+	float3 F = BLACK;
+	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
+		if (aliveMask & (1u << i)) {
+			const float r = FresnelCauchy_Evaluate(
+					Spectral_WaveLength2IORSellmeier(hitPoint->spectralW[i], nt,
+							cauchyB, sellB, sellC) / nc,
 					cosTheta);
 			if (i == 0) F.x = r; else if (i == 1) F.y = r; else F.z = r;
 		}

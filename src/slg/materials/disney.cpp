@@ -18,6 +18,7 @@
 
 #include "luxrays/core/color/spectral.h"
 #include "slg/materials/disney.h"
+#include "slg/materials/microfacet.h"
 #include "slg/materials/thinfilmcoating.h"
 #include "slg/textures/fresnel/fresneltexture.h"
 
@@ -41,13 +42,17 @@ DisneyMaterial::DisneyMaterial(
 	TextureConstPtr anisotropic,
 	TextureConstPtr sheen,
 	TextureConstPtr sheenTint,
+	TextureConstPtr sheenRoughness,
 	TextureConstPtr filmAmount,
 	TextureConstPtr filmThickness,
 	TextureConstPtr filmIor,
 	TextureConstPtr transmission,
 	TextureConstPtr transmissionRoughness,
 	TextureConstPtr ior,
-	TextureConstPtr cauchyB
+	TextureConstPtr cauchyB,
+	TextureConstPtr sellmeierB,
+	TextureConstPtr sellmeierC,
+	const bool multibounce
 ) : Material(frontTransp, backTransp, emitted, bump),
 	BaseColor(baseColor),
 	Subsurface(subsurface),
@@ -60,13 +65,15 @@ DisneyMaterial::DisneyMaterial(
 	Anisotropic(anisotropic),
 	Sheen(sheen),
 	SheenTint(sheenTint),
+	SheenRoughness(sheenRoughness),
 	filmAmount(filmAmount),
 	filmThickness(filmThickness),
 	filmIor(filmIor),
 	Transmission(transmission),
 	TransmissionRoughness(transmissionRoughness),
 	Ior(ior),
-	CauchyB(cauchyB) {
+	CauchyB(cauchyB), SellmeierB(sellmeierB), SellmeierC(sellmeierC),
+	multibounce(multibounce) {
 	UpdateGlossiness();
 }
 
@@ -114,6 +121,10 @@ Spectrum DisneyMaterial::Evaluate(
 	// clamped between 0.0 and 1.0 to not break the energy conservation law.
 	const float sheen = Sheen->GetFloatValue(hitPoint);
 	const float sheenTint = Clamp(SheenTint->GetFloatValue(hitPoint), 0.0f, 1.0f);
+	// Sheen roughness >= 0 selects the Estevez-Kulla "Charlie" microfacet
+	// sheen; -1 (texture absent) keeps the legacy Schlick sheen lobe.
+	const float sheenRoughness = SheenRoughness ?
+			Clamp(SheenRoughness->GetFloatValue(hitPoint), 0.0f, 1.0f) : -1.f;
 	const float localFilmAmount = filmAmount ? Clamp(filmAmount->GetFloatValue(hitPoint), 0.0f, 1.0f) : 1.f;
 	const float localFilmThickness = filmThickness ? filmThickness->GetFloatValue(hitPoint) : 0.f;
 	const float localFilmIor = (localFilmThickness > 0.f && filmIor) ? filmIor->GetFloatValue(hitPoint) : 1.f;
@@ -122,11 +133,12 @@ Spectrum DisneyMaterial::Evaluate(
 			Clamp(TransmissionRoughness->GetFloatValue(hitPoint), 0.0f, 1.0f) : roughness;
 	const float nc = ExtractExteriorIors(hitPoint, nullptr);
 	const float nt = ExtractInteriorIors(hitPoint, Ior);
-	const float cauchyB = CauchyB ? CauchyB->GetFloatValue(hitPoint) : 0.f;
+	const Dispersion disp = GetDispersion(hitPoint);
 
 	return DisneyEvaluate(hitPoint.fromLight, color, subsurface, roughness, metallic, specular, specularTint,
-			clearcoat, clearcoatGloss, anisotropicGloss, sheen, sheenTint, localFilmAmount, localFilmThickness,
-			localFilmIor, transmission, transmissionRoughness, nc, nt, cauchyB,
+			clearcoat, clearcoatGloss, anisotropicGloss, sheen, sheenTint, sheenRoughness,
+			localFilmAmount, localFilmThickness,
+			localFilmIor, transmission, transmissionRoughness, nc, nt, disp,
 			localLightDir, localEyeDir, event, directPdfW, reversePdfW)
 			// Evaluate() follows LuxRender habit to return the result multiplied by cosThetaToLight
 			* fabsf(CosTheta(localLightDir));
@@ -145,6 +157,7 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 		const float anisotropicGloss,
 		const float sheen,
 		const float sheenTint,
+		const float sheenRoughness,
 		const float localFilmAmount,
 		const float localFilmThickness,
 		const float localFilmIor,
@@ -152,7 +165,7 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 		const float transmissionRoughness,
 		const float nc,
 		const float nt,
-		const float cauchyB,
+		const Dispersion &disp,
 		const Vector &localLightDir,
 		const Vector &localEyeDir,
 		BSDFEvent *event,
@@ -180,7 +193,7 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 		if (transmitWeight <= 0.f)
 			return Spectrum();
 
-		const float ntEff = DispersiveIOR(nt, cauchyB);
+		const float ntEff = DispersiveIOR(nt, disp);
 		const float ntc = ntEff / nc;
 		const bool entering = (CosTheta(wi) > 0.f);
 		const float eta = entering ? (nc / ntEff) : ntc;
@@ -201,7 +214,7 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 		const float D = SchlickDistribution_D(alpha, wh, 0.f);
 		const float G = SchlickDistribution_G(alpha, wi, wo);
 		const float specPdf = SchlickDistribution_Pdf(alpha, wh, 0.f);
-		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH);
+		const Spectrum F = DispersiveFresnelR(nt, nc, disp, cosThetaOH);
 
 		float ratioGlossy, ratioDiffuse, ratioClearcoat, ratioTransmit;
 		ComputeRatio(metallic, clearcoat, transmission,
@@ -232,6 +245,15 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 
 	Spectrum metallicEval = DisneyMetallic(color, specular, specularTint, metallic, anisotropicGloss, roughness,
 										   NdotL, NdotV, NdotH, LdotH, VdotH, wi, wo, H);
+	if (multibounce) {
+		// GTR2 is the GGX NDF, so the Turquin compensation applies; Disney's
+		// Schlick Fresnel has endpoints F0 = Cspec0, F90 = 1
+		const Spectrum CSpecTint = specular * 0.08f *
+				Lerp(specularTint, Spectrum(1.f), CalculateTint(color));
+		const Spectrum Cspec0 = Lerp(metallic, CSpecTint, color);
+		metallicEval *= GgxMSCompensation(NdotV, Max(roughness * roughness, 1e-4f),
+				GgxFresnelAverage(Cspec0, Spectrum(1.f)));
+	}
 	
 	if (localFilmThickness > 0.f) {
 		const Spectrum metallicWithFilmColor = metallicEval * CalcFilmColor(wo, localFilmThickness, localFilmIor);
@@ -242,10 +264,11 @@ Spectrum DisneyMaterial::DisneyEvaluate(
 											NdotL, NdotV, NdotH, LdotH));
 	const Spectrum glossyEval = metallicEval + clearCoatEval;
 
-	const Spectrum sheenEval = DisneySheen(color, sheen, sheenTint, LdotH);
+	const Spectrum sheenEval = DisneySheen(color, sheen, sheenTint, sheenRoughness,
+			wo, wi, LdotH);
 
 	DisneyPdf(fromLight, roughness, metallic, clearcoat, clearcoatGloss,
-			anisotropicGloss, transmission, transmissionRoughness, nc, nt, cauchyB,
+			anisotropicGloss, transmission, transmissionRoughness, nc, nt, disp,
 			localLightDir, localEyeDir, directPdfW, reversePdfW);
 
 	*event = GLOSSY | REFLECT;
@@ -320,11 +343,18 @@ float DisneyMaterial::DisneyClearCoat(const float clearcoat, const float clearco
 }
 
 Spectrum DisneyMaterial::DisneySheen(const Spectrum &color, const float sheen,
-		const float sheenTint, float LdotH) const {
-	const float FH = Schlick_Weight(LdotH);
-
+		const float sheenTint, const float sheenRoughness,
+		const Vector &wo, const Vector &wi, const float LdotH) const {
 	const Spectrum Ctint = CalculateTint(color);
 	const Spectrum Csheen = Lerp(sheenTint, Spectrum(1.0f), Ctint);
+
+	if (sheenRoughness >= 0.f) {
+		// Estevez-Kulla '17 "Charlie" sheen: D*V microfacet lobe, F = 1
+		const float eval = charlie::Eval(wo, wi, sheenRoughness);
+		return (eval * sheen * Csheen).Clamp(0.f, 4.f);
+	}
+
+	const float FH = Schlick_Weight(LdotH);
 
 	return (FH * sheen * Csheen).Clamp(0.f, 1.f);
 }
@@ -351,12 +381,14 @@ Spectrum DisneyMaterial::Sample(
 	// clamped between 0.0 and 1.0 to not break the energy conservation law.
 	const float sheen = Sheen->GetFloatValue(hitPoint);
 	const float sheenTint = Clamp(SheenTint->GetFloatValue(hitPoint), 0.0f, 1.0f);
+	const float sheenRoughness = SheenRoughness ?
+			Clamp(SheenRoughness->GetFloatValue(hitPoint), 0.0f, 1.0f) : -1.f;
 	const float transmission = Clamp(Transmission->GetFloatValue(hitPoint), 0.0f, 1.0f);
 	const float transmissionRoughness = TransmissionRoughness ?
 			Clamp(TransmissionRoughness->GetFloatValue(hitPoint), 0.0f, 1.0f) : roughness;
 	const float nc = ExtractExteriorIors(hitPoint, nullptr);
 	const float nt = ExtractInteriorIors(hitPoint, Ior);
-	const float cauchyB = CauchyB ? CauchyB->GetFloatValue(hitPoint) : 0.f;
+	const Dispersion disp = GetDispersion(hitPoint);
 
 	const Vector &wo = localFixedDir;
 
@@ -375,7 +407,7 @@ Spectrum DisneyMaterial::Sample(
 			passThroughEvent <= ratioGlossy + ratioClearcoat + ratioDiffuse + ratioTransmit) {
 		// Transmission lobe: sample the transmission-roughness microfacet
 		// normal and refract (same scheme as RoughGlassMaterial)
-		const float ntEff = DispersiveIOR(nt, cauchyB);
+		const float ntEff = DispersiveIOR(nt, disp);
 		const float ntc = ntEff / nc;
 		const float alpha = Max(Sqr(transmissionRoughness), 1e-6f);
 
@@ -414,7 +446,7 @@ Spectrum DisneyMaterial::Sample(
 	*event = GLOSSY | REFLECT;
 
 	DisneyPdf(hitPoint.fromLight, roughness, metallic, clearcoat, clearcoatGloss, anisotropicGloss,
-			transmission, transmissionRoughness, nc, nt, cauchyB,
+			transmission, transmissionRoughness, nc, nt, disp,
 			localLightDir, localEyeDir, pdfW, nullptr);
 	if (*pdfW <= 0.f)
 		return Spectrum();
@@ -425,12 +457,13 @@ Spectrum DisneyMaterial::Sample(
 
 	const Spectrum f = DisneyEvaluate(hitPoint.fromLight, color, subsurface, roughness,
 			metallic, specular, specularTint, clearcoat, clearcoatGloss,
-			anisotropicGloss, sheen, sheenTint, localFilmAmount, localFilmThickness, localFilmIor,
-			transmission, transmissionRoughness, nc, nt, cauchyB,
+			anisotropicGloss, sheen, sheenTint, sheenRoughness,
+			localFilmAmount, localFilmThickness, localFilmIor,
+			transmission, transmissionRoughness, nc, nt, disp,
 			localLightDir, localEyeDir, event, nullptr, nullptr);
 
 	// Dispersive refraction terminates the secondary wavelengths
-	if (sampledTransmit && cauchyB > 0.f)
+	if (sampledTransmit && disp.Active())
 		return (f * Spectral::CollapseToHero()) / *pdfW;
 
 	return f / *pdfW;
@@ -495,10 +528,10 @@ void DisneyMaterial::Pdf(
 			Clamp(TransmissionRoughness->GetFloatValue(hitPoint), 0.0f, 1.0f) : roughness;
 	const float nc = ExtractExteriorIors(hitPoint, nullptr);
 	const float nt = ExtractInteriorIors(hitPoint, Ior);
-	const float cauchyB = CauchyB ? CauchyB->GetFloatValue(hitPoint) : 0.f;
+	const Dispersion disp = GetDispersion(hitPoint);
 
 	DisneyPdf(hitPoint.fromLight, roughness, metallic, clearcoat, clearcoatGloss,
-			anisotropicGloss, transmission, transmissionRoughness, nc, nt, cauchyB,
+			anisotropicGloss, transmission, transmissionRoughness, nc, nt, disp,
 			localLightDir, localEyeDir, directPdfW, reversePdfW);
 }
 
@@ -506,7 +539,7 @@ void DisneyMaterial::DisneyPdf(const bool fromLight,
 		const float roughness, const float metallic,
 		const float clearcoat, const float clearcoatGloss, const float anisotropic,
 		const float transmission, const float transmissionRoughness,
-		const float nc, const float nt, const float cauchyB,
+		const float nc, const float nt, const Dispersion &disp,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		float *directPdfW,  float *reversePdfW) const {
 	float ratioGlossy, ratioDiffuse, ratioClearcoat, ratioTransmit;
@@ -517,7 +550,7 @@ void DisneyMaterial::DisneyPdf(const bool fromLight,
 		// Opposite hemispheres: only the transmission lobe contributes
 		float transmitDirectPdfW = 0.f, transmitReversePdfW = 0.f;
 		if (ratioTransmit > 0.f)
-			TransmissionPdf(fromLight, transmissionRoughness, nc, nt, cauchyB,
+			TransmissionPdf(fromLight, transmissionRoughness, nc, nt, disp,
 					localLightDir, localEyeDir, &transmitDirectPdfW, &transmitReversePdfW);
 
 		if (directPdfW)
@@ -652,10 +685,10 @@ void DisneyMaterial::Anisotropic_Params(const float anisotropic, const float rou
 
 void DisneyMaterial::TransmissionPdf(const bool fromLight,
 		const float transmissionRoughness,
-		const float nc, const float nt, const float cauchyB,
+		const float nc, const float nt, const Dispersion &disp,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		float *directPdfW, float *reversePdfW) const {
-	const float ntEff = DispersiveIOR(nt, cauchyB);
+	const float ntEff = DispersiveIOR(nt, disp);
 	const float ntc = ntEff / nc;
 	const bool entering = (CosTheta(localLightDir) > 0.f);
 	const float eta = entering ? (nc / ntEff) : ntc;
@@ -720,6 +753,8 @@ PropertiesUPtr DisneyMaterial::ToProperties(const ImageMapCache &imgMapCache, co
 	props->Set(Property("scene.materials." + name + ".anisotropic")(Anisotropic->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".sheen")(Sheen->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".sheentint")(SheenTint->GetSDLValue()));
+	if (SheenRoughness)
+		props->Set(Property("scene.materials." + name + ".sheenroughness")(SheenRoughness->GetSDLValue()));
 	if (filmAmount)
 		props->Set(Property("scene.materials." + name + ".filmamount")(filmAmount->GetSDLValue()));
 	if (filmThickness)
@@ -732,6 +767,12 @@ PropertiesUPtr DisneyMaterial::ToProperties(const ImageMapCache &imgMapCache, co
 	props->Set(Property("scene.materials." + name + ".ior")(Ior->GetSDLValue()));
 	if (CauchyB)
 		props->Set(Property("scene.materials." + name + ".cauchyb")(CauchyB->GetSDLValue()));
+	if (SellmeierB && SellmeierC) {
+		props->Set(Property("scene.materials." + name + ".sellmeierb")(SellmeierB->GetSDLValue()));
+		props->Set(Property("scene.materials." + name + ".sellmeierc")(SellmeierC->GetSDLValue()));
+	}
+	if (multibounce)
+		props->Set(Property("scene.materials." + name + ".multibounce")(multibounce));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;
@@ -756,6 +797,7 @@ void DisneyMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef 
 	if (Anisotropic == &oldTex) Anisotropic = &newTex;
 	if (Sheen == &oldTex) Sheen = &newTex;
 	if (SheenTint == &oldTex) SheenTint = &newTex;
+	if (SheenRoughness == &oldTex) SheenRoughness = &newTex;
 	if (filmAmount == &oldTex) filmAmount = &newTex;
 	if (filmThickness == &oldTex) filmThickness = &newTex;
 	if (filmIor == &oldTex) filmIor = &newTex;
@@ -763,6 +805,8 @@ void DisneyMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef 
 	if (TransmissionRoughness == &oldTex) TransmissionRoughness = &newTex;
 	if (Ior == &oldTex) Ior = &newTex;
 	if (CauchyB == &oldTex) CauchyB = &newTex;
+	if (SellmeierB == &oldTex) SellmeierB = &newTex;
+	if (SellmeierC == &oldTex) SellmeierC = &newTex;
 
 	if (updateGlossiness)
 		UpdateGlossiness();
@@ -782,6 +826,8 @@ void DisneyMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  
 	Anisotropic->AddReferencedTextures(referencedTexs);
 	Sheen->AddReferencedTextures(referencedTexs);
 	SheenTint->AddReferencedTextures(referencedTexs);
+	if (SheenRoughness)
+		SheenRoughness->AddReferencedTextures(referencedTexs);
 	if (filmAmount)
 		filmAmount->AddReferencedTextures(referencedTexs);
 	if (filmThickness)
@@ -794,5 +840,9 @@ void DisneyMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  
 	Ior->AddReferencedTextures(referencedTexs);
 	if (CauchyB)
 		CauchyB->AddReferencedTextures(referencedTexs);
+	if (SellmeierB)
+		SellmeierB->AddReferencedTextures(referencedTexs);
+	if (SellmeierC)
+		SellmeierC->AddReferencedTextures(referencedTexs);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

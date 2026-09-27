@@ -128,6 +128,7 @@ OPENCL_FORCE_INLINE float GlassMaterial_WaveLength2IOR(const float waveLength, c
 OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularReflection(__global const HitPoint *hitPoint,
 		const float3 localFixedDir, const float3 kr,
 		const float nc, const float nt, const float cauchyB,
+		const float3 sellB, const float3 sellC,
 		float3 *sampledDir, const float localFilmThickness, const float localFilmIor) {
 	if (Spectrum_IsBlack(kr))
 		return BLACK;
@@ -137,11 +138,13 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularReflection(__global const H
 
 #if defined(SLG_SPECTRAL)
 	// Per-bin dielectric Fresnel under spectral transport (each wavelength
-	// sees its own Cauchy IOR); scalar Fresnel otherwise.
+	// sees its own IOR); scalar Fresnel otherwise.
 	const float3 result = kr * Spectral_DispersiveFresnelR(nt, nc, cauchyB,
-			costheta, hitPoint);
+			sellB, sellC, costheta, hitPoint);
 #else
-	const float ntc = nt / nc;
+	// Effective IOR at 560nm so Sellmeier still reflects (nt alone is not
+	// the physical index when coefficient-driven)
+	const float ntc = Spectral_RefIOR(nt, cauchyB, sellB, sellC) / nc;
 	const float3 result = kr * FresnelCauchy_Evaluate(ntc, costheta);
 #endif
 	
@@ -155,29 +158,34 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularReflection(__global const H
 OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularTransmission(__global const HitPoint *hitPoint,
 		const float3 localFixedDir, const float u0,
 		const float3 kt, const float nc, const float nt, const float cauchyB,
+		const float3 sellB, const float3 sellC,
 		float3 *sampledDir) {
 	if (Spectrum_IsBlack(kt))
 		return BLACK;
+
+	const bool dispersive = (sellB.x >= 0.f) || (cauchyB > 0.f);
 
 	// Compute transmitted ray direction
 	float3 lkt;
 	float lnt;
 #if defined(SLG_SPECTRAL)
-	if (cauchyB > 0.f) {
+	if (dispersive) {
 		// Hero-wavelength refraction: the direction-defining wavelength is
 		// the path's hero bin (no per-path RGB tint -- the bins already are
 		// the spectral samples).
 		const uint hero = min((hitPoint->spectralHeroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
 				SLG_SPECTRAL_BINS - 1u);
-		lnt = GlassMaterial_WaveLength2IOR(hitPoint->spectralW[hero], nt, cauchyB);
+		lnt = Spectral_WaveLength2IORSellmeier(hitPoint->spectralW[hero],
+				nt, cauchyB, sellB, sellC);
 		lkt = kt;
 	} else
 #endif
-	if (cauchyB > 0.f) {
+	if (dispersive) {
 		// Select the wavelength to sample
 		const float waveLength = mix(380.f, 780.f, u0);
 
-		lnt = GlassMaterial_WaveLength2IOR(waveLength, nt, cauchyB);
+		lnt = Spectral_WaveLength2IORSellmeier(waveLength, nt, cauchyB,
+				sellB, sellC);
 
 		lkt = kt * GlassMaterial_WaveLength2RGB(waveLength);
 	} else {
@@ -242,10 +250,18 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	const float nt = ExtractInteriorIors(hitPoint, material->glass.interiorIorTexIndex TEXTURES_PARAM);
 
 	const float cauchyB = (material->glass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->glass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+	// sellB.x >= 0 selects Sellmeier dispersion (sellmeierb/c textures)
+	const float3 sellB = (material->glass.sellmeierBTex != NULL_INDEX &&
+			material->glass.sellmeierCTex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	const float3 sellC = (sellB.x >= 0.f) ?
+			Texture_GetSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			BLACK;
 
 	float3 transLocalSampledDir; 
 	const float3 trans = GlassMaterial_EvalSpecularTransmission(hitPoint, fixedDir, u0,
-			kt, nc, nt, cauchyB, &transLocalSampledDir);
+			kt, nc, nt, cauchyB, sellB, sellC, &transLocalSampledDir);
 	
 	const float localFilmThickness = (material->glass.filmThicknessTexIndex != NULL_INDEX) 
 									 ? Texture_GetFloatValue(material->glass.filmThicknessTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
@@ -254,7 +270,7 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	
 	float3 reflLocalSampledDir;
 	const float3 refl = GlassMaterial_EvalSpecularReflection(hitPoint, fixedDir,
-			kr, nc, nt, cauchyB, &reflLocalSampledDir, localFilmThickness, localFilmIor);
+			kr, nc, nt, cauchyB, sellB, sellC, &reflLocalSampledDir, localFilmThickness, localFilmIor);
 
 	// Decide to transmit or reflect
 	float threshold;
@@ -292,7 +308,7 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 
 		result = trans;
 #if defined(SLG_SPECTRAL)
-		if (cauchyB > 0.f)
+		if ((cauchyB > 0.f) || (sellB.x >= 0.f))
 			// Dispersive transmission: only the hero wavelength survives
 			// (uniform pick -> the surviving bin carries x BINS weight).
 			// The alive mask is read back into the SampleResult after

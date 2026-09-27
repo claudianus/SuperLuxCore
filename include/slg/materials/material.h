@@ -308,13 +308,44 @@ extern float ExtractInteriorIors(const HitPoint &hitPoint, TextureConstPtr inter
 // Cauchy dispersion: IOR at waveLength (nm) from the mean IOR (Cauchy-A)
 // and the dispersion coefficient (Cauchy-B)
 extern float WaveLength2IOR(const float waveLength, const float IOR, const float B);
-// Spectral-aware variants (S2): with spectral transport active and B > 0,
-// DispersiveIOR returns the hero-wavelength IOR (the direction-defining
-// wavelength) and DispersiveFresnelR returns the per-bin dielectric
-// reflectance. Otherwise they reduce to nt and CauchyEvaluate(nt/nc).
+// Sellmeier dispersion (3-term): n^2(lambda_um) = 1 + sum_i B_i*l^2/(l^2-C_i).
+// `sellC` entries are in um^2.
+extern float WaveLength2IORSellmeier(const float waveLength,
+		const float B[3], const float C[3]);
+
+// Dispersion descriptor carried by dielectric materials. sellmeier ==
+// true selects the Sellmeier model (B/C coefficient textures evaluated
+// once per hit); otherwise cauchyB drives the classic Cauchy model.
+struct Dispersion {
+	float cauchyB = 0.f;
+	bool sellmeier = false;
+	float sellB[3] = {0.f, 0.f, 0.f};
+	float sellC[3] = {0.f, 0.f, 0.f};
+
+	bool Active() const { return sellmeier || (cauchyB > 0.f); }
+	float IOR(const float waveLength, const float baseIor) const {
+		return sellmeier ? WaveLength2IORSellmeier(waveLength, sellB, sellC) :
+				WaveLength2IOR(waveLength, baseIor, cauchyB);
+	}
+};
+
+// Build the per-hit descriptor from the material's optional textures:
+// Sellmeier (both coefficient textures present) wins over Cauchy-B.
+extern Dispersion EvaluateDispersion(TextureConstPtr cauchyB,
+		TextureConstPtr sellmeierB, TextureConstPtr sellmeierC,
+		const HitPoint &hitPoint);
+
+// Spectral-aware variants (S2): with spectral transport active and
+// dispersion enabled, DispersiveIOR returns the hero-wavelength IOR
+// (the direction-defining wavelength) and DispersiveFresnelR returns
+// the per-bin dielectric reflectance. Otherwise they reduce to nt and
+// CauchyEvaluate(nt/nc).
 extern float DispersiveIOR(const float nt, const float cauchyB);
+extern float DispersiveIOR(const float nt, const Dispersion &disp);
 extern luxrays::Spectrum DispersiveFresnelR(const float nt, const float nc,
 		const float cauchyB, const float cosTheta);
+extern luxrays::Spectrum DispersiveFresnelR(const float nt, const float nc,
+		const Dispersion &disp, const float cosTheta);
 
 //------------------------------------------------------------------------------
 // Coating absorption

@@ -54,6 +54,21 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_GetPassThroughTransparency(__global co
 	DefaultMaterial_GetPassThroughTransparency(material, hitPoint, evalStack, evalStackOffset MATERIALS_PARAM);
 }
 
+// Turquin MS compensation for a GGX carpaint lobe (F0 = ks*r, F90 = ks)
+OPENCL_FORCE_INLINE float3 CarPaint_MSComp(__global const Material* restrict material,
+		const float coso, const float a, const float3 ks, const float r) {
+	return material->carpaint.multibounce ?
+			Microfacet_GgxMSCompensation(coso, a,
+					Microfacet_GgxFresnelAverage(ks * r, ks)) : WHITE;
+}
+
+// Coating-style (1-G) MS term for a Schlick carpaint lobe
+OPENCL_FORCE_INLINE float CarPaint_SchlickMS(__global const Material* restrict material,
+		const float coso, const float cosi, const float G) {
+	return material->carpaint.multibounce ? cosi *
+			clamp((1.f - G) / (4.f * coso * cosi), 0.f, 1.f) : 0.f;
+}
+
 OPENCL_FORCE_INLINE void CarPaintMaterial_GetEmittedRadiance(__global const Material* restrict material,
 		__global const HitPoint *hitPoint,
 		__global float *evalStack, uint *evalStackOffset
@@ -103,10 +118,11 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 		const float r1 = Texture_GetFloatValue(material->carpaint.R1TexIndex, hitPoint TEXTURES_PARAM);
 		if (useGgx) {
 			const float a1 = fmax(rough1, 1e-4f);
-			result += (Microfacet_GgxD(H, a1, a1) * Microfacet_GgxG2(lightDir, eyeDir, a1, a1) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
+			result += (Microfacet_GgxD(H, a1, a1) * Microfacet_GgxG2(lightDir, eyeDir, a1, a1) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H))) * CarPaint_MSComp(material, coso, a1, ks1, r1);
 			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a1, a1);
 		} else {
-			result += (SchlickDistribution_D(rough1, H, 0.f) * SchlickDistribution_G(rough1, lightDir, eyeDir) / (4.f * coso)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
+			const float G = SchlickDistribution_G(rough1, lightDir, eyeDir);
+			result += (SchlickDistribution_D(rough1, H, 0.f) * G / (4.f * coso) + CarPaint_SchlickMS(material, coso, cosi, G)) * (ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), dot(eyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough1, H, 0.f);
 		}
 		++n;
@@ -120,10 +136,11 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 		const float r2 = Texture_GetFloatValue(material->carpaint.R2TexIndex, hitPoint TEXTURES_PARAM);
 		if (useGgx) {
 			const float a2 = fmax(rough2, 1e-4f);
-			result += (Microfacet_GgxD(H, a2, a2) * Microfacet_GgxG2(lightDir, eyeDir, a2, a2) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
+			result += (Microfacet_GgxD(H, a2, a2) * Microfacet_GgxG2(lightDir, eyeDir, a2, a2) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H))) * CarPaint_MSComp(material, coso, a2, ks2, r2);
 			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a2, a2);
 		} else {
-			result += (SchlickDistribution_D(rough2, H, 0.f) * SchlickDistribution_G(rough2, lightDir, eyeDir) / (4.f * coso)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
+			const float G = SchlickDistribution_G(rough2, lightDir, eyeDir);
+			result += (SchlickDistribution_D(rough2, H, 0.f) * G / (4.f * coso) + CarPaint_SchlickMS(material, coso, cosi, G)) * (ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), dot(eyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough2, H, 0.f);
 		}
 		++n;
@@ -137,10 +154,11 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 		const float r3 = Texture_GetFloatValue(material->carpaint.R3TexIndex, hitPoint TEXTURES_PARAM);
 		if (useGgx) {
 			const float a3 = fmax(rough3, 1e-4f);
-			result += (Microfacet_GgxD(H, a3, a3) * Microfacet_GgxG2(lightDir, eyeDir, a3, a3) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
+			result += (Microfacet_GgxD(H, a3, a3) * Microfacet_GgxG2(lightDir, eyeDir, a3, a3) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H))) * CarPaint_MSComp(material, coso, a3, ks3, r3);
 			pdfDirect += Microfacet_GgxVNDFReflectionPdf(eyeDir, H, a3, a3);
 		} else {
-			result += (SchlickDistribution_D(rough3, H, 0.f) * SchlickDistribution_G(rough3, lightDir, eyeDir) / (4.f * coso)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
+			const float G = SchlickDistribution_G(rough3, lightDir, eyeDir);
+			result += (SchlickDistribution_D(rough3, H, 0.f) * G / (4.f * coso) + CarPaint_SchlickMS(material, coso, cosi, G)) * (ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), dot(eyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough3, H, 0.f);
 		}
 		++n;
@@ -264,6 +282,7 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 			result = ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
 			result *= Microfacet_GgxD(wh, a1, a1) * Microfacet_GgxG2(fixedDir, sampledDir, a1, a1) /
 				(4.f * fabs(fixedDir.z));
+			result *= CarPaint_MSComp(material, fabs(fixedDir.z), a1, ks1, r1);
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough1, 0.f, u0, u1, &wh, &d, &pdf);
@@ -285,6 +304,8 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 
 			const float G = SchlickDistribution_G(rough1, fixedDir, sampledDir);
 			result *= d * G / (4.f * fabs(fixedDir.z));
+			result += ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH) *
+					CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G);
 		}
 	} else if ((passThroughEvent < 2.f / n  ||
 		(!l1 && passThroughEvent < 3.f / n)) && l2) {
@@ -311,6 +332,7 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 			result = ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
 			result *= Microfacet_GgxD(wh, a2, a2) * Microfacet_GgxG2(fixedDir, sampledDir, a2, a2) /
 				(4.f * fabs(fixedDir.z));
+			result *= CarPaint_MSComp(material, fabs(fixedDir.z), a2, ks2, r2);
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough2, 0.f, u0, u1, &wh, &d, &pdf);
@@ -332,6 +354,8 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 
 			const float G = SchlickDistribution_G(rough2, fixedDir, sampledDir);
 			result *= d * G / (4.f * fabs(fixedDir.z));
+			result += ks2 * FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH) *
+					CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G);
 		}
 	} else if (l3) {
 		// Sample 3rd glossy layer
@@ -357,6 +381,7 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 			result = ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
 			result *= Microfacet_GgxD(wh, a3, a3) * Microfacet_GgxG2(fixedDir, sampledDir, a3, a3) /
 				(4.f * fabs(fixedDir.z));
+			result *= CarPaint_MSComp(material, fabs(fixedDir.z), a3, ks3, r3);
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough3, 0.f, u0, u1, &wh, &d, &pdf);
@@ -378,6 +403,8 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 
 			const float G = SchlickDistribution_G(rough3, fixedDir, sampledDir);
 			result *= d * G / (4.f * fabs(fixedDir.z));
+			result += ks3 * FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH) *
+					CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G);
 		}
 	} else {
 		// Sampling issue
@@ -407,11 +434,13 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 		const float pdf1 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a1, a1) :
 			SchlickDistribution_Pdf(rough1, wh, 0.f) / (4.f * cosWH);
 		if (pdf1 > 0.f) {
-			result += ks1 * (d1 *
-				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a1, a1) :
-					SchlickDistribution_G(rough1, fixedDir, sampledDir)) /
-				(4.f * fabs(fixedDir.z))) *
-				FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH);
+			const float G = useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a1, a1) :
+					SchlickDistribution_G(rough1, fixedDir, sampledDir);
+			result += ks1 * (d1 * G /
+				(4.f * fabs(fixedDir.z)) +
+				(useGgx ? 0.f : CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G))) *
+				FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH) *
+				(useGgx ? CarPaint_MSComp(material, fabs(fixedDir.z), a1, ks1, r1) : WHITE);
 			pdf += pdf1;
 		}
 	}
@@ -423,11 +452,13 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 		const float pdf2 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a2, a2) :
 			SchlickDistribution_Pdf(rough2, wh, 0.f) / (4.f * cosWH);
 		if (pdf2 > 0.f) {
-			result += ks2 * (d2 *
-				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a2, a2) :
-					SchlickDistribution_G(rough2, fixedDir, sampledDir)) /
-				(4.f * fabs(fixedDir.z))) *
-				FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH);
+			const float G = useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a2, a2) :
+					SchlickDistribution_G(rough2, fixedDir, sampledDir);
+			result += ks2 * (d2 * G /
+				(4.f * fabs(fixedDir.z)) +
+				(useGgx ? 0.f : CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G))) *
+				FresnelSchlick_Evaluate(TO_FLOAT3(r2), cosWH) *
+				(useGgx ? CarPaint_MSComp(material, fabs(fixedDir.z), a2, ks2, r2) : WHITE);
 			pdf += pdf2;
 		}
 	}
@@ -439,11 +470,13 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 		const float pdf3 = useGgx ? Microfacet_GgxVNDFReflectionPdf(fixedDir, wh, a3, a3) :
 			SchlickDistribution_Pdf(rough3, wh, 0.f) / (4.f * cosWH);
 		if (pdf3 > 0.f) {
-			result += ks3 * (d3 *
-				(useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a3, a3) :
-					SchlickDistribution_G(rough3, fixedDir, sampledDir)) /
-				(4.f * fabs(fixedDir.z))) *
-				FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH);
+			const float G = useGgx ? Microfacet_GgxG2(fixedDir, sampledDir, a3, a3) :
+					SchlickDistribution_G(rough3, fixedDir, sampledDir);
+			result += ks3 * (d3 * G /
+				(4.f * fabs(fixedDir.z)) +
+				(useGgx ? 0.f : CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G))) *
+				FresnelSchlick_Evaluate(TO_FLOAT3(r3), cosWH) *
+				(useGgx ? CarPaint_MSComp(material, fabs(fixedDir.z), a3, ks3, r3) : WHITE);
 			pdf += pdf3;
 		}
 	}

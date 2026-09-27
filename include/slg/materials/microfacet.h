@@ -703,6 +703,107 @@ inline float EvalTimesCosI(const luxrays::Vector &wo, const luxrays::Vector &wi,
 
 } // namespace zeltner
 
+//------------------------------------------------------------------------------
+// Estevez-Kulla 2017 "Charlie" sheen ("Production Friendly Microfacet Sheen
+// BRDF", SIGGRAPH 2017 course notes): cloth/fabric sheen as a microfacet
+// model. Microfibers oriented along the normal give an exponentiated
+// sinusoidal NDF D(m) = (2 + 1/r) sin^(1/r)(theta_m) / (2 pi) with a
+// numerically-fitted correlated Smith masking. r in (0,1] is the sheen
+// roughness. No Fresnel (F = 1); the directional albedo can exceed 1
+// slightly for r < ~0.2 - callers should keep the layer weight small.
+//------------------------------------------------------------------------------
+
+namespace charlie {
+
+// Charlie NDF at microfacet normal polar angle cosThetaH.
+inline float NDF(const float cosThetaH, const float rough) {
+	const float r = luxrays::Clamp(rough, 0.05f, 1.f);
+	const float invR = 1.f / r;
+	// sin^2(theta_m); floored so sin^(1/r) stays finite at grazing half-vectors
+	const float sin2 = luxrays::Max(1.f - cosThetaH * cosThetaH, 1e-4f);
+	return (2.f + invR) * powf(sin2, invR * .5f) * (.5f * INV_PI);
+}
+
+// Correlated-Smith Lambda for the Charlie NDF: rational fit to the
+// numerically-integrated masking function (Imageworks supplemental;
+// parameterized in alphaG = roughness^2, matching the published fit).
+inline float Lambda(const float cosTheta, const float rough) {
+	const float alphaG = luxrays::Max(rough * rough, 1e-3f);
+	const float omas = luxrays::Sqr(1.f - alphaG);
+	const float a = 21.5473f * (1.f - omas);
+	const float b = 3.82987f * (1.f - omas);
+	const float c = 0.19824f * (1.f - omas);
+	const float d = -1.97760f * (1.f - omas);
+	const float e = -4.32054f * (1.f - omas);
+	const auto L = [&](const float x) {
+		return a / (1.f + b * powf(luxrays::Max(x, 1e-6f), c)) + d * x + e;
+	};
+	const float x = fabsf(cosTheta);
+	// Reflect about x = 0.5 (the fit is only valid on [0, .5])
+	return (x < 0.5f) ? expf(L(x)) : expf(2.f * L(0.5f) - L(1.f - x));
+}
+
+// Visibility function V = G / (4 NdotL NdotV) for the sheen lobe.
+inline float Visibility(const float nDotV, const float nDotL, const float rough) {
+	return 1.f / ((1.f + Lambda(nDotV, rough) + Lambda(nDotL, rough)) *
+			4.f * nDotV * nDotL);
+}
+
+// BRDF f(wo, wi) = D(wh) * V(wo, wi) in the local (+Z) frame. Both
+// directions must sit in the upper hemisphere.
+inline float Eval(const luxrays::Vector &wo, const luxrays::Vector &wi,
+		const float rough) {
+	if (wo.z <= 0.f || wi.z <= 0.f)
+		return 0.f;
+	const luxrays::Vector wh = luxrays::Normalize(wo + wi);
+	return NDF(wh.z, rough) * Visibility(wo.z, wi.z, rough);
+}
+
+inline float EvalTimesCosI(const luxrays::Vector &wo, const luxrays::Vector &wi,
+		const float rough) {
+	return Eval(wo, wi, rough) * wi.z;
+}
+
+// Solid-angle pdf of wi when sampling m ~ D(m) cos(theta_m) and reflecting
+// wo about m (reflection Jacobian 1/(4 |wo.wh|)).
+inline float Pdf(const luxrays::Vector &wo, const luxrays::Vector &wi,
+		const float rough) {
+	if (wo.z <= 0.f || wi.z <= 0.f)
+		return 0.f;
+	const luxrays::Vector wh = luxrays::Normalize(wo + wi);
+	const float voH = luxrays::Dot(wo, wh);
+	if (voH <= 0.f)
+		return 0.f;
+	return NDF(wh.z, rough) * wh.z / (4.f * voH);
+}
+
+// Sample the microfacet normal from D(m) cos(theta_m) via inverse CDF -
+// CDF(theta) = sin^(1/r+2)(theta) -> sin(theta) = u^(r/(2r+1)) - then
+// reflect wo about it. Returns wi; a returned wi.z <= 0 (pdf = 0) means
+// the sample scattered below the horizon and must be rejected.
+inline luxrays::Vector Sample(const luxrays::Vector &wo, const float rough,
+		const float u0, const float u1, float &pdf) {
+	const float r = luxrays::Clamp(rough, 0.05f, 1.f);
+	const float sinThetaH = powf(u0, r / (2.f * r + 1.f));
+	const float cosThetaH = sqrtf(luxrays::Max(0.f, 1.f - sinThetaH * sinThetaH));
+	const float phi = 2.f * M_PI * u1;
+	const luxrays::Vector wh(sinThetaH * cosf(phi), sinThetaH * sinf(phi), cosThetaH);
+	const float voH = luxrays::Dot(wo, wh);
+	if (voH <= 0.f) {
+		pdf = 0.f;
+		return luxrays::Vector(0.f, 0.f, -1.f);
+	}
+	const luxrays::Vector wi = 2.f * voH * wh - wo;
+	if (wi.z <= 0.f) {
+		pdf = 0.f;
+		return wi;
+	}
+	pdf = NDF(wh.z, r) * wh.z / (4.f * voH);
+	return wi;
+}
+
+} // namespace charlie
+
 // Dielectric Fresnel at cosI for relative IOR eta = n_t/n_i (incl. TIR).
 // Compact form from the OpenPBR reference (Portsmouth).
 inline float FresnelDielectric(const float cosI, const float eta) {

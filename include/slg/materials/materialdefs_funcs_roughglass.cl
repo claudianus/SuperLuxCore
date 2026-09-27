@@ -81,11 +81,18 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 	const float nc = ExtractExteriorIors(hitPoint, material->roughglass.exteriorIorTexIndex TEXTURES_PARAM);
 	const float nt = ExtractInteriorIors(hitPoint, material->roughglass.interiorIorTexIndex TEXTURES_PARAM);
 	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+	const float3 sellB = (material->roughglass.sellmeierBTex != NULL_INDEX &&
+			material->roughglass.sellmeierCTex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	const float3 sellC = (sellB.x >= 0.f) ?
+			Texture_GetSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			BLACK;
 #if defined(SLG_SPECTRAL)
 	// Dispersion: the direction-defining wavelength is the hero bin
-	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, sellB, sellC, hitPoint);
 #else
-	const float ntEff = nt;
+	const float ntEff = Spectral_RefIOR(nt, cauchyB, sellB, sellC);
 #endif
 	const float ntc = ntEff / nc;
 
@@ -131,7 +138,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		const float specPdf = useGgx ? Microfacet_GgxVNDFHalfPdf(eyeDir, wh, alphaT, alphaB) :
 				SchlickDistribution_Pdf(roughness, wh, anisotropy);
 #if defined(SLG_SPECTRAL)
-		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaOH, hitPoint);
 #else
 		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
 				FresnelCauchy_Evaluate(ntc, cosThetaOH), FresnelCauchy_Evaluate(ntc, cosThetaOH));
@@ -170,7 +177,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		const float specPdf = useGgx ? Microfacet_GgxVNDFReflectionPdf(eyeDir, wh, alphaT, alphaB) :
 				SchlickDistribution_Pdf(roughness, wh, anisotropy) / (4.f * fabs(dot(lightDir, wh)));
 #if defined(SLG_SPECTRAL)
-		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaH, hitPoint);
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaH, hitPoint);
 #else
 		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaH),
 				FresnelCauchy_Evaluate(ntc, cosThetaH), FresnelCauchy_Evaluate(ntc, cosThetaH));
@@ -181,7 +188,20 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		//if (reversePdfW)
 		//	*reversePdfW = (1.f - threshold) * specPdf / (4.f * fabs(dot(lightDir, wh));
 
-		result = (D * G / (4.f * cosThetaI)) * kr * F;
+		// Multi-scattering: Turquin compensation (GGX) resp. coating-style
+		// (1-G) term (Schlick). Reflection lobe only.
+		float msFactor = D * G / (4.f * cosThetaI);
+		if (material->roughglass.multibounce) {
+			if (useGgx) {
+				const float alpha = .5f * (alphaT + alphaB);
+				msFactor *= Microfacet_GgxMSCompensation(cosThetaI, alpha,
+						Microfacet_GgxFresnelAverage(F, WHITE)).x;
+			} else {
+				msFactor += cosThetaO *
+						clamp((1.f - G) / (4.f * cosThetaI * cosThetaO), 0.f, 1.f);
+			}
+		}
+		result = msFactor * kr * F;
 		
 		const float localFilmThickness = (material->roughglass.filmThicknessTexIndex != NULL_INDEX) 
 										 ? Texture_GetFloatValue(material->roughglass.filmThicknessTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
@@ -252,11 +272,18 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 	const float nc = ExtractExteriorIors(hitPoint, material->roughglass.exteriorIorTexIndex TEXTURES_PARAM);
 	const float nt = ExtractInteriorIors(hitPoint, material->roughglass.interiorIorTexIndex TEXTURES_PARAM);
 	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+	const float3 sellB = (material->roughglass.sellmeierBTex != NULL_INDEX &&
+			material->roughglass.sellmeierCTex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	const float3 sellC = (sellB.x >= 0.f) ?
+			Texture_GetSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			BLACK;
 #if defined(SLG_SPECTRAL)
 	// Dispersion: the direction-defining wavelength is the hero bin
-	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, sellB, sellC, hitPoint);
 #else
-	const float ntEff = nt;
+	const float ntEff = Spectral_RefIOR(nt, cauchyB, sellB, sellC);
 #endif
 	const float ntc = ntEff / nc;
 
@@ -313,7 +340,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 			}
 			const float g2 = Microfacet_GgxG2(sampledDir, fixedDir, alphaT, alphaB);
 #if defined(SLG_SPECTRAL)
-			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaIH, hitPoint);
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaIH, hitPoint);
 #else
 			const float F = FresnelCauchy_Evaluate(ntc, cosThetaIH);
 #endif
@@ -324,7 +351,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 
 			//if (!hitPoint.fromLight) {
 #if defined(SLG_SPECTRAL)
-			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaIH, hitPoint);
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaIH, hitPoint);
 #else
 			const float F = FresnelCauchy_Evaluate(ntc, cosThetaIH);
 #endif
@@ -339,7 +366,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 		event = GLOSSY | TRANSMIT;
 #if defined(SLG_SPECTRAL)
 		// Dispersive refraction terminates the secondary wavelengths
-		if (cauchyB > 0.f)
+		if ((cauchyB > 0.f) || (sellB.x >= 0.f))
 			result *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
 #endif
 	} else {
@@ -357,7 +384,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 		}
 
 #if defined(SLG_SPECTRAL)
-		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaOH, hitPoint);
 #else
 		const float F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
 #endif
@@ -367,13 +394,31 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 			if (g1 <= 0.f) {
 				MATERIAL_SAMPLE_RETURN_BLACK;
 			}
-			result = kr * F * (Microfacet_GgxG2(sampledDir, fixedDir, alphaT, alphaB) /
+			float msComp = 1.f;
+			if (material->roughglass.multibounce) {
+				const float alpha = .5f * (alphaT + alphaB);
+#if defined(SLG_SPECTRAL)
+				const float3 Fvec = F;
+#else
+				const float3 Fvec = (float3)(F, F, F);
+#endif
+				msComp = Microfacet_GgxMSCompensation(fabs(fixedDir.z), alpha,
+						Microfacet_GgxFresnelAverage(Fvec, WHITE)).x;
+			}
+			result = kr * F * msComp *
+					(Microfacet_GgxG2(sampledDir, fixedDir, alphaT, alphaB) /
 					(g1 * (1.f - threshold)));
 		} else {
 			const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
 			float factor = (d / specPdf) * G * fabs(cosThetaOH) / (1.f - threshold);
 			//factor /= (!hitPoint.fromLight) ? coso : cosi;
 			factor /= coso;
+			if (material->roughglass.multibounce) {
+				// Coating-style (1-G) term / direction pdf
+				factor += cosi *
+						clamp((1.f - G) / (4.f * coso * cosi), 0.f, 1.f) *
+						4.f * fabs(cosThetaOH) / specPdf / (1.f - threshold);
+			}
 			result = factor * F * kr;
 		}
 		

@@ -3,20 +3,21 @@
  *                                                                         *
  *   This file is part of LuxCoreRender.                                   *
  *                                                                         *
- * Licensed under the Apache License, Version 2.0 (the "License");         *
- * you may not use this file except in compliance with the License.        *
- * You may obtain a copy of the License at                                 *
+ *   Licensed under the Apache License, Version 2.0 (the "License");       *
+ *   you may not use this file except in compliance with the License.      *
+ *   You may obtain a copy of the License at                               *
  *                                                                         *
- *     http://www.apache.org/licenses/LICENSE-2.0                          *
+ *   http://www.apache.org/licenses/LICENSE-2.0                            *
  *                                                                         *
- * Unless required by applicable law or agreed to in writing, software     *
- * distributed under the License is distributed on an "AS IS" BASIS,       *
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.*
- * See the License for the specific language governing permissions and     *
- * limitations under the License.                                          *
+ *   Unless required by applicable law or agreed to in writing, software   *
+ *   distributed under the License is distributed on an "AS IS" BASIS,     *
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.*
+ *   See the License for the specific language governing permissions and     *
+ *   limitations under the License.                                          *
  ***************************************************************************/
 
 #include "slg/materials/velvet.h"
+#include "slg/materials/microfacet.h"
 
 using namespace std;
 using namespace luxrays;
@@ -29,9 +30,11 @@ using namespace slg;
 VelvetMaterial::VelvetMaterial(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 		TextureConstPtr emitted, TextureConstPtr bump,
 		TextureConstPtr kd, TextureConstPtr p1, TextureConstPtr p2, TextureConstPtr p3,
-		TextureConstPtr thickness) :
+		TextureConstPtr thickness, TextureConstPtr sheenRoughness,
+		const bool useCharlie) :
 			Material(frontTransp, backTransp, emitted, bump), Kd(kd),
-			P1(p1), P2(p2), P3(p3), Thickness(thickness) {
+			P1(p1), P2(p2), P3(p3), Thickness(thickness),
+			SheenRoughness(sheenRoughness), useCharlie(useCharlie) {
 	glossiness = 1.f;
 }
 
@@ -43,6 +46,30 @@ Spectrum VelvetMaterial::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,
 	float *directPdfW, float *reversePdfW) const {
 
+	if (useCharlie) {
+		// Charlie sheen: microfacet lobe living in the +Z hemisphere of the
+		// local frame; mirror backface hits by flipping z on both dirs.
+		const float sgn = Sgn(localEyeDir.z);
+		const Vector wo(localEyeDir.x, localEyeDir.y, localEyeDir.z * sgn);
+		const Vector wi(localLightDir.x, localLightDir.y, localLightDir.z * sgn);
+		const float r = SheenRoughness->GetFloatValue(hitPoint);
+
+		// directPdfW = pdf of the direction the path sampled (lightDir for
+		// eye paths, eyeDir for light paths)
+		const Vector &fix = hitPoint.fromLight ? wi : wo;
+		const Vector &smp = hitPoint.fromLight ? wo : wi;
+		const float pdf = charlie::Pdf(fix, smp, r);
+		const float pdfR = charlie::Pdf(smp, fix, r);
+		if (directPdfW)
+			*directPdfW = pdf;
+		if (reversePdfW)
+			*reversePdfW = pdfR;
+
+		*event = GLOSSY | REFLECT;
+
+		return Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) *
+				charlie::EvalTimesCosI(wo, wi, r);
+	}
 
 	if (directPdfW)
 		*directPdfW = fabsf((hitPoint.fromLight ? localEyeDir.z : localLightDir.z) * INV_PI);
@@ -51,12 +78,12 @@ Spectrum VelvetMaterial::Evaluate(const HitPoint &hitPoint,
 		*reversePdfW = fabsf((hitPoint.fromLight ? localLightDir.z : localEyeDir.z) * INV_PI);
 
 	*event = DIFFUSE | REFLECT;
-	
+
 	const float A1 = P1->GetFloatValue(hitPoint);
 	const float A2 = P2->GetFloatValue(hitPoint);
 	const float A3 = P3->GetFloatValue(hitPoint);
 	const float delta = Thickness->GetFloatValue(hitPoint);
-	
+
 	const float cosv = -Dot(localLightDir, localEyeDir);
 
 	// Compute phase function
@@ -65,7 +92,7 @@ Spectrum VelvetMaterial::Evaluate(const HitPoint &hitPoint,
 
 	float p = 1.0f + A1 * cosv + A2 * 0.5f * (B * cosv - 1.0f) + A3 * 0.5 * (5.0f * cosv * cosv * cosv - B);
 	p = p / (4.0f * M_PI);
- 
+
 	p = (p * delta) / fabsf(localEyeDir.z);
 
 	// Clamp the BRDF (page 7)
@@ -84,17 +111,39 @@ Spectrum VelvetMaterial::Sample(const HitPoint &hitPoint,
 	if (fabsf(localFixedDir.z) < DEFAULT_COS_EPSILON_STATIC)
 		return Spectrum();
 
+	if (useCharlie) {
+		const float sgn = Sgn(localFixedDir.z);
+		const Vector wo(localFixedDir.x, localFixedDir.y, localFixedDir.z * sgn);
+		const float r = SheenRoughness->GetFloatValue(hitPoint);
+
+		float pdf;
+		Vector wi = charlie::Sample(wo, r, u0, u1, pdf);
+		*localSampledDir = Vector(wi.x, wi.y, wi.z * sgn);
+		if (!(pdf > 0.f) || wi.z <= 0.f)
+			return Spectrum();
+
+		*event = GLOSSY | REFLECT;
+
+		const Spectrum eval = Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) *
+				charlie::EvalTimesCosI(wo, wi, r);
+		if (eval.Black())
+			return Spectrum();
+
+		*pdfW = pdf;
+		return eval / pdf;
+	}
+
 	*localSampledDir = Sgn(localFixedDir.z) * CosineSampleHemisphere(u0, u1, pdfW);
 	if (fabsf(CosTheta(*localSampledDir)) < DEFAULT_COS_EPSILON_STATIC)
 		return Spectrum();
 
 	*event = DIFFUSE | REFLECT;
-	
+
 	float A1 = P1->GetFloatValue(hitPoint);
 	float A2 = P2->GetFloatValue(hitPoint);
 	float A3 = P3->GetFloatValue(hitPoint);
 	float delta = Thickness->GetFloatValue(hitPoint);
-	
+
 	const float cosv = -Dot(localFixedDir, *localSampledDir);
 
 	// Compute phase function
@@ -103,21 +152,35 @@ Spectrum VelvetMaterial::Sample(const HitPoint &hitPoint,
 
 	float p = 1.0f + A1 * cosv + A2 * 0.5f * (B * cosv - 1.0f) + A3 * 0.5 * (5.0f * cosv * cosv * cosv - B);
 	p = p / (4.0f * M_PI);
- 
+
 	p = (p * delta) / (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z));
-	
+
 	// Clamp the BRDF (page 7)
 	if (p > 1.0f)
 		p = 1.0f;
 	else if (p < 0.0f)
 		p = 0.0f;
-	
+
 	return Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) * (p / *pdfW);
 }
 
 void VelvetMaterial::Pdf(const HitPoint &hitPoint,
-		const Vector &localLightDir, const Vector &localEyeDir,
-		float *directPdfW, float *reversePdfW) const {
+	const Vector &localLightDir, const Vector &localEyeDir,
+	float *directPdfW, float *reversePdfW) const {
+	if (useCharlie) {
+		const float r = SheenRoughness->GetFloatValue(hitPoint);
+		const float sgn = Sgn(localEyeDir.z);
+		const Vector wo(localEyeDir.x, localEyeDir.y, localEyeDir.z * sgn);
+		const Vector wi(localLightDir.x, localLightDir.y, localLightDir.z * sgn);
+		const Vector &fix = hitPoint.fromLight ? wi : wo;
+		const Vector &smp = hitPoint.fromLight ? wo : wi;
+		if (directPdfW)
+			*directPdfW = charlie::Pdf(fix, smp, r);
+		if (reversePdfW)
+			*reversePdfW = charlie::Pdf(smp, fix, r);
+		return;
+	}
+
 	if (directPdfW)
 		*directPdfW = fabsf((hitPoint.fromLight ? localEyeDir.z : localLightDir.z) * INV_PI);
 
@@ -133,6 +196,8 @@ void VelvetMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  
 	P2->AddReferencedTextures(referencedTexs);
 	P3->AddReferencedTextures(referencedTexs);
 	Thickness->AddReferencedTextures(referencedTexs);
+	if (SheenRoughness)
+		SheenRoughness->AddReferencedTextures(referencedTexs);
 }
 
 void VelvetMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
@@ -148,6 +213,8 @@ void VelvetMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef 
 		P3 = &newTex;
 	if (Thickness == &oldTex)
 		Thickness = &newTex;
+	if (SheenRoughness == &oldTex)
+		SheenRoughness = &newTex;
 }
 
 PropertiesUPtr VelvetMaterial::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const  {
@@ -160,6 +227,9 @@ PropertiesUPtr VelvetMaterial::ToProperties(const ImageMapCache &imgMapCache, co
 	props->Set(Property("scene.materials." + name + ".p2")(P2->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".p3")(P3->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".thickness")(Thickness->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".model")(useCharlie ? "charlie" : "legacy"));
+	if (SheenRoughness)
+		props->Set(Property("scene.materials." + name + ".sheenroughness")(SheenRoughness->GetSDLValue()));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

@@ -35,9 +35,9 @@ CarPaintMaterial::CarPaintMaterial(
 	TextureConstPtr emitted, TextureConstPtr bump,
 	TextureConstPtr kd, TextureConstPtr ks1, TextureConstPtr ks2, TextureConstPtr ks3, TextureConstPtr m1, TextureConstPtr m2, TextureConstPtr m3,
 	TextureConstPtr r1, TextureConstPtr r2, TextureConstPtr r3, TextureConstPtr ka, TextureConstPtr d,
-	const bool useGgx) :
+	const bool multibounce, const bool useGgx) :
 	Material(frontTransp, backTransp, emitted, bump), Kd(kd), Ks1(ks1), Ks2(ks2), Ks3(ks3), M1(m1), M2(m2), M3(m3),
-	R1(r1), R2(r2), R3(r3),	Ka(ka), depth(d), useGgx(useGgx) {
+	R1(r1), R2(r2), R3(r3),	Ka(ka), depth(d), multibounce(multibounce), useGgx(useGgx) {
 	ComputeGlossiness(M1, M2, M3);
 }
 
@@ -71,6 +71,17 @@ Spectrum CarPaintMaterial::Evaluate(const HitPoint &hitPoint,
 	const float d = depth->GetFloatValue(hitPoint);
 	const Spectrum absorption = CoatingAbsorption(cosi, coso, alpha, d);
 
+	// Turquin multi-scattering compensation for the GGX lobes: effective
+	// Schlick endpoints are F0 = ks_i * r_i, F90 = ks_i.
+	auto msComp = [&](const float a, const Spectrum &ks, const float r) {
+		return multibounce ? GgxMSCompensation(coso, a,
+				GgxFresnelAverage(ks * r, ks)) : Spectrum(1.f);
+	};
+	auto schlickMS = [&](const float G) {
+		return multibounce ? cosi *
+				Clamp((1.f - G) / (4.f * coso * cosi), 0.f, 1.f) : 0.f;
+	};
+
 	// Diffuse layer
 	Spectrum result = absorption * Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) * INV_PI * fabsf(localLightDir.z);
 
@@ -85,11 +96,13 @@ Spectrum CarPaintMaterial::Evaluate(const HitPoint &hitPoint,
 			// GGX path: m is the perceptual roughness, alpha = m^2 = rough
 			const float a1 = Max(rough1, 1e-4f);
 			result += (GgxD(H, a1, a1) * GgxG2(localLightDir, localEyeDir, a1, a1) / (4.f * coso)) *
-					(ks1 * FresnelTexture::SchlickEvaluate(r1, Dot(localEyeDir, H)));
+					(ks1 * FresnelTexture::SchlickEvaluate(r1, Dot(localEyeDir, H))) *
+					msComp(a1, ks1, r1);
 			pdfDirect += GgxVNDFReflectionPdf(localEyeDir, H, a1, a1);
 			pdfReverse += GgxVNDFReflectionPdf(localLightDir, H, a1, a1);
 		} else {
-			result += (SchlickDistribution_D(rough1, H, 0.f) * SchlickDistribution_G(rough1, localLightDir, localEyeDir) / (4.f * coso)) *
+			const float G = SchlickDistribution_G(rough1, localLightDir, localEyeDir);
+			result += (SchlickDistribution_D(rough1, H, 0.f) * G / (4.f * coso) + schlickMS(G)) *
 					(ks1 * FresnelTexture::SchlickEvaluate(r1, Dot(localEyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough1, H, 0.f);
 		}
@@ -104,11 +117,13 @@ Spectrum CarPaintMaterial::Evaluate(const HitPoint &hitPoint,
 		if (useGgx) {
 			const float a2 = Max(rough2, 1e-4f);
 			result += (GgxD(H, a2, a2) * GgxG2(localLightDir, localEyeDir, a2, a2) / (4.f * coso)) *
-					(ks2 * FresnelTexture::SchlickEvaluate(r2, Dot(localEyeDir, H)));
+					(ks2 * FresnelTexture::SchlickEvaluate(r2, Dot(localEyeDir, H))) *
+					msComp(a2, ks2, r2);
 			pdfDirect += GgxVNDFReflectionPdf(localEyeDir, H, a2, a2);
 			pdfReverse += GgxVNDFReflectionPdf(localLightDir, H, a2, a2);
 		} else {
-			result += (SchlickDistribution_D(rough2, H, 0.f) * SchlickDistribution_G(rough2, localLightDir, localEyeDir) / (4.f * coso)) *
+			const float G = SchlickDistribution_G(rough2, localLightDir, localEyeDir);
+			result += (SchlickDistribution_D(rough2, H, 0.f) * G / (4.f * coso) + schlickMS(G)) *
 					(ks2 * FresnelTexture::SchlickEvaluate(r2, Dot(localEyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough2, H, 0.f);
 		}
@@ -123,11 +138,13 @@ Spectrum CarPaintMaterial::Evaluate(const HitPoint &hitPoint,
 		if (useGgx) {
 			const float a3 = Max(rough3, 1e-4f);
 			result += (GgxD(H, a3, a3) * GgxG2(localLightDir, localEyeDir, a3, a3) / (4.f * coso)) *
-					(ks3 * FresnelTexture::SchlickEvaluate(r3, Dot(localEyeDir, H)));
+					(ks3 * FresnelTexture::SchlickEvaluate(r3, Dot(localEyeDir, H))) *
+					msComp(a3, ks3, r3);
 			pdfDirect += GgxVNDFReflectionPdf(localEyeDir, H, a3, a3);
 			pdfReverse += GgxVNDFReflectionPdf(localLightDir, H, a3, a3);
 		} else {
-			result += (SchlickDistribution_D(rough3, H, 0.f) * SchlickDistribution_G(rough3, localLightDir, localEyeDir) / (4.f * coso)) *
+			const float G = SchlickDistribution_G(rough3, localLightDir, localEyeDir);
+			result += (SchlickDistribution_D(rough3, H, 0.f) * G / (4.f * coso) + schlickMS(G)) *
 					(ks3 * FresnelTexture::SchlickEvaluate(r3, Dot(localEyeDir, H)));
 			pdf += SchlickDistribution_Pdf(rough3, H, 0.f);
 		}
@@ -212,6 +229,7 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 		// Sample 1st glossy layer
 		sampled = 1;
 		const float rough1 = m1 * m1;
+		const float r1 = R1->GetFloatValue(hitPoint);
 		if (useGgx) {
 			const float a1 = Max(rough1, 1e-4f);
 			wh = GgxSampleVNDF(localFixedDir, a1, a1, u0, u1);
@@ -227,9 +245,13 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks1 * FresnelTexture::SchlickEvaluate(R1->GetFloatValue(hitPoint), cosWH);
+			result = ks1 * FresnelTexture::SchlickEvaluate(r1, cosWH);
 			result *= GgxD(wh, a1, a1) * GgxG2(localFixedDir, *localSampledDir, a1, a1) /
 				(4.f * fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z));
+			if (multibounce)
+				result *= GgxMSCompensation(
+						fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z),
+						a1, GgxFresnelAverage(ks1 * r1, ks1));
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough1, 0.f, u0, u1, &wh, &d, &pdf);
@@ -245,21 +267,24 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks1 * FresnelTexture::SchlickEvaluate(R1->GetFloatValue(hitPoint), cosWH);
+			result = ks1 * FresnelTexture::SchlickEvaluate(r1, cosWH);
 
 			const float G = SchlickDistribution_G(rough1, localFixedDir, *localSampledDir);
-			if (!hitPoint.fromLight)
-				//CoatingF(sw, *wi, wo, f_);
-				result *= d * G / (4.f * fabsf(localFixedDir.z));
-			else
-				//CoatingF(sw, wo, *wi, f_);
-				result *= d * G / (4.f * fabsf(localSampledDir->z));
+			const float denom = 4.f * fabsf(hitPoint.fromLight ?
+					localSampledDir->z : localFixedDir.z);
+			const float otherCos = fabsf(hitPoint.fromLight ?
+					localFixedDir.z : localSampledDir->z);
+			result *= d * G / denom;
+			if (multibounce)
+				result += ks1 * FresnelTexture::SchlickEvaluate(r1, cosWH) *
+						otherCos * Clamp((1.f - G) / (denom * otherCos), 0.f, 1.f);
 		}
 	} else if ((passThroughEvent < 2.f / n  ||
 		(!l1 && passThroughEvent < 3.f / n)) && l2) {
 		// Sample 2nd glossy layer
 		sampled = 2;
 		const float rough2 = m2 * m2;
+		const float r2 = R2->GetFloatValue(hitPoint);
 		if (useGgx) {
 			const float a2 = Max(rough2, 1e-4f);
 			wh = GgxSampleVNDF(localFixedDir, a2, a2, u0, u1);
@@ -275,9 +300,13 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks2 * FresnelTexture::SchlickEvaluate(R2->GetFloatValue(hitPoint), cosWH);
+			result = ks2 * FresnelTexture::SchlickEvaluate(r2, cosWH);
 			result *= GgxD(wh, a2, a2) * GgxG2(localFixedDir, *localSampledDir, a2, a2) /
 				(4.f * fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z));
+			if (multibounce)
+				result *= GgxMSCompensation(
+						fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z),
+						a2, GgxFresnelAverage(ks2 * r2, ks2));
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough2, 0.f, u0, u1, &wh, &d, &pdf);
@@ -293,20 +322,23 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks2 * FresnelTexture::SchlickEvaluate(R2->GetFloatValue(hitPoint), cosWH);
+			result = ks2 * FresnelTexture::SchlickEvaluate(r2, cosWH);
 
 			const float G = SchlickDistribution_G(rough2, localFixedDir, *localSampledDir);
-			if (!hitPoint.fromLight)
-				//CoatingF(sw, *wi, wo, f_);
-				result *= d * G / (4.f * fabsf(localFixedDir.z));
-			else
-				//CoatingF(sw, wo, *wi, f_);
-				result *= d * G / (4.f * fabsf(localSampledDir->z));
+			const float denom = 4.f * fabsf(hitPoint.fromLight ?
+					localSampledDir->z : localFixedDir.z);
+			const float otherCos = fabsf(hitPoint.fromLight ?
+					localFixedDir.z : localSampledDir->z);
+			result *= d * G / denom;
+			if (multibounce)
+				result += ks2 * FresnelTexture::SchlickEvaluate(r2, cosWH) *
+						otherCos * Clamp((1.f - G) / (denom * otherCos), 0.f, 1.f);
 		}
 	} else if (l3) {
 		// Sample 3rd glossy layer
 		sampled = 3;
 		const float rough3 = m3 * m3;
+		const float r3 = R3->GetFloatValue(hitPoint);
 		if (useGgx) {
 			const float a3 = Max(rough3, 1e-4f);
 			wh = GgxSampleVNDF(localFixedDir, a3, a3, u0, u1);
@@ -322,9 +354,13 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks3 * FresnelTexture::SchlickEvaluate(R3->GetFloatValue(hitPoint), cosWH);
+			result = ks3 * FresnelTexture::SchlickEvaluate(r3, cosWH);
 			result *= GgxD(wh, a3, a3) * GgxG2(localFixedDir, *localSampledDir, a3, a3) /
 				(4.f * fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z));
+			if (multibounce)
+				result *= GgxMSCompensation(
+						fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z),
+						a3, GgxFresnelAverage(ks3 * r3, ks3));
 		} else {
 			float d;
 			SchlickDistribution_SampleH(rough3, 0.f, u0, u1, &wh, &d, &pdf);
@@ -340,15 +376,17 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 			if (pdf <= 0.f)
 				return Spectrum();
 
-			result = ks3 * FresnelTexture::SchlickEvaluate(R3->GetFloatValue(hitPoint), cosWH);
+			result = ks3 * FresnelTexture::SchlickEvaluate(r3, cosWH);
 
 			const float G = SchlickDistribution_G(rough3, localFixedDir, *localSampledDir);
-			if (!hitPoint.fromLight)
-				//CoatingF(sw, *wi, wo, f_);
-				result *= d * G / (4.f * fabsf(localFixedDir.z));
-			else
-				//CoatingF(sw, wo, *wi, f_);
-				result *= d * G / (4.f * fabsf(localSampledDir->z));
+			const float denom = 4.f * fabsf(hitPoint.fromLight ?
+					localSampledDir->z : localFixedDir.z);
+			const float otherCos = fabsf(hitPoint.fromLight ?
+					localFixedDir.z : localSampledDir->z);
+			result *= d * G / denom;
+			if (multibounce)
+				result += ks3 * FresnelTexture::SchlickEvaluate(r3, cosWH) *
+						otherCos * Clamp((1.f - G) / (denom * otherCos), 0.f, 1.f);
 		}
 	} else {
 		// Sampling issue
@@ -369,19 +407,33 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 		pdf += pdf0;
 		result += absorption * Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f) * pdf0;
 	}
+	// Turquin MS compensation helpers, matching Evaluate
+	const float msCoso = fabsf(hitPoint.fromLight ? localSampledDir->z : localFixedDir.z);
+	const float msCosi = fabsf(hitPoint.fromLight ? localFixedDir.z : localSampledDir->z);
+	auto msCompX = [&](const float a, const Spectrum &ks, const float r) {
+		return multibounce ? GgxMSCompensation(msCoso, a,
+				GgxFresnelAverage(ks * r, ks)) : Spectrum(1.f);
+	};
+	auto schlickMSX = [&](const float G) {
+		return multibounce ? msCosi *
+				Clamp((1.f - G) / (4.f * msCoso * msCosi), 0.f, 1.f) : 0.f;
+	};
 	// 1st glossy
 	if (l1 && sampled != 1) {
 		const float rough1 = m1 * m1;
 		const float a1 = Max(rough1, 1e-4f);
+		const float r1 = R1->GetFloatValue(hitPoint);
 		const float d1 = useGgx ? GgxD(wh, a1, a1) : SchlickDistribution_D(rough1, wh, 0.f);
 		const float pdf1 = useGgx ? GgxVNDFReflectionPdf(localFixedDir, wh, a1, a1) :
 			SchlickDistribution_Pdf(rough1, wh, 0.f) / (4.f * cosWH);
 		if (pdf1 > 0.f) {
-			result += ks1 * (d1 *
-				(useGgx ? GgxG2(localFixedDir, *localSampledDir, a1, a1) :
-					SchlickDistribution_G(rough1, localFixedDir, *localSampledDir)) /
-				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z)))) *
-				FresnelTexture::SchlickEvaluate(R1->GetFloatValue(hitPoint), cosWH);
+			const float G = useGgx ? GgxG2(localFixedDir, *localSampledDir, a1, a1) :
+					SchlickDistribution_G(rough1, localFixedDir, *localSampledDir);
+			result += ks1 * (d1 * G /
+				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z))) +
+				schlickMSX(G) * (useGgx ? 0.f : 1.f)) *
+				FresnelTexture::SchlickEvaluate(r1, cosWH) *
+				(useGgx ? msCompX(a1, ks1, r1) : Spectrum(1.f));
 			pdf += pdf1;
 		}
 	}
@@ -389,15 +441,18 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 	if (l2 && sampled != 2) {
 		const float rough2 = m2 * m2;
 		const float a2 = Max(rough2, 1e-4f);
+		const float r2 = R2->GetFloatValue(hitPoint);
 		const float d2 = useGgx ? GgxD(wh, a2, a2) : SchlickDistribution_D(rough2, wh, 0.f);
 		const float pdf2 = useGgx ? GgxVNDFReflectionPdf(localFixedDir, wh, a2, a2) :
 			SchlickDistribution_Pdf(rough2, wh, 0.f) / (4.f * cosWH);
 		if (pdf2 > 0.f) {
-			result += ks2 * (d2 *
-				(useGgx ? GgxG2(localFixedDir, *localSampledDir, a2, a2) :
-					SchlickDistribution_G(rough2, localFixedDir, *localSampledDir)) /
-				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z)))) *
-				FresnelTexture::SchlickEvaluate(R2->GetFloatValue(hitPoint), cosWH);
+			const float G = useGgx ? GgxG2(localFixedDir, *localSampledDir, a2, a2) :
+					SchlickDistribution_G(rough2, localFixedDir, *localSampledDir);
+			result += ks2 * (d2 * G /
+				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z))) +
+				schlickMSX(G) * (useGgx ? 0.f : 1.f)) *
+				FresnelTexture::SchlickEvaluate(r2, cosWH) *
+				(useGgx ? msCompX(a2, ks2, r2) : Spectrum(1.f));
 			pdf += pdf2;
 		}
 	}
@@ -405,15 +460,18 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 	if (l3 && sampled != 3) {
 		const float rough3 = m3 * m3;
 		const float a3 = Max(rough3, 1e-4f);
+		const float r3 = R3->GetFloatValue(hitPoint);
 		const float d3 = useGgx ? GgxD(wh, a3, a3) : SchlickDistribution_D(rough3, wh, 0.f);
 		const float pdf3 = useGgx ? GgxVNDFReflectionPdf(localFixedDir, wh, a3, a3) :
 			SchlickDistribution_Pdf(rough3, wh, 0.f) / (4.f * cosWH);
 		if (pdf3 > 0.f) {
-			result += ks3 * (d3 *
-				(useGgx ? GgxG2(localFixedDir, *localSampledDir, a3, a3) :
-					SchlickDistribution_G(rough3, localFixedDir, *localSampledDir)) /
-				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z)))) *
-				FresnelTexture::SchlickEvaluate(R3->GetFloatValue(hitPoint), cosWH);
+			const float G = useGgx ? GgxG2(localFixedDir, *localSampledDir, a3, a3) :
+					SchlickDistribution_G(rough3, localFixedDir, *localSampledDir);
+			result += ks3 * (d3 * G /
+				(4.f * (hitPoint.fromLight ? fabsf(localSampledDir->z) : fabsf(localFixedDir.z))) +
+				schlickMSX(G) * (useGgx ? 0.f : 1.f)) *
+				FresnelTexture::SchlickEvaluate(r3, cosWH) *
+				(useGgx ? msCompX(a3, ks3, r3) : Spectrum(1.f));
 			pdf += pdf3;
 		}
 	}
@@ -572,6 +630,8 @@ PropertiesUPtr CarPaintMaterial::ToProperties(const ImageMapCache &imgMapCache, 
 	props->Set(Property("scene.materials." + name + ".ka")(Ka->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".d")(depth->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".distribution")(useGgx ? "ggx" : "schlick"));
+	if (multibounce)
+		props->Set(Property("scene.materials." + name + ".multibounce")(multibounce));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;
