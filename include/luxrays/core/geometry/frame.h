@@ -47,11 +47,11 @@ public:
 		// an arbitrary orthonormal basis around a sanitized normal.
 		const Vector y0 = Cross(Z, x);
 		const float yl2 = Dot(y0, y0);
-		if (isfinite(yl2) && (yl2 > 1e-20f)) {
+		if (std::isfinite(yl2) && (yl2 > 1e-20f)) {
 			Y = Normalize(y0);
 			X = Cross(Y, Z);
 		} else {
-			if (!(isfinite(Dot(Z, Z)) && (Dot(Z, Z) > 1e-20f)))
+			if (!(std::isfinite(Dot(Z, Z)) && (Dot(Z, Z) > 1e-20f)))
 				Z = Vector(0.f, 0.f, 1.f);
 			CoordinateSystem(Z, &X, &Y);
 		}
@@ -73,7 +73,7 @@ public:
 		// Same NaN/Inf guard as the (x,y,z) constructor: never let a
 		// non-finite or zero normal reach CoordinateSystem
 		const float zl2 = Dot(z, z);
-		Z = (isfinite(zl2) && (zl2 > 1e-20f)) ? z : Vector(0.f, 0.f, 1.f);
+		Z = (std::isfinite(zl2) && (zl2 > 1e-20f)) ? z : Vector(0.f, 0.f, 1.f);
 		CoordinateSystem(Z, &X, &Y);
 	}
 
