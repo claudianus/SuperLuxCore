@@ -764,6 +764,7 @@ set(SLG_FILM_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/objectidmask.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/outputswitcher.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/vignetting.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/viewportinfill.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/premultiplyalpha.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/tonemaps/autolinear.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/imagepipeline/plugins/tonemaps/linear.cpp

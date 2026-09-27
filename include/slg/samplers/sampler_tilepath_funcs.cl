@@ -69,32 +69,9 @@ OPENCL_FORCE_INLINE void TilePathSampler_SplatSample(
 	// gid: task index supplied by the caller (wavefront-safe)
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
-#if defined(RENDER_ENGINE_RTPATHOCL)
-	__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
-	__global TilePathSample *sample = &samples[gid];
-
-	// Check if I'm in preview phase
-	if (sample->pass < taskConfig->renderEngine.rtpathocl.previewResolutionReductionStep) {
-		// I have to copy the current pixel to fill the assigned square
-		for (uint y = 0; y < taskConfig->renderEngine.rtpathocl.previewResolutionReduction; ++y) {
-			for (uint x = 0; x < taskConfig->renderEngine.rtpathocl.previewResolutionReduction; ++x) {
-				// The sample weight is very low so this value is rapidly replaced
-				// during normal rendering
-				const uint px = sampleResult->pixelX + x;
-				const uint py = sampleResult->pixelY + y;
-				// px and py are unsigned so there is no need to check if they are >= 0
-				if ((px < filmWidth) && (py < filmHeight)) {
-					Film_AddSample(px, py,
-							sampleResult, .001f
-							FILM_PARAM);
-				}
-			}
-		}
-	} else
-#endif
-		Film_AddSample(sampleResult->pixelX, sampleResult->pixelY,
-				sampleResult, 1.f
-				FILM_PARAM);
+	Film_AddSample(sampleResult->pixelX, sampleResult->pixelY,
+			sampleResult, 1.f
+			FILM_PARAM);
 }
 
 OPENCL_FORCE_INLINE void TilePathSampler_NextSample(
@@ -125,36 +102,40 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 #if defined(RENDER_ENGINE_RTPATHOCL)
 	// 1 thread for each pixel
 
-	uint pixelX, pixelY;
-	if (samplerSharedData->tilePass < taskConfig->renderEngine.rtpathocl.previewResolutionReductionStep) {
-		const uint samplesPerRow = filmWidth / taskConfig->renderEngine.rtpathocl.previewResolutionReduction;
-		const uint subPixelX = gid % samplesPerRow;
-		const uint subPixelY = gid / samplesPerRow;
-
-		pixelX = subPixelX * taskConfig->renderEngine.rtpathocl.previewResolutionReduction;
-		pixelY = subPixelY * taskConfig->renderEngine.rtpathocl.previewResolutionReduction;
-	} else {
-		const uint samplesPerRow = filmWidth / taskConfig->renderEngine.rtpathocl.resolutionReduction;
-		const uint subPixelX = gid % samplesPerRow;
-		const uint subPixelY = gid / samplesPerRow;
-
-		pixelX = subPixelX * taskConfig->renderEngine.rtpathocl.resolutionReduction;
-		pixelY = subPixelY * taskConfig->renderEngine.rtpathocl.resolutionReduction;
-
-		const uint pixelsCount = taskConfig->renderEngine.rtpathocl.resolutionReduction;
-		const uint pixelsCount2 = pixelsCount * pixelsCount;
-
-		// Rendering according a Morton curve
-		const uint pixelIndex = samplerSharedData->tilePass % pixelsCount2;
-		const uint mortonX = DecodeMorton2X(pixelIndex);
-		const uint mortonY = DecodeMorton2Y(pixelIndex);
-
-		pixelX += mortonX;
-		pixelY += mortonY;
-	}
-
-	if ((pixelX >= samplerSharedData->tileWidth) || (pixelY >= samplerSharedData->tileHeight))
+	// Viewport progressive coverage: each pass walks a rank-1 lattice
+	// over the whole tile instead of a stride-R grid refined by Morton
+	// order inside R*R cells. The old scheme left R*R stale blocks on
+	// screen until coverage completed (~R^2 passes); the lattice lands
+	// pixelCount/R^2 maximally-scattered real samples per pass, so the
+	// display-side VIEWPORT_INFILL reconstructs a coherent image that
+	// dissolves in instead of forming block ghosts.
+	const uint pixelCount = samplerSharedData->tileWidth * samplerSharedData->tileHeight;
+	const uint pass = samplerSharedData->tilePass;
+	const uint step = taskConfig->renderEngine.rtpathocl.previewResolutionReductionStep;
+	const uint previewRR = max(1u, taskConfig->renderEngine.rtpathocl.previewResolutionReduction);
+	const uint steadyRR = max(1u, taskConfig->renderEngine.rtpathocl.resolutionReduction);
+	const uint rr = (pass < step) ? previewRR : steadyRR;
+	const uint activeCount = max(1u, pixelCount / (rr * rr));
+	if (gid >= activeCount)
 		return false;
+
+	// Cumulative lattice index across variable-rate passes: the preview
+	// phase runs previewRR^2-sparse for "step" passes, then the steady
+	// sequence continues where it left off.
+	const uint previewActive = max(1u, pixelCount / (previewRR * previewRR));
+	const uint steadyActive = max(1u, pixelCount / (steadyRR * steadyRR));
+	const ulong seqIdx = (ulong)min(pass, step) * previewActive +
+			(pass > step ? (ulong)(pass - step) * steadyActive : 0ul) + gid;
+	const uint i = (uint)(seqIdx % pixelCount);
+	const uint epoch = (uint)(seqIdx / pixelCount);
+	// Knuth golden-ratio multiplier: the lattice covers a single residue
+	// coset when gcd(A, pixelCount) > 1, so the epoch offset shifts the
+	// coset once per full cycle - every pixel is reached within gcd
+	// cycles. 64-bit math keeps i*A exact.
+	const uint pix = (uint)(((ulong)i * 0x9E3779B1ul + epoch) % pixelCount);
+
+	const uint pixelX = pix % samplerSharedData->tileWidth;
+	const uint pixelY = pix / samplerSharedData->tileWidth;
 
 	sample->pass = samplerSharedData->tilePass;
 

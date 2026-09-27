@@ -47,6 +47,7 @@ namespace OCIO = OCIO_NAMESPACE;
 #include "slg/film/imagepipeline/plugins/bloom.h"
 #include "slg/film/imagepipeline/plugins/objectidmask.h"
 #include "slg/film/imagepipeline/plugins/vignetting.h"
+#include "slg/film/imagepipeline/plugins/viewportinfill.h"
 #include "slg/film/imagepipeline/plugins/coloraberration.h"
 #include "slg/film/imagepipeline/plugins/premultiplyalpha.h"
 #include "slg/film/imagepipeline/plugins/mist.h"
@@ -729,6 +730,8 @@ ImagePipeline *Film::CreateImagePipeline(const Properties &props, const string &
 					props.Get(Property(prefix + ".fstop")(2.8)).Get<double>()));
 			} else if (type == "NOP") {
 				imagePipeline->AddPlugin(new NopPlugin());
+			} else if (type == "VIEWPORT_INFILL") {
+				imagePipeline->AddPlugin(new ViewportInfillPlugin());
 			} else if (type == "GAMMA_CORRECTION") {
 				imagePipeline->AddPlugin(new GammaCorrectionPlugin(
 					props.Get(Property(prefix + ".value")(2.2)).Get<double>(),

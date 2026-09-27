@@ -263,21 +263,11 @@ void RTPathCPUSampler::NextSample(const vector<SampleResult> &sampleResults) {
 	if (firstFrameDone)
 		film->AddSample(sr->pixelX, sr->pixelY, *sr, 1.f);
 	else {
-		// A fake weight so the first frame is replaced in a short amount of time
-		const float w = engine->zoomWeight;
-
-		for (u_int py = 0; py < engine->zoomFactor; ++py) {
-			for (u_int px = 0; px < engine->zoomFactor; ++px) {
-				const u_int x = sr->pixelX + px;
-				const u_int y = sr->pixelY + py;
-
-				if ((x >= sharedData->filmSubRegion[0]) &&
-						(x <= sharedData->filmSubRegion[1]) &&
-						(y >= sharedData->filmSubRegion[2]) &&
-						(y <= sharedData->filmSubRegion[3]))
-					film->AddSample(x, y, *sr, w);
-			}
-		}
+		// Single-pixel write only: the VIEWPORT_INFILL imagepipeline plugin
+		// reconstructs the gaps, which looks far better than zoomFactor x
+		// zoomFactor blocks. A fake weight keeps the first frame easily
+		// replaced once the steady sequence reaches the pixel.
+		film->AddSample(sr->pixelX, sr->pixelY, *sr, engine->zoomWeight);
 	}
 
 	NextPixel();
