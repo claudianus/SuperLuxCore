@@ -52,9 +52,13 @@ void RTPathCPURenderEngine::StartLockLess() {
 
 void RTPathCPURenderEngine::StopLockLess() {
 	// We need to resume paused sessions first,
-	// otherwise it will hang on a thread barrier.
-	if(pauseMode)
+	// otherwise it will hang on a thread barrier. Threads parked by a
+	// scene/film edit (threadsPauseMode set while pauseMode stays false)
+	// must be released exactly the same way.
+	if (pauseMode)
 		Resume();
+	else if (threadsPauseMode)
+		ResumeThreads();
 	PathCPURenderEngine::StopLockLess();
 }
 
@@ -69,7 +73,8 @@ void RTPathCPURenderEngine::SetRuntimeResolutionReduction(const u_int reduction)
 }
 
 void RTPathCPURenderEngine::WaitNewFrame() {
-	if (!firstFrameDone && !pauseMode && !editMode) {
+	// !started: no render threads will ever signal the first frame
+	if (started && !firstFrameDone && !pauseMode && !editMode) {
 		// Wait for the signal from all the rendering threads
 		std::unique_lock<std::mutex> lock(firstFrameMutex);
 		while (firstFrameThreadDoneCount < renderThreads.size())
@@ -80,6 +85,16 @@ void RTPathCPURenderEngine::WaitNewFrame() {
 }
 
 void RTPathCPURenderEngine::PauseThreads() {
+	// Serialize against StopLockLess(): the barrier expects one arrival
+	// per render thread, so pausing once the threads have already been
+	// joined (stale session handle, failed start) would block the caller
+	// on arrive_and_wait() forever - the parties that must arrive no
+	// longer exist. Render threads never take engineMutex, so holding it
+	// across the wait cannot deadlock them.
+	std::lock_guard<std::recursive_mutex> lock(engineMutex);
+	if (!started)
+		return;
+
 	// Tell the threads to pause the rendering
 	threadsPauseMode = true;
 
@@ -88,6 +103,10 @@ void RTPathCPURenderEngine::PauseThreads() {
 }
 
 void RTPathCPURenderEngine::ResumeThreads() {
+	std::lock_guard<std::recursive_mutex> lock(engineMutex);
+	if (!started)
+		return;
+
 	threadsPauseMode = false;
 	firstFrameDone = false;
 	firstFrameThreadDoneCount = 0;
@@ -115,6 +134,10 @@ void RTPathCPURenderEngine::BeginSceneEditLockLess() {
 }
 
 void RTPathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
+	// On a stopped engine samplerSharedData is already released
+	if (!started)
+		return;
+
 	GetFilm().Reset();
 	samplerSharedData->Reset();
 	if (lightSamplerSharedData)
@@ -138,9 +161,16 @@ void RTPathCPURenderEngine::BeginFilmEdit() {
 
 // A fast path for film resize
 void RTPathCPURenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
+	std::lock_guard<std::recursive_mutex> lock(engineMutex);
+
 	// Update the film pointer
 	film = &flm;
 	filmMutex = flmMutex;
+
+	// Nothing else to do on a stopped engine (samplerSharedData is gone)
+	if (!started)
+		return;
+
 	InitFilm();
 
 	static_cast<RTPathCPUSamplerSharedData *>(samplerSharedData.get())->Reset( GetFilmPtr());
