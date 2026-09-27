@@ -59,6 +59,50 @@ Runs 1, 6, 7 of `e47` with a fresh `SUPERLUXCORE_CACHE_DIR` AND a cold
 - App-cold / OS-warm (fresh `SUPERLUXCORE_CACHE_DIR` but warm system shader
   cache): Metal ~13s (cl2msl only), OpenCL ~0.1s.
 
+## cl2msl translator optimization (`propagate_gid`, 2026-09-27)
+
+`propagate_gid` (threads `gid` through the helper call graph) was ~85%
+of translation time: the upward fixpoint re-searched every function
+body for every needing callee (~376k `re.search` over the 3.4MB
+source) and pass 2 ran one `re.finditer` per needing name over the
+whole text (~22k full-text scans total).
+
+Rewrite (same output, verified byte-identical on the e47 PathOCL
+program — emitted .msl and layout .json both `cmp`-clean):
+
+- one `_fn_spans` walk; each body is comment-stripped once and all its
+  callee candidates extracted with a single compiled pattern
+  `(?<![\w:.$])([A-Za-z_]\w*)\s*\(`
+- reverse edges callee → callers built once; fixpoint becomes a
+  worklist walk over edges (same least fixpoint, O(edges) not
+  O(names × needs × body size))
+- pass 2 is ONE whole-text `finditer` filtering matches to `needs`;
+  the per-call-site logic (paren walk, signature-skip via fresh spans,
+  last-arg / SAMPLER_PARAM / empty-call rules) is unchanged
+
+| metric | before | after |
+|---|---|---|
+| cl2msl wall (e47 PathOCL input, unprofiled) | 28.6s | 2.06–2.24s |
+| cProfile total | 36.6s | 3.25s |
+| `propagate_gid` cumulative | 30.98s | 1.48s |
+| `re.search` calls | ~398k | ~27k |
+
+New cold-run e47 numbers (fresh `SUPERLUXCORE_CACHE_DIR` + cold
+`com.apple.metal`, logs `/tmp/e47_cl_{1,2}.log`):
+
+| run | Metal compile | OpenCL compile | wall |
+|---|---|---|---|
+| before (runs 1/6/7) | 31.4–32.6s | 40.5–46.9s | 74.5–81s |
+| cl1 | 20.25s | 42.52s | 66s |
+| cl2 | 21.10s | 41.98s | 66s |
+
+The Metal leg is no longer translator-bound: ~2.3s cl2msl + ~2.9s
+`newLibraryWithSource`/archive + ~15s parallel PSO compiles.
+PATHOCL-METAL_GPU and PATHOCL-OPENCL_GPU both PASS; the .msl the run
+produced is byte-identical to the verified standalone output.
+New profile: `/tmp/cl2msl_profile_new.txt` (top entry is now
+`rule_kernel_buffer_attrs` at 2.2s, mostly `_fn_spans`/`re.sub`).
+
 ## Gotchas
 
 - **Apple's shader caches are uid-scoped, not HOME-scoped.** The OS-level

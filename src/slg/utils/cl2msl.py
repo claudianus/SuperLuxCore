@@ -311,27 +311,42 @@ def propagate_gid(text: str) -> str:
     # functions that directly use the stub
     needs = set()
     fn_map = {}
+    # One comment-stripped copy + one callee-candidate scan per body.
+    # callers maps each callee to the set of functions that call it
+    # (reverse edges), so the fixpoint below walks each edge once
+    # instead of re-searching every body for every needing name.
+    callers = {}
+    call_pat = re.compile(r"(?<![\w:.$])([A-Za-z_]\w*)\s*\(")
     for (name, hs, bo, bc) in _fn_spans(text):
         fn_map[name] = (hs, bo, bc)
-        if "get_global_id(0)" in _code_only(text[bo:bc]):
+        body = _code_only(text[bo : bc + 1])
+        if "get_global_id(0)" in body:
             needs.add(name)
+        # callee candidates, keyed by caller name - overloads share a
+        # name so the last definition wins, matching the old per-name
+        # rescan over fn_map's final span
+        callers[name] = set(cm.group(1) for cm in call_pat.finditer(body))
     if not needs:
         return text
-    # upward fixpoint: a function calling a needing function needs gid
-    changed = True
-    while changed:
-        changed = False
-        for name, (hs, bo, bc) in fn_map.items():
-            if name in needs:
-                continue
-            body = _code_only(text[bo : bc + 1])
-            for callee in needs:
-                if callee == name:
-                    continue
-                if re.search(r"(?<![\w:.$])\b" + re.escape(callee) + r"\s*\(", body):
-                    needs.add(name)
-                    changed = True
-                    break
+    # keep only edges to real function names and invert them into
+    # callee -> callers adjacency
+    rev = {}
+    for caller, cands in callers.items():
+        for c in cands:
+            if c in fn_map:
+                rev.setdefault(c, set()).add(caller)
+    callers = rev
+    # upward fixpoint: a function calling a needing function needs gid.
+    # Worklist walk over the reverse edges - same closure as the old
+    # rescan-everything loop, reached in O(edges) instead of
+    # O(names x needs x body size).
+    worklist = list(needs)
+    while worklist:
+        callee = worklist.pop()
+        for caller in callers.get(callee, ()):
+            if caller != callee and caller not in needs:
+                needs.add(caller)
+                worklist.append(caller)
     # kernels already declare 'const size_t gid = gid_;' - exclude them
     # from parameter injection (they are the roots)
     kernel_pat = re.compile(r"^kernel void\s+(\w+)\s*\(", re.M)
@@ -383,64 +398,65 @@ def propagate_gid(text: str) -> str:
     # pass 2: call sites of needing functions get ', gid' appended
     # before the matching close paren of the call. Definition headers
     # are skipped via FRESH spans - pass 1 has already shifted the
-    # offsets captured in fn_map.
+    # offsets captured in fn_map. One finditer over the whole text
+    # finds every call-shaped token; the per-name logic below is
+    # unchanged (the old code ran one finditer per needing name).
     fresh_spans = {name: (hs, bo, bc) for (name, hs, bo, bc) in _fn_spans(text)}
-    for name in needs:
-        if name == "get_global_id":
+    site_pat = re.compile(r"(?<![\w:.$])\b([A-Za-z_]\w*)\s*\(")
+    for m in site_pat.finditer(text):
+        name = m.group(1)
+        if name not in needs or name == "get_global_id":
             continue
-        for m in re.finditer(
-            r"(?<![\w:.$])\b" + re.escape(name) + r"\s*\(", text
-        ):
-            cs = m.end() - 1
-            d = 0
-            i = cs
-            while i < len(text):
-                if text[i] == "(":
-                    d += 1
-                elif text[i] == ")":
-                    d -= 1
-                    if d == 0:
-                        break
-                i += 1
-            if i >= len(text):
+        cs = m.end() - 1
+        d = 0
+        i = cs
+        while i < len(text):
+            if text[i] == "(":
+                d += 1
+            elif text[i] == ")":
+                d -= 1
+                if d == 0:
+                    break
+            i += 1
+        if i >= len(text):
+            continue
+        call_close = i
+        # skip call sites inside the function's own signature
+        # (definition header) - those are covered by pass 1
+        if name in fresh_spans:
+            fhs, fbo, _ = fresh_spans[name]
+            if fhs <= m.start() < fbo:
                 continue
-            call_close = i
-            # skip call sites inside the function's own signature
-            # (definition header) - those are covered by pass 1
-            if name in fresh_spans:
-                fhs, fbo, _ = fresh_spans[name]
-                if fhs <= m.start() < fbo:
-                    continue
-            # does the call already pass gid as its last top-level
-            # argument? (generated earlier pass, or through
-            # SAMPLER_PARAM which expands to ", gid"). seg excludes
-            # the closing paren, so scan backward at depth 0 for the
-            # last argument instead of matching a trailing paren.
-            seg = text[m.start() : call_close]
-            if "SAMPLER_PARAM" in seg:
-                continue
-            depth = 0
-            last_arg = ""
-            call_open = cs - m.start()
-            for ci in range(len(seg) - 1, -1, -1):
-                ch = seg[ci]
-                if ch == ")":
-                    depth += 1
-                elif ch == "(":
-                    depth -= 1
-                    if ci == call_open:
-                        last_arg = seg[ci + 1:].strip()
-                        break
-                elif ch == "," and depth == 0:
+        # does the call already pass gid as its last top-level
+        # argument? (generated earlier pass, or through
+        # SAMPLER_PARAM which expands to ", gid"). seg excludes
+        # the closing paren, so scan backward at depth 0 for the
+        # last argument instead of matching a trailing paren.
+        seg = text[m.start() : call_close]
+        if "SAMPLER_PARAM" in seg:
+            continue
+        depth = 0
+        last_arg = ""
+        call_open = cs - m.start()
+        for ci in range(len(seg) - 1, -1, -1):
+            ch = seg[ci]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                depth -= 1
+                if ci == call_open:
                     last_arg = seg[ci + 1:].strip()
                     break
-            if last_arg == "gid":
-                continue
-            inner = text[cs + 1 : call_close].rstrip()
-            if not inner:
-                edits.append((call_close, "", "gid"))
-            else:
-                edits.append((call_close, "", ", gid"))
+            elif ch == "," and depth == 0:
+                last_arg = seg[ci + 1:].strip()
+                break
+        if last_arg == "gid":
+            continue
+        inner = text[cs + 1 : call_close].rstrip()
+        if not inner:
+            edits.append((call_close, "", "gid"))
+        else:
+            edits.append((call_close, "", ", gid"))
     # apply edits right-to-left
     edits.sort(key=lambda t: -t[0])
     for pos, old, new in edits:
