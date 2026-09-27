@@ -34,10 +34,14 @@
 #include <sstream>
 #include <thread>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <spawn.h>
+#include <cerrno>
 #include <unistd.h>
 #include <dlfcn.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include <crt_externs.h> // _NSGetEnviron
 #endif
 
 #include "luxrays/devices/vkdevice.h"
@@ -142,6 +146,33 @@ static string GetOptPath() {
 			return derived;
 	}
 	return "opt"; // PATH lookup
+}
+
+// Run a shell command like system(), but safe for concurrent use: on
+// macOS system() takes a process-wide lock spanning the whole child
+// lifetime, so the per-kernel pools below would silently serialize
+// (measured: 4x system("sleep 3") from 4 threads = 12s wall). Spawning
+// the shell ourselves and waitpid()ing our own pid keeps N children
+// truly in flight. Returns the raw wait status, same contract as
+// system() (nonzero = failed).
+static int RunShellCmd(const string &cmd) {
+#if defined(__APPLE__)
+	char **envp = *_NSGetEnviron();
+#else
+	char **envp = environ; // declared in <unistd.h> on glibc
+#endif
+	pid_t pid;
+	char *argv[] = {
+		(char *)"sh", (char *)"-c", (char *)cmd.c_str(), nullptr
+	};
+	if (posix_spawn(&pid, "/bin/sh", nullptr, nullptr, argv, envp) != 0)
+		return -1;
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0) {
+		if (errno != EINTR)
+			return -1;
+	}
+	return status;
 }
 
 // Module handle of the MoltenVK dylib we loaded (RTLD_LOCAL — its symbols
@@ -1035,25 +1066,69 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 	// of all of them.
 	vector<string> todo;
 	map<string, string> prunedBCs;
+	// Phase 1: collect which pruned single-kernel modules are missing.
+	vector<string> toPrune;
 	for (const string &k : prog->kernelNames) {
 		const string prunedBC = cacheDir + "/" + hash + "-" + k + ".pruned.bc";
-		struct stat s3;
-		if (stat(prunedBC.c_str(), &s3) != 0) {
-			ostringstream cmd;
-			// internalize keeps only this kernel external; on the
-			// annotations-stripped input globaldce drops all other
-			// kernels and their call graphs.
-			cmd << "\"" << GetOptPath() << "\" \"" << prunedLL << "\""
-				<< " -passes='internalize,globaldce'"
-				<< " -internalize-public-api-list=" << k
-				<< " -o \"" << prunedBC << "\"";
-			if (system(cmd.str().c_str()) != 0 ||
-					stat(prunedBC.c_str(), &s3) != 0)
-				throw runtime_error(programName +
-						": opt internalize/globaldce failed for " + k);
-		}
 		prunedBCs[k] = prunedBC;
+		struct stat s3;
+		if (stat(prunedBC.c_str(), &s3) != 0)
+			toPrune.push_back(k);
+	}
+	if (!toPrune.empty()) {
+		// The opt prune stage is parallelized with the same worker-pool
+		// shape as the clspv stage below: each opt run is an independent
+		// single-threaded process, so threads are free parallelism.
+		// RunShellCmd, not system(): system() serializes across threads.
+		std::atomic<u_int> next{0};
+		std::atomic<u_int> failed{0};
+		vector<int> pruneRCs(toPrune.size(), 0);
+		const u_int nWorkers = std::min<u_int>(8, toPrune.size());
+		vector<std::thread> pool;
+		for (u_int w = 0; w < nWorkers; w++) {
+			pool.emplace_back([&, this]() {
+				for (u_int i = next++; i < toPrune.size(); i = next++) {
+					const string &k = toPrune[i];
+					const string &prunedBC = prunedBCs[k];
+					ostringstream cmd;
+					// internalize keeps only this kernel external; on the
+					// annotations-stripped input globaldce drops all other
+					// kernels and their call graphs.
+					cmd << "\"" << GetOptPath() << "\" \"" << prunedLL << "\""
+						<< " -passes='internalize,globaldce'"
+						<< " -internalize-public-api-list=" << k
+						<< " -o \"" << prunedBC << "\"";
+					const int rc = RunShellCmd(cmd.str());
+					struct stat s3;
+					if (rc != 0 || stat(prunedBC.c_str(), &s3) != 0) {
+						pruneRCs[i] = (rc != 0) ? rc : -1;
+						failed++;
+					}
+				}
+			});
+		}
+		for (auto &t : pool)
+			t.join();
+		if (failed) {
+			// Report in kernel order so the message is deterministic.
+			string names;
+			for (u_int i = 0; i < toPrune.size(); i++) {
+				if (pruneRCs[i] != 0) {
+					if (!names.empty())
+						names += ", ";
+					names += toPrune[i] + " rc=" + ToString(pruneRCs[i]);
+				}
+			}
+			throw runtime_error(programName +
+					": opt internalize/globaldce failed for " + names);
+		}
+	}
 
+	// Phase 3 (serial): hash each pruned module and pick the kernels
+	// whose .spv/.map are missing. Hashing is cheap; keeping it on the
+	// main thread is simple and deterministic.
+	for (const string &k : prog->kernelNames) {
+		const string &prunedBC = prunedBCs[k];
 		ifstream in(prunedBC, ios::binary);
 		const string khash = oclKernelPersistentCache::HashString(
 				string(istreambuf_iterator<char>(in),
@@ -1097,7 +1172,9 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 
 		std::atomic<u_int> next{0};
 		std::atomic<u_int> failed{0};
-		const u_int nWorkers = std::min<u_int>(4, todo.size());
+		// 8-way: each clspv is ~200-500MB RSS; on the M5 Pro this leaves
+		// headroom while overlapping the per-kernel SPIR-V codegen.
+		const u_int nWorkers = std::min<u_int>(8, todo.size());
 		vector<std::thread> pool;
 		for (u_int w = 0; w < nWorkers; w++) {
 			pool.emplace_back([&, this]() {
@@ -1114,7 +1191,10 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 						// Vulkan 1.2; our SPIR-V 1.6 modules still parse fine.
 						<< "\"" << GetClspvReflectionPath() << "\" -d \"" << kbase << ".spv\""
 						<< " -o \"" << kbase << ".map\"";
-					const int rc = system(cmd.str().c_str());
+					// RunShellCmd, not system(): concurrent system()
+					// calls serialize on macOS, which silently made
+					// this pool serial.
+					const int rc = RunShellCmd(cmd.str());
 					struct stat s2;
 					if (rc != 0 || stat((kbase + ".spv").c_str(), &s2) != 0 ||
 							stat((kbase + ".map").c_str(), &s2) != 0) {

@@ -315,6 +315,68 @@ vs 4.0±0.20, Stage C AS rebuild). No crashes, no validation errors, no
 new MoltenVK warnings; parallel workers sampled inside MTLCompiler XPC
 waits (no deadlock).
 
+## Vulkan `CompileProgram`: parallel opt prune + the `system()`
+serialization trap (2026-09-27)
+
+### The discovery: `system()` serializes across threads on macOS
+
+`VulkanDevice::CompileProgram` runs three per-program stages: clspv
+frontend (`.bc`), per-kernel `opt -passes='internalize,globaldce'`
+prune (`.pruned.bc`), per-kernel `clspv -x ir` + clspv-reflection
+(`.spv`+`.map`). The clspv stage already had a worker pool and the opt
+loop got the same pool shape (`std::atomic<u_int> next`/`failed`,
+`nWorkers = min(8, todo)`) — **but measured `system()` behaviour on
+macOS kills both pools**: Libc holds a process-wide lock spanning the
+whole child lifetime, so N threads calling `system()` run their
+children strictly one-at-a-time.
+
+Measured: 4 threads × `system("sleep 3")` = **12.0s wall** (children'
+own timestamps fully disjoint); the same via `posix_spawn` +
+per-thread `waitpid(pid)` = **2.0s**. The opt pool's `.pruned.bc`
+mtimes under `system()` show a uniform ~2.5s drip = serial rate, and
+the clspv-ir stage had silently been serial all along — that is the
+"clspv program compile (cold ~11min) still serial" noted in the
+previous session: the worker pool existed but never actually
+parallelized.
+
+### Fix (vkdevice.cpp)
+
+- New `RunShellCmd(cmd)`: `posix_spawn("/bin/sh", {"sh","-c",cmd})` +
+  `waitpid` on the child's own pid in each worker thread — same wait
+  status contract as `system()` (nonzero = failed), real concurrency.
+- Opt loop split into: (1) collect missing `.pruned.bc`, (2) worker
+  pool of `min(8, toPrune.size())` running `RunShellCmd`, failures
+  collected per-kernel (name+rc, reported in kernel order), (3) serial
+  hash/`kernelBasePaths`/`todo` bookkeeping on the main thread.
+- The existing clspv-ir pool switched to `RunShellCmd` too — same one-
+  word fix, same latent bug.
+- Serial single-shot `system()` calls left alone (clspv frontend,
+  llvm-dis, glslangValidator).
+
+### Measured (M5 Pro, cold `SUPERLUXCORE_CACHE_DIR`, PATHOCL = 25
+kernels + MergeSampleBuffers 4)
+
+| stage | before (`system()`) | after (`posix_spawn`) |
+|---|---|---|
+| opt prune, 25× `opt` on a 248MB `.ll` | ~62s (serial drip) | **21.4s** |
+| clspv -x ir + reflection, 25 kernels | **607.6s** | **191.5s** |
+| **CompileProgram total** | **~678s (~11.3min)** | **~228s (~3.8min), −450s** |
+
+Controlled micro-bench (same 25 opts, idle machine): serial 64.0s,
+`xargs -P8` 11.4s (5.6×); solo opt 2.3s / ~1GB RSS. Per-kernel opt
+cost is dominated by parsing the 248MB annotation-stripped `.ll` once
+per kernel — memory-bandwidth heavy, so 8-way scales ~3× in-app not
+8× (same contention pattern as the 20-way Metal pipeline phase).
+Outputs verified byte-identical: all 25 `.pruned.bc` produced by the
+parallel pool cmp-equal the serially-produced ones on the same input;
+cross-run diffs are only the cache-dir path embedded in the module
+(`source_filename`), pre-existing behaviour.
+
+Regression: `dev-tools/vulkan-regression.sh --full` ALL PASSED both
+runs (Stage A 15/15 HWRT+SW, Stage B centre 4.0000 vs 4.0±0.20, Stage
+C AS rebuild). A direct `LUXRAYS_VULKAN_RT=0 vk_intersect_test` run
+also exercised the SW-traversal CompileProgram path on the new code.
+
 ### `SUPERLUXCORE_CACHE_DIR` → `luxcore/` Vulkan tree
 
 - `luxrays::GetVulkanLuxCoreDir()` (vkdevice.cpp): `$DIR/luxcore` when the
@@ -358,6 +420,12 @@ waits (no deadlock).
   `/tmp/vk_warm_render.log` (+ `emissive-vk.png` in `/tmp/vk_warm_work/`),
   sequential app-cold `/tmp/vk_seq_full.log`, sequential true-cold
   `/tmp/vk_seq_oscold_full.log`
+- Vulkan posix_spawn pools: serial-via-system() cold
+  `/tmp/vk_optpar_full.log` + cache `/tmp/slc_vk_opt/luxcore/vkcache`,
+  real-parallel cold `/tmp/vk_optpar2_full.log` + cache
+  `/tmp/slc_vk_opt2/luxcore/vkcache`; serial opt reference outputs in
+  `/tmp/opt_serial_test/`, `/tmp/opt_run2_serial/`; system() probe:
+  `/tmp/test_system_par{,2}.c`
 - cl2msl profile (cProfile, top-25 cumulative): `/tmp/cl2msl_profile.txt` —
   ~85% of translation time is `propagate_gid()` inside
   `rule_kernel_buffer_attrs()` (regex `re.search` over function bodies).
