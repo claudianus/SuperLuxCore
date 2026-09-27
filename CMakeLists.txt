@@ -30,7 +30,12 @@ cmake_policy(VERSION 3.25)
 
 MESSAGE(STATUS "Building LuxCore ${LUXCORE_VERSION}")
 
-project(LuxCore LANGUAGES C CXX OBJCXX)
+project(LuxCore LANGUAGES C CXX)
+if(APPLE)
+	# Metal backend sources (.mm) — unused on other platforms, and the
+	# OBJCXX compiler probe fails on Windows clang toolchains
+	enable_language(OBJCXX)
+endif()
 
 MESSAGE(STATUS "C++ compiler identifier is ${CMAKE_CXX_COMPILER_ID}")
 MESSAGE(STATUS "C++ compiler version is ${CMAKE_CXX_COMPILER_VERSION}")
