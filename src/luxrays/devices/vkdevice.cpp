@@ -1089,7 +1089,10 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 			pool.emplace_back([&, this]() {
 				for (u_int i = next++; i < toPrune.size(); i = next++) {
 					const string &k = toPrune[i];
-					const string &prunedBC = prunedBCs[k];
+					// .at(), not operator[]: keys were all inserted in
+					// phase 1, so this stays a pure lookup safe to call
+					// from worker threads (operator[] could insert).
+					const string &prunedBC = prunedBCs.at(k);
 					ostringstream cmd;
 					// internalize keeps only this kernel external; on the
 					// annotations-stripped input globaldce drops all other
@@ -1128,7 +1131,7 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 	// whose .spv/.map are missing. Hashing is cheap; keeping it on the
 	// main thread is simple and deterministic.
 	for (const string &k : prog->kernelNames) {
-		const string &prunedBC = prunedBCs[k];
+		const string &prunedBC = prunedBCs.at(k);
 		ifstream in(prunedBC, ios::binary);
 		const string khash = oclKernelPersistentCache::HashString(
 				string(istreambuf_iterator<char>(in),
@@ -1186,7 +1189,7 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 					// above; clspv only compiles this kernel's reachable
 					// code, so each .spv has exactly one entry point.
 					cmd << "\"" << GetClspvPath() << "\" -x ir" << flags
-						<< " \"" << prunedBCs[k] << "\" -o \"" << kbase << ".spv\" && "
+						<< " \"" << prunedBCs.at(k) << "\" -o \"" << kbase << ".spv\" && "
 						// -d: the tool's built-in validator only knows up to
 						// Vulkan 1.2; our SPIR-V 1.6 modules still parse fine.
 						<< "\"" << GetClspvReflectionPath() << "\" -d \"" << kbase << ".spv\""
