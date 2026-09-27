@@ -60,6 +60,11 @@ ask for.
 | Huang hair (S3) | [hair.md](hair.md) | `4cfae3329` Chiang/Huang model select | `dev-tools/e36_hair_huang.py`, `e36_visual_demo.py` | CPU/OCL/Metal |
 | .lxm proxy + scene.spill out-of-core | [../engineering/out-of-core.md](../engineering/out-of-core.md) | `fe11c2ee9` v1, `c92c2f340` cluster idx, `62c7c0668` v4, `c92c2f340` stride, `c92c2f340` residency pool, spill `c92c2f340`+ | SuperBlendLuxCore `dev-tools/lxm*_test.py`, `cluster_residency_test.py`, `imagemap_stream_test.py`, `*spill*_test.py` | all (POSIX+Win COW) |
 | Diffraction grating (CD rainbow) | [diffraction.md](diffraction.md) | this branch | `dev-tools/e46_diffraction_test.py` (T1–T4), `scenes/diffraction/cd-rainbow.scn` | CPU/OCL/Metal |
+| Charlie sheen (S7) + `sheenroughness` | shared microfacet lib | this branch | `dev-tools/e47_charlie_sheen_parity.py` | CPU/OCL/Metal |
+| metal2 `edgetint` (F82) + measured n/k preset DB (S4) | `fresnelpreset.cpp` | this branch | smoke: chromium/titanium spheres | CPU/OCL/Metal |
+| CB'15 hybrid SSS remap (S2) | [../engineering/openpbr-sss-findings.md](../engineering/openpbr-sss-findings.md) | this branch | `dev-tools/e48_sss_cb15_parity.py` | CPU/OCL/Metal |
+| Sellmeier 3-term dispersion (S4) | [dispersion.md](dispersion.md) | this branch | `dev-tools/e49_sellmeier_dispersion.py` | CPU/OCL/Metal |
+| Turquin/Schlick multi-scatter (roughglass, carpaint, disney) | [multiscatter.md](multiscatter.md) | this branch | `dev-tools/e50_multibounce_parity.py`, `e50_visual_showcase.py` | CPU/OCL/Metal |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.

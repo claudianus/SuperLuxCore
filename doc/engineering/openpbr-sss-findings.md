@@ -47,3 +47,23 @@
 - Ninja multi-config: `ninja -C out/build pysuperluxcore` builds Debug only;
   the Release module needs `-f build-Release.ninja pysuperluxcore`.
 
+## CB'15 hybrid SSS remap (e48)
+
+- The CB15 diffuse-reflectance formula `Rd(α,η)` is correct in itself but
+  WRONG as an absolute albedo target at matched boundaries: at η=1 it
+  overestimates Monte-Carlo transport reflectance (~0.87 vs measured 0.83
+  for α=0.8). vdH/d'Eon fits exist precisely because they fit measured
+  reflectance at matched boundaries.
+- Correct design = **hybrid**: baseline `Rd` from vdH (exact at η=1),
+  CB15 used only as a ratio `K(α,η) = Rd_cb15(α,η)/Rd_cb15(α,1)` to model
+  internal-Fresnel trapping loss at η>1. Inverted numerically so the
+  albedo parameter is exactly what the artist picks.
+- Residual error is a diffusion-ratio limit: at low albedo + η=1.4 the
+  hybrid underestimates trapping correction (~19% at α=0.3 vs vdH's ~43%).
+- Gotcha: there are TWO homogeneous-volume GPU paths —
+  `materialdefs_funcs_homogeneousvol.cl` (volume material) AND the shared
+  material-volume path. Mirroring the remap in only one silently desyncs
+  GPU (observed: openpbr sss GPU rendered vdH, CPU cb15, ~35% off).
+- OpenPBR `subsurface_radius` is the CB15 diffusion-radius convention, so
+  the implicit interior volume maps 1:1 to `sssprofile=cb15`.
+
