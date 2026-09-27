@@ -808,8 +808,10 @@ void OpenPBRMaterial::AddReferencedTextures(std::unordered_set<const Texture *> 
 	TransmissionScatter->AddReferencedTextures(referencedTexs);
 	TransmissionScatterAniso->AddReferencedTextures(referencedTexs);
 	DispersionTex->AddReferencedTextures(referencedTexs);
-	SellmeierB->AddReferencedTextures(referencedTexs);
-	SellmeierC->AddReferencedTextures(referencedTexs);
+	if (SellmeierB)
+		SellmeierB->AddReferencedTextures(referencedTexs);
+	if (SellmeierC)
+		SellmeierC->AddReferencedTextures(referencedTexs);
 	SubsurfaceWeight->AddReferencedTextures(referencedTexs);
 	SubsurfaceColor->AddReferencedTextures(referencedTexs);
 	SubsurfaceRadius->AddReferencedTextures(referencedTexs);
@@ -893,8 +895,10 @@ PropertiesUPtr OpenPBRMaterial::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.materials." + name + ".transmissionscatter")(TransmissionScatter->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".transmissionscatteranisotropy")(TransmissionScatterAniso->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".dispersion")(DispersionTex->GetSDLValue()));
-	props->Set(Property("scene.materials." + name + ".sellmeierb")(SellmeierB->GetSDLValue()));
-	props->Set(Property("scene.materials." + name + ".sellmeierc")(SellmeierC->GetSDLValue()));
+	if (SellmeierB)
+		props->Set(Property("scene.materials." + name + ".sellmeierb")(SellmeierB->GetSDLValue()));
+	if (SellmeierC)
+		props->Set(Property("scene.materials." + name + ".sellmeierc")(SellmeierC->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfaceweight")(SubsurfaceWeight->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfacecolor")(SubsurfaceColor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".subsurfaceradius")(SubsurfaceRadius->GetSDLValue()));

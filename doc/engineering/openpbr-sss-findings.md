@@ -67,3 +67,34 @@
 - OpenPBR `subsurface_radius` is the CB15 diffusion-radius convention, so
   the implicit interior volume maps 1:1 to `sssprofile=cb15`.
 
+## Measured-media presets (e53)
+
+- `subsurfacepreset` is resolved at parse time into the *defaults* of
+  `subsurfacecolor`/`subsurfaceradius`/`subsurfaceradiusscale` — the
+  material itself is unchanged, so serialization, GPU upload and the
+  implicit-volume path needed zero new plumbing. Explicit properties
+  always win over preset defaults.
+- Table generation (`dev-tools/gen_sss_presets.py`): α = σs'/σt',
+  apparent albedo = invertible vdH/CB15-hybrid Rd(α,η) at the medium's
+  canonical IOR (1.35 milk-like / 1.4 skin / 1.5 marble), radius = mfp
+  of the strongest channel so `radiusscale` max component is exactly 1.
+- `wantSSSVol` previously required an explicit `subsurfaceradius` —
+  with a preset the property may be absent, so the gate now also fires
+  on `sssPreset` (still ANDed with `subsurfaceweight` being defined).
+- **Found bug (unrelated to SSS)**: `OpenPBRMaterial::ToProperties()`
+  and `AddReferencedTextures()` dereferenced `SellmeierB`/`SellmeierC`
+  unconditionally → `Scene.ToProperties()` segfaulted on EVERY openpbr
+  material without a sellmeier ior set. Disney material already guards
+  the same optional pair; openpbr now matches that pattern.
+
+## Skin recipe sanity numbers (meters, human head ~20 cm)
+
+- `subsurfacepreset = skin_light`/`skin_dark`, `subsurfaceweight = 1`
+  (skin's diffuse look IS the SSS — no separate diffuse lobe needed),
+  specular IOR 1.4, roughness ~0.4.
+- Translucency through ears/nostrils needs REAL thickness — the
+  implicit volume is a true random walk, not a screen-space diffusion
+  blur.
+- `gen_sss_presets.py` keeps engine `parsematerials.cpp` and the
+  adapter's `SSS_PRESETS` dict in sync — regenerate, don't hand-edit.
+
