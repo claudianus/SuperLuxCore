@@ -170,6 +170,16 @@ else()
   message(STATUS "Intel OIDN support: enabled")
 endif()
 
+# The Vulkan backend (vkdevice/vkintersectiondevice) is POSIX-only for
+# now (unistd.h/dlfcn.h + bundled clspv toolchain); disable on Windows.
+if (WIN32)
+  ADD_DEFINITIONS("-DLUXRAYS_DISABLE_VULKAN")
+
+  message(STATUS "Vulkan support: disabled (POSIX-only backend)")
+else()
+  message(STATUS "Vulkan support: enabled")
+endif()
+
 include(GNUInstallDirs)
 
 # Set path to modules (keep it after project declaration)
