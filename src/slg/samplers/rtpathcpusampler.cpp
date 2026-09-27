@@ -163,7 +163,6 @@ void RTPathCPUSampler::Reset(FilmPtr flm) {
 	film->GetDenoiser().SetEnabled(false);
 
 	myStep = sharedData->step.fetch_add(1);
-	frameHeight = RoundUp<u_int>(sharedData->filmSubRegionHeight, engine->zoomFactor);
 	if (myStep < sharedData->firstFrameSequence.size()) {
 		const auto &pc = sharedData->firstFrameSequence[myStep];
 		currentX = pc.x;
@@ -203,8 +202,9 @@ void RTPathCPUSampler::NextPixel() {
 			firstFrameDone = true;
 
 			// Hand off to the normal path with a coherent state
+			const u_int zf = Max(1u, engine->zoomFactor.load());
 			currentX = 0;
-			currentY = (myStep * engine->zoomFactor) % frameHeight;
+			currentY = (myStep * zf) % RoundUp<u_int>(sharedData->filmSubRegionHeight, zf);
 			linesDone = 0;
 		}
 	} else {
@@ -212,6 +212,10 @@ void RTPathCPUSampler::NextPixel() {
 		// skipping forward while the candidate pixel looks converged
 		// (same floor semantics as the other adaptive samplers: every
 		// pixel keeps a 1-strength acceptance probability).
+		// Snapshot the decimation factor once per call: it can change at
+		// any time via SetRuntimeResolutionReduction() without pausing
+		// the render threads.
+		const u_int zf = Max(1u, engine->zoomFactor.load());
 		for (u_int tries = 0; ; ) {
 			++currentX;
 
@@ -220,12 +224,17 @@ void RTPathCPUSampler::NextPixel() {
 				++linesDone;
 				++currentY;
 
-				if ((currentY >= sharedData->filmSubRegionHeight) || (linesDone == engine->zoomFactor)) {
+				if ((currentY >= sharedData->filmSubRegionHeight) || (linesDone >= zf)) {
 					// This should be done as atomic operation but it is only for statistics
 					film->AddSampleCount(threadIndex, sharedData->filmSubRegionWidth * linesDone, 0.0);
 
 					myStep = sharedData->step.fetch_add(1);
-					currentY = (myStep * engine->zoomFactor) % frameHeight;
+					// Modulo against the LIVE padded height: a frameHeight
+					// captured at Reset() goes stale across a runtime
+					// zoomFactor change and (myStep * zf) % staleHeight
+					// can land on a row >= filmSubRegionHeight, indexing
+					// past the end of pixelRenderSequence
+					currentY = (myStep * zf) % RoundUp<u_int>(sharedData->filmSubRegionHeight, zf);
 					linesDone = 0;
 				}
 			}

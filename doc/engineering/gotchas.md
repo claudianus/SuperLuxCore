@@ -169,6 +169,25 @@
   on PATH). Symptom: `[BISON][luxbison]` `FAILED: [code=141]` with
   empty output after a reconfigure forces the parser regen.
 
+- **RTPATHCPU strip-modulo vs live `zoomFactor` (heap OOB in
+  `RTPathCPUSampler::NextPixel`, the viewport-orbit crash)**: the
+  steady path jumps strips via `currentY = (myStep * zf) % frameHeight`.
+  `frameHeight` was a *sampler member* captured at `Reset()` while
+  `SetRuntimeResolutionReduction()` mutates `engine->zoomFactor` live
+  with no thread pause. `% RoundUp(H, zf)` is `< H` only when the padded
+  height was built with the *same* zf — a stale one (e.g. H=2300 built
+  under zf=16 → 2304, live zf=4 → `575*4 % 2304 = 2300`) emits rows in
+  `[H, frameHeight)` and indexes `pixelRenderSequence` past its end.
+  Small films absorb the overread in allocator slack; a large viewport
+  film (68 MB vector) faults ~one row past the region — and since
+  `step` is shared, ALL render threads die in `NextPixel`. The Blender
+  adapter enables `fovea`/`adaptive` by default, which is why the read
+  happens inside `NextPixel` (line ~238) rather than only `GetSample`.
+  Fix: take the modulo against the *live* `RoundUp(filmSubRegionHeight,
+  zf)` with a per-call `zf` snapshot (and `linesDone >= zf`, not `==`).
+  Verified by instrumenting the row wrap pre-fix (`currentY` reached
+  177..191 on a 177-tall film under zf 16→1 toggling) — silent under
+  the fix. Regression: `testrtpathcpudynres.py`.
 - **`Properties::SetFromString("x = true")` reads back as false.**
   `Property::Get<bool>` on a string value goes through
   `FromString<bool>` (`istringstream >> bool` without `boolalpha`), so

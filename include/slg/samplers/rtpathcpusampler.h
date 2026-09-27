@@ -129,7 +129,7 @@ private:
 	std::shared_ptr<RTPathCPUSamplerSharedData> sharedData;
 	RTPathCPURenderEngine *engine;
 
-	u_int myStep, frameHeight;
+	u_int myStep;
 	u_int currentX, currentY, linesDone;
 	bool firstFrameDone;
 	// Viewport adaptive sampling: noise-guided rejection over the
