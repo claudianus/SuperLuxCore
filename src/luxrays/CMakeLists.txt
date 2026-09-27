@@ -316,15 +316,12 @@ endif()
 # global leaf indices / per-triangle normals / meta). Used by the
 # Metal PoC to render arbitrary geometry through the engine's own
 # builder (see metal-poc/bvh_dump.cpp + bvhaccelhw.cpp BVHKernel).
-add_executable(bvh_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/bvh_dump.cpp)
-add_executable(enum_metal_test ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/enum_metal_test.cpp)
-add_executable(metal_kernel_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_kernel_smoke.cpp)
-add_executable(metal_initseed_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_initseed_smoke.cpp)
-add_executable(enum_vk_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/enum_vk_test.cpp)
-add_executable(vk_intersect_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/vk_intersect_test.cpp)
-# E9: ExtTriangleMesh vertex-motion series unit test
-# (dev-tools/deformation-motion-blur-design.md)
-add_executable(vertexmotion_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/e9_vertexmotion_test.cpp)
+# All of these are dev-only tools whose sources live outside the repo
+# (metal-poc) or link Apple frameworks, so they are skipped when the
+# sources are absent (CI checkouts) or on non-Apple platforms.
+set(_metalpoc_dir ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc)
+if(EXISTS ${_metalpoc_dir}/bvh_dump.cpp)
+add_executable(bvh_dump ${_metalpoc_dir}/bvh_dump.cpp)
 set_target_properties(bvh_dump PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 target_link_libraries(bvh_dump PRIVATE
   luxrays
@@ -333,6 +330,11 @@ target_link_libraries(bvh_dump PRIVATE
   boost::boost
   OpenMP::OpenMP_CXX
 )
+endif()
+if(APPLE AND EXISTS ${_metalpoc_dir}/enum_metal_test.cpp)
+add_executable(enum_metal_test ${_metalpoc_dir}/enum_metal_test.cpp)
+add_executable(metal_kernel_smoke ${_metalpoc_dir}/metal_kernel_smoke.cpp)
+add_executable(metal_initseed_smoke ${_metalpoc_dir}/metal_initseed_smoke.cpp)
 # Metal device enumeration smoke test (Context must list DEVICE_TYPE_METAL_GPU)
 target_link_libraries(enum_metal_test PRIVATE
   luxrays
@@ -358,16 +360,10 @@ target_link_libraries(metal_initseed_smoke PRIVATE
   OpenMP::OpenMP_CXX
   "-framework Metal"
   "-framework Foundation")
-target_link_libraries(vertexmotion_test PRIVATE
-  luxrays
-  embree::embree
-  openimageio::openimageio
-  boost::boost
-  OpenMP::OpenMP_CXX
-)
-set_target_properties(vertexmotion_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set_target_properties(enum_metal_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+add_executable(enum_vk_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/enum_vk_test.cpp)
+add_executable(vk_intersect_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/vk_intersect_test.cpp)
 # Vulkan device enumeration smoke test (Context must list DEVICE_TYPE_VULKAN_GPU)
 target_link_libraries(enum_vk_test PRIVATE
   luxrays
@@ -389,6 +385,19 @@ target_link_libraries(vk_intersect_test PRIVATE
   "-framework Metal"
   "-framework Foundation")
 set_target_properties(vk_intersect_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
+
+# E9: ExtTriangleMesh vertex-motion series unit test
+# (dev-tools/deformation-motion-blur-design.md)
+add_executable(vertexmotion_test ${CMAKE_CURRENT_SOURCE_DIR}/../../dev-tools/e9_vertexmotion_test.cpp)
+target_link_libraries(vertexmotion_test PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+)
+set_target_properties(vertexmotion_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 ################################################################################
 #
