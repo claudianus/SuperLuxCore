@@ -274,8 +274,11 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                                 // copy, so an async upload would outlive
                                 // it. One drain per override change is
                                 // cheap (this is not a per-frame path).
+                                // Base the copy on this thread's config
+                                // so per-device fields survive the
+                                // round-trip.
                                 slg::ocl::pathoclbase::GPUTaskConfiguration cfg =
-                                        engine->taskConfig;
+                                        threadTaskConfig;
                                 cfg.renderEngine.rtpathocl.resolutionReduction = target;
                                 cfg.renderEngine.rtpathocl.previewResolutionReduction =
                                         Max(target, engine->previewResolutionReduction);

@@ -351,6 +351,13 @@ protected:
 	luxrays::HardwareDeviceBuffer *raysBuff;
 	luxrays::HardwareDeviceBuffer *hitsBuff;
 	luxrays::HardwareDeviceBuffer *taskConfigBuff;
+	// Per-thread task configuration: snapshotted from
+	// renderEngine->taskConfig once init is complete. All mutable
+	// fields (PGIC refresh, deposit retire, VCM schedule) are edited
+	// here and this copy is what reaches taskConfigBuff - render
+	// threads no longer write the engine-shared structure while
+	// siblings memcpy it to their devices.
+	slg::ocl::pathoclbase::GPUTaskConfiguration threadTaskConfig;
 	luxrays::HardwareDeviceBuffer *tasksBuff;
 	luxrays::HardwareDeviceBuffer *tasksDirectLightBuff;
 	luxrays::HardwareDeviceBuffer *tasksStateBuff;

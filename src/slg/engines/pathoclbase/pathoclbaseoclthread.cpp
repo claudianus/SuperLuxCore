@@ -495,7 +495,7 @@ void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
 	intersectionDevice.EnqueueReadBuffer(pgicDepositCountersBuff, CL_TRUE,
 			4 * sizeof(u_int), counters);
 
-	const auto &pgicCfg = renderEngine->taskConfig.pathTracer.pgic;
+	const auto &pgicCfg = threadTaskConfig.pathTracer.pgic;
 	const u_int nPhotons = Min(counters[0], pgicCfg.depositPhotonCapacity);
 	const u_int nBeams = Min(counters[1], pgicCfg.depositBeamCapacity);
 
@@ -535,10 +535,10 @@ void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
 	// unlike a plain counter drain that would keep burning rays.
 	if (renderEngine->photonGICache->IsCausticFull() ||
 			((pgicDrainProduced == 0.0) && (pgicDrainTraced >= 4194304.0))) {
-		renderEngine->taskConfig.pathTracer.pgic.depositEnabled = false;
-		intersectionDevice.EnqueueWriteBuffer(taskConfigBuff, CL_FALSE,
+		threadTaskConfig.pathTracer.pgic.depositEnabled = false;
+		intersectionDevice.EnqueueWriteBuffer(taskConfigBuff, CL_TRUE,
 				sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
-				&renderEngine->taskConfig);
+				&threadTaskConfig);
 		pgicDepositsStopped = true;
 		SLG_LOG("PhotonGI GPU deposit tasks retired: " <<
 				(renderEngine->photonGICache->IsCausticFull() ?

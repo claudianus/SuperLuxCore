@@ -130,8 +130,11 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 						Get("path.lighttracing.taskfraction")).Get<double>(), 0.0, 0.9) :
 						Clamp(1.0 - cfg.Get(PathTracer::GetDefaultProps()->
 						Get("path.hybridbackforward.partition")).Get<double>(), 0.0, 0.9);
-				lightTaskCount = Min(taskCount - 8192u,
-						RoundUp<u_int>((u_int)(taskCount * f), 8192u));
+				// taskCount <= 8192 leaves no tail to steal from (the
+				// subtraction would wrap): all tasks stay eye tasks
+				lightTaskCount = (taskCount > 8192u) ?
+						Min(taskCount - 8192u,
+						RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
 				eyeTaskCount = taskCount - lightTaskCount;
 			}
 		}

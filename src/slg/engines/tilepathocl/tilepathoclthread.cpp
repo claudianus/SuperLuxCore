@@ -133,12 +133,12 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 	// traces eye + candidates + winner shadow ray (3 passes).
 	const u_int maxDepth = engine->pathTracer.maxPathDepth.depth;
 	const bool visCands =
-			(engine->taskConfig.pathTracer.restir.visCandCount > 0u);
+			(threadTaskConfig.pathTracer.restir.visCandCount > 0u);
 	// ReSTIR GI (G1 GPU): the depth-0 vertex needs 2 more trace passes
 	// (candidate bounce rays, then their NEE shadow rays) before the
 	// resolve hands the winner back to MK_GENERATE_NEXT_VERTEX_RAY.
 	const u_int giPasses =
-			(engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+			(threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 			2u : 0u;
 	const u_int worstCaseIterationCount =
 			(maxDepth == 1) ? (visCands ? 3 : 2) + giPasses :
@@ -151,10 +151,10 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 		intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff,
 				engine->taskCount + engine->lightTaskCount +
 				engine->taskCount *
-				(engine->taskConfig.pathTracer.restir.visCandCount +
+				(threadTaskConfig.pathTracer.restir.visCandCount +
 				(visCands ? RESTIR_PIXEL_MERGES_MAX : 0u) +
-				2u * engine->taskConfig.pathTracer.restirGI.giCandCount +
-				((engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+				2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
+				((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 				1u : 0u)));
 
 		// Advance to next path state
@@ -238,6 +238,10 @@ void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
         vector<TileWork> tileWorks(1);
         vector<slg::ocl::TilePathSamplerSharedData> samplerDatas(1);
         const std::function<void()> pgicUpdateCallBack = std::bind(PGICUpdateCallBack, engine->compiledScene);
+        // Caustic generation last seen by this device: the swap lands
+        // on the last barrier arrival, so threads != 0 detect it via
+        // the pass counter (Update() only returns true on thread 0)
+        u_int lastPGICPass = 0;
 
         while (!stop_token.stop_requested()) {
                 // Check if we are in pause mode
@@ -304,7 +308,30 @@ void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                 if (engine->photonGICache) {
                         const u_int spp = engine->GetFilm().GetTotalEyeSampleCount() / engine->GetFilm().GetPixelCount();
 
-                        if (engine->photonGICache->Update(threadIndex, spp, pgicUpdateCallBack)) {
+                        engine->photonGICache->Update(threadIndex, spp, pgicUpdateCallBack);
+                        // A generation swap lands on the last barrier
+                        // arrival: every render thread refreshes its own
+                        // device on the pass bump (Update() itself only
+                        // returns true on thread 0)
+                        if (engine->photonGICache->GetCausticPhotonPass() != lastPGICPass) {
+                                lastPGICPass = engine->photonGICache->GetCausticPhotonPass();
+                                // Refresh the device query fields of the
+                                // new generation (same pattern as
+                                // pathoclopenclthread.cpp): deposit fields
+                                // are session config, preserved across the
+                                // compile-struct assignment
+                                auto &pgicCfg = threadTaskConfig.pathTracer.pgic;
+                                const auto keepDeposit = pgicCfg.depositEnabled;
+                                const auto keepPhotonCap = pgicCfg.depositPhotonCapacity;
+                                const auto keepBeamCap = pgicCfg.depositBeamCapacity;
+                                pgicCfg = engine->compiledScene->compiledPathTracer.pgic;
+                                pgicCfg.depositEnabled = keepDeposit;
+                                pgicCfg.depositPhotonCapacity = keepPhotonCap;
+                                pgicCfg.depositBeamCapacity = keepBeamCap;
+                                intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+                                        CL_TRUE,
+                                        sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+                                        &threadTaskConfig);
                                 InitPhotonGI();
                                 SetKernelArgs();
                         }

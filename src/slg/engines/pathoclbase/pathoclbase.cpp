@@ -231,7 +231,13 @@ void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 	// UpdateTaskCount(). When light tracing is off the tasks run
 	// deposit-only (no connects/splats) - the cache then ingests
 	// device records instead of a CPU re-trace.
-	pgicDepositWanted = photonGICache && photonGICache->IsCausticEnabled() &&
+	// Restricted to PATHOCL: only its render loop runs
+	// MK_LIGHT_* deposit tasks and calls DrainPGIC(); other engines
+	// sharing this config (TilePathOCL, RTPATHOCL) would enable
+	// ingest-only mode without ever draining the device buffers -
+	// starving the cache (CPU re-trace is disabled by ingest-only).
+	pgicDepositWanted = (GetType() == PATHOCL) &&
+			photonGICache && photonGICache->IsCausticEnabled() &&
 			photonGICache->UseFrustumCulling() &&
 			(photonGICache->GetParams().caustic.updateSpp > 0);
 	if (pgicDepositWanted && (lightTaskCount == 0)) {
@@ -242,8 +248,12 @@ void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 				PhotonGICache::GetDefaultProps()->
 				Get("path.photongi.deposit.taskfraction")).Get<double>(),
 				0.0, 0.9);
-		lightTaskCount = Min(taskCount - 8192u,
-				RoundUp<u_int>((u_int)(taskCount * f), 8192u));
+		// taskCount <= 8192 leaves no tail to steal from (the
+		// subtraction would wrap): no deposit tasks, CPU re-trace
+		// stays in charge
+		lightTaskCount = (taskCount > 8192u) ?
+				Min(taskCount - 8192u,
+				RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
 		eyeTaskCount = taskCount - lightTaskCount;
 		if (lightTaskCount == 0)
 			SLG_LOG("WARNING: PhotonGI deposits wanted but the task "

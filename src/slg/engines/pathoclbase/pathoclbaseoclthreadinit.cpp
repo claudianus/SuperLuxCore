@@ -623,6 +623,13 @@ void PathOCLBaseOCLRenderThread::InitImageMaps() {
 void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	const u_int taskCount = renderEngine->taskCount;
 
+	// Per-thread configuration copy: everything below edits task- and
+	// device-dependent fields (ray-tail offsets, reservoir counts,
+	// clamped candidate budgets). Writing them into the engine-shared
+	// taskConfig raced siblings memcpy'ing it to their devices - and
+	// could even ship a different device's taskCount-derived offsets.
+	threadTaskConfig = renderEngine->taskConfig;
+
 	//--------------------------------------------------------------------------
 	// Allocate tasksConfigBuff
 	//--------------------------------------------------------------------------
@@ -635,12 +642,12 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// publishes the pre-spatial state every bounce) - so the buffer is
 	// skipped only when neither feature is enabled at all.
 	{
-		const auto &restirCfg = renderEngine->taskConfig.pathTracer.restir;
-		const auto &giCfg = renderEngine->taskConfig.pathTracer.restirGI;
+		const auto &restirCfg = threadTaskConfig.pathTracer.restir;
+		const auto &giCfg = threadTaskConfig.pathTracer.restirGI;
 		const bool diReuse = restirCfg.enabled &&
 				(restirCfg.temporalEnable || restirCfg.spatialEnable);
 		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
-		renderEngine->taskConfig.pathTracer.restir.reservoirCount =
+		threadTaskConfig.pathTracer.restir.reservoirCount =
 				(diReuse || giCfg.enabled) ?
 				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth() : 0;
 	}
@@ -651,7 +658,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// rays[lightVisRayBase + (gid - eyeTaskCount)] for the
 	// camera-visibility ray (dual-slot layout: one iteration per vertex).
 	// The ReSTIR/GI tails start after that region.
-	auto &lt = renderEngine->taskConfig.pathTracer.lightTracing;
+	auto &lt = threadTaskConfig.pathTracer.lightTracing;
 	lt.eyeTaskCount = renderEngine->eyeTaskCount;
 	lt.lightTaskCount = renderEngine->lightTaskCount;
 	lt.lightVisRayBase = taskCount;
@@ -665,9 +672,9 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// it like the ReSTIR tails - a truncated store drops connect
 	// strategies but stays unbiased (each exercised strategy is weighted
 	// by its own densities, no renormalization).
-	auto &vc = renderEngine->taskConfig.pathTracer.vertexConnect;
+	auto &vc = threadTaskConfig.pathTracer.vertexConnect;
 	if (vc.enabled && (renderEngine->lightTaskCount > 0)) {
-		vc.slotsPerTask = renderEngine->taskConfig.pathTracer.maxPathDepth.depth;
+		vc.slotsPerTask = threadTaskConfig.pathTracer.maxPathDepth.depth;
 		const size_t vcBytesPerSlot = sizeof(slg::ocl::pathoclbase::VCLightVertex);
 		const size_t vcByteBudget = (size_t)384 * 1024 * 1024;
 		const u_int maxSlots = (u_int)(vcByteBudget /
@@ -734,9 +741,9 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// after the per-pixel reservoirs.
 	// K is capped at 8: candidate shadow rays are the dominant memory
 	// cost (taskCount * K * (sizeof(Ray) + sizeof(RayHit))).
-	if (renderEngine->taskConfig.pathTracer.restir.enabled &&
-			renderEngine->taskConfig.pathTracer.restir.visibilityEnable) {
-		auto &restir = renderEngine->taskConfig.pathTracer.restir;
+	if (threadTaskConfig.pathTracer.restir.enabled &&
+			threadTaskConfig.pathTracer.restir.visibilityEnable) {
+		auto &restir = threadTaskConfig.pathTracer.restir;
 		restir.visCandCount = Min(8u, restir.candidateCount);
 
 		// Low-resource guard: the candidate tail costs
@@ -773,10 +780,10 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		// screen-space neighbour-pixel merge replaces it).
 		restir.visCandDataOffset = restir.reservoirCount;
 	} else {
-		renderEngine->taskConfig.pathTracer.restir.visibilityEnable = false;
-		renderEngine->taskConfig.pathTracer.restir.visCandCount = 0;
-		renderEngine->taskConfig.pathTracer.restir.visCandRayBase = rayTailBase;
-		renderEngine->taskConfig.pathTracer.restir.visCandDataOffset = 0;
+		threadTaskConfig.pathTracer.restir.visibilityEnable = false;
+		threadTaskConfig.pathTracer.restir.visCandCount = 0;
+		threadTaskConfig.pathTracer.restir.visCandRayBase = rayTailBase;
+		threadTaskConfig.pathTracer.restir.visCandDataOffset = 0;
 	}
 
 	// ReSTIR GI (G1 GPU): the GI state shares restirReservoirsBuff -
@@ -787,8 +794,8 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	// rounded up to whole slots like the DI candidate region.
 	{
 		namespace podt = slg::ocl::pathoclbase;
-		auto &gi = renderEngine->taskConfig.pathTracer.restirGI;
-		auto &restir = renderEngine->taskConfig.pathTracer.restir;
+		auto &gi = threadTaskConfig.pathTracer.restirGI;
+		auto &restir = threadTaskConfig.pathTracer.restir;
 		const u_int reservoirCount = restir.reservoirCount;
 		// Byte size of the DI candidate region that precedes the GI
 		// data (0 when visibility is off).
@@ -859,7 +866,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		}
 	}
 
-	intersectionDevice.AllocBufferRO(&taskConfigBuff, &renderEngine->taskConfig, sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration), "GPUTaskConfiguration");
+	intersectionDevice.AllocBufferRO(&taskConfigBuff, &threadTaskConfig, sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration), "GPUTaskConfiguration");
 
 	//--------------------------------------------------------------------------
 	// Allocate tasksBuff
@@ -1248,11 +1255,11 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	const u_int raySlotCount = taskCount +
 			renderEngine->lightTaskCount +
 			taskCount * (
-			((renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
-			(renderEngine->taskConfig.pathTracer.restir.visCandCount +
+			((threadTaskConfig.pathTracer.restir.visCandCount > 0u) ?
+			(threadTaskConfig.pathTracer.restir.visCandCount +
 			RESTIR_PIXEL_MERGES_MAX) : 0u) +
-			2u * renderEngine->taskConfig.pathTracer.restirGI.giCandCount +
-			((renderEngine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+			2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
+			((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 			1u : 0u));
 	intersectionDevice.AllocBufferRW(&raysBuff, nullptr, sizeof(Ray) * raySlotCount, "Ray");
 	intersectionDevice.AllocBufferRW(&hitsBuff, nullptr, sizeof(RayHit) * raySlotCount, "RayHit");
@@ -1307,10 +1314,10 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// paired task, and vcVertexCount is rewritten by MK_LIGHT_INIT on
 	// every new light subpath before any eye task can reach the
 	// connect state (several iterations of lead time).
-	if (renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount > 0)
+	if (threadTaskConfig.pathTracer.vertexConnect.vertexCount > 0)
 		intersectionDevice.AllocBufferRW(&vcVerticesBuff, nullptr,
 				sizeof(slg::ocl::pathoclbase::VCLightVertex) *
-				renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount,
+				threadTaskConfig.pathTracer.vertexConnect.vertexCount,
 				"VCLightVertices");
 	else
 		intersectionDevice.FreeBuffer(&vcVerticesBuff);
@@ -1320,7 +1327,7 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// atomic fill counter per bucket. Rebuilt every iteration by the
 	// VCResetMergeHash/VCBuildMergeHash kernels so bucket placement
 	// always reflects the current vertex positions.
-	const auto &vcm = renderEngine->taskConfig.pathTracer.vertexConnect;
+	const auto &vcm = threadTaskConfig.pathTracer.vertexConnect;
 	if (vcm.enabled && vcm.mergeEnable) {
 		std::vector<u_int> zeroHash(
 				VC_MERGE_BUCKETS * (VC_MERGE_CAPACITY + 1), 0u);
@@ -1333,7 +1340,7 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// (landed luminance, spent connect rays) plus a global pair, all
 	// float and CAS-accumulated on device. The kernel derives the tile
 	// geometry from filmWidth/filmHeight with the same formula.
-	const auto &vcfg = renderEngine->taskConfig.pathTracer.vertexConnect;
+	const auto &vcfg = threadTaskConfig.pathTracer.vertexConnect;
 	if (vcfg.enabled && (vcfg.connects > 0) && vcfg.adaptive) {
 		const u_int effTilesX = (renderEngine->GetFilm().GetWidth() + 15) / 16;
 		const u_int effTilesY = (renderEngine->GetFilm().GetHeight() + 15) / 16;
@@ -1362,7 +1369,7 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// radius) plus a monotonic fill counter used as the ring cursor.
 	// Zero-filled: count 0 means "no hotspot learned yet".
 	if ((renderEngine->lightTaskCount > 0) &&
-			renderEngine->taskConfig.pathTracer.lightTracing.focusEnable &&
+			threadTaskConfig.pathTracer.lightTracing.focusEnable &&
 			(renderEngine->compiledScene->lightDefs.size() > 0)) {
 		const u_int lightCount = renderEngine->compiledScene->lightDefs.size();
 		std::vector<float> zeroFocus(4 * LIGHT_FOCUS_K * lightCount, 0.f);
@@ -1420,21 +1427,21 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 
 	{
 		const u_int reservoirCount =
-				renderEngine->taskConfig.pathTracer.restir.reservoirCount;
+				threadTaskConfig.pathTracer.restir.reservoirCount;
 		// The visibility-candidate records are appended after the
 		// per-pixel reservoirs: taskCount * (K + RESTIR_PIXEL_MERGES_MAX)
 		// RestirVisCandidate records, sized in bytes and rounded up to
 		// whole reservoir slots so the layout stays correct if the two
 		// structs' sizes diverge again (both are 56B today).
 		const u_int candTailCount =
-				(renderEngine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
-				taskCount * (renderEngine->taskConfig.pathTracer.restir.visCandCount +
+				(threadTaskConfig.pathTracer.restir.visCandCount > 0u) ?
+				taskCount * (threadTaskConfig.pathTracer.restir.visCandCount +
 				RESTIR_PIXEL_MERGES_MAX) : 0u;
 		// ReSTIR GI (G1 GPU): per-pixel GI reservoirs then the per-task
 		// candidate/result records follow the DI region. The offsets
 		// were computed in InitGPUTaskBuffer() (giReservoirOffset/
 		// giCandDataOffset/giCandStride, all in reservoir-slot units).
-		const auto &gi = renderEngine->taskConfig.pathTracer.restirGI;
+		const auto &gi = threadTaskConfig.pathTracer.restirGI;
 		const u_int giTotalSlots = (gi.giCandCount > 0u) ?
 				(gi.giCandDataOffset + taskCount * gi.giCandStride) :
 				(gi.giReservoirOffset + (u_int)(

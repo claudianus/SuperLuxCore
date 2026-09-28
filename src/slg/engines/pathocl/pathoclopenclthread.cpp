@@ -201,7 +201,7 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			// the light population accumulates sub-paths. Kernels read the
 			// current values from taskConfig; the merge hash cell size
 			// tracks mergeRadius so queries stay self-consistent.
-			auto &vc = engine->taskConfig.pathTracer.vertexConnect;
+			auto &vc = threadTaskConfig.pathTracer.vertexConnect;
 			if (vc.enabled && vc.mergeEnable && (vc.mergeAlpha < 1.f) &&
 					(engine->lightTaskCount > 0)) {
 				const u_int mergePass = (u_int)(lightSampleCount / engine->lightTaskCount);
@@ -218,9 +218,9 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 					vc.misVmWeightFactor = etaVCM * etaVCM;
 					vc.vmNorm = 1.f / (M_PI * r * r * nVM);
 					intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
-							CL_FALSE,
+							CL_TRUE,
 							sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
-							&engine->taskConfig);
+							&threadTaskConfig);
 				}
 			}
 
@@ -244,11 +244,11 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		// Must match the allocation in InitGPUTaskBuffer().
 		const u_int raySlotCount = taskCount + engine->lightTaskCount +
 				taskCount * (
-				((engine->taskConfig.pathTracer.restir.visCandCount > 0u) ?
-				(engine->taskConfig.pathTracer.restir.visCandCount +
+				((threadTaskConfig.pathTracer.restir.visCandCount > 0u) ?
+				(threadTaskConfig.pathTracer.restir.visCandCount +
 				RESTIR_PIXEL_MERGES_MAX) : 0u) +
-				2u * engine->taskConfig.pathTracer.restirGI.giCandCount +
-				((engine->taskConfig.pathTracer.restirGI.giCandCount > 0u) ?
+				2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
+				((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 				1u : 0u));
 		for (u_int i = 0; i < iterations; ++i) {
 			// Mid-batch abort check: each iteration is ~10ms of queued
@@ -324,7 +324,7 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				// previously they stayed at their startup values for the
 				// whole render. Deposit fields are session config that
 				// CompilePhotonGI() resets, so preserve the live values.
-				auto &pgicCfg = engine->taskConfig.pathTracer.pgic;
+				auto &pgicCfg = threadTaskConfig.pathTracer.pgic;
 				const auto keepDeposit = pgicCfg.depositEnabled;
 				const auto keepPhotonCap = pgicCfg.depositPhotonCapacity;
 				const auto keepBeamCap = pgicCfg.depositBeamCapacity;
@@ -333,9 +333,9 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				pgicCfg.depositPhotonCapacity = keepPhotonCap;
 				pgicCfg.depositBeamCapacity = keepBeamCap;
 				intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
-						CL_FALSE,
+						CL_TRUE,
 						sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
-						&engine->taskConfig);
+						&threadTaskConfig);
 				InitPhotonGI();
 				SetKernelArgs();
 			}

@@ -407,14 +407,14 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// see InitGPUTaskBuffer). It carries the KERNEL_ARGS tail plus the
 	// light path infos + vertex cache (2 extra args, not the full
 	// KERNEL_ARGS_LIGHT tail - same Apple argument-limit concern).
-	if (renderEngine->taskConfig.pathTracer.vertexConnect.enabled) {
+	if (threadTaskConfig.pathTracer.vertexConnect.enabled) {
 		jobs.push_back({&advancePathsKernel_MK_VC_CONNECT, nullptr, true, "AdvancePaths_MK_VC_CONNECT"});
 
 		// Vertex merging (M7): the spatial hash over the vertex cache is
 		// rebuilt every iteration (reset counters, re-insert all current
 		// vertices) so bucket placement always matches the positions the
 		// connect pass sees this iteration.
-		if (renderEngine->taskConfig.pathTracer.vertexConnect.mergeEnable) {
+		if (threadTaskConfig.pathTracer.vertexConnect.mergeEnable) {
 			jobs.push_back({&advancePathsKernel_VCResetMergeHash, nullptr, true, "AdvancePaths_VCResetMergeHash"});
 			jobs.push_back({&advancePathsKernel_VCBuildMergeHash, nullptr, true, "AdvancePaths_VCBuildMergeHash"});
 		}
@@ -881,7 +881,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	// the Apple OpenCL->Metal translator past its buffer-argument limit
 	// (dispatch crashed in AGX::ComputeContext::prepareForEnqueue on
 	// TILEPATHOCL with ReSTIR disabled).
-	const auto &restirCfg = renderEngine->taskConfig.pathTracer.restir;
+	const auto &restirCfg = threadTaskConfig.pathTracer.restir;
 	if (advancePathsKernel_MK_RT_RESTIR && restirCfg.visibilityEnable &&
 			restirCfg.visCandCount > 0)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_RESTIR,
@@ -902,8 +902,8 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	// the needsTrace flag (their NEE hits only exist after the next
 	// trace pass). Same reachability gate as MK_RT_RESTIR: tasks only
 	// enter MK_RT_GI_BOUNCE when ReSTIR GI candidates are enabled.
-	const bool giEnabled = renderEngine->taskConfig.pathTracer.restirGI.enabled &&
-			renderEngine->taskConfig.pathTracer.restirGI.giCandCount > 0;
+	const bool giEnabled = threadTaskConfig.pathTracer.restirGI.enabled &&
+			threadTaskConfig.pathTracer.restirGI.giCandCount > 0;
 	if (advancePathsKernel_MK_RT_GI_BOUNCE && giEnabled)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_BOUNCE,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
@@ -925,7 +925,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	if (advancePathsKernel_VCBuildMergeHash)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_VCBuildMergeHash,
 				HardwareDeviceRange(
-						renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount),
+						threadTaskConfig.pathTracer.vertexConnect.vertexCount),
 				HardwareDeviceRange(advancePathsWorkGroupSize));
 	if (advancePathsKernel_MK_VC_CONNECT)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_VC_CONNECT,
@@ -995,7 +995,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	if (advancePathsKernel_VCBuildMergeHash)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_VCBuildMergeHash,
 				HardwareDeviceRange(
-						renderEngine->taskConfig.pathTracer.vertexConnect.vertexCount),
+						threadTaskConfig.pathTracer.vertexConnect.vertexCount),
 				HardwareDeviceRange(advancePathsWorkGroupSize));
 
 	// Debug (LUXRAYS_WAVEFRONT_DEBUG=1): validate that every queued task
