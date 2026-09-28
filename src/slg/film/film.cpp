@@ -104,6 +104,7 @@ Film::Film() {
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
+	adaptiveError = nullptr;
 	haltTime = 0.0;
 	haltSPP = 0;
 	haltSPP_PixelNormalized = 0;
@@ -181,6 +182,7 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 
 	convTest = nullptr;
 	noiseEstimation = nullptr;
+	adaptiveError = nullptr;
 	haltTime = 0.0;
 
 	haltSPP = 0;
@@ -200,6 +202,14 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 	noiseEstimationTestStep = 32;
 	noiseEstimationFilterScale = 4;
 	noiseEstimationImagePipelineIndex = 0;
+
+	// Statistical adaptive error (E5): disabled unless
+	// film.adaptiveerror.target is set
+	adaptiveErrorTarget = 0.f;
+	adaptiveErrorWarmUp = 8;
+	adaptiveErrorTestStep = 16;
+	adaptiveErrorMinSamples = 4;
+	adaptiveErrorHaltEnable = true;
 
 	isAsyncImagePipelineRunning = false;
 	imagePipelineThread = nullptr;
@@ -231,6 +241,7 @@ Film::~Film() {
 
 	delete convTest;
 	delete noiseEstimation;
+	delete adaptiveError;
 
 	FreeChannels();
 }
@@ -295,6 +306,23 @@ void Film::CopyHaltSettings(const Film &film) {
 			noiseEstimationImagePipelineIndex
 		);
 	}
+
+	adaptiveErrorTarget = film.adaptiveErrorTarget;
+	adaptiveErrorWarmUp = film.adaptiveErrorWarmUp;
+	adaptiveErrorTestStep = film.adaptiveErrorTestStep;
+	adaptiveErrorMinSamples = film.adaptiveErrorMinSamples;
+	adaptiveErrorHaltEnable = film.adaptiveErrorHaltEnable;
+
+	if (film.adaptiveError) {
+		delete adaptiveError;
+		adaptiveError = nullptr;
+
+		adaptiveError = new FilmAdaptiveError(
+			*this, adaptiveErrorTarget, adaptiveErrorWarmUp,
+			adaptiveErrorTestStep, adaptiveErrorMinSamples,
+			adaptiveErrorHaltEnable
+		);
+	}
 }
 
 void Film::SetThreadCount(const u_int threadCount) {
@@ -331,6 +359,17 @@ void Film::Init() {
 		noiseEstimation = new FilmNoiseEstimation(
 			*this, noiseEstimationWarmUp, noiseEstimationTestStep,
 			noiseEstimationFilterScale, noiseEstimationImagePipelineIndex
+		);
+
+	// Statistical adaptive error test: enabled by film.adaptiveerror.target.
+	// Runs on VARIANCE/SAMPLECOUNT/RADIANCE_PER_PIXEL_NORMALIZED (all
+	// auto-requested by Parse when the target is set) so it works for
+	// both CPU and GPU accumulated films.
+	if ((adaptiveErrorTarget > 0.f) && !adaptiveError)
+		adaptiveError = new FilmAdaptiveError(
+			*this, adaptiveErrorTarget, adaptiveErrorWarmUp,
+			adaptiveErrorTestStep, adaptiveErrorMinSamples,
+			adaptiveErrorHaltEnable
 		);
 
 	initialized = true;
@@ -648,6 +687,10 @@ void Film::Resize(const u_int w, const u_int h) {
 	// Clear(), same as the NOISE channel, so the estimate survives film
 	// restarts)
 	pixelLumaMoments.assign(2 * pixelCount, 0.f);
+
+	// The adaptive error map is pixel-sized too
+	if (adaptiveError)
+		adaptiveError->Reset();
 
 	// Reset BCD statistics accumulator (I need to redo the warmup period)
 	filmDenoiser->Reset();
@@ -1478,6 +1521,8 @@ void Film::ResetTests() {
 		convTest->Reset();
 	if (noiseEstimation)
 		noiseEstimation->Reset();
+	if (adaptiveError)
+		adaptiveError->Reset();
 }
 
 void Film::RunTests() {
@@ -1561,6 +1606,27 @@ void Film::RunTests() {
 		ExecuteImagePipeline(noiseEstimationImagePipelineIndex);
 		// Run the noise estimation test
 		noiseEstimation->Test();
+	}
+
+	// Statistical adaptive error test: reads raw film channels (no image
+	// pipeline needed) so it is valid for CPU and GPU merged films alike.
+	// When enabled it is also the NOISE channel writer of last resort,
+	// superseding the image-diff heuristic map for the samplers.
+	if (adaptiveError && adaptiveError->IsTestUpdateRequired()) {
+		adaptiveError->Test();
+
+		if (adaptiveErrorHaltEnable) {
+			// Global noise level (95th pct of the dilated rel-error map)
+			// at or under target: rendering is done, Corona-style.
+			if (adaptiveError->noiseLevel <= adaptiveErrorTarget) {
+				SLG_LOG("Adaptive error " << (adaptiveError->noiseLevel * 100.f) <<
+					"% <= target " << (adaptiveErrorTarget * 100.f) <<
+					"%, rendering done.");
+				statsConvergence = 1.f;
+			} else
+				statsConvergence = Max(statsConvergence,
+						static_cast<double>(adaptiveError->convergedRatio));
+		}
 	}
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

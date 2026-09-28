@@ -42,6 +42,7 @@
 #include "slg/film/framebuffer.h"
 #include "slg/film/filmoutputs.h"
 #include "slg/film/convtest/filmconvtest.h"
+#include "slg/film/adaptiveerror/filmadaptiveerror.h"
 #include "slg/film/noiseestimation/filmnoiseestimation.h"
 #include "slg/film/denoiser/filmdenoiser.h"
 #include "slg/utils/varianceclamping.h"
@@ -331,6 +332,11 @@ public:
 	// Convergence can be set by external source (like TileRepository convergence test)
 	void SetConvergence(const float conv) { statsConvergence = conv; }
 	float GetConvergence() { return statsConvergence; }
+
+	// Statistical adaptive error test (E5): nullptr when disabled
+	// (adaptiveErrorTarget <= 0). Used by engines for
+	// stats.renderengine.noiselevel and by samplers for the done map.
+	const FilmAdaptiveError *GetAdaptiveError() const { return adaptiveError; }
 
 	// EXR metadata injection (e.g. Cryptomatte manifests). The session
 	// fills this once the scene is known; Film::Output writes every
@@ -623,10 +629,15 @@ private:
 
 	// Adaptive sampling
 	FilmNoiseEstimation *noiseEstimation;
+	FilmAdaptiveError *adaptiveError;
 
 	u_int noiseEstimationWarmUp, noiseEstimationTestStep;
 	u_int noiseEstimationFilterScale;
 	u_int noiseEstimationImagePipelineIndex;
+
+	float adaptiveErrorTarget;
+	u_int adaptiveErrorWarmUp, adaptiveErrorTestStep, adaptiveErrorMinSamples;
+	bool adaptiveErrorHaltEnable;
 
 	FilmOutputs filmOutputs;
 
@@ -642,7 +653,7 @@ template<> void Film::GetOutput<u_int>(const FilmOutputs::FilmOutputType type, u
 
 }
 
-BOOST_CLASS_VERSION(slg::Film, 29)
+BOOST_CLASS_VERSION(slg::Film, 30)
 BOOST_CLASS_VERSION(slg::FilmSamplesCounts, 1)
 
 BOOST_CLASS_EXPORT_KEY(slg::Film)

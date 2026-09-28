@@ -2377,6 +2377,14 @@ void RenderSessionImpl::UpdateStats() {
 	stats->Set(Property("stats.renderengine.time")(renderSession->renderEngine->GetRenderingTime()));
 	stats->Set(Property("stats.renderengine.convergence")(renderSession->film->GetConvergence()));
 
+	// Global noise level from the statistical adaptive error test
+	// (95th pct of the dilated relative-error map; NaN when disabled)
+	{
+		const slg::FilmAdaptiveError *ae = renderSession->film->GetAdaptiveError();
+		stats->Set(Property("stats.renderengine.noiselevel")(
+				ae ? ae->noiseLevel : std::numeric_limits<float>::quiet_NaN()));
+	}
+
 	// Intersection devices statistics
 	const auto idevices = renderSession->renderEngine->GetIntersectionDevices();
 

@@ -1123,5 +1123,33 @@ void Film::Parse(PropertiesRPtr props) {
 			noiseEstimationImagePipelineIndex
 		);
 	}
+
+	//--------------------------------------------------------------------------
+	// Statistical adaptive error test (E5). A single knob for artists:
+	// film.adaptiveerror.target is the tolerated relative pixel error
+	// (e.g. 0.02 = 2% noise). Setting it implies the channels needed by
+	// the estimator and lets samplers consume the NOISE importance map.
+	//--------------------------------------------------------------------------
+
+	adaptiveErrorTarget = props->Get(Property("film.adaptiveerror.target")(0.f)).Get<float>();
+	adaptiveErrorWarmUp = props->Get(Property("film.adaptiveerror.warmup")(8)).Get<u_int>();
+	adaptiveErrorTestStep = props->Get(Property("film.adaptiveerror.step")(16)).Get<u_int>();
+	adaptiveErrorMinSamples = props->Get(Property("film.adaptiveerror.minsamples")(4)).Get<u_int>();
+	adaptiveErrorHaltEnable = props->Get(Property("film.adaptiveerror.halt.enable")(true)).Get<bool>();
+
+	if (adaptiveErrorTarget > 0.f) {
+		AddChannel(VARIANCE);
+		AddChannel(SAMPLECOUNT);
+		AddChannel(NOISE);
+
+		delete adaptiveError;
+		adaptiveError = nullptr;
+
+		adaptiveError = new FilmAdaptiveError(
+			*this, adaptiveErrorTarget, adaptiveErrorWarmUp,
+			adaptiveErrorTestStep, adaptiveErrorMinSamples,
+			adaptiveErrorHaltEnable
+		);
+	}
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -731,6 +731,7 @@ set(SLG_FILM_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/film/framebuffer.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/sampleresult.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/convtest/filmconvtest.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/film/adaptiveerror/filmadaptiveerror.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/noiseestimation/filmnoiseestimation.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/denoiser/filmdenoiser.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/film/denoiser/samplesaccumulator.cpp

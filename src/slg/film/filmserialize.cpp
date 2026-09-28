@@ -145,6 +145,13 @@ template<class Archive> void Film::load(Archive &ar, const u_int version) {
 	ar & noiseEstimationTestStep;
 	ar & noiseEstimationFilterScale;
 
+	ar & adaptiveError;
+	ar & adaptiveErrorTarget;
+	ar & adaptiveErrorWarmUp;
+	ar & adaptiveErrorTestStep;
+	ar & adaptiveErrorMinSamples;
+	ar & adaptiveErrorHaltEnable;
+
 	ar & filmOutputs;
 
 	ar & initialized;
@@ -241,6 +248,13 @@ template<class Archive> void Film::save(Archive &ar, const u_int version) const 
 	ar & noiseEstimationWarmUp;
 	ar & noiseEstimationTestStep;
 	ar & noiseEstimationFilterScale;
+
+	ar & adaptiveError;
+	ar & adaptiveErrorTarget;
+	ar & adaptiveErrorWarmUp;
+	ar & adaptiveErrorTestStep;
+	ar & adaptiveErrorMinSamples;
+	ar & adaptiveErrorHaltEnable;
 
 	ar & filmOutputs;
 
