@@ -129,6 +129,11 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 	// BIDIRVMCPU's per-iteration schedule since each CPU iteration also
 	// traces lightPathsCount sub-paths. Only rewritten when it changes.
 	u_int lastVCMergePass = 0;
+	double lastPGICDrainLightCount = 0.0;
+	// PhotonGI generation counter seen by this thread: a change means a
+	// cache swap landed inside Update()'s barrier (per-thread refresh
+	// of taskConfig + query buffers; thread 0 is not the only device)
+	u_int lastPGICPass = 0;
 
 	while (!stop_token.stop_requested()) {
 		//if (threadIndex == 0)
@@ -179,6 +184,17 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				lightSampleCount += gpuTaskStats[i].sampleCount;
 			threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
 					eyeSampleCount, lightSampleCount);
+
+			// PhotonGI GPU photon generation (B1'): drain the deposit
+			// buffers while the queue is synchronized; the light-task
+			// sample counter delta feeds the cache's traced-path
+			// normalization (paths that produced these deposits).
+			if (engine->pgicDepositWanted) {
+				const u_int tracedDelta = (u_int)(lightSampleCount -
+						lastPGICDrainLightCount);
+				lastPGICDrainLightCount = lightSampleCount;
+				DrainPGIC(tracedDelta);
+			}
 
 			// Progressive vertex-merge radius (VCM schedule): shrink the
 			// merge kernel radius and re-derive the SmallVCM constants as
@@ -280,10 +296,49 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			break;
 
 		if (engine->photonGICache) {
-                    if (engine->photonGICache->Update(threadIndex, engine->GetTotalEyeSPP(), pgicUpdateCallBack)) {
-                            InitPhotonGI();
-                            SetKernelArgs();
-                    }
+			engine->photonGICache->Update(threadIndex, engine->GetTotalEyeSPP(), pgicUpdateCallBack);
+			// A generation swap landed (pass counter bumped inside the
+			// barrier completion): every render thread detects it here -
+			// not only thread 0 - so multi-device sessions refresh each
+			// device's taskConfig fields and query buffers alike.
+			if (engine->photonGICache->GetCausticPhotonPass() != lastPGICPass) {
+				lastPGICPass = engine->photonGICache->GetCausticPhotonPass();
+				// B1': flush pending deposits before the query buffers
+				// are recompiled (the queue is synchronized here); the
+				// append buffers persist.
+				if (engine->pgicDepositWanted && (engine->lightTaskCount > 0)) {
+					intersectionDevice.EnqueueReadBuffer(taskStatsBuff, CL_TRUE,
+							sizeof(slg::ocl::pathoclbase::GPUTaskStats) * taskCount,
+							gpuTaskStats.get());
+					double lightSampleCount = 0.0;
+					for (size_t i = taskCount - engine->lightTaskCount;
+							i < taskCount; ++i)
+						lightSampleCount += gpuTaskStats[i].sampleCount;
+					const u_int tracedDelta = (u_int)(lightSampleCount -
+							lastPGICDrainLightCount);
+					lastPGICDrainLightCount = lightSampleCount;
+					DrainPGIC(tracedDelta);
+				}
+				// Refresh the device query fields of the new generation
+				// (traced-path normalization + shrunken lookup radius) -
+				// previously they stayed at their startup values for the
+				// whole render. Deposit fields are session config that
+				// CompilePhotonGI() resets, so preserve the live values.
+				auto &pgicCfg = engine->taskConfig.pathTracer.pgic;
+				const auto keepDeposit = pgicCfg.depositEnabled;
+				const auto keepPhotonCap = pgicCfg.depositPhotonCapacity;
+				const auto keepBeamCap = pgicCfg.depositBeamCapacity;
+				pgicCfg = engine->compiledScene->compiledPathTracer.pgic;
+				pgicCfg.depositEnabled = keepDeposit;
+				pgicCfg.depositPhotonCapacity = keepPhotonCap;
+				pgicCfg.depositBeamCapacity = keepBeamCap;
+				intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+						CL_FALSE,
+						sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+						&engine->taskConfig);
+				InitPhotonGI();
+				SetKernelArgs();
+			}
 		}
 	} // ~while
 

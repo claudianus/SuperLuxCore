@@ -255,6 +255,14 @@ typedef struct {
 		// per-volume photongi.enable flag (volumes default it to false)
 		int causticVolumeBeams;
 
+		// GPU photon generation (B1'): light tasks double as photon
+		// paths - each MK_LIGHT_VERTEX hit appends caustic photon/beam
+		// records to the deposit buffers, drained by the host into the
+		// cache update path. Enabled only with frustum culling (the
+		// device has no visibility map). 0-capacity disables a kind.
+		int depositEnabled;
+		unsigned int depositPhotonCapacity, depositBeamCapacity;
+
 		PhotonGIDebugType debugType;
 	} pgic;
 

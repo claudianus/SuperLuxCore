@@ -6559,6 +6559,17 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		 * MK_LIGHT_VERTEX. NULL when vertexConnect is disabled */ \
 		, __global VCLightVertex *lightVertices
 
+// PhotonGI GPU photon generation (B1'): deposit append buffers +
+// atomic counters, written only by MK_LIGHT_VERTEX (kept out of
+// KERNEL_ARGS for the same Apple argument-limit reason as
+// KERNEL_ARGS_LIGHT; bound only on that kernel).
+// pgicDepositCounters layout: [0] photon cursor, [1] beam cursor,
+// [2] photon overflow, [3] beam overflow.
+#define KERNEL_ARGS_PGIC_DEPOSIT \
+		, __global Photon *pgicDepositPhotons \
+		, __global PhotonBeam *pgicDepositBeams \
+		, __global uint *pgicDepositCounters
+
 // Vertex connection (M6): eye-side kernels need the emit light strategy
 // distribution for the CPU DirectHitLight weightCamera pick pdf (the
 // light sub-path was picked with it in MK_LIGHT_INIT). Kept out of
@@ -6670,9 +6681,12 @@ __kernel void Init(
 
 	// GPU light tracing (doc/features/gpu_lighttracing.md): tasks
 	// [eyeTaskCount, taskCount) are light-path tasks cycling
-	// MK_LIGHT_INIT <-> MK_LIGHT_VERTEX.
-	if (taskConfig->pathTracer.lightTracing.enabled &&
-			gid >= taskConfig->pathTracer.lightTracing.eyeTaskCount) {
+	// MK_LIGHT_INIT <-> MK_LIGHT_VERTEX. lightTaskCount > 0 alone
+	// selects them: PhotonGI deposit mode (B1') allocates light tasks
+	// with lightTracing.enabled == 0 (they only append photon records,
+	// the camera-connect block is gated on .enabled).
+	if ((taskConfig->pathTracer.lightTracing.lightTaskCount > 0) &&
+			(gid >= taskConfig->pathTracer.lightTracing.eyeTaskCount)) {
 		// Read the seed (required by SAMPLER_PARAM)
 		Seed ltSeedValue = tasks[gid].seed;
 		Seed *ltSeed = &ltSeedValue;

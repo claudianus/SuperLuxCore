@@ -294,7 +294,13 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 		SLG_LOG("WARNING: path.vertexconnection requires the GPU light "
 				"task population; enabling GPU light tracing");
 	}
-	if (lightTracingEnable) {
+	// PhotonGI photon generation (B1'): caustic deposits ride the
+	// light-task population. The cache object does not exist yet here
+	// (it is created inside PathOCLBaseRenderEngine::StartLockLess), so
+	// the deposit-task allocation runs in InitGPUTaskConfiguration()
+	// instead - light tracing alone decides the split at this point.
+	const bool lightTasksWanted = lightTracingEnable;
+	if (lightTasksWanted) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
 		// Light tasks run their own sample sequence and are sampler
 		// independent: under METROPOLIS they draw an i.i.d. uniform
@@ -306,7 +312,8 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 		} else {
 			// path.lighttracing.only is a debug/validation mode: the whole
 			// population traces light paths (LIGHTCPU-style output)
-			const bool lightOnly = cfg.Get(PathTracer::GetDefaultProps()->
+			const bool lightOnly = lightTracingEnable &&
+					cfg.Get(PathTracer::GetDefaultProps()->
 					Get("path.lighttracing.only")).Get<bool>();
 			if (lightOnly) {
 				lightTaskCount = taskCount;
@@ -322,7 +329,7 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 				eyeTaskCount = taskCount - lightTaskCount;
 			}
 			if (lightTaskCount == 0)
-				SLG_LOG("WARNING: path.lighttracing enabled but the task "
+				SLG_LOG("WARNING: light tasks wanted but the task "
 						"fraction leaves no light tasks");
 		}
 	}

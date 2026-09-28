@@ -2490,6 +2490,16 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
+	// PhotonGI deposit mode (B1'): when the host retires deposition
+	// (cache full, or the scene proved caustic-free) it clears
+	// pgic.depositEnabled in taskConfig - deposit-only tasks then park
+	// here instead of tracing paths that produce nothing.
+	if (!pathTracer->lightTracing.enabled && !pathTracer->pgic.depositEnabled) {
+		taskState->state = MK_DONE;
+		rays[gid].flags = RAY_FLAGS_MASKED;
+		return;
+	}
+
 	// Advance the light-sample sequence (dims map to sampler dims >= 2)
 	Sampler_LightNextSample(taskConfig
 			SAMPLER_PARAM);
@@ -2842,6 +2852,7 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 		KERNEL_ARGS
 		KERNEL_ARGS_LIGHT
+		KERNEL_ARGS_PGIC_DEPOSIT
 		) {
 	WAVEFRONT_GUARD
 	__global GPUTask *task = &tasks[gid];
@@ -3073,6 +3084,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 	const float passThroughEvent = Sampler_GetLightSample(taskConfig,
 			sampleOffset SAMPLER_PARAM);
 
+	// Volume the traced segment flies through (pre-intersect), with
+	// the same default-world-volume fallback as the CPU deposit path
+	const uint flightVolIdx = (lpi->volume.currentVolumeIndex != NULL_INDEX) ?
+			lpi->volume.currentVolumeIndex : scene->defaultVolumeIndex;
+
 	int throughShadowTransparency = taskState->throughShadowTransparency;
 	const bool continueToTrace = Scene_Intersect(taskConfig,
 			LIGHT_RAY | INDIRECT_RAY,
@@ -3125,6 +3141,113 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 
 		if (!terminate) {
 			// Something was hit
+
+			//----------------------------------------------------------
+			// PhotonGI caustic deposits (B1'): light paths double as
+			// photon paths. Mirrors CPU TracePhotonsThread: the specular
+			// prefix is lpi->isNearlyS + lpi->firstVertSeen evaluated
+			// BEFORE this vertex folds in; beams get pre-segment flux,
+			// point photons get post-segment flux.
+			//----------------------------------------------------------
+
+			if (pathTracer->pgic.depositEnabled && pgicDepositCounters &&
+					lpi->isNearlyS && lpi->firstVertSeen) {
+				const float3 lightPathFlux = VLOAD3F(taskState->throughput.c);
+				if (isfinite(lightPathFlux.x) && isfinite(lightPathFlux.y) &&
+						isfinite(lightPathFlux.z)) {
+					const float3 segP0 = VLOAD3F(&rays[gid].o.x);
+					const float3 segP1 = VLOAD3F(&bsdf->hitPoint.p.x);
+					const float3 segDelta = segP1 - segP0;
+					const float segLen = length(segDelta);
+
+					// Beam deposit: homogeneous flight volume, chunked so
+					// segment AABBs stay tight (CPU tracephotonsthread.cpp:196)
+					if (pathTracer->pgic.causticVolumeBeams && pgicDepositBeams &&
+							(flightVolIdx != NULL_INDEX) &&
+							(mats[flightVolIdx].type == HOMOGENEOUS_VOL) &&
+							(segLen > DEFAULT_EPSILON_STATIC)) {
+						const float3 segDir = segDelta / segLen;
+						const float chunkLen = fmax(
+								8.f * pathTracer->pgic.causticLookUpRadius,
+								segLen / 16.f);
+						const uint nChunks = (uint)ceil(segLen / chunkLen);
+						const Ray rayBackup = rays[gid];
+						for (uint i = 0; i < nChunks; ++i) {
+							const float s0 = i * chunkLen;
+							const float s1 = fmin((i + 1) * chunkLen, segLen);
+							float3 f = lightPathFlux * ((s1 - s0) / segLen);
+							if (s0 > 0.f) {
+								rays[gid].o.x = segP0.x; rays[gid].o.y = segP0.y;
+								rays[gid].o.z = segP0.z;
+								rays[gid].d.x = segDir.x; rays[gid].d.y = segDir.y;
+								rays[gid].d.z = segDir.z;
+								rays[gid].mint = 0.f;
+								rays[gid].maxt = s0;
+								rays[gid].time = 0.f;
+								f *= Volume_TransmittanceEstimate(
+										&mats[flightVolIdx], &rays[gid], s0, .5f,
+										&task->tmpHitPoint TEXTURES_PARAM);
+							}
+							const uint slot = atomic_inc(&pgicDepositCounters[1]);
+							if (slot < pathTracer->pgic.depositBeamCapacity) {
+								__global PhotonBeam *b = &pgicDepositBeams[slot];
+								const float3 a = segP0 + s0 * segDir;
+								b->p0.x = a.x; b->p0.y = a.y; b->p0.z = a.z;
+								b->d.x = segDir.x; b->d.y = segDir.y; b->d.z = segDir.z;
+								b->lightID = lpi->lightGroupID;
+								b->alpha.c[0] = f.x; b->alpha.c[1] = f.y; b->alpha.c[2] = f.z;
+								b->length = s1 - s0;
+								b->volumeIndex = flightVolIdx;
+							} else
+								atomic_inc(&pgicDepositCounters[3]);
+						}
+						rays[gid] = rayBackup;
+					}
+
+					// Point deposit: receiver material + film frustum
+					// (deposit mode only runs with frustum culling - no
+					// device visibility map exists)
+					if ((lpi->depth.depth > 0) && pgicDepositPhotons &&
+							PhotonGICache_IsPhotonGIEnabled(bsdf,
+								pathTracer->pgic.glossinessUsageThreshold,
+								pathTracer->pgic.causticVolumeBeams
+								MATERIALS_PARAM)) {
+						float filmX, filmY;
+						if (Camera_ProjectWorldPointToFilm(camera, segP1,
+								rays[gid].time, filmHeight, &filmX, &filmY)) {
+							const float padX = .1f * filmWidth;
+							const float padY = .1f * filmHeight;
+							if ((filmX >= -padX) && (filmX < filmWidth + padX) &&
+									(filmY >= -padY) && (filmY < filmHeight + padY)) {
+								const uint slot = atomic_inc(&pgicDepositCounters[0]);
+								if (slot < pathTracer->pgic.depositPhotonCapacity) {
+									__global Photon *ph = &pgicDepositPhotons[slot];
+									const float3 photonFlux = lightPathFlux *
+											connectionThroughput;
+									ph->p.x = segP1.x; ph->p.y = segP1.y; ph->p.z = segP1.z;
+									ph->d.x = rays[gid].d.x; ph->d.y = rays[gid].d.y;
+									ph->d.z = rays[gid].d.z;
+									ph->lightID = lpi->lightGroupID;
+									ph->alpha.c[0] = photonFlux.x;
+									ph->alpha.c[1] = photonFlux.y;
+									ph->alpha.c[2] = photonFlux.z;
+									// Landing normal flipped against the
+									// incoming ray (CPU: landingSurfaceNormal)
+									const float3 gn = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+									const float flip = (dot(gn, -VLOAD3F(&rays[gid].d.x)) > 0.f) ?
+											1.f : -1.f;
+									ph->landingSurfaceNormal.x = flip * gn.x;
+									ph->landingSurfaceNormal.y = flip * gn.y;
+									ph->landingSurfaceNormal.z = flip * gn.z;
+									ph->isVolume = bsdf->isVolume;
+								} else
+									atomic_inc(&pgicDepositCounters[2]);
+							}
+						}
+					}
+				}
+			}
+
 			VSTORE3F(connectionThroughput * VLOAD3F(taskState->throughput.c),
 					taskState->throughput.c);
 
@@ -3201,8 +3324,14 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			const bool cameraInvisible = (bsdf->sceneObjectIndex != NULL_INDEX) &&
 					sceneObjs[bsdf->sceneObjectIndex].cameraInvisible;
 			// CPU ConnectToEye: skip camera-invisible objects and delta
-			// BSDF vertices
-			if (!cameraInvisible && !isDeltaBsdf) {
+			// BSDF vertices. Under PhotonGI deposit mode (B1') light
+			// tasks may run with lightTracing.enabled = 0: they only
+			// append photon records, so the whole connect block -
+			// visibility ray, pendingSplat, LMNEE start, focus
+			// credits - is skipped here (the Stage-A splat resolve and
+			// mneeActive blocks above are unreachable: pendingSplat and
+			// mneeActive can only be armed inside this block).
+			if (pathTracer->lightTracing.enabled && !cameraInvisible && !isDeltaBsdf) {
 				const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
 				const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX,
 						lpi->lensPointY, lpi->lensPointZ);
@@ -3401,6 +3530,16 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 							(pathTracer->hybridBackForward.adaptiveCaustic ?
 								!lpi->isAdaptiveS : !lpi->isNearlyS) &&
 							(lpi->depth.diffuseDepth + lpi->depth.glossyDepth > 1))
+						terminate = true;
+
+					// PhotonGI deposit mode (B1'): once the specular
+					// prefix breaks the path can never deposit again -
+					// it produces nothing else (no splats, no
+					// connects), so drop it immediately. Mirrors the
+					// CPU photon tracer stopping at its first
+					// non-specular vertex when only caustics remain.
+					if (!pathTracer->lightTracing.enabled &&
+							pathTracer->pgic.depositEnabled && !lpi->isNearlyS)
 						terminate = true;
 				}
 

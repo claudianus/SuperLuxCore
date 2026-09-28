@@ -672,7 +672,7 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 // screen-normalized film channels - kept out of KERNEL_ARGS so the
 // other kernels do not pay the buffer-argument cost; see
 // WAVEFRONT_GID for the Apple argument limit).
-void PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
+u_int PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
 	HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState
 ) {
 	u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel, filmIndex, queueState);
@@ -691,6 +691,8 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsLightKernelArgs(
 	// disabled - MK_LIGHT_VERTEX skips the store under the
 	// vertexConnect.enabled gate)
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, vcVerticesBuff);
+
+	return argIndex;
 }
 
 // Mirror of the PathState enum in
@@ -762,8 +764,18 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 	// tail on top of the shared set
 	if (advancePathsKernel_MK_LIGHT_INIT)
 		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_INIT, filmIndex, MK_LIGHT_INIT);
-	if (advancePathsKernel_MK_LIGHT_VERTEX)
-		SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_VERTEX, filmIndex, MK_LIGHT_VERTEX);
+	if (advancePathsKernel_MK_LIGHT_VERTEX) {
+		u_int argIndex = SetAdvancePathsLightKernelArgs(advancePathsKernel_MK_LIGHT_VERTEX,
+				filmIndex, MK_LIGHT_VERTEX);
+		// PhotonGI photon generation (B1'): the deposit append buffers,
+		// KERNEL_ARGS_PGIC_DEPOSIT tail of MK_LIGHT_VERTEX only
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_LIGHT_VERTEX,
+				argIndex++, pgicDepositPhotonsBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_LIGHT_VERTEX,
+				argIndex++, pgicDepositBeamsBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_LIGHT_VERTEX,
+				argIndex++, pgicDepositCountersBuff);
+	}
 	// Vertex connection (M6): KERNEL_ARGS + lightPathInfos + the vertex
 	// cache (the eye side reads the paired light task's slot count and
 	// stored vertices).

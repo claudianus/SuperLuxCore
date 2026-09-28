@@ -1,0 +1,93 @@
+# E90 caustic stress suite: scalability check. Eight glass objects of
+# varied roughness (0.0 / 0.03 / 0.08 / 0.15 / 0.30 plus one dispersive
+# and one prism) stand on a low table under the small ceiling panel, each
+# casting its own caustic. Pushes photon-count, lookup radius and chain
+# classification cost up together - a coarse performance/robustness canary
+# for the caustic cache.
+# Intended film: 640x360 (the e90 harness renders it smaller).
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.730003
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 250 250 250
+scene.materials.Light.kd = 0.0 0.0 0.0
+##
+scene.materials.glass0.type = glass
+scene.materials.glass0.kt = 0.95 0.95 0.95
+scene.materials.glass0.kr = 0.95 0.95 0.95
+scene.materials.glass0.interiorior = 1.45
+scene.materials.glassd.type = glass
+scene.materials.glassd.kt = 0.95 0.95 0.95
+scene.materials.glassd.kr = 0.95 0.95 0.95
+scene.materials.glassd.interiorior = 1.45
+scene.materials.glassd.cauchyb = 0.08
+scene.materials.r03.type = roughglass
+scene.materials.r03.kt = 0.95 0.95 0.95
+scene.materials.r03.kr = 0.95 0.95 0.95
+scene.materials.r03.interiorior = 1.45
+scene.materials.r03.uroughness = 0.03
+scene.materials.r03.vroughness = 0.03
+scene.materials.r08.type = roughglass
+scene.materials.r08.kt = 0.95 0.95 0.95
+scene.materials.r08.kr = 0.95 0.95 0.95
+scene.materials.r08.interiorior = 1.45
+scene.materials.r08.uroughness = 0.08
+scene.materials.r08.vroughness = 0.08
+scene.materials.r15.type = roughglass
+scene.materials.r15.kt = 0.95 0.95 0.95
+scene.materials.r15.kr = 0.95 0.95 0.95
+scene.materials.r15.interiorior = 1.45
+scene.materials.r15.uroughness = 0.15
+scene.materials.r15.vroughness = 0.15
+scene.materials.r30.type = roughglass
+scene.materials.r30.kt = 0.95 0.95 0.95
+scene.materials.r30.kr = 0.95 0.95 0.95
+scene.materials.r30.interiorior = 1.45
+scene.materials.r30.uroughness = 0.30
+scene.materials.r30.vroughness = 0.30
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki2.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey-small.ply
+# The "table": low box covering most of the floor, top at z = 1.15.
+scene.objects.table.material = Khaki
+scene.objects.table.ply = scenes/cornell/box.ply
+##
+# Eight glass objects instanced from sphere-mid.ply (c = -2.776 2.76 3.28,
+# r = 0.85) and prism.ply, resting on the table top.
+scene.objects.g1.material = glass0
+scene.objects.g1.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g1.transformation = 0.55 0.0 0.0 0.0  0.0 0.55 0.0 0.0  0.0 0.0 0.55 0.0  -3.1731 0.9319 -0.1838 1.0
+scene.objects.g2.material = r03
+scene.objects.g2.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g2.transformation = 0.55 0.0 0.0 0.0  0.0 0.55 0.0 0.0  0.0 0.0 0.55 0.0  -2.0231 0.9319 -0.1838 1.0
+scene.objects.g3.material = r08
+scene.objects.g3.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g3.transformation = 0.50 0.0 0.0 0.0  0.0 0.50 0.0 0.0  0.0 0.0 0.50 0.0  -1.0119 1.0699 -0.0625 1.0
+scene.objects.g4.material = r15
+scene.objects.g4.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g4.transformation = 0.45 0.0 0.0 0.0  0.0 0.45 0.0 0.0  0.0 0.0 0.45 0.0  -0.1007 1.2079 0.0588 1.0
+scene.objects.g5.material = glassd
+scene.objects.g5.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g5.transformation = 0.50 0.0 0.0 0.0  0.0 0.50 0.0 0.0  0.0 0.0 0.50 0.0  -3.2119 1.9199 -0.0625 1.0
+scene.objects.g6.material = glass0
+scene.objects.g6.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g6.transformation = 0.60 0.0 0.0 0.0  0.0 0.60 0.0 0.0  0.0 0.0 0.60 0.0  -1.5343 1.6239 -0.3050 1.0
+scene.objects.g7.material = r30
+scene.objects.g7.ply = scenes/cornell/sphere-mid.ply
+scene.objects.g7.transformation = 0.50 0.0 0.0 0.0  0.0 0.50 0.0 0.0  0.0 0.0 0.50 0.0  -0.4619 1.9199 -0.0625 1.0
+scene.objects.g8.material = glass0
+scene.objects.g8.ply = scenes/cornell/prism.ply
+scene.objects.g8.transformation = 0.35 0.0 0.0 0.0  0.0 0.35 0.0 0.0  0.0 0.0 0.35 0.0  0.1335 2.3235 0.562 1.0

@@ -61,6 +61,10 @@ public:
 	// light paths; eyeTaskCount == taskCount when disabled.
 	u_int taskCount;
 	u_int eyeTaskCount, lightTaskCount;
+	// PhotonGI GPU photon generation (B1'): light tasks are wanted for
+	// caustic deposits even with light tracing disabled; the cache
+	// then ingests drained records instead of CPU re-tracing.
+	bool pgicDepositWanted = false;
 
 	PathTracer pathTracer;
 

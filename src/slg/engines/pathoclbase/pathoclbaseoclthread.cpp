@@ -33,6 +33,7 @@
 #include "slg/slg.h"
 #include "slg/kernels/kernels.h"
 #include "slg/renderconfig.h"
+#include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/pathoclbase/pathoclbase.h"
 #include "slg/samplers/sobol.h"
 
@@ -112,6 +113,13 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	pgicCausticPhotonsBVHNodesBuff = nullptr;
 	pgicCausticBeamsBuff = nullptr;
 	pgicCausticBeamsBVHNodesBuff = nullptr;
+	pgicDepositPhotonsBuff = nullptr;
+	pgicDepositBeamsBuff = nullptr;
+	pgicDepositCountersBuff = nullptr;
+	pgicDrainTraced = 0.0;
+	pgicDrainProduced = 0.0;
+	pgicDepositsStopped = false;
+	pgicOverflowWarned = false;
 	guideDbgBuff = nullptr;
 	for (u_int i = 0u; i < 16u; ++i)
 		guideRecBuff[i] = nullptr;
@@ -235,6 +243,9 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticBeamsBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticBeamsBVHNodesBuff);
+	intersectionDevice.FreeBuffer(&pgicDepositPhotonsBuff);
+	intersectionDevice.FreeBuffer(&pgicDepositBeamsBuff);
+	intersectionDevice.FreeBuffer(&pgicDepositCountersBuff);
 	intersectionDevice.FreeBuffer(&guideNodesBuff);
 	intersectionDevice.FreeBuffer(&guideLeavesBuff);
 	intersectionDevice.FreeBuffer(&guideDbgBuff);
@@ -471,6 +482,69 @@ void PathOCLBaseOCLRenderThread::FreeThreadFilmsOCLBuffers() {
 
 void PathOCLBaseOCLRenderThread::FreeThreadFilms() {
 	threadFilms.clear();
+}
+
+void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
+	if (!pgicDepositCountersBuff || !renderEngine->photonGICache ||
+			pgicDepositsStopped)
+		return;
+
+	// The caller synchronized the queue (film readback FinishQueue), so
+	// these reads are immediate.
+	u_int counters[4];
+	intersectionDevice.EnqueueReadBuffer(pgicDepositCountersBuff, CL_TRUE,
+			4 * sizeof(u_int), counters);
+
+	const auto &pgicCfg = renderEngine->taskConfig.pathTracer.pgic;
+	const u_int nPhotons = Min(counters[0], pgicCfg.depositPhotonCapacity);
+	const u_int nBeams = Min(counters[1], pgicCfg.depositBeamCapacity);
+
+	std::vector<slg::ocl::Photon> photons(nPhotons);
+	std::vector<slg::ocl::PhotonBeam> beams(nBeams);
+	if (nPhotons > 0)
+		intersectionDevice.EnqueueReadBuffer(pgicDepositPhotonsBuff, CL_TRUE,
+				nPhotons * sizeof(slg::ocl::Photon), photons.data());
+	if (nBeams > 0)
+		intersectionDevice.EnqueueReadBuffer(pgicDepositBeamsBuff, CL_TRUE,
+				nBeams * sizeof(slg::ocl::PhotonBeam), beams.data());
+
+	// Reset cursors + per-drain overflow counts for the next round
+	const u_int zeroCounters[4] = { 0u, 0u, 0u, 0u };
+	intersectionDevice.EnqueueWriteBuffer(pgicDepositCountersBuff, CL_FALSE,
+			4 * sizeof(u_int), zeroCounters);
+
+	// Always ingest: tracedCountDelta feeds causticPhotonTracedCount
+	// (flux normalization) even on rounds with zero deposits, matching
+	// the CPU semantic of counting every traced photon path.
+	renderEngine->photonGICache->IngestTracedPhotons(
+			photons.data(), nPhotons, beams.data(), nBeams, tracedCountDelta);
+	pgicDrainTraced += tracedCountDelta;
+	pgicDrainProduced += nPhotons + nBeams;
+	if (((counters[2] > 0) || (counters[3] > 0)) && !pgicOverflowWarned) {
+		pgicOverflowWarned = true;
+		SLG_LOG("WARNING: PhotonGI GPU deposits overflowed capacity (photons +"
+				<< counters[2] << ", beams +" << counters[3] <<
+				") - increase path.photongi.deposit.capacity");
+	}
+
+	// Retire the deposit tasks once they can no longer contribute:
+	// the cache is full (CPU maxSize semantic), or the scene has no
+	// caustic transport at all (mirrors the CPU tracer's empty
+	// early-out at 4M paths). Toggling depositEnabled in taskConfig
+	// parks the tail tasks in MK_DONE - they stop tracing entirely,
+	// unlike a plain counter drain that would keep burning rays.
+	if (renderEngine->photonGICache->IsCausticFull() ||
+			((pgicDrainProduced == 0.0) && (pgicDrainTraced >= 4194304.0))) {
+		renderEngine->taskConfig.pathTracer.pgic.depositEnabled = false;
+		intersectionDevice.EnqueueWriteBuffer(taskConfigBuff, CL_FALSE,
+				sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+				&renderEngine->taskConfig);
+		pgicDepositsStopped = true;
+		SLG_LOG("PhotonGI GPU deposit tasks retired: " <<
+				(renderEngine->photonGICache->IsCausticFull() ?
+				"caustic cache full" : "no caustic transport in scene") <<
+				" (traced " << (u_int)pgicDrainTraced << " paths)");
+	}
 }
 
 #endif

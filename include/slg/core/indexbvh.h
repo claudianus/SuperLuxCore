@@ -50,6 +50,11 @@ public:
 		return arrayNodes.get();
 	}
 
+	// Rebind the entry container after the array was moved: node entry
+	// indexes stay valid (contents moved along), only the container
+	// address went stale.
+	void SetEntries(const luxrays::SpillableArray<T> *entries) { allEntries = entries; }
+
 	friend class boost::serialization::access;
 
 protected:

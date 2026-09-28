@@ -334,7 +334,14 @@ public:
 	const luxrays::SpillableArray<Photon> &GetCausticPhotons() const { return causticPhotons; }
 	const PGICPhotonBvh *GetCausticPhotonsBVH() const { return causticPhotonsBVH; }
 	const u_int GetCausticPhotonTracedCount() const { return causticPhotonTracedCount; }
+	// Bumps once per swap (ApplyPendingUpdate): lets every render
+	// thread detect a new generation after Update() returned.
+	const u_int GetCausticPhotonPass() const { return causticPhotonPass; }
 	const std::vector<PhotonBeam> &GetCausticBeams() const { return causticBeams; }
+	// CPU semantics: maxSize caps the combined photon+beam population
+	bool IsCausticFull() const {
+		return causticPhotons.size() + causticBeams.size() >= params.caustic.maxSize;
+	}
 	const luxrays::ocl::IndexBVHArrayNode *GetCausticBeamsBVHArrayNodes(u_int *count = nullptr) const;
 
 	static PhotonGISamplerType String2SamplerType(const std::string &type);
@@ -345,6 +352,16 @@ public:
 	static luxrays::PropertiesUPtr ToProperties(const luxrays::Properties &cfg);
 	static luxrays::PropertiesUPtr GetDefaultProps();
 	static PhotonGICache *FromProperties(SceneConstRef scn, const luxrays::Properties &cfg);
+
+	// GPU photon generation (B1'): device-side light tasks deposit
+	// caustic photon/beam records; the engine drains them into this
+	// staging and the update worker absorbs it instead of running a
+	// CPU re-trace (ingestOnly). The population accumulates across
+	// generations (progressive photon mapping) under maxSize.
+	void IngestTracedPhotons(const ocl::Photon *photons, const u_int nPhotons,
+			const ocl::PhotonBeam *beams, const u_int nBeams, const u_int tracedCount);
+	void SetIngestOnly(const bool v) { ingestOnly = v; }
+	bool IsIngestOnly() const { return ingestOnly; }
 
 	friend class PGICSceneVisibility;
 	friend class TracePhotonsThread;
@@ -432,6 +449,21 @@ private:
 	u_int updateFilmSPP;
 	std::function<void()> updateCallback;
 	std::atomic<bool> updateInFlight{false}, updatePendingSwap{false}, updateFailed{false};
+	// Deferred initial generation: launched by the first Update() call
+	// (ingest mode is resolved by then, so GPU deposit sessions build
+	// gen-1 from device records instead of a CPU trace)
+	std::atomic<bool> initialUpdatePending{false};
+
+	// GPU photon deposit staging (B1'): IngestTracedPhotons() fills
+	// these under the mutex; UpdateWorker() absorbs them into the
+	// update* shadow buffers at build time.
+	std::mutex ingestMutex;
+	std::vector<Photon> ingestPhotons;
+	std::vector<PhotonBeam> ingestBeams;
+	u_int ingestTracedCount = 0;
+	// true when photons arrive via device deposits and no CPU trace
+	// runs at all (GPU engines): the worker becomes ingest + build
+	bool ingestOnly = false;
 };
 
 }

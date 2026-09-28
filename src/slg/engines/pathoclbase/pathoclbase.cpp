@@ -221,6 +221,57 @@ void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 	// Path Tracer configuration
 	taskConfig.pathTracer = compiledScene->compiledPathTracer;
 
+	// GPU photon generation (B1'): light tasks deposit caustic
+	// photons/beams while tracing; the host drains the records into
+	// the cache update path. Deposit mode requires frustum culling
+	// (no device visibility map) and a periodic update channel
+	// (updateSpp > 0) to ingest the drained records. The cache object
+	// only exists from here on (PathOCLBaseRenderEngine::StartLockLess),
+	// so the deposit-task allocation lives here rather than in
+	// UpdateTaskCount(). When light tracing is off the tasks run
+	// deposit-only (no connects/splats) - the cache then ingests
+	// device records instead of a CPU re-trace.
+	pgicDepositWanted = photonGICache && photonGICache->IsCausticEnabled() &&
+			photonGICache->UseFrustumCulling() &&
+			(photonGICache->GetParams().caustic.updateSpp > 0);
+	if (pgicDepositWanted && (lightTaskCount == 0)) {
+		// UseFrustumCulling() already guarantees a projective camera,
+		// so the deposit frustum test is well-defined. Deposit tasks
+		// are cheap (no connect work): a dedicated tail fraction.
+		const float f = Clamp(renderConfig.GetConfig().Get(
+				PhotonGICache::GetDefaultProps()->
+				Get("path.photongi.deposit.taskfraction")).Get<double>(),
+				0.0, 0.9);
+		lightTaskCount = Min(taskCount - 8192u,
+				RoundUp<u_int>((u_int)(taskCount * f), 8192u));
+		eyeTaskCount = taskCount - lightTaskCount;
+		if (lightTaskCount == 0)
+			SLG_LOG("WARNING: PhotonGI deposits wanted but the task "
+					"fraction leaves no light tasks");
+	}
+	// Ingest mode only when the deposit population actually exists:
+	// without light tasks the device writes nothing and an ingest-only
+	// cache would stay empty forever - keep the CPU trace in that case.
+	if (photonGICache)
+		photonGICache->SetIngestOnly(pgicDepositWanted && (lightTaskCount > 0));
+	if (pgicDepositWanted)
+		SLG_LOG("PhotonGI GPU deposit mode: " <<
+				(lightTaskCount > 0 ? "light tasks will deposit photons/beams" :
+				"no light tasks - CPU re-trace stays in charge"));
+
+	auto &pgicCfg = taskConfig.pathTracer.pgic;
+	pgicCfg.depositEnabled = pgicCfg.causticEnabled && photonGICache &&
+			photonGICache->IsIngestOnly() && (lightTaskCount > 0);
+	if (pgicCfg.depositEnabled) {
+		pgicCfg.depositPhotonCapacity = Max(1u, renderConfig.GetConfig().Get(
+				PhotonGICache::GetDefaultProps()->
+				Get("path.photongi.deposit.capacity")).Get<u_int>());
+		// Per-kind budgets: volume-heavy scenes produce orders of
+		// magnitude more beams than photons, so beams get the full
+		// capacity too (a shared budget would starve point photons)
+		pgicCfg.depositBeamCapacity = pgicCfg.depositPhotonCapacity;
+	}
+
 	// Pixel filter configuration
 	taskConfig.pixelFilter = *oclPixelFilter;
 

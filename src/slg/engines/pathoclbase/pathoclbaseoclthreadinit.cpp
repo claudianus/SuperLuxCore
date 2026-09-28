@@ -416,6 +416,29 @@ void PathOCLBaseOCLRenderThread::InitPhotonGI() {
 		intersectionDevice.FreeBuffer(&pgicCausticBeamsBuff);
 		intersectionDevice.FreeBuffer(&pgicCausticBeamsBVHNodesBuff);
 	}
+
+	// GPU photon generation (B1'): deposit append buffers. Allocated
+	// once - InitPhotonGI() reruns on every cache update and realloc
+	// would drop records written between drains (and thrash device
+	// memory). The drain resets the counters itself.
+	const auto &pgicCfg = renderEngine->taskConfig.pathTracer.pgic;
+	if (pgicCfg.depositEnabled && !pgicDepositCountersBuff) {
+		static const u_int zeroCounters[4] = { 0u, 0u, 0u, 0u };
+		intersectionDevice.AllocBufferRW(&pgicDepositPhotonsBuff, nullptr,
+				pgicCfg.depositPhotonCapacity * sizeof(slg::ocl::Photon),
+				"PhotonGI photon deposits");
+		intersectionDevice.AllocBufferRW(&pgicDepositBeamsBuff, nullptr,
+				pgicCfg.depositBeamCapacity * sizeof(slg::ocl::PhotonBeam),
+				"PhotonGI beam deposits");
+		intersectionDevice.AllocBufferRW(&pgicDepositCountersBuff, nullptr,
+				4u * sizeof(u_int), "PhotonGI deposit counters");
+		intersectionDevice.EnqueueWriteBuffer(pgicDepositCountersBuff, CL_TRUE,
+				4u * sizeof(u_int), zeroCounters);
+	} else if (!pgicCfg.depositEnabled) {
+		intersectionDevice.FreeBuffer(&pgicDepositPhotonsBuff);
+		intersectionDevice.FreeBuffer(&pgicDepositBeamsBuff);
+		intersectionDevice.FreeBuffer(&pgicDepositCountersBuff);
+	}
 }
 
 void PathOCLBaseOCLRenderThread::InitGuide() {

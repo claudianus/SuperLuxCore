@@ -30,7 +30,8 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 	// threads keep querying the live one: the update no longer stalls
 	// rendering for the whole photon tracing + index rebuild time.
 	if ((threadIndex == 0) && !updateInFlight &&
-			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp)) {
+			(initialUpdatePending ||
+			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp))) {
 		// A safety check to avoid the update if visibility map has been
 		// deallocated (caustic beams and frustum-culled deposits do not
 		// need it)
@@ -38,15 +39,28 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 				!params.caustic.volumeBeams && !UseFrustumCulling()) {
 			SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
 			lastUpdateSpp = filmSPP;
+			initialUpdatePending = false;
 		} else {
-			// Drop leftovers of a previously failed update round
+			// Drop leftovers of a previously failed update round. In
+			// ingest mode (GPU photon deposits) the shadow buffers hold
+			// the accumulated population - refresh them from the live
+			// cache so the worker's BVH sees the full set (old + new
+			// staging absorb).
 			delete updateCausticPhotonsBVH;
 			updateCausticPhotonsBVH = nullptr;
-			updateCausticPhotons.clear();
-			updateCausticBeams.clear();
+			if (ingestOnly) {
+				updateCausticPhotons.clear();
+				updateCausticPhotons.insert(updateCausticPhotons.end(),
+						causticPhotons.begin(), causticPhotons.end());
+				updateCausticBeams = causticBeams;
+			} else {
+				updateCausticPhotons.clear();
+				updateCausticBeams.clear();
+			}
 
 			updateInFlight = true;
 			updateFailed = false;
+			initialUpdatePending = false;
 			updateFilmSPP = filmSPP;
 			updateCallback = threadZeroCallback;
 

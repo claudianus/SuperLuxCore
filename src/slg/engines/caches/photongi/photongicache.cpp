@@ -32,6 +32,7 @@
 #include "slg/engines/caches/photongi/tracephotonsthread.h"
 #include "slg/utils/pathinfo.h"
 #include "slg/scene/scene.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/volumes/homogenous.h"
 
 using namespace std;
@@ -283,6 +284,42 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 // inside the sync barrier completion step (completion_t), where every
 // render thread is already parked and can not be inside a query.
 
+void PhotonGICache::IngestTracedPhotons(const ocl::Photon *photons, const u_int nPhotons,
+		const ocl::PhotonBeam *beams, const u_int nBeams, const u_int tracedCount) {
+	std::lock_guard<std::mutex> lock(ingestMutex);
+	ingestPhotons.reserve(ingestPhotons.size() + nPhotons);
+	for (u_int i = 0; i < nPhotons; ++i) {
+		const ocl::Photon &op = photons[i];
+		ingestPhotons.push_back(Photon(
+				Point(op.p.x, op.p.y, op.p.z),
+				Vector(op.d.x, op.d.y, op.d.z),
+				op.lightID,
+				Spectrum(op.alpha.c[0], op.alpha.c[1], op.alpha.c[2]),
+				Normal(op.landingSurfaceNormal.x, op.landingSurfaceNormal.y,
+						op.landingSurfaceNormal.z),
+				op.isVolume != 0));
+	}
+	ingestBeams.reserve(ingestBeams.size() + nBeams);
+	for (u_int i = 0; i < nBeams; ++i) {
+		const ocl::PhotonBeam &ob = beams[i];
+		// Device stores a material-array volume index; resolve to the
+		// CPU Volume pointer (volumes are materials here)
+		const MaterialConstRef mat = scene->GetMaterials().GetMaterial(ob.volumeIndex);
+		const Volume *vol = dynamic_cast<const Volume *>(&mat);
+		if (!vol)
+			continue;
+		ingestBeams.push_back(PhotonBeam(
+				Point(ob.p0.x, ob.p0.y, ob.p0.z),
+				Point(ob.p0.x + ob.length * ob.d.x,
+						ob.p0.y + ob.length * ob.d.y,
+						ob.p0.z + ob.length * ob.d.z),
+				ob.lightID,
+				Spectrum(ob.alpha.c[0], ob.alpha.c[1], ob.alpha.c[2]),
+				VolumeConstPtr(vol)));
+	}
+	ingestTracedCount += tracedCount;
+}
+
 void PhotonGICache::UpdateWorker() {
 	const double startTime = WallClockTime();
 	SLG_LOG("Updating PhotonGI caustic cache (Pass " << causticPhotonPass << ")");
@@ -293,9 +330,43 @@ void PhotonGICache::UpdateWorker() {
 				powf(float(causticPhotonPass + 1), .5f * (1.f - params.caustic.radiusReduction));
 		updateLookUpRadius = Max(updateLookUpRadius, params.caustic.minLookUpRadius);
 
-		// Trace photons into the shadow copy (never touches the live cache)
-		TracePhotons(false, params.caustic.enabled,
-				&updateCausticPhotons, &updateCausticBeams);
+		if (!ingestOnly) {
+			// Trace photons into the shadow copy (never touches the
+			// live cache)
+			TracePhotons(false, params.caustic.enabled,
+					&updateCausticPhotons, &updateCausticBeams);
+		}
+
+		// Absorb device-side deposits (B1'): the drain thread fills the
+		// staging vectors; here they move into the update buffers. In
+		// ingestOnly mode the shadow buffers hold the accumulated
+		// population (swap-restored each generation), so the cache
+		// grows up to maxSize like a progressive photon map.
+		{
+			std::lock_guard<std::mutex> lock(ingestMutex);
+			// CPU semantics: maxSize caps the combined photon+beam
+			// population (tracephotonsthread.cpp globalCausticSize),
+			// so both inserts share one room budget.
+			const size_t total = updateCausticPhotons.size() + updateCausticBeams.size();
+			const size_t room = (params.caustic.maxSize > total) ?
+					(params.caustic.maxSize - total) : 0;
+			const size_t nPhotons = Min<size_t>(ingestPhotons.size(), room);
+			updateCausticPhotons.insert(updateCausticPhotons.end(),
+					ingestPhotons.begin(), ingestPhotons.begin() + nPhotons);
+			const size_t nBeams = Min<size_t>(ingestBeams.size(), room - nPhotons);
+			updateCausticBeams.insert(updateCausticBeams.end(),
+					ingestBeams.begin(), ingestBeams.begin() + nBeams);
+			// Traced-count semantics match CPU: paths counted while
+			// deposits were collected, until the cache fills.
+			if (room > 0)
+				causticPhotonTracedCount += ingestTracedCount;
+			SLG_LOG("PhotonGI ingested GPU deposits: +" << nPhotons << " photons, +" <<
+					nBeams << " beams (total " << updateCausticPhotons.size() <<
+					" photons, " << updateCausticBeams.size() << " beams)");
+			ingestPhotons.clear();
+			ingestBeams.clear();
+			ingestTracedCount = 0;
+		}
 
 		if (updateCausticPhotons.size() > 0) {
 			SLG_LOG("PhotonGI building caustic photons BVH");
@@ -332,6 +403,14 @@ void PhotonGICache::ApplyPendingUpdate() noexcept {
 			causticPhotons = std::move(updateCausticPhotons);
 			causticBeams = std::move(updateCausticBeams);
 			causticBeamsIndex = std::move(updateCausticBeamsIndex);
+
+			// The adopted BVH was built over &updateCausticPhotons;
+			// after the move that container is empty - rebind it to the
+			// live array (contents moved along, indexes stay valid).
+			// Without this the live BVH dereferences a null allEntries
+			// (crashes in ConnectAllNearEntries).
+			if (causticPhotonsBVH)
+				causticPhotonsBVH->SetEntries(&causticPhotons);
 
 			params.caustic.lookUpRadius = updateLookUpRadius;
 			params.caustic.lookUpRadius2 = Sqr(updateLookUpRadius);
@@ -697,17 +776,16 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	if (params.caustic.enabled) {
 		if (params.caustic.updateSpp > 0) {
 			// Deferred initial generation: with periodic updates enabled,
-			// the first cache is traced by the background worker while
+			// the first cache is built by the background worker while
 			// rendering starts immediately on an empty cache (no
-			// pre-cache stall). Generation 1 lands through the normal
-			// pending-swap path on the first Update() call after the
-			// worker completes. Queries guard the empty cache:
-			// ConnectWithCausticPaths returns an empty SpectrumGroup and
-			// the GPU kernels see null buffers.
-			SLG_LOG("PhotonGI deferring initial caustic trace to background update");
-			updateInFlight = true;
-			updateFilmSPP = 0;
-			updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
+			// pre-cache stall). The launch is deferred to the first
+			// Update() call so ingest mode (GPU photon deposits, B1') is
+			// resolved by then - the worker then builds gen-1 from
+			// device records instead of a CPU trace. Queries guard the
+			// empty cache: ConnectWithCausticPaths returns an empty
+			// SpectrumGroup and the GPU kernels see null buffers.
+			SLG_LOG("PhotonGI deferring initial caustic generation to first update");
+			initialUpdatePending = true;
 		} else {
 			SLG_LOG("PhotonGI tracing caustic cache photons");
 			TracePhotons(false, true);

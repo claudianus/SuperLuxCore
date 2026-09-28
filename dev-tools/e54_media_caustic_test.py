@@ -79,7 +79,7 @@ opencl.native.threads.count = 0
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while True:
         ses.UpdateStats()
-        if ses.GetStats().Get("stats.renderengine.pass").GetInt() >= SPP:
+        if ses.GetStats().Get("stats.renderengine.pass").GetInt() >= spp:
             break
         if time.monotonic() > deadline:
             ses.Stop()
@@ -126,6 +126,19 @@ def main():
     # ---- volume caustic scene -------------------------------------------
     scene = parse_scene(VOL_CAUSTIC)
 
+    # 4c renders first: two extra GPU sessions are the most fragile part
+    # of the suite (kernel compile + PGIC init), so they run while the
+    # chip is cold. The watchdog compares against the per-call spp, not
+    # the global SPP - a fixed-SPP comparison stalls every low-spp gate.
+    gpu_beams = gpu_pts = None
+    try:
+        gpu_beams = luminance(render(scene, "PATHOCL", PGIC,
+                                     spp=16, width=160, height=90))
+        gpu_pts = luminance(render(scene, "PATHOCL", PGIC_NOBEAMS,
+                                   spp=16, width=160, height=90))
+    except Exception as e:
+        ok &= check(False, "4c GPU beam parity", e)
+
     cpu_off = luminance(render(scene, "PATHCPU", ADAPT_OFF))
     cpu_on = luminance(render(scene, "PATHCPU", ADAPT_ON))
     ok &= check(0.6 < cpu_on.mean() / max(cpu_off.mean(), 1e-6) < 1.7,
@@ -161,21 +174,14 @@ def main():
     except Exception as e:
         ok &= check(False, "4 PhotonGI caustic cache", e)
 
-    # 4c. GPU beam parity: beams must contribute medium-caustic energy on
-    # the device too, and agree with the CPU beam estimate. Lower spp —
-    # the beam-only delta shows well before convergence.
-    try:
-        gpu_beams = luminance(render(scene, "PATHOCL", PGIC,
-                                     spp=16, width=160, height=90))
-        gpu_pts = luminance(render(scene, "PATHOCL", PGIC_NOBEAMS,
-                                   spp=16, width=160, height=90))
+    # 4c verdict (rendered above, asserted here once the CPU reference
+    # exists)
+    if gpu_beams is not None:
         ok &= check(finite(gpu_beams) and finite(gpu_pts) and
                     gpu_beams.mean() > gpu_pts.mean() * 1.02 and
                     0.5 < gpu_beams.mean() / max(pgic.mean(), 1e-6) < 2.0,
                     "4c GPU beam parity",
                     f"gpu_beams={gpu_beams.mean():.4f} gpu_pts={gpu_pts.mean():.4f}")
-    except Exception as e:
-        ok &= check(False, "4c GPU beam parity", e)
 
     # 5. BIDIRCPU smoke on the volume caustic scene
     try:

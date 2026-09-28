@@ -122,6 +122,52 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   the full `photon.maxcount` (100M paths, ~30 s) every update;
   threads now bail after 4M paths when nothing was stored at all
   (~22× less wasted work on non-caustic scenes).
+- **B1′ light-task photon piggyback** (LANDED): GPU light tasks
+  already trace the same paths a photon pass would, so
+  `MK_LIGHT_VERTEX` appends caustic records — an atomic push into a
+  shared-storage buffer (Metal shared mode: host reads after
+  `FinishQueue`, no DMA limit) — turning the light pass into the
+  photon generator for free. Design + semantics:
+  - Deposit mode activates when `caustic.enabled` + projective
+    frustum culling + `updatespp > 0`. With `lighttracing.enable = 0`
+    a tail fraction (`path.photongi.deposit.taskfraction`, default
+    0.2) of the task population runs **deposit-only**: the whole
+    camera-connect block (visibility ray, film splats, LMNEE) is
+    gated on `lightTracing.enabled`, and paths terminate the moment
+    the specular prefix breaks (they can never deposit again).
+  - Kernel deposits mirror `TracePhotonsThread` exactly: the
+    specular prefix is `lpi->isNearlyS && lpi->firstVertSeen`
+    evaluated before the vertex folds in; homogeneous-volume flights
+    chunk into beams at `max(8·r, len/16)` with length-share flux
+    pre-attenuated to the chunk start; point photons take
+    post-segment flux, flipped landing normal, film-frustum + 10%
+    border receiver test.
+  - Host `DrainPGIC()` (per thread, inside the queue-synchronized
+    film-readback window) reads the 4 counters + records, resets
+    cursors, and calls `PhotonGICache::IngestTracedPhotons()` —
+    a staging area the update worker absorbs into the shadow
+    buffers under one combined `maxSize` room (CPU semantics:
+    photons+beams share the cap). `ingestOnly` mode skips the CPU
+    re-trace entirely; `IsCausticFull()` or 4M deposit-free paths
+    retires the tail tasks by clearing `depositEnabled` in
+    `taskConfig` (they park in `MK_DONE`, zero GPU waste).
+  - Deferred gen-1 (`initialUpdatePending`): the first cache is
+    launched by the first `Update()` call, after ingest mode is
+    resolved — GPU sessions build generation 1 purely from device
+    records while rendering starts immediately.
+  - Generation refresh fix: `CompilePhotonGI` rebuilds
+    `compiledPathTracer.pgic` (traced-path normalization, shrunk
+    radius) every swap, but nothing pushed it to `taskConfig` —
+    devices kept startup values forever, and only thread 0 ran
+    `InitPhotonGI`/`SetKernelArgs` so the second OCL thread kept a
+    stale cache. The render loop now detects the swap per-thread
+    via `GetCausticPhotonPass()` and refreshes `taskConfig.pgic`
+    (preserving the deposit session fields) + re-uploads query
+    buffers on every thread.
+  - New properties: `path.photongi.deposit.capacity` (per-kind
+    append-buffer size, default 262144) and
+    `path.photongi.deposit.taskfraction` (fallback tail fraction,
+    default 0.2).
 - **C5 SPPM per-pixel photon pass** (the structural endpoint):
   per-pixel state `{τ, N, R, hitpoint}` (RestirGI/samplerSharedData
   appended-array pattern), photon deposit tasks, hash+gather kernels.

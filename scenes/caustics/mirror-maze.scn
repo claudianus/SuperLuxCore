@@ -1,0 +1,60 @@
+# E90 caustic stress suite: multi-specular mirror chain. A laser at the
+# left wall fires a collimated beam that zigzags down through FOUR tilted
+# mirror plates (inline quads) before landing on the diffuse floor at
+# (-1.87, 2.8, 0). Transport is L S S S S D E: the eye path must stumble
+# onto the beam spot AND retrace the whole chain to connect to the light -
+# pure path tracing converges at a glacial rate, so this exercises the
+# PhotonGI caustic cache and light-side strategies on SSSS*D transport.
+# Intended film: 640x360 (the e90 harness renders it smaller).
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.730003
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.mirror.type = mirror
+scene.materials.mirror.kr = 1.0 1.0 1.0
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki2.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+##
+# M1 (-4.4, 2.8, 4.6): folds the +x beam straight down to M2.
+scene.objects.m1.material = mirror
+scene.objects.m1.type = inlinedmesh
+scene.objects.m1.vertices = -4.0465 2.3 4.2465   -4.7535 2.3 4.9535   -4.7535 3.3 4.9535   -4.0465 3.3 4.2465
+scene.objects.m1.faces = 0 1 2  0 2 3
+# M2 (-4.4, 2.8, 3.4): folds the falling beam to +x, toward M3.
+scene.objects.m2.material = mirror
+scene.objects.m2.type = inlinedmesh
+scene.objects.m2.vertices = -4.7535 2.3 3.7535   -4.0465 2.3 3.0465   -4.0465 3.3 3.0465   -4.7535 3.3 3.7535
+scene.objects.m2.faces = 0 1 2  0 2 3
+# M3 (-3.2, 2.8, 3.4): folds the +x beam straight down to M4.
+scene.objects.m3.material = mirror
+scene.objects.m3.type = inlinedmesh
+scene.objects.m3.vertices = -2.8465 2.3 3.0465   -3.5535 2.3 3.7535   -3.5535 3.3 3.7535   -2.8465 3.3 3.0465
+scene.objects.m3.faces = 0 1 2  0 2 3
+# M4 (-3.2, 2.8, 1.0): tilts the falling beam to (0.8,0,-0.6); it lands on
+# the floor at (-1.87, 2.8, 0).
+scene.objects.m4.material = mirror
+scene.objects.m4.type = inlinedmesh
+scene.objects.m4.vertices = -3.4236 2.3 1.4472   -2.9764 2.3 0.5528   -2.9764 3.3 0.5528   -3.4236 3.3 1.4472
+scene.objects.m4.faces = 0 1 2  0 2 3
+################################################################################
+# Collimated beam feeding the maze (hits M1 dead centre).
+scene.lights.beam.type = laser
+scene.lights.beam.position = -5.4 2.8 4.6
+scene.lights.beam.target = -4.4 2.8 4.6
+scene.lights.beam.radius = 0.08
+scene.lights.beam.gain = 2000.0 2000.0 2000.0
+# Weak ambient so the rest of the frame is not pitch black.
+scene.lights.amb.type = point
+scene.lights.amb.position = -2.0 4.0 4.8
+scene.lights.amb.gain = 5.0 5.0 5.0

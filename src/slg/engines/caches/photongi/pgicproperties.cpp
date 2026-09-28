@@ -95,6 +95,12 @@ PropertiesUPtr PhotonGICache::GetDefaultProps() {
 			Property("path.photongi.caustic.lookup.radius")(.0f) <<
 			Property("path.photongi.caustic.lookup.normalangle")(10.f) <<
 			Property("path.photongi.caustic.volumebeams")(true) <<
+			// GPU photon generation (B1'): per-kind deposit
+			// append-buffer size and the fallback tail fraction of
+			// the GPU task population used when light tracing is off;
+			// only used with frustum culling + updatespp > 0
+			Property("path.photongi.deposit.capacity")(262144u) <<
+			Property("path.photongi.deposit.taskfraction")(0.2f) <<
 			Property("path.photongi.debug.type")("none") <<
 			Property("path.photongi.persistent.file")("") <<
 			Property("path.photongi.persistent.safesave")(true);

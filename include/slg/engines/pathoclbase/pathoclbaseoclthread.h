@@ -219,6 +219,10 @@ protected:
 	// CPU cache, swap a training round and re-upload the coarse chunks.
 	// Called once per outer render iteration (device idle).
 	void DrainGuide();
+	// PhotonGI GPU photon generation (B1'): drain deposit buffers into
+	// the cache staging; tracedCountDelta feeds the cache's
+	// path-traced normalization (light task sample counter delta).
+	void DrainPGIC(const u_int tracedCountDelta);
 	// Portal bounce proposal (M5): one-time aperture rect upload.
 	void InitPortals();
 	void InitKernels();
@@ -230,7 +234,7 @@ protected:
 
 	void SetInitKernelArgs(const u_int filmIndex);
 	u_int SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
-	void SetAdvancePathsLightKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState);
+	u_int SetAdvancePathsLightKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
 
@@ -320,6 +324,18 @@ protected:
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBVHNodesBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticBeamsBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticBeamsBVHNodesBuff;
+	// GPU photon generation (B1'): light tasks append caustic
+	// photon/beam records here; the host drains them into the cache
+	// update path. Counters: [0] photon cursor, [1] beam cursor,
+	// [2]/[3] overflow counts.
+	luxrays::HardwareDeviceBuffer *pgicDepositPhotonsBuff;
+	luxrays::HardwareDeviceBuffer *pgicDepositBeamsBuff;
+	luxrays::HardwareDeviceBuffer *pgicDepositCountersBuff;
+	// Deposit task lifecycle: cumulative production decides when the
+	// tail tasks idle (cache full, or a caustic-free scene mirrors the
+	// CPU empty-trace early-out)
+	double pgicDrainTraced, pgicDrainProduced;
+	bool pgicDepositsStopped, pgicOverflowWarned;
 	// Path guiding (P1-3 M4e): flattened SD-tree nodes (uint4/node)
 	// + per-leaf vMF mixture records (24 floats/leaf)
 	luxrays::HardwareDeviceBuffer *guideNodesBuff;

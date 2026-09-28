@@ -58,6 +58,9 @@ void CompiledScene::CompilePhotonGI() {
 
 	compiledPathTracer.pgic.indirectEnabled = false;
 	compiledPathTracer.pgic.causticEnabled = false;
+	compiledPathTracer.pgic.depositEnabled = false;
+	compiledPathTracer.pgic.depositPhotonCapacity = 0;
+	compiledPathTracer.pgic.depositBeamCapacity = 0;
 
 	const PhotonGICache *photonGICache = pathTracer->GetPhotonGICache();
 	if (!photonGICache)
