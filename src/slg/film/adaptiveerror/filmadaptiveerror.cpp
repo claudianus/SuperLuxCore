@@ -48,7 +48,8 @@ FilmAdaptiveError::FilmAdaptiveError(
 	Reset();
 }
 
-FilmAdaptiveError::FilmAdaptiveError() {
+FilmAdaptiveError::FilmAdaptiveError() :
+	film(nullptr) {
 }
 
 FilmAdaptiveError::~FilmAdaptiveError() {
@@ -64,6 +65,11 @@ void FilmAdaptiveError::Reset() {
 }
 
 bool FilmAdaptiveError::IsTestUpdateRequired() const {
+	// The film back pointer is rebound by Film::load - an orphaned
+	// object (unbound by a non-film deserialize path) is inert
+	if (!film)
+		return false;
+
 	if (!GetFilm().HasChannel(Film::VARIANCE) ||
 			!GetFilm().HasChannel(Film::SAMPLECOUNT) ||
 			!GetFilm().HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED))
@@ -128,6 +134,16 @@ float FilmAdaptiveError::Test() {
 			continue;
 		}
 		const float mu = Luma709(radP[0], radP[1], radP[2]) / wr;
+
+		// NaN/Inf-contaminated moments must never read as converged:
+		// Max(NaN, 0) and (inf - inf) both collapse to 0 which would
+		// mark a corrupt pixel as perfectly clean. Mark them non-finite
+		// instead: excluded from the percentile below but counted as
+		// not converged, and the NOISE map keeps them fully sampled.
+		if (!isfinite(e2) || !isfinite(mu)) {
+			rawErr[i] = numeric_limits<float>::infinity();
+			continue;
+		}
 
 		const float var = Max(e2 - mu * mu, 0.f);
 		rawErr[i] = sqrtf(var / static_cast<float>(n)) / (fabsf(mu) + 1e-6f);
@@ -200,7 +216,17 @@ template<class Archive> void FilmAdaptiveError::serialize(Archive &ar, const u_i
 	ar & testStep;
 	ar & minSamples;
 	ar & haltEnabled;
-	ar & film;
+	// Version 1 serialized the film pointer inline, writing a full
+	// nested film copy into every archive and binding the loaded object
+	// to that frozen duplicate (GetFilm() then queried stale data and
+	// the test never re-triggered after a resume). Version >= 2 drops
+	// the field; Film::load rebinds it via BindFilm(). The v1 payload
+	// still has to be consumed for stream alignment.
+	if (version < 2) {
+		FilmConstPtr legacyFilm = nullptr;
+		ar & legacyFilm;
+		delete const_cast<Film *>(legacyFilm.get());
+	}
 	ar & errorVector;
 	ar & noiseLevel;
 	ar & convergedRatio;

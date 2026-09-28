@@ -152,6 +152,12 @@ template<class Archive> void Film::load(Archive &ar, const u_int version) {
 	ar & adaptiveErrorMinSamples;
 	ar & adaptiveErrorHaltEnable;
 
+	// The adaptive-error film back pointer is not serialized (a v1
+	// nested-copy payload was consumed and dropped during load) -
+	// rebind it to this film.
+	if (adaptiveError)
+		adaptiveError->BindFilm(this);
+
 	ar & filmOutputs;
 
 	ar & initialized;

@@ -33,7 +33,11 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 	// rendering for the whole photon tracing + index rebuild time.
 	if ((threadIndex == 0) && !updateInFlight &&
 			(initialUpdatePending ||
-			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp))) {
+			// filmSPP is u_int: a film reset mid-session can drop it
+			// below lastUpdateSpp and the subtraction would wrap into
+			// a huge delta, relaunching a worker every poll
+			((filmSPP > lastUpdateSpp) &&
+			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp)))) {
 		// A safety check to avoid the update if visibility map has been
 		// deallocated (caustic beams and frustum-culled deposits do not
 		// need it)

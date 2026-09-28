@@ -67,6 +67,10 @@ public:
 	u_int todoPixelsCount;
 
 	FilmConstRef GetFilm() const { return *film; }
+	// The film back pointer is not serialized: Film::load rebinds it
+	// after deserialization (version 1 archives carried a full nested
+	// film copy which was consumed and dropped).
+	void BindFilm(const Film *f) { film = f; }
 
 	friend class boost::serialization::access;
 
@@ -93,7 +97,7 @@ private:
 
 }
 
-BOOST_CLASS_VERSION(slg::FilmAdaptiveError, 1)
+BOOST_CLASS_VERSION(slg::FilmAdaptiveError, 2)
 
 BOOST_CLASS_EXPORT_KEY(slg::FilmAdaptiveError)
 

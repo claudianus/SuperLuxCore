@@ -255,12 +255,18 @@ void SobolSampler::InitNewSample() {
 					if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
 						const float n = (float)(curPass - SOBOL_STARTOFFSET);
 						const float *mom = &GetFilm().pixelLumaMoments[(pixelX + pixelY * GetFilm().GetWidth()) * 2];
-						const float mean = mom[0] / n;
-						const float var = Max(mom[1] / n - mean * mean, 0.f);
-						// std. error of the mean, relative to the mean
-						const float relErr = sqrtf(var / n) / (fabs(mean) + 1e-6f);
-						noise = Min(relErr / sobolAdaptiveRelErrTarget, 1.f);
-						noiseValid = true;
+						// NaN/Inf accumulators (a corrupt sample reached
+						// the moments) collapse to relErr=0 and would
+						// starve the pixel - leave noiseValid false so
+						// the film map, or full sampling, takes over.
+						if (isfinite(mom[0]) && isfinite(mom[1])) {
+							const float mean = mom[0] / n;
+							const float var = Max(mom[1] / n - mean * mean, 0.f);
+							// std. error of the mean, relative to the mean
+							const float relErr = sqrtf(var / n) / (fabs(mean) + 1e-6f);
+							noise = Min(relErr / sobolAdaptiveRelErrTarget, 1.f);
+							noiseValid = true;
+						}
 					}
 				}
 

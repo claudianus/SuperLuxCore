@@ -330,12 +330,17 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 					const uint subIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
 					__global uint *pixelPasses = SobolSampler_GetPassesPtr(samplerSharedData);
 					const uint curPass = pixelPasses[subIdx];
-					if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
+					__global const float *lumaMoments = SobolSampler_GetLumaMomentsPtr(samplerSharedData) + subIdx * 2;
+					if ((curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) &&
+							isfinite(lumaMoments[0]) && isfinite(lumaMoments[1])) {
 						const float n = (float)(curPass - SOBOL_STARTOFFSET);
-						__global const float *lumaMoments = SobolSampler_GetLumaMomentsPtr(samplerSharedData) + subIdx * 2;
 						const float mean = lumaMoments[0] / n;
 						const float var = fmax(lumaMoments[1] / n - mean * mean, 0.f);
-						// std. error of the mean, relative to the mean
+						// std. error of the mean, relative to the mean.
+						// The accumulator isfinite gate above keeps a
+						// corrupt sample from collapsing relErr to 0
+						// (which would starve the pixel): noise stays
+						// INFINITY so it is always sampled.
 						const float relErr = native_sqrt(var / n) / (fabs(mean) + 1e-6f);
 						noise = fmin(relErr / sampler->sobol.adaptiveRelErrTarget, 1.f);
 						noiseValid = true;
