@@ -18,6 +18,8 @@
 
 #include <stdexcept>
 
+#include <oneapi/tbb.h>
+
 #include "slg/film/film.h"
 #include "slg/film/imagepipeline/plugins/outputswitcher.h"
 
@@ -72,18 +74,29 @@ void OutputSwitcherPlugin::Apply(Film &film, const u_int piepelineIndex) {
 		const bool hasSN = film.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED);
 
 		const u_int pixelCount = film.GetWidth() * film.GetHeight();
+		// Per-pixel channel copies are pure reads into disjoint
+		// slots - fan out over TBB (same treatment as
+		// Film::GetOutput). This plugin runs inside
+		// ExecuteImagePipeline under filmMutex.
+		auto parallelPixels = [pixelCount](auto &&body) {
+			tbb::parallel_for(tbb::blocked_range<u_int>(0, pixelCount),
+				[&](const tbb::blocked_range<u_int> &r) {
+					for (u_int i = r.begin(); i < r.end(); ++i)
+						body(i);
+				});
+		};
 		switch (channelType) {
 			case Film::RADIANCE_PER_PIXEL_NORMALIZED: {
 				if (channelIndex >= film.channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size())
 					return;
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v[3];
 						film.channel_RADIANCE_PER_PIXEL_NORMALIZEDs[channelIndex]->GetWeightedPixel(i, v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::RADIANCE_PER_SCREEN_NORMALIZED: {
@@ -93,7 +106,7 @@ void OutputSwitcherPlugin::Apply(Film &film, const u_int piepelineIndex) {
 				// Normalize factor
 				const float factor = film.GetTotalSampleCount() / (film.GetHeight() * film.GetWidth());
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v[3] = { 0.f, 0.f, 0.f};
 						film.channel_RADIANCE_PER_SCREEN_NORMALIZEDs[channelIndex]->AccumulateWeightedPixel(i, v);
@@ -105,219 +118,219 @@ void OutputSwitcherPlugin::Apply(Film &film, const u_int piepelineIndex) {
 
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::ALPHA: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float a;
 						film.channel_ALPHA->GetWeightedPixel(i, &a);
 						pixels[i] = Spectrum(a);
 					}
-				}
+				});
 				break;
 			}
 			case Film::DEPTH: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float d;
 						film.channel_DEPTH->GetWeightedPixel(i, &d);
 						pixels[i] = Spectrum(d);
 					}
-				}
+				});
 				break;
 			}
 			case Film::POSITION: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float *v = film.channel_POSITION->GetPixel(i);
 						pixels[i].c[0] = fabs(v[0]);
 						pixels[i].c[1] = fabs(v[1]);
 						pixels[i].c[2] = fabs(v[2]);
 					}
-				}
+				});
 				break;
 			}
 			case Film::GEOMETRY_NORMAL: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float *v = film.channel_GEOMETRY_NORMAL->GetPixel(i);
 						pixels[i].c[0] = fabs(v[0]);
 						pixels[i].c[1] = fabs(v[1]);
 						pixels[i].c[2] = fabs(v[2]);
 					}
-				}
+				});
 				break;
 			}
 			case Film::SHADING_NORMAL: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float *v = film.channel_SHADING_NORMAL->GetPixel(i);
 						pixels[i].c[0] = fabs(v[0]);
 						pixels[i].c[1] = fabs(v[1]);
 						pixels[i].c[2] = fabs(v[2]);
 					}
-				}
+				});
 				break;
 			}
 			case Film::MATERIAL_ID: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						u_int *v = film.channel_MATERIAL_ID->GetPixel(i);
 						pixels[i].c[0] = (*v) & 0xff;
 						pixels[i].c[1] = ((*v) & 0xff00) >> 8;
 						pixels[i].c[2] = ((*v) & 0xff0000) >> 16;
 					}
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_DIFFUSE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_DIFFUSE->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_DIFFUSE_REFLECT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_DIFFUSE_REFLECT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}		case Film::DIRECT_DIFFUSE_TRANSMIT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_DIFFUSE_TRANSMIT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_GLOSSY: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_GLOSSY->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_GLOSSY_REFLECT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_GLOSSY_REFLECT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_GLOSSY_TRANSMIT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_DIRECT_GLOSSY_TRANSMIT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::EMISSION: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_EMISSION->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_DIFFUSE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_DIFFUSE->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_DIFFUSE_REFLECT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_DIFFUSE_REFLECT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_DIFFUSE_TRANSMIT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_DIFFUSE_TRANSMIT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_GLOSSY: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_GLOSSY->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_GLOSSY_REFLECT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_GLOSSY_REFLECT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_GLOSSY_TRANSMIT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_GLOSSY_TRANSMIT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_SPECULAR: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_SPECULAR->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_SPECULAR_REFLECT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_SPECULAR_REFLECT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_SPECULAR_TRANSMIT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_INDIRECT_SPECULAR_TRANSMIT->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::MATERIAL_ID_MASK: {
 				if (channelIndex >= film.channel_MATERIAL_ID_MASKs.size())
 					return;
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_MATERIAL_ID_MASKs[channelIndex]->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::DIRECT_SHADOW_MASK: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_DIRECT_SHADOW_MASK->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::INDIRECT_SHADOW_MASK: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_INDIRECT_SHADOW_MASK->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::UV: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v[2];
 						film.channel_UV->GetWeightedPixel(i, v);
@@ -325,133 +338,133 @@ void OutputSwitcherPlugin::Apply(Film &film, const u_int piepelineIndex) {
 						pixels[i].c[1] = v[1];
 						pixels[i].c[2] = 0.f;
 					}
-				}
+				});
 				break;
 			}
 			case Film::RAYCOUNT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_RAYCOUNT->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::BY_MATERIAL_ID: {
 				if (channelIndex >= film.channel_BY_MATERIAL_IDs.size())
 					return;
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_BY_MATERIAL_IDs[channelIndex]->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::IRRADIANCE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v[3];
 						film.channel_IRRADIANCE->GetWeightedPixel(i, v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::OBJECT_ID: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						u_int *v = film.channel_OBJECT_ID->GetPixel(i);
 						pixels[i].c[0] = (*v) & 0xff;
 						pixels[i].c[1] = ((*v) & 0xff00) >> 8;
 						pixels[i].c[2] = ((*v) & 0xff0000) >> 16;
 					}
-				}
+				});
 				break;
 			}
 			case Film::OBJECT_ID_MASK: {
 				if (channelIndex >= film.channel_OBJECT_ID_MASKs.size())
 					return;
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_OBJECT_ID_MASKs[channelIndex]->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::BY_OBJECT_ID: {
 				if (channelIndex >= film.channel_BY_OBJECT_IDs.size())
 					return;
 
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_BY_OBJECT_IDs[channelIndex]->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::SAMPLECOUNT: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						u_int *v = film.channel_SAMPLECOUNT->GetPixel(i);
 						pixels[i].c[0] = (*v) & 0xff;
 						pixels[i].c[1] = ((*v) & 0xff00) >> 8;
 						pixels[i].c[2] = ((*v) & 0xff0000) >> 16;
 					}
-				}
+				});
 				break;
 			}
 			case Film::CONVERGENCE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_CONVERGENCE->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::MATERIAL_ID_COLOR: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_MATERIAL_ID_COLOR->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::ALBEDO: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_ALBEDO->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::AVG_SHADING_NORMAL: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i))
 						film.channel_AVG_SHADING_NORMAL->GetWeightedPixel(i, pixels[i].c);
-				}
+				});
 				break;
 			}
 			case Film::NOISE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_NOISE->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			case Film::USER_IMPORTANCE: {
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					if (film.HasSamples(hasPN, hasSN, i)) {
 						float v;
 						film.channel_USER_IMPORTANCE->GetWeightedPixel(i, &v);
 						pixels[i] = Spectrum(v);
 					}
-				}
+				});
 				break;
 			}
 			default:
