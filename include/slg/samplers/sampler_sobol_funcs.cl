@@ -342,11 +342,21 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 					}
 				}
 
-				// Fall back to the host-computed film NOISE channel when
-				// the moments estimate is not yet valid; INFINITY (never
-				// skipped) when neither source is available
-				if (!noiseValid && filmNoise)
-					noise = filmNoise[pixelX + pixelY * filmWidth];
+				// Max-combine with the host-computed film NOISE channel:
+				// a pixel is only considered converged when both
+				// estimators agree. The dilated film map sees sub-pixel
+				// neighborhood error the per-pixel moments miss; the
+				// moments estimate refreshes every pass while the map
+				// updates only every test step, so each covers the
+				// other's blind spot (keeps hard caustic/volume tails
+				// sampled). A still-infinite map (first test not run
+				// yet) must not veto the fresh moments estimate.
+				if (filmNoise) {
+					const float chNoise = filmNoise[pixelX + pixelY * filmWidth];
+					noise = noiseValid ?
+						(isfinite(chNoise) ? fmax(noise, chNoise) : noise) :
+						chNoise;
+				}
 
 				// Factor user driven importance sampling too
 				float threshold;

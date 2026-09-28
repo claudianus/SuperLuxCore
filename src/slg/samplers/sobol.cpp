@@ -264,8 +264,22 @@ void SobolSampler::InitNewSample() {
 					}
 				}
 
-				if (!noiseValid && GetFilm().HasChannel(Film::NOISE))
-					noise = *(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
+				if (GetFilm().HasChannel(Film::NOISE)) {
+					const float chNoise =
+						*(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
+					// Max-combine the two estimators: a pixel is only
+					// considered converged when both agree. The dilated
+					// film map sees sub-pixel neighborhood error the
+					// per-pixel moments miss; the moments estimate
+					// refreshes every pass while the map updates only
+					// every test step, so each covers the other's blind
+					// spot (keeps hard caustic/volume tails sampled).
+					// A still-infinite map (first test not run yet)
+					// must not veto the fresh moments estimate.
+					noise = noiseValid ?
+						(isfinite(chNoise) ? Max(noise, chNoise) : noise) :
+						chNoise;
+				}
 
 				// Factor user driven importance sampling too
 				float threshold;
