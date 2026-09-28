@@ -881,6 +881,14 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	intersectionDevice.AllocBufferRW(&tasksDirectLightBuff, nullptr, sizeof(slg::ocl::pathoclbase::GPUTaskDirectLight) * taskCount, "GPUTaskDirectLight");
 
 	//--------------------------------------------------------------------------
+	// Allocate tasksMneeBuff: the whole per-task MNEE solver state
+	// (~1.9KB/task, ~115MB at 64K) only exists when MNEE is enabled.
+	//--------------------------------------------------------------------------
+
+	if (threadTaskConfig.pathTracer.mnee.enabled)
+		intersectionDevice.AllocBufferRW(&tasksMneeBuff, nullptr, sizeof(slg::ocl::pathoclbase::GPUTaskMnee) * taskCount, "GPUTaskMnee");
+
+	//--------------------------------------------------------------------------
 	// Allocate tasksStateBuff
 	//--------------------------------------------------------------------------
 
@@ -1468,7 +1476,7 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// means "no cached seed"); only used when path.mnee.enable is set.
 	//--------------------------------------------------------------------------
 
-	{
+	if (threadTaskConfig.pathTracer.mnee.enabled) {
 		std::vector<slg::ocl::pathoclbase::MneeSeedEntry> zeroSeeds(
 				MNEE_SEED_CACHE_SIZE);
 		intersectionDevice.AllocBufferRW(&mneeSeedsBuff, zeroSeeds.data(),

@@ -751,13 +751,19 @@ typedef struct {
 	// The shadow transparency flag used by Scene_Intersect()
 	int throughShadowTransparency;
 
-	// MNEE specular chain solver state (MK_MNEE_NEXT_VERTEX) and the two
-	// BSDF slots it needs: mneeBsdf is the trace target of the in-flight
-	// MNEE proposal, mneeBsdfFinal is the BSDF of the current chain vertex
-	// (the accepted proposal, the seed trace or the shadow-ray occluder).
+} GPUTaskDirectLight;
+
+// Per-task MNEE state (1928B -> 76B for GPUTaskDirectLight): the two BSDF
+// slots plus the whole Newton/line-search chain state. mneeBsdf is the
+// trace target of the in-flight MNEE proposal, mneeBsdfFinal is the BSDF
+// of the current chain vertex (the accepted proposal, the seed trace or
+// the shadow-ray occluder). Lives in its own tasksMnee buffer allocated
+// ONLY when path.mnee.enable is set - at 64K tasks this is ~115MB of
+// device memory a non-MNEE render never touches.
+typedef struct {
 	BSDF mneeBsdf, mneeBsdfFinal;
 	MneeState mnee;
-} GPUTaskDirectLight;
+} GPUTaskMnee;
 
 typedef struct {
 	// The task seed

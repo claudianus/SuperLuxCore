@@ -531,6 +531,7 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, taskConfigBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, tasksBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, tasksDirectLightBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, tasksMneeBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, tasksStateBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, taskStatsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pixelFilterBuff);

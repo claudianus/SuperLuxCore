@@ -727,6 +727,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 	//--------------------------------------------------------------------------
 
 	__global GPUTaskDirectLight *taskDirectLight = &tasksDirectLight[gid];
+	__global GPUTaskMnee *taskMnee = &tasksMnee[gid];
 	__constant const Scene* restrict scene = &taskConfig->scene;
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
@@ -856,12 +857,12 @@ __kernel void AdvancePaths_MK_RT_DL(
 		const int mneeStartResult =
 				((taskDirectLight->directLightResult == SHADOWED) &&
 				!taskConfig->pathTracer.hybridBackForward.enabled ?
-				Mnee_Start(taskConfig, task, taskDirectLight, taskState,
+				Mnee_Start(taskConfig, task, taskDirectLight, taskMnee, taskState,
 					&rayHits[gid], &rays[gid], mneeSeeds, worldRadius
 					LIGHTS_PARAM) : 0);
 		if ((mneeStartResult == 1) ||
 				((mneeStartResult == 2) &&
-				 MneeChain_StartFromShadow(taskConfig, task, taskDirectLight, taskState,
+				 MneeChain_StartFromShadow(taskConfig, task, taskDirectLight, taskMnee, taskState,
 					&rays[gid],
 					&directLightVolInfos[gid], &eyePathInfos[gid]
 					LIGHTS_PARAM))) {
@@ -1512,7 +1513,7 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 	//--------------------------------------------------------------------------
 
 	Mnee_ProcessState(taskConfig,
-			task, &tasksDirectLight[gid], taskState, pathInfo,
+			task, &tasksDirectLight[gid], &tasksMnee[gid], taskState, pathInfo,
 			&rays[gid], &rayHits[gid], &directLightVolInfos[gid],
 			sampleResult, (uint)gid,
 			worldCenterX, worldCenterY, worldCenterZ, worldRadius,
@@ -2910,7 +2911,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 	//--------------------------------------------------------------------------
 
 	if (lpi->mneeActive) {
-		LMnee_ProcessState(taskConfig, task, &tasksDirectLight[gid],
+		LMnee_ProcessState(taskConfig, task, &tasksDirectLight[gid], &tasksMnee[gid],
 				taskState, lpi, visRay, visRayHit, sampleResult,
 				filmWidth, filmHeight,
 				filmSubRegion0, filmSubRegion1,
@@ -3044,16 +3045,16 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			int lmRet = 0;
 			if (lpi->pendingSplat.fromMnee == 1)
 				lmRet = LMneeChain_Start(taskConfig, task,
-						&tasksDirectLight[gid], taskState, visRay, lpi
+						&tasksDirectLight[gid], &tasksMnee[gid], taskState, visRay, lpi
 						MATERIALS_PARAM) ? 1 : 0;
 			else if (!lpi->pendingSplat.fromMnee) {
-				lmRet = LMnee_Start(taskConfig, task, &tasksDirectLight[gid],
+				lmRet = LMnee_Start(taskConfig, task, &tasksDirectLight[gid], &tasksMnee[gid],
 						taskState, visRayHit, visRay, lpi, mneeSeeds,
 						worldRadius
 						MATERIALS_PARAM);
 				if (!lmRet)
 					lmRet = LMneeChain_Start(taskConfig, task,
-							&tasksDirectLight[gid], taskState, visRay, lpi
+							&tasksDirectLight[gid], &tasksMnee[gid], taskState, visRay, lpi
 							MATERIALS_PARAM) ? 1 : 0;
 			}
 			if (lmRet) {

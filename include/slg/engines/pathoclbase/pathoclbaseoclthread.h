@@ -360,6 +360,11 @@ protected:
 	slg::ocl::pathoclbase::GPUTaskConfiguration threadTaskConfig;
 	luxrays::HardwareDeviceBuffer *tasksBuff;
 	luxrays::HardwareDeviceBuffer *tasksDirectLightBuff;
+	// Per-task MNEE solver state (~1.9KB/task): allocated only when
+	// path.mnee.enable is set - ~115MB saved per thread otherwise.
+	// NULL is a legal kernel arg (pointer slot) and the state machine
+	// never dereferences it while pathTracer.mnee.enabled == 0.
+	luxrays::HardwareDeviceBuffer *tasksMneeBuff;
 	luxrays::HardwareDeviceBuffer *tasksStateBuff;
 	luxrays::HardwareDeviceBuffer *samplerSharedDataBuff;
 	luxrays::HardwareDeviceBuffer *samplesBuff;
