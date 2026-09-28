@@ -86,10 +86,25 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
     environment/stereo cameras fall back to it.
   - Remaining C3b (deferred): focus-cache emission steering for
     the RANDOM sampler path; Metropolis already self-steers.
-- **C4 GPU beam index**: `IndexBvh<PhotonBeam>` (segment AABBs,
-  periodic CPU build + upload — same update cadence as the existing
-  PGIC BVH upload in `compilephotongi.cpp`). Gives GPU the B2 media
-  caustics; later a GPU-side hash index removes the CPU build.
+- **C4 GPU beam index** (landed): `PGICBeamIndex` is a flat
+  `IndexBVHArrayNode` tree over radius-inflated segment AABBs —
+  the same array drives CPU `Query()` and the device traversal
+  (`PGICBeamBvh_ConnectAllNearEntries`, mirrors
+  `ConnectCausticBeams` one to one). Buffers upload in
+  `InitPhotonGI` and refresh through the existing
+  `Update()`→`RecompilePhotonGI`→`InitPhotonGI`+`SetKernelArgs`
+  path each generation. Verified +12.6% medium-caustic energy on
+  GPU vs +14% CPU (fog+glass Cornell, inside noise).
+- **C8 deferred initial cache** (landed): when
+  `caustic.updatespp>0`, `Preprocess` no longer traces the first
+  caustic cache synchronously — it launches the C7 background
+  worker immediately and rendering starts on an empty cache
+  (~0.3s preprocess on the fog scene). Generation 1 lands via the
+  normal pending-swap; `Update()` adopts thread 0's callback so
+  GPU recompilation still fires. `updatespp=0` keeps the
+  synchronous build (final-render/fixed-cache mode). This is the
+  "no pre-cache" half of the Corona-UX goal: first pixels are on
+  screen before the cache exists.
 - **C7 stall-free periodic updates** (landed): `Update()` used to
   park every render thread at a barrier while thread 0 re-traced
   photons and rebuilt BVH + beam index (seconds of viewport freeze

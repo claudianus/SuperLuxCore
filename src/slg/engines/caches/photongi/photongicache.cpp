@@ -695,8 +695,23 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	}
 
 	if (params.caustic.enabled) {
-		SLG_LOG("PhotonGI tracing caustic cache photons");
-		TracePhotons(false, true);
+		if (params.caustic.updateSpp > 0) {
+			// Deferred initial generation: with periodic updates enabled,
+			// the first cache is traced by the background worker while
+			// rendering starts immediately on an empty cache (no
+			// pre-cache stall). Generation 1 lands through the normal
+			// pending-swap path on the first Update() call after the
+			// worker completes. Queries guard the empty cache:
+			// ConnectWithCausticPaths returns an empty SpectrumGroup and
+			// the GPU kernels see null buffers.
+			SLG_LOG("PhotonGI deferring initial caustic trace to background update");
+			updateInFlight = true;
+			updateFilmSPP = 0;
+			updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
+		} else {
+			SLG_LOG("PhotonGI tracing caustic cache photons");
+			TracePhotons(false, true);
+		}
 	}
 
 	//--------------------------------------------------------------------------

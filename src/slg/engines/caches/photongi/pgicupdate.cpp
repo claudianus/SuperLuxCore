@@ -54,6 +54,12 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 		}
 	}
 
+	// The deferred initial generation (launched in Preprocess) carries no
+	// callback: adopt thread 0's callback so the swap still notifies
+	// GPU-side recompilation exactly once.
+	if ((threadIndex == 0) && updateInFlight && !updateCallback)
+		updateCallback = threadZeroCallback;
+
 	if (!updatePendingSwap)
 		return false;
 

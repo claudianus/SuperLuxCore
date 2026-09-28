@@ -61,14 +61,14 @@ def parse_scene(path):
         os.chdir(cwd)
 
 
-def render(scene, engine, extra):
+def render(scene, engine, extra, spp=SPP, width=WIDTH, height=HEIGHT):
     cfg = pysuperluxcore.Properties()
     cfg.SetFromString(f"""
-film.width = {WIDTH}
-film.height = {HEIGHT}
+film.width = {width}
+film.height = {height}
 renderengine.type = {engine}
 sampler.type = SOBOL
-batch.haltspp = {SPP}
+batch.haltspp = {spp}
 renderengine.seed = 17
 opencl.task.count = {TASK_COUNT}
 opencl.native.threads.count = 0
@@ -83,15 +83,15 @@ opencl.native.threads.count = 0
             break
         if time.monotonic() > deadline:
             ses.Stop()
-            raise TimeoutError(f"render stalled below {SPP} spp")
+            raise TimeoutError(f"render stalled below {spp} spp")
         time.sleep(0.5)
     # Stop() performs the final UpdateFilmLockLess() - on GPU engines the
     # per-task films (incl. light-pass splats) merge only then.
     ses.Stop()
-    rgb = np.empty(WIDTH * HEIGHT * 3, dtype=np.float32)
+    rgb = np.empty(width * height * 3, dtype=np.float32)
     ses.GetFilm().GetOutputFloat(pysuperluxcore.FilmOutputType.RGB,
                                  rgb, 0, True)
-    return rgb.reshape(HEIGHT, WIDTH, 3)
+    return rgb.reshape(height, width, 3)
 
 
 def luminance(img):
@@ -160,6 +160,22 @@ def main():
                     f"beams={pgic.mean():.4f} points={pgic_pts.mean():.4f}")
     except Exception as e:
         ok &= check(False, "4 PhotonGI caustic cache", e)
+
+    # 4c. GPU beam parity: beams must contribute medium-caustic energy on
+    # the device too, and agree with the CPU beam estimate. Lower spp —
+    # the beam-only delta shows well before convergence.
+    try:
+        gpu_beams = luminance(render(scene, "PATHOCL", PGIC,
+                                     spp=16, width=160, height=90))
+        gpu_pts = luminance(render(scene, "PATHOCL", PGIC_NOBEAMS,
+                                   spp=16, width=160, height=90))
+        ok &= check(finite(gpu_beams) and finite(gpu_pts) and
+                    gpu_beams.mean() > gpu_pts.mean() * 1.02 and
+                    0.5 < gpu_beams.mean() / max(pgic.mean(), 1e-6) < 2.0,
+                    "4c GPU beam parity",
+                    f"gpu_beams={gpu_beams.mean():.4f} gpu_pts={gpu_pts.mean():.4f}")
+    except Exception as e:
+        ok &= check(False, "4c GPU beam parity", e)
 
     # 5. BIDIRCPU smoke on the volume caustic scene
     try:

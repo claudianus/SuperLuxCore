@@ -1,7 +1,8 @@
 # Caustics SOTA program — unified coverage across engines
 
-Status: **Stage A + B2 landed** (media-transparent specular chains,
-photon beams for volumetric caustics) — see §Stages. Regression:
+Status: **Stage A + B2 + C4 landed** (media-transparent specular chains,
+photon beams for volumetric caustics on CPU **and** GPU — see
+`doc/engineering/pgic-beams.md`) — see §Stages. Regression:
 `dev-tools/e54_media_caustic_test.py` (all 7 gates PASS), scenes
 `scenes/cornell/cornell-vol-caustic*.scn`, `cornell-vol-pure.scn`;
 visual: `dev-tools/e54_visual_demo.py` + `cornell-vol-caustic-show.scn`
@@ -80,7 +81,7 @@ spheres in fog, 1280×720 PATHOCL adaptive hybrid): volumetric shafts +
 spectral caustic fans converge under the light-pass side; AgX punch
 display transform, correct orientation.
 
-## Stage B2 — caustic photon beams (landed, CPU)
+## Stage B2 — caustic photon beams (landed, CPU+GPU)
 
 Volumetric caustics are 3D-sparse: a focused shaft crosses the whole
 medium as a line, but point deposits only land where a scatter vertex
@@ -137,7 +138,10 @@ photons; beam render overhead ≈ +40% vs point queries at small res.
 
 - **B1 GPU photon shooting**: wavefront photon-trace kernels reusing
   the PhotonGI layout; CPU keeps BVH build per pass. Gate: slab caustic
-  parity vs CPU + measured speedup.
+  parity vs CPU + measured speedup. (C4 done: the beam/point BVH side —
+  `pgicCausticBeams*` buffers and `PGICBeamBvh_ConnectAllNearEntries`
+  are live on device; the remaining work is generating deposits on-GPU
+  instead of the CPU `TracePhotonsThread`.)
 - **B3 dual-field product guiding** (own research): light-side exitant
   vMF field trained like M2b-2 records; eye×light product proposal at
   specular-adjacent bounces; MNEE stays the exact fallback.
