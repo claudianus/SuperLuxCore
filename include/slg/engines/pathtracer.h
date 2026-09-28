@@ -307,6 +307,10 @@ public:
 	// Vertex merging (M7): merge radius as a fraction of the scene
 	// bounding-sphere radius (0 disables merging)
 	float vertexConnectMergeRadius;
+	// Progressive merge radius shrink exponent (BIDIRVM's
+	// bidirvm.alpha counterpart); the host re-derives the merge
+	// constants each merge pass (0 disables progressive shrinkage)
+	float vertexConnectMergeAlpha;
 	// Temporal connect reuse (M7d): replay each eye task's best
 	// connect vertex as an extra deterministic candidate
 	bool vertexConnectReuse;

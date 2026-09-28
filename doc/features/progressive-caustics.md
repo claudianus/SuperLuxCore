@@ -64,12 +64,15 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   (single shared evaluation). Remaining: `caustic.maxsize=0` →
   photons-per-pixel/memory budget (Corona scheme), `photon.maxcount`
   cap sanity, Blender "automatic" collapse.
-- **C2 progressive GPU merge radius** (audit items B-1/B-2/B-3):
-  per-light-subpath sample index `n_t` → `r_t = r0/(n_t+1)^(.5(1-α))`;
-  `vmNorm/misVc/misVm` derived per-merge from the vertex's stored pass
-  instead of taskConfig constants (`init.cpp:659` already anticipated
-  this). Hash cell policy under varying radii. CPU reference:
-  `bidirvmcputhread.cpp:111`.
+- **C2 progressive GPU merge radius** (landed): the render loop
+  tracks `t = lightSampleCount / lightTaskCount` (mean completed
+  sub-paths per light task — the GPU analogue of BIDIRVMCPU's
+  iteration counter) and re-derives `mergeRadius` + the three
+  MIS constants, re-uploading `GPUTaskConfiguration` only when
+  the pass index changes. `path.vertexconnection.mergealpha`
+  (default 0.95, `bidirvm.alpha` parity; 1.0 = fixed radius).
+  Kernel-side unchanged: merge hash cell size tracks the current
+  radius, so queries stay self-consistent.
 - **C3 kill the visibility pre-pass** (partially landed as C3a):
   - `UseFrustumCulling()` — caustic-only caches on projective
     cameras skip `TraceVisibilityParticles()` entirely; deposits

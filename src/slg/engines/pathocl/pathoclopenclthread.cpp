@@ -124,6 +124,12 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 	const std::function<void()> pgicUpdateCallBack = std::bind(PGICUpdateCallBack, engine->compiledScene);
 
+	// Progressive vertex-merge radius (VCM): the merge pass counter is
+	// the mean completed subpaths per light task - the same scale as
+	// BIDIRVMCPU's per-iteration schedule since each CPU iteration also
+	// traces lightPathsCount sub-paths. Only rewritten when it changes.
+	u_int lastVCMergePass = 0;
+
 	while (!stop_token.stop_requested()) {
 		//if (threadIndex == 0)
 		//	SLG_LOG("[DEBUG] =================================");
@@ -173,6 +179,34 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				lightSampleCount += gpuTaskStats[i].sampleCount;
 			threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
 					eyeSampleCount, lightSampleCount);
+
+			// Progressive vertex-merge radius (VCM schedule): shrink the
+			// merge kernel radius and re-derive the SmallVCM constants as
+			// the light population accumulates sub-paths. Kernels read the
+			// current values from taskConfig; the merge hash cell size
+			// tracks mergeRadius so queries stay self-consistent.
+			auto &vc = engine->taskConfig.pathTracer.vertexConnect;
+			if (vc.enabled && vc.mergeEnable && (vc.mergeAlpha < 1.f) &&
+					(engine->lightTaskCount > 0)) {
+				const u_int mergePass = (u_int)(lightSampleCount / engine->lightTaskCount);
+				if (mergePass != lastVCMergePass) {
+					lastVCMergePass = mergePass;
+					const float r = Max(vc.mergeStartRadius * 1e-4f,
+							vc.mergeStartRadius /
+							powf(float(mergePass + 1), .5f * (1.f - vc.mergeAlpha)));
+					const float nVM = (float)engine->lightTaskCount;
+					const float nVC = (float)Max(1u, vc.poolTasks);
+					const float etaVCM = M_PI * r * r * nVM / nVC;
+					vc.mergeRadius = r;
+					vc.misVcWeightFactor = 1.f / (etaVCM * etaVCM);
+					vc.misVmWeightFactor = etaVCM * etaVCM;
+					vc.vmNorm = 1.f / (M_PI * r * r * nVM);
+					intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+							CL_FALSE,
+							sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+							&engine->taskConfig);
+				}
+			}
 
 			//SLG_LOG("[DEBUG] film transferred");
 		}

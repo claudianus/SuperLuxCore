@@ -45,6 +45,7 @@ strategies actually sampled.
 | `path.vertexconnection.pool` | `1` | How many light tasks' vertex caches each eye vertex may connect to. `1` = the paired task only (M6 behaviour). |
 | `path.vertexconnection.adaptive` | `1` | Scale the connect budget by the measured efficiency of the sample's screen-space tile (needs `connects > 0`). |
 | `path.vertexconnection.mergeradius` | `0` | VCM vertex-merging radius as a fraction of the scene bounding sphere. `0` disables merging. |
+| `path.vertexconnection.mergealpha` | `0.95` | Progressive merge-radius schedule (VCM). Each merge pass the host shrinks `r_t = r0 / (t+1)^(.5*(1-a))` and re-derives the MIS constants, where `t` = mean completed sub-paths per light task — the CPU `BIDIRVMCPU` per-iteration schedule, so merge bias -> 0 as samples accumulate. `1.0` = fixed radius (old behaviour). |
 | `path.vertexconnection.reuse` | `1` | Temporal connect reuse: replay each eye task's best-scoring connect vertex as one extra deterministic candidate per eye vertex (M7d). |
 | `opencl.task.count` | — | Must exceed 8192: light tasks occupy the tail gids, so the population needs headroom above the eye-task floor. |
 | `path.lighttracing.taskfraction` | `1 - path.hybridbackforward.partition` | Share of the task population running light paths (and therefore the vertex cache size). |
@@ -315,6 +316,15 @@ exhausted before the eye path bounces. `WAVEFRONT_NUM_STATES` is 18.
   (a coverage loss, not a bias) and the merge lookup is a 27-cell
   neighbourhood per eye vertex — its cost scales with the merge
   radius, not the scene.
+- Progressive merge radius (`mergealpha < 1`): the host recomputes
+  `mergeRadius` + `misVcWeightFactor`/`misVmWeightFactor`/`vmNorm`
+  each merge pass and re-uploads `GPUTaskConfiguration` from the
+  render loop (`pathoclopenclthread.cpp`). Light vertices written
+  before a shrink keep the constants of their generation (a
+  one-generation lag, as in CPU VCM where vertices are rebuilt
+  per pass — asymptotically identical). The schedule follows the
+  mean light-task pass index, so tasks at different speeds all
+  merge at the current global radius.
 - The 384 MB vertex-cache budget can truncate `slotsPerTask`; deep
   light chains then lose their deepest connect strategies (still
   unbiased, just less coverage).

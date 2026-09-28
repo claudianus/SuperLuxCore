@@ -228,6 +228,12 @@ typedef struct {
 		// misVcWeightFactor = Mis(1/etaVCM), misVmWeightFactor =
 		// Mis(etaVCM), vmNorm = 1/(PI*r^2*nVM).
 		float misVcWeightFactor, misVmWeightFactor, vmNorm;
+		// Progressive radius schedule (VCM, Hachisuka-Georgiev): the
+		// host re-derives mergeRadius + the MIS constants above every
+		// merge pass as r_t = mergeStartRadius / (t+1)^(.5*(1-alpha)),
+		// where t = mean completed subpaths per light task. Kernels
+		// only read the current values.
+		float mergeStartRadius, mergeAlpha;
 		// Temporal connect reuse (M7d): each eye task replays the
 		// highest-scoring light vertex it has connected so far as one
 		// extra deterministic candidate per eye vertex.

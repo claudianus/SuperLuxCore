@@ -656,8 +656,9 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		// merge hash covers the whole light population (nVM =
 		// lightTaskCount) while a connect pool spans poolTasks sub-paths
 		// (nVC), so etaVCM = PI*r^2*nVM/nVC. vmNorm is the VM density
-		// normalization 1/(PI*r^2*nVM) - progressive shrinkage can be
-		// added later by re-scaling all three terms per pass.
+		// normalization 1/(PI*r^2*nVM). Progressive shrinkage: the host
+		// loop re-derives all merge constants from mergeStartRadius each
+		// merge pass (see pathoclopenclthread.cpp).
 		if (vc.enabled && vc.mergeEnable && (renderEngine->lightTaskCount > 0)) {
 			const float r = Max(1e-6f, vc.mergeRadius *
 					renderEngine->compiledScene->worldBSphere.rad);
@@ -673,6 +674,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 				vc.mergeEnable = 0;
 			} else {
 				vc.mergeRadius = r;
+				vc.mergeStartRadius = r;
 				vc.misVcWeightFactor = misVcW;
 				vc.misVmWeightFactor = misVmW;
 				vc.vmNorm = 1.f / (M_PI * r * r * nVM);

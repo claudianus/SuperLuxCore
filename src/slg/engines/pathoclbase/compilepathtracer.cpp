@@ -131,6 +131,8 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.vertexConnect.misVcWeightFactor = 0.f;
 	compiledPathTracer.vertexConnect.misVmWeightFactor = 0.f;
 	compiledPathTracer.vertexConnect.vmNorm = 0.f;
+	compiledPathTracer.vertexConnect.mergeStartRadius = 0.f;
+	compiledPathTracer.vertexConnect.mergeAlpha = pathTracer->vertexConnectMergeAlpha;
 	// Temporal connect reuse (M7d): per-eye-task vertex replay slot
 	compiledPathTracer.vertexConnect.reuse = pathTracer->vertexConnectReuse ? 1 : 0;
 

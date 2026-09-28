@@ -107,6 +107,7 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		vertexConnectEnable(false),
 		vertexConnectBudget(0), vertexConnectPoolTasks(1),
 		vertexConnectAdaptive(true), vertexConnectMergeRadius(0.f),
+		vertexConnectMergeAlpha(.95f),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true) {
@@ -2779,6 +2780,7 @@ void PathTracer::ParseOptions(
 	vertexConnectPoolTasks = Max(1u, cfg.Get(defaultProps.Get("path.vertexconnection.pool")).Get<u_int>());
 	vertexConnectAdaptive = cfg.Get(defaultProps.Get("path.vertexconnection.adaptive")).Get<bool>();
 	vertexConnectMergeRadius = Max(0.f, cfg.Get(defaultProps.Get("path.vertexconnection.mergeradius")).Get<float>());
+	vertexConnectMergeAlpha = Clamp(cfg.Get(defaultProps.Get("path.vertexconnection.mergealpha")).Get<float>(), 0.f, 1.f);
 	vertexConnectReuse = cfg.Get(defaultProps.Get("path.vertexconnection.reuse")).Get<bool>();
 	if (vertexConnectEnable && !hybridBackForwardEnable) {
 		hybridBackForwardEnable = true;
@@ -3094,6 +3096,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			// Vertex merging (M7, Georgiev'12 VCM): merge radius as a
 			// fraction of the scene bounding-sphere radius (0 = off)
 			Property("path.vertexconnection.mergeradius")(0.f) <<
+			Property("path.vertexconnection.mergealpha")(.95f) <<
 			// Temporal connect reuse (M7d, ReSTIR-style vertex replay):
 			// each eye task keeps a copy of its best connect vertex and
 			// replays it as an extra candidate on later samples
