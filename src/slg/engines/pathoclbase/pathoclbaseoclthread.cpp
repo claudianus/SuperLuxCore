@@ -178,12 +178,11 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	advancePathsKernel_BucketHistogram = nullptr;
 	advancePathsKernel_QueuePrefix = nullptr;
 
-	// Wavefront per-state task queues (B2/E3): opt-in via env
-	// LUXRAYS_WAVEFRONT_QUEUES=1 while the dense path stays the default
-	{
-		const char *env = getenv("LUXRAYS_WAVEFRONT_QUEUES");
-		wavefrontQueues = env && (atoi(env) != 0);
-	}
+	// Wavefront per-state task queues (B2/E3): resolved in InitRender()
+	// from pathocl.wavefront / LUXRAYS_WAVEFRONT_QUEUES (the decision is
+	// compile+buffer-time, so it must land before InitGPUTaskBuffer and
+	// InitKernels run).
+	wavefrontQueues = false;
 	taskQueueBuff = nullptr;
 	taskQueueCountBuff = nullptr;
 	taskQueueBaseBuff = nullptr;

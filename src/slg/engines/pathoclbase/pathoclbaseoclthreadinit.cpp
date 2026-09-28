@@ -1161,6 +1161,37 @@ void PathOCLBaseOCLRenderThread::InitSampleDataBuffer() {
 
 void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
+	// Wavefront per-state task queues (E3): pathocl.wavefront =
+	// auto|on|off, LUXRAYS_WAVEFRONT_QUEUES env overrides. The decision
+	// is compile+buffer-time so it must precede InitGPUTaskBuffer() and
+	// InitKernels(). AUTO enables on GPU-class devices: measured
+	// +24% (prism-conservatory) to +153% (cornell 720p) on Metal with
+	// the device-side queue prefix (M3a); the worst observed dense-win
+	// is ~10% on uniform-state scenes.
+	//--------------------------------------------------------------------------
+	{
+		const string wavefrontMode = renderEngine->renderConfig.GetConfig().Get(
+				Property("pathocl.wavefront")("auto")).Get<string>();
+		const char *env = getenv("LUXRAYS_WAVEFRONT_QUEUES");
+		if (env)
+			wavefrontQueues = (atoi(env) != 0);
+		else if (wavefrontMode == "on")
+			wavefrontQueues = true;
+		else if (wavefrontMode == "off")
+			wavefrontQueues = false;
+		else {
+			const DeviceType dt = intersectionDevice.GetDeviceDesc().GetType();
+			wavefrontQueues = (dt == DEVICE_TYPE_OPENCL_GPU) ||
+					(dt == DEVICE_TYPE_METAL_GPU) ||
+					(dt == DEVICE_TYPE_CUDA_GPU) ||
+					(dt == DEVICE_TYPE_VULKAN_GPU);
+		}
+		if (wavefrontQueues)
+			SLG_LOG("[PathOCLBaseRenderThread] Wavefront task queues "
+					"enabled (mode=" << wavefrontMode << ")");
+	}
+
+	//--------------------------------------------------------------------------
 	// Path guiding frozen table first (M2b): small chunk uploads before
 	// all other buffers.
 	//--------------------------------------------------------------------------
