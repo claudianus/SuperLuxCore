@@ -481,6 +481,17 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 		// (explicit radius or auto-derived), not an absolute value.
 		params.caustic.minLookUpRadius = params.caustic.lookUpRadius * .02f;
 
+	if (params.caustic.enabled && (params.caustic.maxSize == 0)) {
+		// Automatic cache capacity: ~2 photons per film pixel, bounded
+		// [256K, 16M]. Caustic detail requirements scale with resolution
+		// (viewport renders stay light), so the film area is the natural
+		// budget axis - the same scheme Corona's caustics solver uses.
+		const u_int filmPixels = Max(1u, scene->GetCamera().filmWidth *
+				scene->GetCamera().filmHeight);
+		params.caustic.maxSize = Max(262144u, Min(16777216u, 2u * filmPixels));
+		SLG_LOG("PhotonGI automatic caustic cache max size: " << params.caustic.maxSize);
+	}
+
 	//--------------------------------------------------------------------------
 	// Initialize all parameters
 	//--------------------------------------------------------------------------

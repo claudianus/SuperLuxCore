@@ -85,7 +85,10 @@ PropertiesUPtr PhotonGICache::GetDefaultProps() {
 			Property("path.photongi.indirect.usagethresholdscale")(8.f) <<
 			Property("path.photongi.indirect.filter.radiusscale")(3.f) <<
 			Property("path.photongi.caustic.enabled")(false) <<
-			Property("path.photongi.caustic.maxsize")(100000) <<
+			// 0 = automatic: the cache capacity scales with the film
+			// resolution (resolved in Preprocess, Corona-style
+			// photons-per-pixel) instead of a scene-independent constant.
+			Property("path.photongi.caustic.maxsize")(0) <<
 			Property("path.photongi.caustic.updatespp")(8) <<
 			Property("path.photongi.caustic.updatespp.radiusreduction")(.96f) <<
 			Property("path.photongi.caustic.updatespp.minradius")(.0f) <<
