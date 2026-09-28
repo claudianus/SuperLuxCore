@@ -181,11 +181,14 @@ typedef struct {
 	int isNearlyS, isNearlySD, isNearlySDS;
 
 	// Adaptive caustic partition: all vertices so far are non-diffuse
-	// (SPECULAR|GLOSSY), the widened-chain counterpart of isNearlyS.
+	// or medium (media-transparent chains), the widened-chain
+	// counterpart of isNearlyS.
 	int isAdaptiveS;
-	// Light-adjacent vertex (v1): the terminal of the eye-side chain.
-	// Its lobe width vs the light's solid angle decides eye-side
-	// connection difficulty. Lobe is 0 for delta terminals.
+	// First NON-MEDIUM (light-adjacent) vertex: the terminal of the
+	// eye-side chain. Its lobe width vs the light's solid angle decides
+	// eye-side connection difficulty. Lobe is 0 for delta terminals.
+	// firstVertSeen keeps pure-medium prefixes out of the caustic class.
+	int firstVertSeen;
 	float firstVertPX, firstVertPY, firstVertPZ;
 	float firstVertGloss;
 	int firstVertDelta;

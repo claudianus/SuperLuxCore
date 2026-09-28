@@ -345,8 +345,10 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 									bsdf.GetGlossiness(),
 									hybridBackForwardTerminalGlossiness,
 									hybridBackForwardConnectProb,
-									LightConnectionSolidAngle(*light, bsdf.hitPoint.p)) :
-							!pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold)))) {
+									LightConnectionSolidAngle(*light, bsdf.hitPoint.p),
+									bsdf.IsVolume()) :
+							!pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold,
+									bsdf.IsVolume())))) {
 					verify (!isnan(bsdfPdfW) && !isinf(bsdfPdfW));
 					
 					// Create a new PathDepthInfo for the path to the light source

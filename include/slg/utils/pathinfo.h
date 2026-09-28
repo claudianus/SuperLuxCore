@@ -119,29 +119,41 @@ public:
 		return accept;
 	}
 
-	bool IsCausticPath() const { return isNearlyCaustic && (depth.depth > 1); }
-	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
+	// Caustic-class predicates share the media-transparent chain rule
+	// (doc/features/caustics-sota.md Stage A): a medium scattering
+	// vertex neither extends nor breaks the specular chain — the
+	// classification is a pure function of the non-medium events on
+	// both sides, keeping the eye/light partition disjoint.
+	bool IsCausticPath() const { return isNearlyCaustic && (depth.depth > 1) &&
+			(!lastFromVolume || causticHasSurface); }
+	bool IsCausticPath(const BSDFEvent event, const float glossiness,
+			const float glossinessThreshold, const bool terminalIsVolume = false) const;
 
 	// Adaptive counterpart of IsCausticPath(event, ...): widened S*D
 	// chain (isAdaptiveCaustic) + hard light-adjacent terminal. The
 	// pending event/glossiness are the ones of the vertex being
 	// evaluated; lightSolidAngle is Light_ConnectionSolidAngle().
+	// A medium terminal counts as hard once the chain saw a surface:
+	// its phase lobe can never aim at a small light.
 	bool IsAdaptiveCausticPath(const BSDFEvent event, const float glossiness,
 			const float terminalGlossiness, const float connectProb,
-			const float lightSolidAngle) const {
+			const float lightSolidAngle, const bool terminalIsVolume = false) const {
 		return isAdaptiveCaustic && (depth.depth + 1 > 1) &&
-				((event & (SPECULAR | GLOSSY)) != 0) &&
+				(((event & (SPECULAR | GLOSSY)) != 0) ||
+						(terminalIsVolume && causticHasSurface)) &&
 				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
-						(event & SPECULAR) != 0, glossiness, lightSolidAngle);
+						((event & SPECULAR) != 0) || terminalIsVolume,
+						glossiness, lightSolidAngle);
 	}
 	// Direct emitter hit variant: the terminal is the last added vertex
 	bool IsAdaptiveCausticHitPath(const float terminalGlossiness,
 			const float connectProb, const float lightSolidAngle) const {
 		return isAdaptiveCaustic && (depth.depth > 1) &&
-				((lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) &&
+				(((lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) ||
+						(lastFromVolume && causticHasSurface)) &&
 				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
-						(lastBSDFEvent & SPECULAR) != 0, lastGlossiness,
-						lightSolidAngle);
+						((lastBSDFEvent & SPECULAR) != 0) || lastFromVolume,
+						lastGlossiness, lightSolidAngle);
 	}
 
 	bool isPassThroughPath;
@@ -162,6 +174,11 @@ public:
 	// Adaptive caustic partition (see isAdaptiveCaustic in
 	// pathinfo_types.cl)
 	bool isAdaptiveCaustic;
+
+	// Media-transparent chains: any non-medium vertex after the depth-1
+	// receiver. Distinguishes "focused through a surface" from pure
+	// ambient medium paths for the caustic-class predicates above.
+	bool causticHasSurface;
 
 	// LPE: live NFA state set per expression (u32 bitmask each), stepped
 	// once per vertex event in AddVertex; see lpe_funcs.cl for the twin
@@ -205,6 +222,9 @@ public:
 
 	void AddVertex(const BSDF &bsdf, const BSDFEvent event, const float glossinessThreshold);
 
+	// Media-transparent chains: the receiver (connection event) must
+	// stay non-nearly-specular; a medium vertex satisfies that. The
+	// firstVertexSeen guard keeps pure-medium prefixes eye-owned.
 	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
 
 	// Adaptive counterpart: all-non-diffuse chain (isAdaptiveS),
@@ -213,7 +233,7 @@ public:
 			const float terminalGlossiness, const float connectProb,
 			const float lightSolidAngle) const {
 		return isAdaptiveS && (depth.depth + 1 > 1) &&
-				!(event & SPECULAR) &&
+				!(event & SPECULAR) && firstVertexSeen &&
 				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
 						firstVertexDelta, firstVertexGlossiness, lightSolidAngle);
 	}
@@ -221,9 +241,10 @@ public:
 	luxrays::Point lensPoint;
 
 	// Adaptive caustic partition: mirrors the GPU LightPathInfo fields.
-	// firstVertex* describe the light-adjacent vertex (v1), the terminal
-	// of the eye-side connection-difficulty test.
+	// firstVertex* describe the first NON-MEDIUM vertex — the real
+	// light-adjacent terminal of the eye-side difficulty test.
 	bool isAdaptiveS;
+	bool firstVertexSeen;
 	luxrays::Point firstVertexP;
 	float firstVertexGlossiness;
 	bool firstVertexDelta;

@@ -47,7 +47,11 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 		return false;
 	else if (!taskConfig->pathTracer.pgic.causticEnabled || !photonGICausticCacheUsed)
 		return true;
-	else if (!pathInfo->isNearlyCaustic && (taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE))
+	// Media-transparent chains: a pure-medium path is not caustic-class,
+	// its direct hit stays visible (CPU: EyePathInfo::IsCausticPath())
+	else if (!(pathInfo->isNearlyCaustic &&
+			(!pathInfo->lastFromVolume || pathInfo->causticHasSurface)) &&
+			(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE))
 		return true;
 	else
 		return false;

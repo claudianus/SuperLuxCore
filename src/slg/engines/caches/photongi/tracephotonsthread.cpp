@@ -189,7 +189,13 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 								pgic.params.visibility.lookUpNormalCosAngle);
 
 						if (allNearEntryIndices.size() > 0) {
-							if ((pathInfo.depth.depth > 0) && pathInfo.IsSpecularPath() && !causticDone) {
+							// Media-transparent chains: isNearlyS survives
+							// medium scatter vertices, so multi-scatter
+							// deposits in volumes land here. firstVertexSeen
+							// keeps pure-medium prefixes (ambient
+							// in-scattering, no focusing surface) out.
+							if ((pathInfo.depth.depth > 0) && pathInfo.IsSpecularPath() &&
+									pathInfo.firstVertexSeen && !causticDone) {
 								// It is a caustic photon
 								newCausticPhotons.push_back(Photon(bsdf.hitPoint.p, nextEventRay.d,
 										light->GetID(), lightPathFlux, landingSurfaceNormal, bsdf.IsVolume()));

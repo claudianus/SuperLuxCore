@@ -41,6 +41,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->isNearlySD = false;
 	pathInfo->isNearlySDS = false;
 	pathInfo->isAdaptiveCaustic = false;
+	pathInfo->causticHasSurface = false;
 
 	// Vertex connection (M6) eye-prefix MIS bookkeeping - the real init
 	// (dVCM = MIS(1/cameraPdfW)) happens in GenerateEyePath after the
@@ -113,18 +114,25 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	// Update 
 	//
 	// Note: depth.depth has been already incremented by 1 with the depth.IncDepths(event);
+	// Media-transparent chains: a medium scattering vertex neither
+	// extends nor breaks the run (doc/features/caustics-sota.md)
 	pathInfo->isNearlyCaustic = (pathInfo->depth.depth == 1) ? 
 		// First vertex must a nearly diffuse
 		(!isNewVertexNearlySpecular) :
-		// All other vertices must be nearly specular
-		(pathInfo->isNearlyCaustic && isNewVertexNearlySpecular);
+		// All other vertices must be nearly specular or medium
+		(pathInfo->isNearlyCaustic && (isNewVertexNearlySpecular || bsdf->isVolume));
 
 	// Adaptive partition: the receiver (first vertex) only has to be
 	// non-delta (a glossy receiver can still connect to the lens); every
-	// later vertex must be non-diffuse so the chain concentrates light.
+	// later vertex must be non-diffuse or medium so the chain
+	// concentrates light.
 	pathInfo->isAdaptiveCaustic = (pathInfo->depth.depth == 1) ?
 		!(event & SPECULAR) :
-		(pathInfo->isAdaptiveCaustic && ((event & (SPECULAR | GLOSSY)) != 0));
+		(pathInfo->isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) || bsdf->isVolume));
+
+	// Chain touched a surface beyond the receiver
+	if (!bsdf->isVolume && (pathInfo->depth.depth > 1))
+		pathInfo->causticHasSurface = true;
 
 	// Update last path vertex information
 	pathInfo->lastBSDFPdfW = pdfW;
@@ -154,14 +162,19 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 }
 
 OPENCL_FORCE_INLINE bool EyePathInfo_IsCausticPath(__global EyePathInfo *pathInfo) {
-	return pathInfo->isNearlyCaustic && (pathInfo->depth.depth > 1);
+	return pathInfo->isNearlyCaustic && (pathInfo->depth.depth > 1) &&
+			(!pathInfo->lastFromVolume || pathInfo->causticHasSurface);
 }
 
 OPENCL_FORCE_INLINE bool EyePathInfo_IsCausticPathWithEvent(__global EyePathInfo *pathInfo,
-		const BSDFEvent event, const float glossiness, const float glossinessThreshold) {
-	// Note: the +1 is there for the event passed as method arguments
+		const BSDFEvent event, const float glossiness, const float glossinessThreshold,
+		const bool terminalIsVolume) {
+	// Note: the +1 is there for the event passed as method arguments.
+	// A medium terminal matches the light side's caustic mark once the
+	// chain saw a surface (disjoint partition contract).
 	return pathInfo->isNearlyCaustic && (pathInfo->depth.depth + 1 > 1) &&
-			EyePathInfo_IsNearlySpecular(pathInfo, event, glossiness, glossinessThreshold);
+			(EyePathInfo_IsNearlySpecular(pathInfo, event, glossiness, glossinessThreshold) ||
+					(terminalIsVolume && pathInfo->causticHasSurface));
 }
 
 //------------------------------------------------------------------------------
@@ -205,12 +218,16 @@ OPENCL_FORCE_INLINE bool CausticPath_IsTerminalHard(
 OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticPath(__global EyePathInfo *pathInfo,
 		const BSDFEvent event, const float glossiness,
 		const float terminalGlossiness, const float connectProb,
-		const float lightSolidAngle) {
-	// Note: the +1 is there for the event passed as method arguments
+		const float lightSolidAngle, const bool terminalIsVolume) {
+	// Note: the +1 is there for the event passed as method arguments.
+	// A medium terminal counts as hard once the chain saw a surface:
+	// its phase lobe can never aim at a small light.
 	return pathInfo->isAdaptiveCaustic && (pathInfo->depth.depth + 1 > 1) &&
-			((event & (SPECULAR | GLOSSY)) != 0) &&
+			(((event & (SPECULAR | GLOSSY)) != 0) ||
+					(terminalIsVolume && pathInfo->causticHasSurface)) &&
 			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
-					(event & SPECULAR) != 0, glossiness, lightSolidAngle);
+					((event & SPECULAR) != 0) || terminalIsVolume,
+					glossiness, lightSolidAngle);
 }
 
 // Adaptive counterpart of EyePathInfo_IsCausticPath() for a direct
@@ -220,9 +237,10 @@ OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticHitPath(__global EyePathIn
 		const float terminalGlossiness, const float connectProb,
 		const float lightSolidAngle) {
 	return pathInfo->isAdaptiveCaustic && (pathInfo->depth.depth > 1) &&
-			((pathInfo->lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) &&
+			(((pathInfo->lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) ||
+					(pathInfo->lastFromVolume && pathInfo->causticHasSurface)) &&
 			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
-					(pathInfo->lastBSDFEvent & SPECULAR) != 0,
+					((pathInfo->lastBSDFEvent & SPECULAR) != 0) || pathInfo->lastFromVolume,
 					pathInfo->lastGlossiness, lightSolidAngle);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

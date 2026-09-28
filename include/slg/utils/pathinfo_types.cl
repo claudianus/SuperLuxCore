@@ -54,6 +54,11 @@ typedef struct {
 	// difficulty.
 	int isAdaptiveCaustic;
 
+	// Media-transparent chains (doc/features/caustics-sota.md): any
+	// non-medium vertex after the depth-1 receiver. Keeps pure
+	// ambient medium paths out of the caustic class.
+	int causticHasSurface;
+
 	// Vertex connection (M6) eye-prefix MIS bookkeeping, per CPU
 	// BiDirCPURenderThread. dVM (M7) carries the vertex-merging
 	// bookkeeping; with merging disabled it stays at the same values

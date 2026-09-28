@@ -1,0 +1,90 @@
+# Volume caustic showcase (e54): Cornell box in homogeneous fog,
+# dispersion glass spheres, a fan of narrow lasers raking down through
+# the spheres into the medium, plus a dim ceiling panel for ambient.
+# light -> specular -> medium -> surface paths are the caustic class
+# the media-transparent chains classify on both partition sides.
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.730003
+scene.camera.fieldofview = 39.1463
+################################################################################
+scene.world.volume.default = vol_air
+##
+scene.volumes.vol_air.type = homogeneous
+scene.volumes.vol_air.absorption = 0.0 0.0 0.0
+scene.volumes.vol_air.scattering = 0.04 0.04 0.04
+scene.volumes.vol_air.asymmetry = 0.0 0.0 0.0
+scene.volumes.vol_air.multiscattering = 1
+##
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.01 0.01 0.01
+scene.volumes.vol_glass.ior = 1.45
+################################################################################
+scene.materials.Khaki.type = matte
+scene.materials.Khaki.kd = 1. 0.824176 0.549451
+scene.materials.HalveRed.type = matte
+scene.materials.HalveRed.kd = 0.70003 0. 0.
+scene.materials.DarkGreen.type = matte
+scene.materials.DarkGreen.kd = 0. 0.4 0.
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 120 120 120
+scene.materials.Light.kd = 0.0 0.0 0.0
+##
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.95 0.95 0.95
+scene.materials.glass.kr = 0.95 0.95 0.95
+scene.materials.glass.volume.interior = vol_glass
+scene.materials.glass.cauchyc = 0.2
+################################################################################
+scene.objects.Khaki.material = Khaki
+scene.objects.Khaki.ply = scenes/cornell/Khaki2.ply
+scene.objects.HalveRed.material = HalveRed
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = DarkGreen
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey-small.ply
+scene.objects.sphere-left.material = glass
+scene.objects.sphere-left.ply = scenes/cornell/sphere-left.ply
+scene.objects.sphere-mid.material = glass
+scene.objects.sphere-mid.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sphere-right.material = glass
+scene.objects.sphere-right.ply = scenes/cornell/sphere-right.ply
+################################################################################
+# Laser fan: three beams thread the sphere centres (spectral caustics),
+# four fill beams rake the fog between them (volumetric shafts).
+scene.lights.l0.type = laser
+scene.lights.l0.position = -4.53 2.78 4.9
+scene.lights.l0.target = -4.53 2.78 0.0
+scene.lights.l0.radius = 0.05
+scene.lights.l0.gain = 1400.0 1400.0 1400.0
+scene.lights.l1.type = laser
+scene.lights.l1.position = -2.73 2.78 4.9
+scene.lights.l1.target = -2.73 2.78 0.0
+scene.lights.l1.radius = 0.05
+scene.lights.l1.gain = 1400.0 1400.0 1400.0
+scene.lights.l2.type = laser
+scene.lights.l2.position = -0.95 2.78 4.9
+scene.lights.l2.target = -0.95 2.78 0.0
+scene.lights.l2.radius = 0.05
+scene.lights.l2.gain = 1400.0 1400.0 1400.0
+##
+scene.lights.f0.type = laser
+scene.lights.f0.position = -5.20 2.78 4.9
+scene.lights.f0.target = -5.05 2.78 0.0
+scene.lights.f0.radius = 0.06
+scene.lights.f0.gain = 900.0 900.0 900.0
+scene.lights.f1.type = laser
+scene.lights.f1.position = -3.63 2.78 4.9
+scene.lights.f1.target = -3.50 2.78 0.0
+scene.lights.f1.radius = 0.06
+scene.lights.f1.gain = 900.0 900.0 900.0
+scene.lights.f2.type = laser
+scene.lights.f2.position = -1.84 2.78 4.9
+scene.lights.f2.target = -1.75 2.78 0.0
+scene.lights.f2.radius = 0.06
+scene.lights.f2.gain = 900.0 900.0 900.0
+scene.lights.f3.type = laser
+scene.lights.f3.position = -0.35 2.78 4.9
+scene.lights.f3.target = -0.40 2.78 0.0
+scene.lights.f3.radius = 0.06
+scene.lights.f3.gain = 900.0 900.0 900.0

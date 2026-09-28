@@ -2339,6 +2339,7 @@ OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
 	lpi->isNearlySD = false;
 	lpi->isNearlySDS = false;
 	lpi->isAdaptiveS = false;
+	lpi->firstVertSeen = false;
 	lpi->firstVertPX = 0.f;
 	lpi->firstVertPY = 0.f;
 	lpi->firstVertPZ = 0.f;
@@ -2375,17 +2376,21 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 	const bool isNewVertexNearlySpecular = LightPathInfo_IsNearlySpecular(
 			event, glossiness, glossinessThreshold);
 
-	// Same order as CPU PathInfo::AddVertex(): SDS before SD before S
-	lpi->isNearlySDS = (lpi->isNearlySD || lpi->isNearlySDS) && isNewVertexNearlySpecular;
-	lpi->isNearlySD = lpi->isNearlyS && !isNewVertexNearlySpecular;
-	lpi->isNearlyS = ((lpi->depth.depth == 1) || lpi->isNearlyS) && isNewVertexNearlySpecular;
+	// Same order as CPU PathInfo::AddVertex(): SDS before SD before S.
+	// Media-transparent chains: a medium scattering vertex neither
+	// extends nor breaks the run (doc/features/caustics-sota.md).
+	const bool chainSpec = isNewVertexNearlySpecular || bsdf->isVolume;
+	lpi->isNearlySDS = (lpi->isNearlySD || lpi->isNearlySDS) && chainSpec;
+	lpi->isNearlySD = lpi->isNearlyS && !chainSpec;
+	lpi->isNearlyS = ((lpi->depth.depth == 1) || lpi->isNearlyS) && chainSpec;
 
-	// Adaptive partition: any non-diffuse vertex keeps the chain alive;
-	// the first (light-adjacent) vertex is the terminal of the eye-side
-	// connection-difficulty test.
+	// Adaptive partition: any non-diffuse or medium vertex keeps the
+	// chain alive; the first NON-MEDIUM vertex is the terminal of the
+	// eye-side connection-difficulty test.
 	lpi->isAdaptiveS = ((lpi->depth.depth == 1) || lpi->isAdaptiveS) &&
-			((event & (SPECULAR | GLOSSY)) != 0);
-	if (lpi->depth.depth == 1) {
+			(((event & (SPECULAR | GLOSSY)) != 0) || bsdf->isVolume);
+	if (!bsdf->isVolume && !lpi->firstVertSeen) {
+		lpi->firstVertSeen = true;
 		const float3 hp = VLOAD3F(&bsdf->hitPoint.p.x);
 		lpi->firstVertPX = hp.x;
 		lpi->firstVertPY = hp.y;
@@ -2408,7 +2413,9 @@ OPENCL_FORCE_INLINE bool LightPathInfo_UseRR(__global LightPathInfo *lpi,
 OPENCL_FORCE_INLINE bool LightPathInfo_IsCausticPath(__global const LightPathInfo *lpi,
 		const BSDFEvent event, const float glossiness,
 		const float glossinessThreshold) {
-	return lpi->isNearlyS && (lpi->depth.depth + 1 > 1) &&
+	// firstVertSeen keeps pure-medium prefixes out of the caustic class
+	// (a vacuously-alive chain carries no focusing surface)
+	return lpi->isNearlyS && lpi->firstVertSeen && (lpi->depth.depth + 1 > 1) &&
 			!LightPathInfo_IsNearlySpecular(event, glossiness, glossinessThreshold);
 }
 
@@ -2422,7 +2429,7 @@ OPENCL_FORCE_INLINE bool LightPathInfo_IsAdaptiveCausticPath(
 		const float terminalGlossiness, const float connectProb,
 		__global const LightSource* restrict light) {
 	return lpi->isAdaptiveS && (lpi->depth.depth + 1 > 1) &&
-			!(event & SPECULAR) &&
+			!(event & SPECULAR) && lpi->firstVertSeen &&
 			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
 					lpi->firstVertDelta, lpi->firstVertGloss,
 					Light_ConnectionSolidAngle(light,

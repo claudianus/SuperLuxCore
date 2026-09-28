@@ -54,7 +54,7 @@ EyePathInfo::EyePathInfo() : isPassThroughPath(true),
 		lastBSDFPdfW(1.f), lastGlossiness(0.f), lastFromVolume(false),
 		isTransmittedPath(true), lastOnlyInfiniteLights(false),
 		linkAcceptMask(~0ull),
-		isAdaptiveCaustic(false),
+		isAdaptiveCaustic(false), causticHasSurface(false),
 		lpeAutomata(nullptr), lpeCount(0),
 		isNearlyCaustic(false) {
 	memset(lpeStates, 0, sizeof(lpeStates));
@@ -101,20 +101,29 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	// EyePathInfo::AddVertex()
 	//--------------------------------------------------------------------------
 
-	// Update isNearlyCaustic
+	// Update isNearlyCaustic — media-transparent chain: a medium
+	// scattering vertex neither extends nor breaks the specular run
+	// (doc/features/caustics-sota.md). The depth-1 receiver test is
+	// unchanged (a medium vertex is a valid non-delta receiver).
 	//
 	// Note: depth.depth has been already incremented by 1 with the depth.IncDepths(event);
+	const bool isVol = bsdf.IsVolume();
 	isNearlyCaustic = (depth.depth == 1) ?
 		// First vertex must a nearly diffuse
 		(!isNewVertexNearlySpecular) :
-		// All other vertices must be nearly specular
-		(isNearlyCaustic && isNewVertexNearlySpecular);
+		// All other vertices must be nearly specular or medium
+		(isNearlyCaustic && (isNewVertexNearlySpecular || isVol));
 
 	// Adaptive partition: the receiver only has to be non-delta, later
-	// vertices must be non-diffuse (see pathinfo_funcs.cl)
+	// vertices must be non-diffuse or medium (see pathinfo_funcs.cl)
 	isAdaptiveCaustic = (depth.depth == 1) ?
 		!(event & SPECULAR) :
-		(isAdaptiveCaustic && ((event & (SPECULAR | GLOSSY)) != 0));
+		(isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) || isVol));
+
+	// Chain touched a surface beyond the receiver: distinguishes
+	// focused-through-surface chains from pure ambient medium paths.
+	if (!isVol && (depth.depth > 1))
+		causticHasSurface = true;
 
 	// Update last path vertex information
 	lastBSDFPdfW = pdfW;
@@ -135,10 +144,15 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 }
 
 bool EyePathInfo::IsCausticPath(const BSDFEvent event,
-		const float glossiness, const float glossinessThreshold) const {
-	// Note: the +1 is there for the event passed as method arguments
+		const float glossiness, const float glossinessThreshold,
+		const bool terminalIsVolume) const {
+	// Note: the +1 is there for the event passed as method arguments.
+	// A medium terminal counts as specular-chain-compatible once the
+	// chain saw a surface — the light side marks the same path caustic
+	// (isNearlyS + firstVertexSeen), keeping the partition disjoint.
 	return isNearlyCaustic && (depth.depth + 1 > 1) &&
-			IsNearlySpecular(event, glossiness, glossinessThreshold);
+			(IsNearlySpecular(event, glossiness, glossinessThreshold) ||
+					(terminalIsVolume && causticHasSurface));
 }
 
 //------------------------------------------------------------------------------
@@ -146,7 +160,8 @@ bool EyePathInfo::IsCausticPath(const BSDFEvent event,
 //------------------------------------------------------------------------------
 
 LightPathInfo::LightPathInfo() : isAdaptiveS(false),
-		firstVertexGlossiness(0.f), firstVertexDelta(false) {
+		firstVertexSeen(false), firstVertexGlossiness(0.f),
+		firstVertexDelta(false) {
 }
 
 void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
@@ -164,21 +179,28 @@ void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
 	const float glossiness = bsdf.GetGlossiness();
 	const bool isNewVertexNearlySpecular = IsNearlySpecular(event, glossiness, glossinessThreshold);
 
+	// Media-transparent chain: a medium scattering vertex is invisible
+	// to the specular bookkeeping — it neither extends nor breaks the
+	// run (doc/features/caustics-sota.md).
+	const bool isVol = bsdf.IsVolume();
+	const bool chainSpec = isNewVertexNearlySpecular || isVol;
+
 	// Update isNearlySDS (must be done before isNearlySD)
-	isNearlySDS = (isNearlySD || isNearlySDS) && isNewVertexNearlySpecular;
+	isNearlySDS = (isNearlySD || isNearlySDS) && chainSpec;
 
 	// Update isNearlySD (must be done before isNearlyS)
-	isNearlySD = isNearlyS && !isNewVertexNearlySpecular;
+	isNearlySD = isNearlyS && !chainSpec;
 
 	// Update isNearlySpecular
-	isNearlyS = ((depth.depth == 1) || isNearlyS) && isNewVertexNearlySpecular;
+	isNearlyS = ((depth.depth == 1) || isNearlyS) && chainSpec;
 
-	// Adaptive partition: the whole chain must be non-diffuse. The
-	// first (light-adjacent) vertex is also the terminal for the
+	// Adaptive partition: the whole chain must be non-diffuse or
+	// medium. The first non-medium vertex is the terminal for the
 	// connection-difficulty test, so record it.
 	isAdaptiveS = ((depth.depth == 1) || isAdaptiveS) &&
-			((event & (SPECULAR | GLOSSY)) != 0);
-	if (depth.depth == 1) {
+			(((event & (SPECULAR | GLOSSY)) != 0) || isVol);
+	if (!isVol && !firstVertexSeen) {
+		firstVertexSeen = true;
 		firstVertexP = bsdf.hitPoint.p;
 		firstVertexGlossiness = glossiness;
 		firstVertexDelta = (event & SPECULAR);
@@ -190,8 +212,10 @@ void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
 
 bool LightPathInfo::IsCausticPath(const BSDFEvent event,
 		const float glossiness, const float glossinessThreshold) const {
-	// Note: the +1 is there for the event passed as method arguments
-	return isNearlyS && (depth.depth + 1 > 1) &&
+	// Note: the +1 is there for the event passed as method arguments.
+	// firstVertexSeen keeps pure-medium prefixes out of the caustic
+	// class (a vacuously-alive chain carries no focusing surface).
+	return isNearlyS && firstVertexSeen && (depth.depth + 1 > 1) &&
 			!IsNearlySpecular(event, glossiness, glossinessThreshold);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
