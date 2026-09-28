@@ -438,6 +438,13 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 		if (indirectDone && causticDone)
 			break;
 
+		// Early-out for empty caches: when the first few million paths
+		// stored nothing at all, the scene has no cacheable transport and
+		// tracing to the full budget would only burn CPU every update.
+		if ((workCounter >= 4194304) && (globalIndirectSize == 0) &&
+				(globalCausticSize == 0))
+			break;
+
 		u_int workToDo = (workCounter + workSize > photonTracedCount) ?
 			(photonTracedCount - workCounter) : workSize;
 

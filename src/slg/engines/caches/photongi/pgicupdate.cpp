@@ -7,8 +7,6 @@
  * you may not use this file except in compliance with the License.        *
  * You may obtain a copy of the License at                                 *
  *                                                                         *
- *     http://www.apache.org/licenses/LICENSE-2.0                          *
- *                                                                         *
  * Unless required by applicable law or agreed to in writing, software     *
  * distributed under the License is distributed on an "AS IS" BASIS,       *
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.*
@@ -27,76 +25,52 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 	if (!params.caustic.enabled || (params.caustic.updateSpp == 0) || finishUpdateFlag)
 		return false;
 
-	// Check if it is time to update the caustic cache
-	const u_int deltaSpp = filmSPP - lastUpdateSpp;
-	if (deltaSpp > params.caustic.updateSpp) {
-		// Time to update the caustic cache
+	// Launch a background re-trace once the update period expires. The
+	// worker fills a shadow copy of the caustic cache while render
+	// threads keep querying the live one: the update no longer stalls
+	// rendering for the whole photon tracing + index rebuild time.
+	if ((threadIndex == 0) && !updateInFlight &&
+			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp)) {
+		// A safety check to avoid the update if visibility map has been
+		// deallocated (caustic beams and frustum-culled deposits do not
+		// need it)
+		if ((visibilityParticles.size() == 0) &&
+				!params.caustic.volumeBeams && !UseFrustumCulling()) {
+			SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
+			lastUpdateSpp = filmSPP;
+		} else {
+			// Drop leftovers of a previously failed update round
+			delete updateCausticPhotonsBVH;
+			updateCausticPhotonsBVH = nullptr;
+			updateCausticPhotons.clear();
+			updateCausticBeams.clear();
 
-		threadsSyncBarrier->arrive_and_wait();
+			updateInFlight = true;
+			updateFailed = false;
+			updateFilmSPP = filmSPP;
+			updateCallback = threadZeroCallback;
 
-		bool result = false;
-		if ((threadIndex == 0) && !finishUpdateFlag) {
-			const double startTime = WallClockTime();
-
-			SLG_LOG("Updating PhotonGI caustic cache after " << filmSPP << " samples/pixel (Pass " << causticPhotonPass << ")");
-
-			// A safety check to avoid the update if visibility map has been
-			// deallocated (caustic beams and frustum-culled deposits do not
-			// need it)
-			if ((visibilityParticles.size() == 0) &&
-					!(params.caustic.enabled && params.caustic.volumeBeams) &&
-					!UseFrustumCulling()) {
-				SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
-				lastUpdateSpp = filmSPP;
-			} else {
-				// Drop previous cache
-				delete causticPhotonsBVH;
-				causticPhotonsBVH = nullptr;
-				causticPhotons.clear();
-				causticBeams.clear();
-				// The stale beam index is rebuilt by BuildCausticBeamsIndex()
-				// below (unique_ptr reset needs the complete type).
-
-				// Reduce the look up radius
-				params.caustic.lookUpRadius = params.caustic.lookUpRadius /
-						powf(float(causticPhotonPass + 1), .5f * (1.f - params.caustic.radiusReduction));
-				// Place a cap to radius reduction
-				params.caustic.lookUpRadius = Max(params.caustic.lookUpRadius, params.caustic.minLookUpRadius);
-				params.caustic.lookUpRadius2 = Sqr(params.caustic.lookUpRadius);
-				SLG_LOG("New PhotonGI caustic cache lookup radius: " << params.caustic.lookUpRadius);
-				++causticPhotonPass;
-
-				// Trace the photons for a new one
-				TracePhotons(false, params.caustic.enabled);
-
-				if (causticPhotons.size() > 0) {
-					// Build a new BVH
-					SLG_LOG("PhotonGI building caustic photons BVH");
-					causticPhotonsBVH = new PGICPhotonBvh(&causticPhotons, causticPhotonTracedCount,
-							params.caustic.lookUpRadius, params.caustic.lookUpNormalAngle);
-				}
-				BuildCausticBeamsIndex();
-
-				lastUpdateSpp = filmSPP;
-
-				if (threadZeroCallback)
-					threadZeroCallback();
-
-				result = true;
-			}
-
-			const float dt = WallClockTime() - startTime;
-			SLG_LOG("Updating PhotonGI caustic cache done in: " << std::setprecision(3) << dt << " secs");
+			updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
 		}
+	}
 
-		threadsSyncBarrier->arrive_and_wait();
-
-		return result;
-	} else
+	if (!updatePendingSwap)
 		return false;
+
+	// All threads park here; the barrier completion step performs the
+	// shadow-cache swap while no query can be in flight.
+	threadsSyncBarrier->arrive_and_wait();
+
+	return (threadIndex == 0);
 }
 
 void PhotonGICache::FinishUpdate(const u_int threadIndex) {
+	// Wait for a possibly in-flight background update before the
+	// barrier dance; a ready shadow copy is then swapped in by the
+	// barrier completion step as usual.
+	if (updateThread)
+		updateThread.reset();
+
 	for (;;) {
 		if (finishUpdateFlag)
 			return;

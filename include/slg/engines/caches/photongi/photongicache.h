@@ -361,9 +361,17 @@ private:
 		std::atomic<u_int> &globalIndirectPhotonsTraced,
 		std::atomic<u_int> &globalCausticPhotonsTraced,
 		std::atomic<u_int> &globalIndirectSize,
-		std::atomic<u_int> &globalCausticSize);
-	void TracePhotons(const bool indirectEnabled, const bool causticEnabled);
+		std::atomic<u_int> &globalCausticSize,
+		luxrays::SpillableArray<Photon> &dstCausticPhotons,
+		std::vector<PhotonBeam> &dstCausticBeams);
+	void TracePhotons(const bool indirectEnabled, const bool causticEnabled,
+		luxrays::SpillableArray<Photon> *dstCausticPhotons = nullptr,
+		std::vector<PhotonBeam> *dstCausticBeams = nullptr);
 	void BuildCausticBeamsIndex();
+	void BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
+			std::unique_ptr<PGICBeamIndex> &dst);
+	void UpdateWorker();
+	void ApplyPendingUpdate() noexcept;
 	luxrays::SpectrumGroup ConnectCausticBeams(const BSDF &bsdf) const;
 	void FilterVisibilityParticlesRadiance(const std::vector<luxrays::SpectrumGroup> &radianceValues,
 			std::vector<luxrays::SpectrumGroup> &filteredRadianceValues) const;
@@ -380,10 +388,13 @@ private:
 
 	u_int threadCount;
 
-    struct completion_t {
-        void operator()() noexcept { }
-    };
-    completion_t pgic_completion();
+	// Runs the pending cache swap inside the barrier completion step: all
+	// render threads are parked there, so queries can never observe a
+	// half-updated cache.
+	struct completion_t {
+		PhotonGICache *cache = nullptr;
+		void operator()() noexcept;
+	};
 	std::unique_ptr< std::barrier<completion_t> > threadsSyncBarrier;
 	u_int lastUpdateSpp, updateSeedBase;
 	bool finishUpdateFlag;
@@ -405,6 +416,20 @@ private:
 	// Caustic photon beams (in-medium specular flight segments)
 	std::vector<PhotonBeam> causticBeams;
 	std::unique_ptr<PGICBeamIndex> causticBeamsIndex;
+
+	// Shadow-copy state for stall-free cache updates: UpdateWorker()
+	// traces photons and builds indices into these buffers while render
+	// threads keep using the live cache; the barrier completion step
+	// swaps them in atomically.
+	std::unique_ptr<luxrays::JThread> updateThread;
+	luxrays::SpillableArray<Photon> updateCausticPhotons;
+	std::vector<PhotonBeam> updateCausticBeams;
+	PGICPhotonBvh *updateCausticPhotonsBVH = nullptr;
+	std::unique_ptr<PGICBeamIndex> updateCausticBeamsIndex;
+	float updateLookUpRadius;
+	u_int updateFilmSPP;
+	std::function<void()> updateCallback;
+	std::atomic<bool> updateInFlight{false}, updatePendingSwap{false}, updateFailed{false};
 };
 
 }

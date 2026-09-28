@@ -90,6 +90,23 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   periodic CPU build + upload — same update cadence as the existing
   PGIC BVH upload in `compilephotongi.cpp`). Gives GPU the B2 media
   caustics; later a GPU-side hash index removes the CPU build.
+- **C7 stall-free periodic updates** (landed): `Update()` used to
+  park every render thread at a barrier while thread 0 re-traced
+  photons and rebuilt BVH + beam index (seconds of viewport freeze
+  every `updatespp`). Now thread 0 launches a background
+  `UpdateWorker()` (jthread) that fills a shadow copy — photons,
+  beams, BVH, beam index, shrunk radius — while render threads keep
+  querying the live cache. The swap runs inside the `std::barrier`
+  **completion step** (`completion_t`), where all render threads are
+  already parked and no query can be in flight — atomic, no spin
+  locks, no torn state. `TracePhotons`/`BuildCausticBeamsIndex` take
+  output buffers so the live containers are never touched by the
+  worker. Failure sets a retry flag; `FinishUpdate`/destructor join
+  the worker first. Related: empty-cache early-out in
+  `TracePhotonsThread` — scenes with no cacheable transport traced
+  the full `photon.maxcount` (100M paths, ~30 s) every update;
+  threads now bail after 4M paths when nothing was stored at all
+  (~22× less wasted work on non-caustic scenes).
 - **C5 SPPM per-pixel photon pass** (the structural endpoint):
   per-pixel state `{τ, N, R, hitpoint}` (RestirGI/samplerSharedData
   appended-array pattern), photon deposit tasks, hash+gather kernels.

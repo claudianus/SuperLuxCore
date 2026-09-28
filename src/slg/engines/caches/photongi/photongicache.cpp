@@ -92,10 +92,15 @@ PhotonGICache::PhotonGICache(SceneConstRef scn, const PhotonGICacheParams &p) :
 }
 
 PhotonGICache::~PhotonGICache() {
+	// Join a possibly in-flight background update before freeing state
+	updateThread.reset();
+
 	delete visibilityParticlesKdTree;
 
 	delete causticPhotonsBVH;
 	delete radiancePhotonsBVH;
+
+	delete updateCausticPhotonsBVH;
 }
 
 bool PhotonGICache::IsPhotonGIEnabled(const BSDF &bsdf) const {
@@ -172,7 +177,8 @@ bool PhotonGICache::IsDirectLightHitVisible(const EyePathInfo &pathInfo,
 void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedCount,
 		const bool indirectCacheDone, const bool causticCacheDone,
 		std::atomic<u_int> &globalIndirectPhotonsTraced, std::atomic<u_int> &globalCausticPhotonsTraced,
-		std::atomic<u_int> &globalIndirectSize, std::atomic<u_int> &globalCausticSize) {
+		std::atomic<u_int> &globalIndirectSize, std::atomic<u_int> &globalCausticSize,
+		SpillableArray<Photon> &dstCausticPhotons, std::vector<PhotonBeam> &dstCausticBeams) {
 	const size_t renderThreadCount = GetHardwareThreadCount();
 	using TracePhotonsThreadUPtr = std::unique_ptr<TracePhotonsThread>;
 	std::vector<TracePhotonsThreadUPtr> renderThreads;
@@ -211,11 +217,11 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 		}
 		indirectPhotonStored += renderThreads[i]->indirectPhotons.size();
 
-		causticPhotons.insert(causticPhotons.end(), renderThreads[i]->causticPhotons.begin(),
+		dstCausticPhotons.insert(dstCausticPhotons.end(), renderThreads[i]->causticPhotons.begin(),
 				renderThreads[i]->causticPhotons.end());
 		causticPhotonStored += renderThreads[i]->causticPhotons.size();
 
-		causticBeams.insert(causticBeams.end(), renderThreads[i]->causticBeams.begin(),
+		dstCausticBeams.insert(dstCausticBeams.end(), renderThreads[i]->causticBeams.begin(),
 				renderThreads[i]->causticBeams.end());
 
 		renderThreads[i].reset();
@@ -234,7 +240,96 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 	SLG_LOG("PhotonGI total photon traced: " << Max(indirectPhotonTracedCount, causticPhotonTracedCount));
 }
 
-void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticEnabled) {
+//------------------------------------------------------------------------------
+// Stall-free cache updates
+//
+// The periodic caustic update re-traces photons and rebuilds all indices
+// on a dedicated worker thread while render threads keep querying the
+// live cache. Only the pointer swap requires synchronization and it runs
+// inside the sync barrier completion step (completion_t), where every
+// render thread is already parked and can not be inside a query.
+
+void PhotonGICache::UpdateWorker() {
+	const double startTime = WallClockTime();
+	SLG_LOG("Updating PhotonGI caustic cache (Pass " << causticPhotonPass << ")");
+
+	try {
+		// Reduce the look up radius, capped by the minimum
+		updateLookUpRadius = params.caustic.lookUpRadius /
+				powf(float(causticPhotonPass + 1), .5f * (1.f - params.caustic.radiusReduction));
+		updateLookUpRadius = Max(updateLookUpRadius, params.caustic.minLookUpRadius);
+
+		// Trace photons into the shadow copy (never touches the live cache)
+		TracePhotons(false, params.caustic.enabled,
+				&updateCausticPhotons, &updateCausticBeams);
+
+		if (updateCausticPhotons.size() > 0) {
+			SLG_LOG("PhotonGI building caustic photons BVH");
+			updateCausticPhotonsBVH = new PGICPhotonBvh(&updateCausticPhotons,
+					causticPhotonTracedCount, updateLookUpRadius, params.caustic.lookUpNormalAngle);
+		}
+		BuildCausticBeamsIndex(updateCausticBeams, updateCausticBeamsIndex);
+	} catch (std::exception &e) {
+		SLG_LOG("ERROR: PhotonGI cache background update failed: " << e.what());
+		updateFailed = true;
+	}
+
+	SLG_LOG("PhotonGI caustic cache update traced in: " << std::setprecision(3) <<
+			(WallClockTime() - startTime) << " secs");
+
+	// Release the shadow cache for the barrier completion swap
+	updatePendingSwap = true;
+}
+
+void PhotonGICache::ApplyPendingUpdate() noexcept {
+	// Exactly-once guard: the barrier completion step runs every phase
+	if (!updatePendingSwap.exchange(false))
+		return;
+
+	try {
+		if (updateFailed) {
+			updateFailed = false;
+		} else {
+			delete causticPhotonsBVH;
+			causticPhotonsBVH = updateCausticPhotonsBVH;
+			updateCausticPhotonsBVH = nullptr;
+
+			causticPhotons = std::move(updateCausticPhotons);
+			causticBeams = std::move(updateCausticBeams);
+			causticBeamsIndex = std::move(updateCausticBeamsIndex);
+
+			params.caustic.lookUpRadius = updateLookUpRadius;
+			params.caustic.lookUpRadius2 = Sqr(updateLookUpRadius);
+			SLG_LOG("New PhotonGI caustic cache lookup radius: " << params.caustic.lookUpRadius);
+
+			lastUpdateSpp = updateFilmSPP;
+			++causticPhotonPass;
+
+			if (updateCallback) {
+				updateCallback();
+				updateCallback = nullptr;
+			}
+		}
+	} catch (...) {
+		// Must not throw from a barrier completion step
+	}
+
+	updateInFlight = false;
+	updateThread.reset();
+}
+
+void PhotonGICache::completion_t::operator()() noexcept {
+	if (cache)
+		cache->ApplyPendingUpdate();
+}
+
+void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticEnabled,
+		SpillableArray<Photon> *dstCausticPhotons, std::vector<PhotonBeam> *dstCausticBeams) {
+	if (!dstCausticPhotons)
+		dstCausticPhotons = &causticPhotons;
+	if (!dstCausticBeams)
+		dstCausticBeams = &causticBeams;
+
 	const size_t renderThreadCount = GetHardwareThreadCount();
 
 	std::atomic<u_int> globalIndirectPhotonsTraced(0);
@@ -263,7 +358,8 @@ void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticE
 
 			TracePhotons(updateSeedBase, photonTracedStep, false, !causticEnabled,
 				globalIndirectPhotonsTraced, globalCausticPhotonsTraced,
-				globalIndirectSize, globalCausticSize);
+				globalIndirectSize, globalCausticSize,
+				*dstCausticPhotons, *dstCausticBeams);
 			photonTracedCount += photonTracedStep;
 
 			//------------------------------------------------------------------
@@ -331,7 +427,8 @@ void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticE
 						TracePhotons(updateSeedBase,
 								params.photon.maxTracedCount - photonTracedCount, true, false,
 								globalIndirectPhotonsTraced, globalCausticPhotonsTraced,
-								globalIndirectSize, globalCausticSize);
+								globalIndirectSize, globalCausticSize,
+								*dstCausticPhotons, *dstCausticBeams);
 					}
 
 					break;
@@ -352,13 +449,14 @@ void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticE
 		// Just trace the asked amount of photon paths
 		TracePhotons(updateSeedBase, params.photon.maxTracedCount, !indirectEnabled, !causticEnabled,
 				globalIndirectPhotonsTraced, globalCausticPhotonsTraced,
-				globalIndirectSize, globalCausticSize);
+				globalIndirectSize, globalCausticSize,
+				*dstCausticPhotons, *dstCausticBeams);
 
 	}
 
 	updateSeedBase += renderThreadCount;
 
-	causticPhotons.shrink_to_fit();
+	dstCausticPhotons->shrink_to_fit();
 }
 
 void PhotonGICache::FilterVisibilityParticlesRadiance(const vector<SpectrumGroup> &radianceValues,
@@ -440,7 +538,7 @@ void PhotonGICache::CreateRadiancePhotons() {
 
 void PhotonGICache::Preprocess(const u_int threadCnt) {
 	threadCount = threadCnt;
-	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t()));
+	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
 	lastUpdateSpp = 0;
 	updateSeedBase = 1;
 	finishUpdateFlag = false;
@@ -691,10 +789,15 @@ const SpectrumGroup *PhotonGICache::GetIndirectRadiance(const BSDF &bsdf) const 
 }
 
 void PhotonGICache::BuildCausticBeamsIndex() {
-	causticBeamsIndex.reset();
-	if (params.caustic.volumeBeams && (causticBeams.size() > 0)) {
-		SLG_LOG("PhotonGI building caustic beams index (" << causticBeams.size() << " beams)");
-		causticBeamsIndex = std::make_unique<PGICBeamIndex>(causticBeams);
+	BuildCausticBeamsIndex(causticBeams, causticBeamsIndex);
+}
+
+void PhotonGICache::BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
+		std::unique_ptr<PGICBeamIndex> &dst) {
+	dst.reset();
+	if (params.caustic.volumeBeams && (src.size() > 0)) {
+		SLG_LOG("PhotonGI building caustic beams index (" << src.size() << " beams)");
+		dst = std::make_unique<PGICBeamIndex>(src);
 	}
 }
 
