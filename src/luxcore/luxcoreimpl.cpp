@@ -22,6 +22,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <typeinfo>
 
 #include "luxcore/luxcorelogger.h"
@@ -50,6 +51,7 @@
 #include "fmt/format.h"
 
 using namespace std;
+using namespace std::literals::chrono_literals;
 using namespace luxrays;
 using namespace luxcore;
 using namespace luxcore::detail;
@@ -2294,6 +2296,15 @@ bool RenderSessionImpl::HasDone() const {
 void RenderSessionImpl::WaitForDone() const {
 	API_BEGIN_NOARGS();
 
+	// Halt conditions (batch.haltspp/halttime, noise threshold, adaptive
+	// error) are only evaluated inside UpdateFilm()->Film::RunTests().
+	// Console/Blender pump it via UpdateStats() every ~1s, but a bare
+	// WaitForDone() caller would otherwise wait forever even when a halt
+	// is configured - pump it here while polling.
+	while (!renderSession->renderEngine->HasDone()) {
+		renderSession->renderEngine->UpdateFilm();
+		std::this_thread::sleep_for(200ms);
+	}
 	renderSession->renderEngine->WaitForDone();
 
 	API_END();
