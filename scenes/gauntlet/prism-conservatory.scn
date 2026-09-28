@@ -1,0 +1,119 @@
+# Gauntlet hero scene 1 - "Prism Conservatory".
+#
+# A dark gallery hall with two tall windows in the left wall. Warm
+# afternoon sun rakes through thin interior fog; the beams strike a
+# dispersive prism, a glass orb and a hanging faceted gem, throwing
+# spectral caustic fans and focused rings onto the matte floor. A gold
+# torus sculpture sits in the splash zone for metal+reflection contrast.
+#
+# Hard paths exercised: sun-through-window (unportalled), S*DS spectral
+# caustics, volume beams through fog, light->spec->med->med multichain,
+# glossy-floor indirect, dim interior GI. Intentionally hostile to plain
+# path tracing - this is the zero-config stress hero.
+#
+# Room: x in [-7,7], y in [-1,15], z in [0,7]; windows on x=-7 wall
+# at y in [3,5] and [8,10], z in [1,6.2]. Camera near y=0, looks +Y.
+scene.camera.lookat.orig = 5.2 0.3 2.5
+scene.camera.lookat.target = -3.6 7.4 2.3
+scene.camera.fieldofview = 52
+################################################################################
+# World default volume: thin fog fills everything (objects embed in it).
+scene.volumes.vol_fog.type = homogeneous
+scene.volumes.vol_fog.absorption = 0.015 0.015 0.017
+scene.volumes.vol_fog.scattering = 0.02 0.02 0.018
+scene.volumes.vol_fog.asymmetry = 0.35 0.35 0.35
+scene.volumes.vol_fog.multiscattering = 1
+scene.volumes.vol_fog.priority = 5
+# Glass interior
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.008 0.008 0.01
+scene.volumes.vol_glass.ior = 1.45
+################################################################################
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.97 0.97 0.97
+scene.materials.glass.kr = 0.97 0.97 0.97
+scene.materials.glass.volume.interior = vol_glass
+scene.materials.glass.volume.exterior = vol_fog
+scene.materials.mat_fog.type = null
+scene.materials.mat_fog.volume.interior = vol_fog
+# Dispersive prism glass
+scene.materials.prismglass.type = glass
+scene.materials.prismglass.kt = 0.97 0.97 0.97
+scene.materials.prismglass.kr = 0.97 0.97 0.97
+scene.materials.prismglass.volume.interior = vol_glass
+scene.materials.prismglass.volume.exterior = vol_fog
+scene.materials.prismglass.cauchyb = 0.09
+# Gold torus: measured-preset metal, GGX + multibounce
+scene.materials.gold.type = metal2
+scene.materials.gold.preset = gold
+scene.materials.gold.distribution = ggx
+scene.materials.gold.multibounce = 1
+scene.materials.gold.uroughness = 0.18
+scene.materials.gold.vroughness = 0.18
+# Surfaces
+scene.materials.floor.type = matte
+scene.materials.floor.kd = 0.62 0.58 0.52
+scene.materials.walls.type = matte
+scene.materials.walls.kd = 0.14 0.13 0.12
+scene.materials.pedestal.type = matte
+scene.materials.pedestal.kd = 0.09 0.09 0.10
+################################################################################
+scene.objects.fogbox.material = mat_fog
+scene.objects.fogbox.ply = scenes/gauntlet/mesh/fogbox.ply
+scene.objects.room.material = walls
+scene.objects.room.ply = scenes/gauntlet/mesh/gauntlet_room.ply
+scene.objects.floor.material = floor
+scene.objects.floor.ply = scenes/gauntlet/mesh/floor_plane.ply
+# Prism A on pedestal near window 1 (catches beam at z~3.9)
+scene.objects.ped1.material = pedestal
+scene.objects.ped1.ply = scenes/gauntlet/mesh/pedestal.ply
+scene.objects.ped1.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -4.2 4.2 0.0 1.0
+scene.objects.prism1.material = prismglass
+scene.objects.prism1.ply = scenes/gauntlet/mesh/prism_a.ply
+scene.objects.prism1.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -4.2 4.2 1.2 1.0
+# Prism B on short pedestal near window 2
+scene.objects.ped2.material = pedestal
+scene.objects.ped2.ply = scenes/gauntlet/mesh/pedestal_s.ply
+scene.objects.ped2.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -3.5 8.6 0.0 1.0
+scene.objects.prism2.material = prismglass
+scene.objects.prism2.ply = scenes/gauntlet/mesh/prism_b.ply
+scene.objects.prism2.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -3.5 8.6 0.9 1.0
+# Glass orb on short pedestal in window-1 beam landing zone
+scene.objects.ped3.material = pedestal
+scene.objects.ped3.ply = scenes/gauntlet/mesh/pedestal_s.ply
+scene.objects.ped3.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.5 2.6 0.0 1.0
+scene.objects.orb.material = glass
+scene.objects.orb.ply = scenes/gauntlet/mesh/orb.ply
+scene.objects.orb.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.5 2.6 1.95 1.0
+# Small glass orb on the floor, right side
+scene.objects.orb2.material = glass
+scene.objects.orb2.ply = scenes/gauntlet/mesh/orb_small.ply
+scene.objects.orb2.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  2.0 10.5 0.6 1.0
+# Hanging gem + rod under window-2 beam
+scene.objects.gem.material = glass
+scene.objects.gem.ply = scenes/gauntlet/mesh/gem.ply
+scene.objects.gem.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -2.8 8.8 3.0 1.0
+scene.objects.rod.material = walls
+scene.objects.rod.ply = scenes/gauntlet/mesh/rod.ply
+scene.objects.rod.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 3.4 0.0  -2.8 8.8 3.72 1.0
+# Gold torus sculpture on the floor
+scene.objects.ring.material = gold
+scene.objects.ring.ply = scenes/gauntlet/mesh/ring.ply
+scene.objects.ring.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.6 6.6 0.42 1.0
+################################################################################
+# Warm sun through the left windows (direction TO the sun).
+scene.lights.sun.type = sun
+scene.lights.sun.dir = -0.72 0.20 0.55
+scene.lights.sun.turbidity = 9.0
+scene.lights.sun.relsize = 12.0
+scene.lights.sun.gain = 0.010 0.010 0.010
+# Dim warm interior fill (wall washers) - keeps shadows readable.
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 4.0
+scene.lights.sky.gain = 0.001 0.001 0.001
+scene.lights.fill1.type = point
+scene.lights.fill1.position = 5.5 3.0 5.6
+scene.lights.fill1.gain = 9.0 6.5 4.0
+scene.lights.fill2.type = point
+scene.lights.fill2.position = 5.5 12.0 5.6
+scene.lights.fill2.gain = 9.0 6.5 4.0
