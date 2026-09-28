@@ -50,11 +50,34 @@ film.imagepipeline.1.type = GAMMA_CORRECTION
 {extra}
 """
 
+# GPU variant (Phase-3): PATHOCL + GPU light tracing, sspTails buffer +
+# tail replay inside the light-side MS_DISCOVER walk.
+CFG_GPU = """\
+film.width = 320
+film.height = 180
+batch.halttime = 20
+scene.file = {scene}
+renderengine.type = PATHOCL
+sampler.type = SOBOL
+filter.type = NONE
+screen.refresh.interval = 1000
+path.maxdepth = 8
+light.maxdepth = 8
+path.lighttracing.enable = 1
+path.lighttracing.taskfraction = 0.3
+path.mnee.enable = 1
+path.mnee.maxspecular = 4
+film.imagepipeline.0.type = TONEMAP_LINEAR
+film.imagepipeline.1.type = GAMMA_CORRECTION
+{extra}
+"""
 
-def render(tmpdir: Path, name: str, extra: str) -> tuple[np.ndarray, str]:
+
+def render(tmpdir: Path, name: str, extra: str,
+        cfg_template: str = CFG) -> tuple[np.ndarray, str]:
     cfg = tmpdir / f"{name}.cfg"
-    cfg.write_text(CFG.format(scene=REPO / "scenes/cornell/lmnee-slab.scn",
-            extra=extra))
+    cfg.write_text(cfg_template.format(
+            scene=REPO / "scenes/cornell/lmnee-slab.scn", extra=extra))
     env = dict(os.environ)
     env["DYLD_LIBRARY_PATH"] = str(LIBDIR)
     env["LUX_LMNEE_REJ"] = "1"
@@ -107,6 +130,33 @@ def main() -> int:
         print(f"[{'PASS' if ok else 'FAIL'}] SSP parity: corr={corr:.5f}")
         if not ok:
             fails.append("image parity")
+
+        # --------------------------------------------------------------
+        # GPU (Phase-3): PATHOCL + GPU light tracing. The tail replay
+        # runs inside the light-side MS_DISCOVER walk; the per-eye-task
+        # SspTails buffer must appear only when the feature is enabled.
+        gpu_on_img, gpu_on_log = render(tmpdir, "gpu_ssp_on",
+                "path.ssp.enable = 1", CFG_GPU)
+        ok = "SspTails buffer" in gpu_on_log
+        print(f"[{'PASS' if ok else 'FAIL'}] GPU SspTails allocated")
+        if not ok:
+            fails.append("no gpu SspTails buffer")
+
+        gpu_off_img, gpu_off_log = render(tmpdir, "gpu_ssp_off",
+                "path.ssp.enable = 0", CFG_GPU)
+        ok = "SspTails buffer" not in gpu_off_log
+        print(f"[{'PASS' if ok else 'FAIL'}] GPU off: no SspTails alloc")
+        if not ok:
+            fails.append("gpu SspTails allocated while disabled")
+
+        la = gpu_on_img.mean(2).ravel()
+        lb = gpu_off_img.mean(2).ravel()
+        corr = float(np.corrcoef(la, lb)[0, 1])
+        ok = corr > 0.97
+        print(f"[{'PASS' if ok else 'FAIL'}] GPU SSP parity: "
+                f"corr={corr:.5f}")
+        if not ok:
+            fails.append("gpu image parity")
 
     print("===")
     print("PASS" if not fails else f"FAIL: {fails}")

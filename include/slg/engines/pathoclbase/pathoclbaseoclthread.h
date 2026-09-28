@@ -388,6 +388,11 @@ protected:
 	// MNEE manifold seed cache (E4): fixed-size hashed grid of converged
 	// single-vertex solutions used as Newton warm-start seeds.
 	luxrays::HardwareDeviceBuffer *mneeSeedsBuff;
+	// SSP eye-side specular tails (path.ssp.enable): SspTail per eye
+	// task (~300B/task, ~19MB at 64K - allocated only when MNEE+SSP
+	// are both on). Light task lt replays the anchors of eye task lt
+	// when its camera connect is blocked by a recorded surface.
+	luxrays::HardwareDeviceBuffer *sspTailsBuff;
 	// Vertex connection (M6): light vertex cache, lightTaskCount *
 	// vertexConnect.slotsPerTask VCLightVertex records, slot k of task t
 	// at [t * slotsPerTask + k]. Written by MK_LIGHT_VERTEX, read by

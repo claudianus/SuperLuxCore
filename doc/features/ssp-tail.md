@@ -53,12 +53,17 @@ would also miss (chain<2).
 
 ## Status / validation
 
-CPU complete (Phase 1-2). e93_ssp_tail_test.py: lmnee-slab PATHCPU
-hybrid - 401K tail splats vs 630K discovery splats (~39% of chain
-connects served by records), zero tail activity with ssp disabled,
-ssp on/off images correlate 0.989 at matched spp (pure MC noise).
+CPU + GPU complete (Phases 1-3). e93_ssp_tail_test.py: lmnee-slab
+PATHCPU hybrid - ~400K tail splats vs ~620K discovery splats (~39% of
+chain connects served by records), zero tail activity with ssp
+disabled, ssp on/off images correlate 0.989 at matched spp (pure MC
+noise). PATHOCL + GPU light tracing (`path.lighttracing.enable`): the
+per-eye-task `SspTails` buffer is allocated only when the feature is
+on, and ssp on/off GPU renders correlate 0.9999.
 
-GPU port (Phase 3, planned): `sspTailsBuff` auxiliary buffer gated on
-`path.ssp.enable`, `SspTail_RecordVertex` in `MK_GENERATE_NEXT_VERTEX_RAY`,
-`MNEE_PHASE_TAIL_LOAD` consumer in `MK_LIGHT_VERTEX` - see
-doc/engineering/ssp-tail.md.
+GPU mechanics (doc/engineering/ssp-tail.md): the recorder runs in
+`MK_GENERATE_NEXT_VERTEX_RAY` (depth-1 call resets the record), the
+consumer in `MK_LIGHT_VERTEX` steers the light-side `MS_DISCOVER` walk
+at the recorded anchors via `mnee->useTail` - an anchor objectID
+mismatch degrades the walk to plain discovery, so a stale record only
+costs a few traces.

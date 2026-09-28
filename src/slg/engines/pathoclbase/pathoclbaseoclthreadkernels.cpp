@@ -753,8 +753,12 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_SAMPLE_BSDF, filmIndex, MK_DL_SAMPLE_BSDF);
 	if (advancePathsKernel_MK_MNEE_NEXT_VERTEX)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_MNEE_NEXT_VERTEX, filmIndex, MK_MNEE_NEXT_VERTEX);
-	if (advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY)
-		SetAdvancePathsKernelArgs(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, filmIndex, MK_GENERATE_NEXT_VERTEX_RAY);
+	if (advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, filmIndex, MK_GENERATE_NEXT_VERTEX_RAY);
+		// SSP tail recorder slot (path.ssp.enable; NULL-safe)
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
+				argIndex++, sspTailsBuff);
+	}
 	if (advancePathsKernel_MK_SPLAT_SAMPLE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_SPLAT_SAMPLE, filmIndex, MK_SPLAT_SAMPLE);
 	if (advancePathsKernel_MK_NEXT_SAMPLE)
@@ -776,6 +780,9 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 				argIndex++, pgicDepositBeamsBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_LIGHT_VERTEX,
 				argIndex++, pgicDepositCountersBuff);
+		// SSP tail consumer slot (path.ssp.enable; NULL-safe)
+		intersectionDevice.SetKernelArg(advancePathsKernel_MK_LIGHT_VERTEX,
+				argIndex++, sspTailsBuff);
 	}
 	// Vertex connection (M6): KERNEL_ARGS + lightPathInfos + the vertex
 	// cache (the eye side reads the paired light task's slot count and

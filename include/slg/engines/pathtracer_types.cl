@@ -113,6 +113,11 @@ typedef struct {
 		// as Newton seeds by nearby attempts (warm start; skips the
 		// mirror seed trace). path.mnee.seedcache, default on.
 		int seedCacheEnable;
+		// SSP eye-side specular tail (path.ssp.enable, only effective
+		// with mnee.enabled): the eye path records its leading delta-
+		// specular run; a camera connect blocked by a recorded surface
+		// replays the anchors instead of running the discovery walk.
+		int sspEnable;
 	} mnee;
 
 	// Hybrid backward/forward path tracing settings

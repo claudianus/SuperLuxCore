@@ -1485,6 +1485,18 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	}
 
 	//--------------------------------------------------------------------------
+	// Allocate the SSP eye-side specular tails (path.ssp.enable): one
+	// SspTail (~300B) per eye task. Only exists when MNEE+SSP are both
+	// enabled - the recorder kernel and the light-vertex consumer gate
+	// on the null buffer.
+	//--------------------------------------------------------------------------
+
+	if (threadTaskConfig.pathTracer.mnee.sspEnable)
+		intersectionDevice.AllocBufferRW(&sspTailsBuff, nullptr,
+				sizeof(slg::ocl::pathoclbase::SspTail) *
+				renderEngine->eyeTaskCount, "SspTails");
+
+	//--------------------------------------------------------------------------
 	// Allocate volume info buffers if required
 	//--------------------------------------------------------------------------
 

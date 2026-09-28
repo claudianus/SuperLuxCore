@@ -148,6 +148,9 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.mnee.maxIterations = pathTracer->mneeMaxIterations;
 	compiledPathTracer.mnee.maxSpecular = pathTracer->mneeMaxSpecular;
 	compiledPathTracer.mnee.seedCacheEnable = pathTracer->mneeSeedCacheEnable;
+	// SSP tail replay only exists in the light-side chain solver
+	compiledPathTracer.mnee.sspEnable =
+			(pathTracer->sspEnable && pathTracer->mneeEnable) ? 1 : 0;
 	if (pathTracer->mneeEnable && (pathTracer->mneeMaxSpecular > 1))
 		SLG_LOG("WARNING: path.mnee.maxspecular = " << pathTracer->mneeMaxSpecular <<
 				" (multi-specular MNEE chains) is supported by the GPU kernels "

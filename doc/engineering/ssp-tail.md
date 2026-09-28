@@ -28,15 +28,32 @@
 - `LUX_LMNEE_REJ=1` already prints `LMNEE_ACC tail` / `LMNEE_REJ tail-*`
   stages (reproj, stale, init, then the shared ms-* rejects).
 
-## GPU port notes (Phase 3)
+## GPU port notes (Phase 3, landed)
 
-- Buffer: `sspTailsBuff`, per-eye-task, allocated when
-  `path.ssp.enable && path.mnee.enable` (same gating as tasksMneeBuff).
-- Recorder: `MK_GENERATE_NEXT_VERTEX_RAY` after `EyePathInfo_AddVertex`;
-  reset in `GenerateEyePath`. Pass-through marker is `cosSampledDir < 0`.
-- Consumer: `MK_LIGHT_VERTEX` blocked branch, before `LMneeChain_Start`;
-  add `MNEE_PHASE_TAIL_LOAD` to reproject one anchor per launch, then
-  reuse `MneeChain_WriteJacStart`/`LMneeChain_SolveEnd` unchanged.
-- Pairing: tails are pixel-unrelated - `pairSlot = lightIndex %
-  eyeTaskCount`. Seqlock `version` field (see GPU mirror in
-  pathinfo_types.cl) protects the shared array.
+- Buffer: `sspTailsBuff`, `eyeTaskCount * sizeof(SspTail)` (~300B/task),
+  allocated only when `pathTracer.mnee.sspEnable` (i.e.
+  `path.ssp.enable && path.mnee.enable`). CL mirror lives in
+  `pathoclbase_datatypes.cl` (component floats - host-compiled file).
+- Recorder: `SspTail_RecordVertex` in `MK_GENERATE_NEXT_VERTEX_RAY`
+  right after `EyePathInfo_AddVertex`, gated on a non-null buffer.
+  **Reset trick**: the `depth == 1` call resets the record, which covers
+  every engine's path-init path (PATHOCL / TILEPATHOCL / RTPATHOCL)
+  without touching `GenerateEyePath`.
+- Consumer: `MK_LIGHT_VERTEX` blocked branch tries
+  `LMneeChain_StartTail` between `LMnee_Start` and `LMneeChain_Start`.
+  Pairing is `sspTails[lightIndex]` (light task lt reads eye task lt's
+  record; guarded `lightIndex < eyeTaskCount`).
+- **No dedicated TAIL_LOAD phase**: `LMneeChain_StartTail` sets
+  `mnee->useTail` and aims the first MS_DISCOVER ray at the farthest
+  anchor. Inside MS_DISCOVER each aimed hit is objectID-validated
+  (`vtx[specN-chainN]`); a mismatch just clears `useTail` and the walk
+  degrades to plain `MneeChain_WalkDir` discovery - the traced vertices
+  stay physically valid, so the fallback is free. `chainMaxV = specN`
+  makes the regular vertex bound hand the loaded chain to the Newton
+  solve unchanged.
+- No seqlock needed: producer (MK_GENERATE_NEXT_VERTEX_RAY) and
+  consumer (MK_LIGHT_VERTEX) are separate serialized kernel launches;
+  a record is only ever written/queried across launch boundaries.
+- Kernel args: `sspTails` is appended to MK_GENERATE_NEXT_VERTEX_RAY
+  (write) and MK_LIGHT_VERTEX (read, after the PGIC_DEPOSIT tail) -
+  NOT added to shared KERNEL_ARGS (Apple translator arg limit).

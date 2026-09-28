@@ -1531,6 +1531,10 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 
 __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 		KERNEL_ARGS
+		/* SSP eye-side specular tail recorder (path.ssp.enable): per-task
+		 * record consumed by the paired light task's camera connects.
+		 * NULL when disabled. */ \
+		, __global SspTail *sspTails
 		) {
 	WAVEFRONT_GUARD
 
@@ -1978,6 +1982,15 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			taskConfig->pathTracer.hybridBackForward.glossinessThreshold
 			LPE_PARAM
 			MATERIALS_PARAM);
+
+	// SSP tail recorder (path.ssp.enable): the leading delta-specular
+	// run is remembered so a paired light task's blocked camera connect
+	// can replay this topology instead of discovering it. The depth-1
+	// call resets the record, so per-path reset needs no init plumbing.
+	if (sspTails)
+		SspTail_RecordVertex(&sspTails[gid], bsdf, cosSampledDir,
+				pathInfo->depth.depth
+				MATERIALS_PARAM);
 
 	// Russian Roulette
 	const bool rrEnabled = EyePathInfo_UseRR(pathInfo, taskConfig->pathTracer.rrDepth);
@@ -2854,6 +2867,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 		KERNEL_ARGS
 		KERNEL_ARGS_LIGHT
 		KERNEL_ARGS_PGIC_DEPOSIT
+		/* SSP eye-side specular tails (path.ssp.enable): sspTails[lt]
+		 * holds eye task lt's last recorded specular run - consumed by
+		 * the LMNEE chain solver when a camera connect is blocked by a
+		 * recorded surface. NULL when disabled. */ \
+		, __global const SspTail* restrict sspTails
 		) {
 	WAVEFRONT_GUARD
 	__global GPUTask *task = &tasks[gid];
@@ -2911,13 +2929,16 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 	//--------------------------------------------------------------------------
 
 	if (lpi->mneeActive) {
+		__global const SspTail *sspTail = (sspTails &&
+				(lightIndex < pathTracer->lightTracing.eyeTaskCount)) ?
+				&sspTails[lightIndex] : NULL;
 		LMnee_ProcessState(taskConfig, task, &tasksDirectLight[gid], &tasksMnee[gid],
 				taskState, lpi, visRay, visRayHit, sampleResult,
 				filmWidth, filmHeight,
 				filmSubRegion0, filmSubRegion1,
 				filmSubRegion2, filmSubRegion3,
 				worldRadius, mneeSeeds,
-				camera
+				camera, sspTail
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
 				, samplerSharedDataBuff
 #endif
@@ -3052,6 +3073,16 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						taskState, visRayHit, visRay, lpi, mneeSeeds,
 						worldRadius
 						MATERIALS_PARAM);
+				if (!lmRet && sspTails &&
+						(lightIndex < pathTracer->lightTracing.eyeTaskCount))
+					// SSP: an eye path recorded a specular run covering
+					// the blocker - replay its anchors instead of
+					// discovering the chain geometrically
+					lmRet = LMneeChain_StartTail(taskConfig, task,
+							&tasksDirectLight[gid], &tasksMnee[gid], taskState,
+							visRay, lpi, &sspTails[lightIndex],
+							task->tmpBsdf.hitPoint.objectID
+							MATERIALS_PARAM) ? 1 : 0;
 				if (!lmRet)
 					lmRet = LMneeChain_Start(taskConfig, task,
 							&tasksDirectLight[gid], &tasksMnee[gid], taskState, visRay, lpi

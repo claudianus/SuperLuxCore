@@ -2832,6 +2832,51 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 }
 
 //------------------------------------------------------------------------------
+// SSP eye-side specular tail recorder (path.ssp.enable, CPU
+// pathtracer.cpp SspTailRecordVertex port): records the path's leading
+// run of delta-specular mirror/glass anchors. Called right after
+// EyePathInfo_AddVertex; the depth-1 call also resets the record, which
+// covers every engine's path-init path without extra plumbing.
+OPENCL_FORCE_INLINE void SspTail_RecordVertex(__global SspTail *tail,
+		__global const BSDF *bsdf, const float cosSampledDir,
+		const uint depth
+		MATERIALS_PARAM_DECL) {
+	if (depth == 1) {
+		// First vertex of a new eye path: reset the record
+		tail->specN = 0;
+		tail->flags = 1u;
+	}
+	if (!(tail->flags & 1u) || (cosSampledDir < 0.f) || bsdf->isVolume)
+		// Run closed, pass-through pseudo-bounce or a medium scattering
+		// vertex (media-transparent caustic contract: it neither extends
+		// nor breaks the chain)
+		return;
+
+	__global const Material *hitMat = &mats[bsdf->materialIndex];
+	// Same acceptance as the chain solver: only surfaces it can model
+	const bool eligible = hitMat->isDelta &&
+			(hitMat->eventTypes & SPECULAR) &&
+			((hitMat->type == MIRROR) || (hitMat->type == GLASS));
+	if (eligible) {
+		if (tail->specN < SSP_TAIL_MAX_VERTICES) {
+			__global SspTailVertex *v = &tail->vtx[tail->specN++];
+			VSTORE3F(VLOAD3F(&bsdf->hitPoint.p.x), &v->pX);
+			VSTORE3F(VLOAD3F(&bsdf->hitPoint.geometryN.x), &v->gnX);
+			v->objectID = bsdf->hitPoint.objectID;
+		} else
+			// Run longer than the record: closed and marked unusable
+			tail->flags = 2u;
+		return;
+	}
+
+	// First non-eligible surface vertex: close the run
+	tail->flags = 0u;
+	tail->termObjectID = bsdf->hitPoint.objectID;
+	VSTORE3F(VLOAD3F(&bsdf->hitPoint.p.x), &tail->termPX);
+	VSTORE3F(VLOAD3F(&bsdf->hitPoint.geometryN.x), &tail->termGnX);
+}
+
+//------------------------------------------------------------------------------
 // MNEE (Manifold Next Event Estimation): direct light sampling through a
 // single delta specular chain x0 -> x1 -> y. Kernel port of
 // src/slg/engines/pathtracer_mnee.cpp (Hanika et al. 2015; Zeltner et al.
@@ -3870,6 +3915,7 @@ OPENCL_FORCE_INLINE int MneeChain_Begin(__global MneeState *mnee, const unsigned
 	mnee->chainSub = 0;
 	mnee->chainProjected = 1;
 	mnee->walkInGlass = 0;
+	mnee->useTail = 0;
 	mnee->chainSpecR = 1.f; mnee->chainSpecG = 1.f; mnee->chainSpecB = 1.f;
 	mnee->beta = 1.f;
 	mnee->iteration = 0;
@@ -5652,6 +5698,7 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		__global const PathVolumeInfo *srcVol,
 		__global PathVolumeInfo *dlVolInfo
 		, __global const Camera* restrict camera
+		, __global const SspTail *sspTail
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
 		, __global void *samplerSharedDataBuff
 #endif
@@ -5747,6 +5794,14 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		mnee->chainMatType[mnee->chainN] = hitMat->type;
 		mnee->chainN++;
 
+		if (mnee->useTail && sspTail &&
+				(taskMnee->mneeBsdf.hitPoint.objectID !=
+						sspTail->vtx[sspTail->specN - mnee->chainN].objectID))
+			// Aimed anchor missed (stale/mismatched record): drop tail
+			// steering - the traced vertex itself stays a valid chain
+			// member, the walk degrades to plain discovery
+			mnee->useTail = 0;
+
 		if (mnee->chainN >= mnee->chainMaxV) {
 			if (!MneeChain_WriteJacStart(mnee, x0p, lightPos,
 					taskConfig->pathTracer.mnee.maxIterations, ray, dlVolInfo, srcVol))
@@ -5755,9 +5810,18 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		}
 
 		const float3 dIn = VLOAD3F(&ray->d.x);
-		const float3 dir = MneeChain_WalkDir(dIn,
-				&taskMnee->mneeBsdf,
-				etaVertex, hitMat->type == MIRROR);
+		float3 dir;
+		if (mnee->useTail && sspTail) {
+			// SSP tail replay: aim at the next recorded anchor
+			// (vtx[specN-1-chainN] is chain[chainN]'s eye record)
+			const uint ni = sspTail->specN - 1u - mnee->chainN;
+			const float3 ap = MAKE_FLOAT3(sspTail->vtx[ni].pX,
+					sspTail->vtx[ni].pY, sspTail->vtx[ni].pZ);
+			dir = normalize(ap - VLOAD3F(&taskMnee->mneeBsdf.hitPoint.p.x));
+		} else
+			dir = MneeChain_WalkDir(dIn,
+					&taskMnee->mneeBsdf,
+					etaVertex, hitMat->type == MIRROR);
 		if (hitMat->type == GLASS)
 			// Entering when the mesh normal faces the incident side; a
 			// TIR bounce keeps the walk inside either way.
@@ -6077,6 +6141,66 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 // occluder topology even when the triggering hit was a re-blocked
 // manifold segment (a slab's far face), where the connect-side BSDF in
 // task->tmpBsdf would seed the wrong interface.
+// Chain-entry variant of LMneeChain_Start (SSP, path.ssp.enable):
+// instead of discovering the chain topology geometrically, steer the
+// MS_DISCOVER walk at the recorded eye-tail anchors (chain[0] adjacent
+// to the receiver is the farthest record, vtx[specN-1]). Each aimed hit
+// is objectID-validated against its anchor inside the DISCOVER phase; a
+// mismatch clears useTail and the walk degrades to plain discovery, so
+// a stale record only wastes a few traces. Returns false when the tail
+// is unusable (the caller falls back to discovery).
+OPENCL_FORCE_NOT_INLINE bool LMneeChain_StartTail(
+		__constant const GPUTaskConfiguration* restrict taskConfig,
+		__global GPUTask *task,
+		__global GPUTaskDirectLight *taskDirectLight,
+		__global GPUTaskMnee *taskMnee,
+		__global GPUTaskState *taskState,
+		__global Ray *ray,
+		__global LightPathInfo *lpi,
+		__global const SspTail *tail, const unsigned int blockerObjectID
+		MATERIALS_PARAM_DECL
+		) {
+	if (!taskConfig->pathTracer.mnee.enabled ||
+			!taskConfig->pathTracer.mnee.sspEnable)
+		return false;
+	// Deterministic gate (CPU ConnectToEye parity): usable record, a
+	// chain the solver can hold, and a blocker that sits on it
+	if (!tail || (tail->flags & 2u) || (tail->specN < 1) ||
+			(tail->specN > min(taskConfig->pathTracer.mnee.maxSpecular,
+					(unsigned int)MNEE_MS_MAX_VERTICES)))
+		return false;
+	bool match = false;
+	for (uint i = 0; i < tail->specN; ++i)
+		match |= (tail->vtx[i].objectID == blockerObjectID);
+	if (!match)
+		return false;
+
+	__global MneeState *mnee = &taskMnee->mnee;
+	const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX, lpi->lensPointY,
+			lpi->lensPointZ);
+	const float3 x0p = VLOAD3F(&taskState->bsdf.hitPoint.p.x);
+
+	mnee->lightPosX = lensPoint.x;
+	mnee->lightPosY = lensPoint.y;
+	mnee->lightPosZ = lensPoint.z;
+	mnee->mirrorMode = false;
+	// chainMaxV = specN: the regular chainN >= chainMaxV test ends the
+	// replay and hands the loaded chain to the Newton solve
+	MneeChain_Begin(mnee, tail->specN);
+	mnee->useTail = 1;
+
+	// Aim at the x0-adjacent anchor (the farthest record)
+	const uint i0 = tail->specN - 1;
+	const float3 anchor = MAKE_FLOAT3(tail->vtx[i0].pX, tail->vtx[i0].pY,
+			tail->vtx[i0].pZ);
+	const float3 dir = normalize(anchor - x0p);
+	MneeChain_WriteDiscoverRay(&taskState->bsdf, dir, ray, ray->time);
+	lpi->connectVolInfo = lpi->volume;
+	mnee->phase = MNEE_PHASE_MS_DISCOVER;
+	lpi->mneeActive = true;
+	return true;
+}
+
 OPENCL_FORCE_NOT_INLINE bool LMneeChain_Start(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global GPUTask *task,
@@ -6175,6 +6299,7 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		const float worldRadius,
 		__global MneeSeedEntry *mneeSeeds
 		, __global const Camera* restrict camera
+		, __global const SspTail *sspTail
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
 		, __global void *samplerSharedDataBuff
 #endif
@@ -6195,7 +6320,7 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 				filmSubRegion0, filmSubRegion1,
 				filmSubRegion2, filmSubRegion3,
 				&lpi->volume, &lpi->connectVolInfo,
-				camera
+				camera, sspTail
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)
 				, samplerSharedDataBuff
 #endif

@@ -720,6 +720,13 @@ typedef struct {
 	// Accumulated specular product over the MS_POST phases.
 	float chainSpecR, chainSpecG, chainSpecB;
 
+	// SSP tail replay (path.ssp.enable): 1 while the MS_DISCOVER walk
+	// steers toward the recorded eye-tail anchors instead of computing
+	// MneeChain_WalkDir. Cleared on the first anchor mismatch (stale
+	// record), degrading the walk to plain discovery - the collected
+	// vertices stay physically valid either way.
+	int useTail;
+
 	// Solve-end results consumed by the contribution launch
 	float specFactorR, specFactorG, specFactorB;
 	float geometricTerm;
@@ -764,6 +771,32 @@ typedef struct {
 	BSDF mneeBsdf, mneeBsdfFinal;
 	MneeState mnee;
 } GPUTaskMnee;
+
+// SSP eye-side specular tail (path.ssp.enable, CPU pathinfo.h SspTail
+// mirror): per-eye-task record of the path's LEADING delta-specular run
+// (vtx[0] nearest the camera). A light task whose camera connect is
+// blocked by a recorded surface replays the anchors into the chain
+// solver instead of running the discovery walk (mnee->useTail). Pure
+// topology hint - every hit is re-validated, the estimator stays
+// unbiased. Component floats: host-compiled file.
+#define SSP_TAIL_MAX_VERTICES 8
+typedef struct {
+	float pX, pY, pZ;            // reproject anchor
+	float gnX, gnY, gnZ;         // reproject ray direction (-gn)
+	unsigned int objectID;       // scene object index: blocker/stale match
+	unsigned int pad;
+} SspTailVertex;
+
+typedef struct {
+	unsigned int specN;
+	unsigned int flags;          // bit0 = run open, bit1 = overflow
+	// Terminator (first non-eligible vertex closing the run): reserved
+	// for receiver-endpoint tail solves, unused by the chain consumer.
+	unsigned int termObjectID;
+	float termPX, termPY, termPZ;
+	float termGnX, termGnY, termGnZ;
+	SspTailVertex vtx[SSP_TAIL_MAX_VERTICES];
+} SspTail;
 
 typedef struct {
 	// The task seed
