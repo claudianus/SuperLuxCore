@@ -32,6 +32,7 @@
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/pathguiding.h"
 #include "slg/engines/restirgi.h"
+#include "slg/engines/restirpt.h"
 #include "slg/utils/pathinfo.h"
 
 namespace slg {
@@ -125,6 +126,9 @@ public:
 
 	void SetRestirGI(RestirGI *gi) { restirGI = gi; }
 	RestirGI *GetRestirGI() const { return restirGI; }
+
+	void SetRestirPT(RestirPT *pt) { restirPT = pt; }
+	RestirPT *GetRestirPT() const { return restirPT; }
 
 	void ParseOptions(
 		luxrays::PropertiesConstRef cfg,
@@ -287,6 +291,15 @@ public:
 	u_int restirGICandidates;
 	bool restirGITemporalEnable;
 	bool restirGISpatialEnable;
+
+	// ReSTIR PT (PT-1, path.restir.pt.*): per-pixel path-suffix
+	// reservoir - stored winners contribute the measured suffix
+	// radiance directly instead of being retraced. Mutually exclusive
+	// with GI (ParseOptions enforces).
+	bool restirPTEnable;
+	u_int restirPTCandidates;
+	bool restirPTTemporalEnable;
+	bool restirPTSpatialEnable;
 
 	// RIS product-guiding candidate count (path.guiding.risk): K > 0
 	// resamples K mixture-proposal draws against the product target
@@ -632,6 +645,9 @@ private:
 	// access). Null when disabled. Path-level state - not a light
 	// strategy - so it lives here, not in LightStrategy.
 	RestirGI *restirGI;
+
+	// ReSTIR PT suffix reservoir (same ownership contract).
+	RestirPT *restirPT;
 
 	static const Film::FilmChannels eyeSampleResultsChannels;
 	static const Film::FilmChannels lightSampleResultsChannels;

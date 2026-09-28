@@ -111,6 +111,8 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
 		restirGITemporalEnable(true), restirGISpatialEnable(true),
+		restirPT(nullptr), restirPTEnable(false), restirPTCandidates(4),
+		restirPTTemporalEnable(true), restirPTSpatialEnable(true),
 		sspEnable(false) {
 }
 
@@ -976,6 +978,16 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	};
 	GuidePending guidePending[64];
 	u_int guidePendingCount = 0;
+	// ReSTIR PT (PT-1): armed by a fresh pick at the depth-0 vertex.
+	// The next landing captures pre-contribution throughput+radiance,
+	// and Commit() at path end publishes the measured suffix
+	// L_suf = delta / thr_x2. A stored-suffix win instead adds its
+	// contribution at the hook and breaks out.
+	RestirPT::Pick ptPending;
+	bool ptArmed = false, ptCaptured = false;
+	Spectrum ptThrAtX2, ptRadAtX2;
+	Point ptX1;
+	Normal ptX1n;
 	bool albedoToDo = true;
 	sampleResult.albedo = Spectrum(); // Just in case albedoToDo is never true
 	sampleResult.shadingNormal = Normal();
@@ -997,6 +1009,24 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				&pathInfo.depth, pathInfo.lastBSDFEvent);
 		pathThroughput *= connectionThroughput;
 		// Note: pass-through check is done inside Scene::Intersect()
+
+		// ReSTIR PT: the armed pick's landing vertex (or miss) is the
+		// reconnection vertex x2. Snapshot pre-contribution state so
+		// Commit() can recover L_suf = (radiance_end - snapshot)/thr_x2.
+		if (ptArmed && !ptCaptured) {
+			ptCaptured = true;
+			ptThrAtX2 = pathThroughput;
+			ptRadAtX2 = sampleResult.radiance.Sum();
+			// The walked landing - not the candidate-trace vertex - is
+			// the reconnection vertex (pass-through continuations can
+			// differ). Record what the path actually hit.
+			ptPending.miss = hit ? 0u : 1u;
+			ptPending.dir = eyeRay.d;
+			if (hit) {
+				ptPending.x2 = bsdf.hitPoint.p;
+				ptPending.x2n = bsdf.hitPoint.geometryN;
+			}
+		}
 
 		const bool checkDirectLightHit =
 				// Avoid to render caustic path if PhotonGI caustic cache is enabled
@@ -1461,6 +1491,49 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						giSelected = true;
 					}
 				}
+				// ReSTIR PT (PT-1): same depth-0 non-delta hook as GI,
+				// but a stored-suffix win contributes its measured
+				// suffix directly and ends the path - no retrace.
+				bool ptSelected = false;
+				if (restirPT && restirPTEnable &&
+						sampleResult.firstPathVertex && !bsdf.IsDelta()) {
+					if (restirPT->ResampleSuffix(device, scene,
+							eyeRay.time, bsdf, pathInfo.volume,
+							bsdf.hitPoint.p,
+							sampleResult.pixelX, sampleResult.pixelY,
+							sampler.GetPass(), restirPTCandidates,
+							restirPTTemporalEnable, restirPTSpatialEnable,
+							&ptPending)) {
+						if (ptPending.consumed) {
+							const Spectrum contrib = pathThroughput *
+									ptPending.eval * ptPending.connThr *
+									ptPending.lsuf;
+							sampleResult.radiance[0] += contrib;
+							if (ptPending.event & DIFFUSE)
+								sampleResult.indirectDiffuseReflect += contrib;
+							else if (ptPending.event & GLOSSY)
+								sampleResult.indirectGlossyReflect += contrib;
+							else
+								sampleResult.indirectSpecularReflect += contrib;
+							// Republish the winner's refreshed record.
+							restirPT->Commit(sampleResult.pixelX,
+									sampleResult.pixelY, sampler.GetPass(),
+									ptPending, bsdf.hitPoint.p,
+									bsdf.hitPoint.geometryN, Spectrum());
+							break;
+						}
+						sampledDir = ptPending.dir;
+						bsdfSample = ptPending.eval;
+						bsdfPdfW = ptPending.pdfW;
+						cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN,
+								ptPending.dir));
+						bsdfEvent = ptPending.event;
+						ptSelected = true;
+						ptArmed = true;
+						ptX1 = bsdf.hitPoint.p;
+						ptX1n = bsdf.hitPoint.geometryN;
+					}
+				}
 				// Portal-guided bounce sampling (M5): with probability
 				// portalShare the bounce direction is proposed by aiming
 				// at a uniform point on an artist-placed aperture rect -
@@ -1473,6 +1546,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				const bool portalOK = !portals.empty() && !bsdf.IsDelta() &&
 						!bsdf.IsVolume() && (ris.zHat <= 0.f) &&
 						!(restirGIEnable && sampleResult.firstPathVertex) &&
+						!(restirPTEnable && sampleResult.firstPathVertex) &&
 						PortalUsableAt(bsdf.hitPoint.p) &&
 						PortalSideOK(bsdf.hitPoint.p) &&
 						PortalFacingOK(bsdf.hitPoint.p,
@@ -1559,7 +1633,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						r.radianceBase = radianceAfterEmission;
 					}
 					if (guidingEnable && tryGuide && takeGuideSide &&
-							!giSelected && !takePortal && ris.zHat <= 0.f) {
+							!giSelected && !ptSelected && !takePortal &&
+							ris.zHat <= 0.f) {
 						float guidePdfW;
 						Vector guideDir;
 						// Sample() is total under tryGuide (table miss falls
@@ -1663,7 +1738,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						}
 					}
 				}
-				if (ris.zHat > 0.f && !giSelected) {
+				if (ris.zHat > 0.f && !giSelected && !ptSelected) {
 					// RIS product-guiding winner (drawn pre-DL): the
 					// continuation weight is f|cos|*zHat/t(w*) - the BSDF
 					// factor that the field-only mixture was missing.
@@ -1751,7 +1826,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					}
 					guided = true;
 				}
-				if (!guided && !giSelected) {
+				if (!guided && !giSelected && !ptSelected) {
 					// Inside the mixture (tryGuide) either side uses the
 					// rescaled conditional uniform (a full [0,1) uniform
 					// given the selector outcome); elsewhere the raw draw
@@ -1844,6 +1919,20 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			pathGuidingCache->Record(r.p, r.d,
 					(finalRadiance - r.radianceBase) * r.invArrival);
 		}
+	}
+
+	// ReSTIR PT: publish the armed pick's measured suffix. L_suf is the
+	// radiance delivered from x2 onward per unit landing throughput -
+	// thr_x2 holds prefix + edge + segment factors, so the per-channel
+	// ratio recovers exactly the suffix-local estimate.
+	if (ptArmed && ptCaptured && restirPT) {
+		const Spectrum dRad = sampleResult.radiance.Sum() - ptRadAtX2;
+		Spectrum lsuf;
+		for (u_int c = 0; c < 3; ++c)
+			lsuf.c[c] = (ptThrAtX2.c[c] > 1e-9f) ?
+					Max(dRad.c[c], 0.f) / ptThrAtX2.c[c] : 0.f;
+		restirPT->Commit(sampleResult.pixelX, sampleResult.pixelY,
+				sampler.GetPass(), ptPending, ptX1, ptX1n, lsuf);
 	}
 
 	sampleResult.rayCount += static_cast<float>(device.GetTotalRaysCount() - deviceRayCount);
@@ -2992,6 +3081,18 @@ void PathTracer::ParseOptions(
 	restirGICandidates = Max(1, cfg.Get(defaultProps.Get("path.restir.gi.candidates")).Get<int>());
 	restirGITemporalEnable = cfg.Get(defaultProps.Get("path.restir.gi.temporal.enable")).Get<bool>();
 	restirGISpatialEnable = cfg.Get(defaultProps.Get("path.restir.gi.spatial.enable")).Get<bool>();
+	// ReSTIR PT (PT-1): path-suffix reuse at the depth-0 vertex.
+	// Mutually exclusive with GI - PT is the strict generalization
+	// (stored suffix instead of stored direction + proxy), so PT wins
+	// when both are set.
+	restirPTEnable = cfg.Get(defaultProps.Get("path.restir.pt.enable")).Get<bool>();
+	restirPTCandidates = Max(1, cfg.Get(defaultProps.Get("path.restir.pt.candidates")).Get<int>());
+	restirPTTemporalEnable = cfg.Get(defaultProps.Get("path.restir.pt.temporal.enable")).Get<bool>();
+	restirPTSpatialEnable = cfg.Get(defaultProps.Get("path.restir.pt.spatial.enable")).Get<bool>();
+	if (restirPTEnable && restirGIEnable) {
+		restirGIEnable = false;
+		SLG_LOG("[PathTracer] path.restir.pt.enable overrides path.restir.gi.enable");
+	}
 
 	// Update eye sample size (9 classic dims + 1 path-guiding bin pick)
 	eyeSampleBootSize = 5 + (spectralEnable ? 1 : 0); // +1 wavelength draw
@@ -3080,6 +3181,10 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.candidates")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.temporal.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.restir.gi.spatial.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.pt.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.pt.candidates")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.pt.temporal.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.restir.pt.spatial.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.spectral.enable")) <<
 			// Emit the effective value: the "spectral.upsampling" alias
 			// takes precedence over the canonical name when set
@@ -3190,6 +3295,10 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.restir.gi.candidates")(4) <<
 			Property("path.restir.gi.temporal.enable")(true) <<
 			Property("path.restir.gi.spatial.enable")(true) <<
+			Property("path.restir.pt.enable")(false) <<
+			Property("path.restir.pt.candidates")(4) <<
+			Property("path.restir.pt.temporal.enable")(true) <<
+			Property("path.restir.pt.spatial.enable")(true) <<
 			Property("path.spectral.enable")(false) <<
 			Property("path.spectral.upsampling")("smits") <<
 			Property("path.pathdepth.total")(6) <<

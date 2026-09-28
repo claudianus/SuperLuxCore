@@ -33,7 +33,7 @@ using namespace slg;
 
 PathCPURenderEngine::PathCPURenderEngine(RenderConfigRef rcfg) :
 		CPUNoTileRenderEngine(rcfg), photonGICache(nullptr),
-		pathGuidingCache(nullptr), restirGI(nullptr),
+		pathGuidingCache(nullptr), restirGI(nullptr), restirPT(nullptr),
 		lightSampleSplatter(nullptr), lightSamplerSharedData(nullptr) {
 }
 
@@ -41,6 +41,7 @@ PathCPURenderEngine::~PathCPURenderEngine() {
 	delete photonGICache;
 	delete pathGuidingCache;
 	delete restirGI;
+	delete restirPT;
 }
 
 void PathCPURenderEngine::InitFilm() {
@@ -203,6 +204,22 @@ void PathCPURenderEngine::StartLockLess() {
 	pathTracer.SetRestirGI(restirGI);
 
 	//--------------------------------------------------------------------------
+	// ReSTIR PT (PT-1): per-pixel path-suffix reservoir, shared by all
+	// render threads (same advisory lock-free protocol as GI).
+	//--------------------------------------------------------------------------
+
+	delete restirPT;
+	restirPT = nullptr;
+	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.restir.pt.enable")).Get<bool>()) {
+		restirPT = new RestirPT();
+		restirPT->Init(GetFilm().GetWidth(), GetFilm().GetHeight());
+		SLG_LOG("[PathCPURenderEngine] ReSTIR PT enabled (candidates=" <<
+				cfg.Get(PathTracer::GetDefaultProps()->Get(
+					"path.restir.pt.candidates")).Get<int>() << ")");
+	}
+	pathTracer.SetRestirPT(restirPT);
+
+	//--------------------------------------------------------------------------
 
 	CPUNoTileRenderEngine::StartLockLess();
 }
@@ -240,6 +257,8 @@ void PathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions
 	// Jacobian + V test, but a reset is cheaper than stale entries).
 	if (restirGI)
 		restirGI->Reset();
+	if (restirPT)
+		restirPT->Reset();
 
 	CPURenderEngine::EndSceneEditLockLess(editActions);
 }

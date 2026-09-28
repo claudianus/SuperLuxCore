@@ -270,6 +270,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/engines/pathtracer.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/pathguiding.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/restirgi.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/engines/restirpt.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/pathtracer_mnee.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/tilerepository.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/tilerepositoryserialize.cpp

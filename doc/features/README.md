@@ -26,6 +26,7 @@ ask for.
 | Metal backend + HWRT | [metal-backend.md](metal-backend.md) + [../metal_backend_design.md](../metal_backend_design.md) | `562a3bf5f` device+HWRT, `9ffadfb12` cl2msl, `ca83e8ceb` pipeline, `30dc89ab3` film; primitive-AS residency `fd3f60471` | luxball, cornell, lightinstances | **Apple only** |
 | ReSTIR DI | [restir-di.md](restir-di.md) | `db4600a18`; visibility target `b349776cb`/`b349776cb`; screen-space merge `b349776cb`; shift `b349776cb`/`b349776cb`; clamp `b349776cb`; vis-aware merge `b349776cb` | manylights | CPU/OCL/Metal |
 | ReSTIR GI | [../../dev-tools/restir-gi-design.md](../../dev-tools/restir-gi-design.md) | CPU `10ed0383e`; spatial `10ed0383e`; GPU `10ed0383e`; e19 10/10 CPU+GPU | cornell | CPU/OCL/Metal |
+| ReSTIR PT (PT-1, opt-in) | [restir-pt.md](restir-pt.md) + [../engineering/restir-pt-design.md](../engineering/restir-pt-design.md) | design `2c42e74de`; e95 6/6 PATHCPU | cornell | CPU (GPU = PT-2) |
 | MNEE | [mnee.md](mnee.md) | `8363ad339` | causticcube | CPU/OCL/Metal |
 | Path guiding | [path-guiding.md](path-guiding.md) | `8687ffc37` | interior | CPU/OCL/Metal |
 | Spectral transport | [spectral.md](spectral.md) | `7d8896fc9` | cornell-spectral | CPU/OCL/Metal |

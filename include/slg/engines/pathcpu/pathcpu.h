@@ -26,6 +26,7 @@
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/pathguiding.h"
 #include "slg/engines/restirgi.h"
+#include "slg/engines/restirpt.h"
 #include "slg/samplers/sampler.h"
 #include "slg/film/film.h"
 #include "slg/film/filmsamplesplatter.h"
@@ -100,6 +101,9 @@ protected:
 	// ReSTIR GI (G1): engine-owned per-pixel first-bounce reservoir
 	// (path.restir.gi.enable). Shared by all render threads.
 	RestirGI *restirGI;
+	// ReSTIR PT (PT-1): engine-owned per-pixel path-suffix reservoir
+	// (path.restir.pt.enable). Shared by all render threads.
+	RestirPT *restirPT;
 };
 
 }
