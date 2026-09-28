@@ -25,3 +25,4 @@ docs live in `doc/features/` (see its README for the index).
 | [pgic-beams.md](pgic-beams.md) | PhotonGI caustic beams: estimator math, chunking, volume photongi.enable=false gotcha, visibility/query gate split |
 | [e90_pgic_update_crash.md](e90_pgic_update_crash.md) | Progressive PhotonGI update SIGSEGV: dangling `IndexBvh::allEntries` after shadow-cache swap — fixed by `SetEntries` rebinding |
 | [pgic-gpu-deposits.md](pgic-gpu-deposits.md) | GPU photon deposits (B1′): light-task piggyback, drain/ingest plumbing, Apple arg-limit + shared-storage gotchas, taskConfig staleness fixes |
+| [pgic-review-fixes.md](pgic-review-fixes.md) | Review-fix invariants: live/shadow fields, updateThread lifecycle, per-thread threadTaskConfig, PATHOCL-only deposit gate, parity guards |

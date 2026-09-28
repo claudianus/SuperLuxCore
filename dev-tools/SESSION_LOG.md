@@ -26,3 +26,37 @@ deposits → 1.1–1.5 s/update (~22×). Changes PhotonGI bias only in
 truly-empty scenes (sub-1/4M-rate caustics would be cut — negligible).
 
 e54 suite: all gates PASS after both changes.
+
+## Session — review fixes A/B (commits 27353b84d, f08766a75, 93f9d7f6f)
+
+Strict-review follow-ups on the C1–C8/B1' caustic work; the three
+commits above plus doc/engineering/pgic-review-fixes.md:
+
+- traced-count race: UpdateWorker wrote causticPhotonTracedCount
+  while ConnectCausticBeams read it. Now updateCausticPhotonTracedCount
+  (shadow) seeds at launch, accrues in the worker, publishes in
+  ApplyPendingUpdate. CPU pgic ratio to one-shot ~1.0.
+- updateThread.reset() raced across FinishUpdate (all threads) and
+  the barrier completion step. updateThreadMutex serializes all three
+  lifecycle sites; reset precedes updateInFlight clear (avoids the
+  completion joining the NEXT worker).
+- lightTaskCount unsigned wrap at taskCount <= 8192 could arm
+  ingest-only with zero light tasks -> permanent empty cache.
+  Guarded in pathoclbase + tilepathocl.
+- engine->taskConfig was mutated by every OCL thread (VC schedule,
+  pgic refresh, deposit retire) while siblings memcpy'd it to their
+  devices. threadTaskConfig per-thread snapshot in InitGPUTaskBuffer;
+  all mutations + taskConfigBuff uploads now use it (CL_TRUE).
+  Kernel arg/enqueue read sites follow.
+- tilepathocl threads != 0 now refresh on GetCausticPhotonPass()
+  bump (Update() returns true only on thread 0) - same fix class
+  as C8 for pathocl.
+- pgicDepositWanted gated to PATHOCL: tilepath never calls
+  DrainPGIC, so deposits would starve the cache.
+- GPU IsDirectLightHitVisible calls EyePathInfo_IsCausticPath
+  (depth>1 parity; signature const-qualified). directPdfW==0 and
+  zero-length PhotonBeam guards on both sides.
+
+Verified: parity-regression 4/4, e90 all PASS (GPU parity ~1.0,
+progressive pgic self-consistent), e54 8/8 gates PASS, 720p GPU
+visual render correct.
