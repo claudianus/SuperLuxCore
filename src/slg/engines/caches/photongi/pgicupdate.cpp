@@ -40,8 +40,10 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 
 			SLG_LOG("Updating PhotonGI caustic cache after " << filmSPP << " samples/pixel (Pass " << causticPhotonPass << ")");
 
-			// A safety check to avoid the update if visibility map has been deallocated
-			if (visibilityParticles.size() == 0) {
+			// A safety check to avoid the update if visibility map has been
+			// deallocated (caustic beams do not need it)
+			if ((visibilityParticles.size() == 0) &&
+					!(params.caustic.enabled && params.caustic.volumeBeams)) {
 				SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
 				lastUpdateSpp = filmSPP;
 			} else {
@@ -49,6 +51,9 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 				delete causticPhotonsBVH;
 				causticPhotonsBVH = nullptr;
 				causticPhotons.clear();
+				causticBeams.clear();
+				// The stale beam index is rebuilt by BuildCausticBeamsIndex()
+				// below (unique_ptr reset needs the complete type).
 
 				// Reduce the look up radius
 				params.caustic.lookUpRadius = params.caustic.lookUpRadius /
@@ -68,6 +73,7 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 					causticPhotonsBVH = new PGICPhotonBvh(&causticPhotons, causticPhotonTracedCount,
 							params.caustic.lookUpRadius, params.caustic.lookUpNormalAngle);
 				}
+				BuildCausticBeamsIndex();
 
 				lastUpdateSpp = filmSPP;
 

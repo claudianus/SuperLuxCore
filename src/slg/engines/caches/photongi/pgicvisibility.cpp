@@ -62,7 +62,9 @@ protected:
 
 	virtual bool ProcessHitPoint(const BSDF &bsdf, const PathVolumeInfo &volInfo,
 			vector<PGICVisibilityParticle> &visibilityParticles) const {
-		if (pgic.IsPhotonGIEnabled(bsdf)) {
+		// Medium vertices do not produce particles by default: a world-scale
+		// scattering volume would fill the whole space with particles.
+		if (pgic.IsVisibilityEnabled(bsdf)) {
 			const Spectrum bsdfEvalTotal = bsdf.EvaluateTotal();
 			assert (bsdfEvalTotal.IsValid());
 

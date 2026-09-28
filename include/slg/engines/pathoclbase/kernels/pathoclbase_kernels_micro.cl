@@ -403,7 +403,8 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	if (taskConfig->pathTracer.pgic.indirectEnabled || taskConfig->pathTracer.pgic.causticEnabled) {
 		const bool isPhotonGIEnabled = PhotonGICache_IsPhotonGIEnabled(bsdf,
-				taskConfig->pathTracer.pgic.glossinessUsageThreshold
+				taskConfig->pathTracer.pgic.glossinessUsageThreshold,
+				taskConfig->pathTracer.pgic.causticVolumeBeams
 				MATERIALS_PARAM);
 
 		switch (taskConfig->pathTracer.pgic.debugType) {

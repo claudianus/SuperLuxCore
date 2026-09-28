@@ -245,6 +245,9 @@ typedef struct {
 		float causticLookUpNormalCosAngle;
 
 		int indirectEnabled, causticEnabled;
+		// Media vertices are caustic(-beam) receivers even without the
+		// per-volume photongi.enable flag (volumes default it to false)
+		int causticVolumeBeams;
 
 		PhotonGIDebugType debugType;
 	} pgic;

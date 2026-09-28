@@ -75,6 +75,7 @@ void CompiledScene::CompilePhotonGI() {
 	}
 
 	compiledPathTracer.pgic.glossinessUsageThreshold = photonGICache->GetParams().glossinessUsageThreshold;
+	compiledPathTracer.pgic.causticVolumeBeams = photonGICache->GetParams().caustic.volumeBeams;
 
 	//--------------------------------------------------------------------------
 	// Indirect cache

@@ -1,10 +1,11 @@
 # Caustics SOTA program — unified coverage across engines
 
-Status: **Stage A landed (media-transparent specular chains)** —
-see §Stages. Regression: `dev-tools/e54_media_caustic_test.py` (all 6
-gates PASS), scenes `scenes/cornell/cornell-vol-caustic*.scn`,
-`cornell-vol-pure.scn`; visual: `dev-tools/e54_visual_demo.py` +
-`cornell-vol-caustic-show.scn` (1280×720, PATHOCL, AgX punch).
+Status: **Stage A + B2 landed** (media-transparent specular chains,
+photon beams for volumetric caustics) — see §Stages. Regression:
+`dev-tools/e54_media_caustic_test.py` (all 7 gates PASS), scenes
+`scenes/cornell/cornell-vol-caustic*.scn`, `cornell-vol-pure.scn`;
+visual: `dev-tools/e54_visual_demo.py` + `cornell-vol-caustic-show.scn`
+(1280×720, AgX punch).
 
 ## Goal
 
@@ -79,15 +80,64 @@ spheres in fog, 1280×720 PATHOCL adaptive hybrid): volumetric shafts +
 spectral caustic fans converge under the light-pass side; AgX punch
 display transform, correct orientation.
 
-## Stage B/C — planned (from `dev-tools/archive/gpu_caustics_design.md`)
+## Stage B2 — caustic photon beams (landed, CPU)
+
+Volumetric caustics are 3D-sparse: a focused shaft crosses the whole
+medium as a line, but point deposits only land where a scatter vertex
+happens to terminate. Stage B2 stores each specular-prefix **in-medium
+flight segment** itself as a `PhotonBeam` (Jarosz et al., *Progressive
+Photon Beams*, 2011).
+
+Deposit (`tracephotonsthread.cpp`): for a specular-prefix flight whose
+medium is a `HomogeneousVolume` (world-volume fallback included), a
+beam `p0→p1` carries the packet flux at segment entry, split into
+length-share chunks of `max(8·lookupRadius, len/16)` so R-tree AABBs
+stay tight (chunking is exact — the estimator is linear in length —
+and transmittance is applied piecewise, strictly better than one
+sample for long flights). Beams deposit regardless of the endpoint's
+receiver class and regardless of visibility particles.
+
+Query (`photongicache.cpp`): a medium eye vertex in a homogeneous
+volume queries the beam R-tree; per candidate it solves the
+segment/ball overlap `[lo,hi]` (quadratic in beam parameter — the
+integrated 4/3πr³ kernel along the beam), evaluates transmittance at
+the overlap midpoint, and adds `α/L · overlap · T · phase/pdf`.
+Normalization `1/(N·4/3πr³)` matches the point-photon estimator, so
+beam and point estimates of the same transport class agree within
+noise (e54 gate 4b: ratio ≈1.16). Volume vertices in
+non-homogeneous media and all surfaces keep the point-kernel path —
+the two estimators stay disjoint.
+
+Key boundary decisions (see `doc/engineering/pgic-beams.md`):
+
+- Volumes default `photongi.enable=false` (parsevolumes.cpp:207), so
+  with beams on, `IsPhotonGIEnabled` admits medium vertices as caustic
+  receivers while a new `IsVisibilityEnabled` keeps the **upstream**
+  gate for visibility-particle generation — otherwise a world-scale
+  volume fills the map with millions of particles.
+- Beams are session-local (not serialized) and CPU-side; GPU keeps
+  point-photon queries via the `causticVolumeBeams` task flag —
+  GPU beam parity is open (B1 ships the photon-side wavefront first).
+- Config: `path.photongi.caustic.volumebeams` (default on).
+
+### Validation (Stage B2)
+
+e54 all-gates @320×180/96spp PATHCPU+PATHOCL+BIDIRCPU:
+
+| Gate | Result |
+|---|---|
+| PhotonGI caustic cache (beams) | 0.0080 vs plain 0.0075 |
+| Beam vs point estimator agreement | beams=0.0080, points=0.0069 (1.16×) |
+| CPU partition disjoint / GPU parity / pure-medium / BIDIR / surface | unchanged PASS |
+
+Beam index sizes: ~400K beams on `cornell-vol-caustic-ms` @1M traced
+photons; beam render overhead ≈ +40% vs point queries at small res.
+
+## Stage B1/B3/C/D — planned (from `dev-tools/archive/gpu_caustics_design.md`)
 
 - **B1 GPU photon shooting**: wavefront photon-trace kernels reusing
   the PhotonGI layout; CPU keeps BVH build per pass. Gate: slab caustic
   parity vs CPU + measured speedup.
-- **B2 photon beams for volumes** (Jarosz'11, UPBP): light-path
-  specular-prefix segments; eye gathers beam density along the medium
-  traversal. The real fix for thin focused shafts where point deposits
-  are too sparse. Volume-only first.
 - **B3 dual-field product guiding** (own research): light-side exitant
   vMF field trained like M2b-2 records; eye×light product proposal at
   specular-adjacent bounces; MNEE stays the exact fallback.

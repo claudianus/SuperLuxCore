@@ -25,6 +25,7 @@
 #include "luxrays/usings.h"
 
 #include "slg/slg.h"
+#include "slg/engines/caches/photongi/photongicache.h"
 
 namespace slg {
 
@@ -33,9 +34,7 @@ namespace slg {
 // TracePhotonsThread
 //------------------------------------------------------------------------------
 
-class Photon;
 class RadiancePhoton;
-class PhotonGICache;
 
 class TracePhotonsThread {
 public:
@@ -63,6 +62,7 @@ public:
 
 	std::vector<RadiancePhotonEntry> indirectPhotons;
 	std::vector<Photon> causticPhotons;
+	std::vector<PhotonBeam> causticBeams;
 
 	friend class PhotonGICache;
 
@@ -73,12 +73,15 @@ private:
 	bool TracePhotonPath(luxrays::RandomGenerator &rndGen,
 			const std::vector<float> &samples,
 			std::vector<RadiancePhotonEntry> &newIndirectPhotons,
-			std::vector<Photon> &newCausticPhotons);
+			std::vector<Photon> &newCausticPhotons,
+			std::vector<PhotonBeam> &newCausticBeams);
 	void AddPhotons(const std::vector<RadiancePhotonEntry> &newIndirectPhotons,
-			const std::vector<Photon> &newCausticPhotons);
+			const std::vector<Photon> &newCausticPhotons,
+			const std::vector<PhotonBeam> &newCausticBeams);
 	void AddPhotons(const float currentPhotonsScale,
 			const std::vector<RadiancePhotonEntry> &newIndirectPhotons,
-			const std::vector<Photon> &newCausticPhotons);
+			const std::vector<Photon> &newCausticPhotons,
+			const std::vector<PhotonBeam> &newCausticBeams);
 
 	void RenderFunc(std::stop_token stop_token);
 

@@ -91,6 +91,7 @@ PropertiesUPtr PhotonGICache::GetDefaultProps() {
 			Property("path.photongi.caustic.updatespp.minradius")(.003f) <<
 			Property("path.photongi.caustic.lookup.radius")(.15f) <<
 			Property("path.photongi.caustic.lookup.normalangle")(10.f) <<
+			Property("path.photongi.caustic.volumebeams")(true) <<
 			Property("path.photongi.debug.type")("none") <<
 			Property("path.photongi.persistent.file")("") <<
 			Property("path.photongi.persistent.safesave")(true);
@@ -140,6 +141,7 @@ PhotonGICache *PhotonGICache::FromProperties(SceneConstRef scn, const Properties
 
 			params.caustic.radiusReduction = Max(0.0, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp.radiusreduction")).Get<double>());
 			params.caustic.minLookUpRadius = Max(0.0, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp.minradius")).Get<double>());
+			params.caustic.volumeBeams = cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.volumebeams")).Get<bool>();
 		}
 
 		params.debugType = String2DebugType(cfg.Get(GetDefaultProps()->Get("path.photongi.debug.type")).Get<string>());

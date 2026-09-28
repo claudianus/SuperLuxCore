@@ -19,7 +19,8 @@
  ***************************************************************************/
 
 OPENCL_FORCE_INLINE bool PhotonGICache_IsPhotonGIEnabled(__global const BSDF *bsdf,
-		const float glossinessUsageThreshold
+		const float glossinessUsageThreshold,
+		const bool causticVolumeBeams
 		MATERIALS_PARAM_DECL) {
 	const uint matIndex = bsdf->materialIndex;
 
@@ -32,6 +33,11 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsPhotonGIEnabled(__global const BSDF *bs
 		if ((eventTypes & TRANSMIT) || (eventTypes & SPECULAR) ||
 				((eventTypes & GLOSSY) && (BSDF_GetGlossiness(bsdf MATERIALS_PARAM) < glossinessUsageThreshold)))
 			return false;
+		else if (bsdf->isVolume && causticVolumeBeams)
+			// Medium scatter vertices are caustic receivers regardless of
+			// the per-volume photongi.enable flag (volumes default it to
+			// false): beams on CPU, point photons on GPU.
+			return true;
 		else
 			return BSDF_IsPhotonGIEnabled(bsdf MATERIALS_PARAM);
 	}

@@ -19,6 +19,8 @@
 #include <math.h>
 
 #include <boost/format.hpp>
+#include <boost/geometry.hpp>
+#include <boost/geometry/index/rtree.hpp>
 #include <chrono>
 #include <filesystem>
 
@@ -31,10 +33,41 @@
 #include "slg/engines/caches/photongi/tracephotonsthread.h"
 #include "slg/utils/pathinfo.h"
 #include "slg/scene/scene.h"
+#include "slg/volumes/homogenous.h"
 
 using namespace std;
 using namespace luxrays;
 using namespace slg;
+
+//------------------------------------------------------------------------------
+// PGICBeamIndex: segment AABBs of caustic photon beams in a boost R-tree.
+// Point queries test the lookup sphere against each candidate segment.
+//------------------------------------------------------------------------------
+
+namespace bgi = boost::geometry::index;
+
+class slg::PGICBeamIndex {
+public:
+	typedef boost::geometry::model::point<float, 3, boost::geometry::cs::cartesian> BPoint;
+	typedef boost::geometry::model::box<BPoint> BBox;
+	typedef std::pair<BBox, u_int> Item;
+	typedef bgi::rtree<Item, bgi::quadratic<8> > RT;
+
+	PGICBeamIndex(const std::vector<PhotonBeam> &beams) {
+		std::vector<Item> items;
+		items.reserve(beams.size());
+		for (u_int i = 0; i < beams.size(); ++i) {
+			const PhotonBeam &b = beams[i];
+			const Point p1 = b.p0 + b.length * b.d;
+			items.push_back(Item(BBox(
+					BPoint(Min(b.p0.x, p1.x), Min(b.p0.y, p1.y), Min(b.p0.z, p1.z)),
+					BPoint(Max(b.p0.x, p1.x), Max(b.p0.y, p1.y), Max(b.p0.z, p1.z))), i));
+		}
+		rt = RT(items.begin(), items.end());
+	}
+
+	RT rt;
+};
 
 //------------------------------------------------------------------------------
 // PhotonGICache
@@ -67,6 +100,26 @@ PhotonGICache::~PhotonGICache() {
 bool PhotonGICache::IsPhotonGIEnabled(const BSDF &bsdf) const {
 	const BSDFEvent eventTypes = bsdf.GetEventTypes();
 
+	if ((eventTypes & TRANSMIT) || (eventTypes & SPECULAR) ||
+			((eventTypes & GLOSSY) && (bsdf.GetGlossiness() < params.glossinessUsageThreshold)))
+		return false;
+	else if (bsdf.IsVolume() && params.caustic.enabled && params.caustic.volumeBeams)
+		// Medium scatter vertices are caustic(-beam) receivers regardless of
+		// the per-volume photongi.enable flag (volumes default it to false):
+		// they must run cache queries. They do NOT need visibility
+		// particles (IsVisibilityEnabled governs those) - beams are
+		// visibility-independent and point deposits in media stay gated by
+		// whatever particles exist.
+		return true;
+	else
+		return bsdf.IsPhotonGIEnabled();
+}
+
+bool PhotonGICache::IsVisibilityEnabled(const BSDF &bsdf) const {
+	const BSDFEvent eventTypes = bsdf.GetEventTypes();
+
+	// Upstream semantics: a medium scatter vertex only counts when the
+	// volume explicitly opts into PhotonGI (scene.volumes.*.photongi.enable).
 	if ((eventTypes & TRANSMIT) || (eventTypes & SPECULAR) ||
 			((eventTypes & GLOSSY) && (bsdf.GetGlossiness() < params.glossinessUsageThreshold)))
 		return false;
@@ -150,6 +203,9 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 		causticPhotons.insert(causticPhotons.end(), renderThreads[i]->causticPhotons.begin(),
 				renderThreads[i]->causticPhotons.end());
 		causticPhotonStored += renderThreads[i]->causticPhotons.size();
+
+		causticBeams.insert(causticBeams.end(), renderThreads[i]->causticBeams.begin(),
+				renderThreads[i]->causticBeams.end());
 
 		renderThreads[i].reset();
 	}
@@ -437,8 +493,15 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 
 	TraceVisibilityParticles();
 	if (visibilityParticles.size() == 0) {
-		SLG_LOG("PhotonGI WARNING: nothing is visible and/or cache enabled.");
-		return;
+		if (!(params.caustic.enabled && params.caustic.volumeBeams)) {
+			SLG_LOG("PhotonGI WARNING: nothing is visible and/or cache enabled.");
+			return;
+		}
+		// Caustic beams deposit on specular-prefix medium flights without
+		// any visibility gate, so photon tracing stays useful even with no
+		// particles (visibilityParticlesKdTree remains null and point
+		// deposits are simply skipped).
+		SLG_LOG("PhotonGI no visibility particles: caustic beams proceed anyway");
 	}
 
 	//--------------------------------------------------------------------------
@@ -482,6 +545,8 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 		causticPhotonsBVH = new PGICPhotonBvh(&causticPhotons, causticPhotonTracedCount,
 				params.caustic.lookUpRadius, params.caustic.lookUpNormalAngle);
 	}
+
+	BuildCausticBeamsIndex();
 
 	//--------------------------------------------------------------------------
 	// Free visibility map (only if it is not required for a further update
@@ -580,16 +645,83 @@ const SpectrumGroup *PhotonGICache::GetIndirectRadiance(const BSDF &bsdf) const 
 	return nullptr;
 }
 
+void PhotonGICache::BuildCausticBeamsIndex() {
+	causticBeamsIndex.reset();
+	if (params.caustic.volumeBeams && (causticBeams.size() > 0)) {
+		SLG_LOG("PhotonGI building caustic beams index (" << causticBeams.size() << " beams)");
+		causticBeamsIndex = std::make_unique<PGICBeamIndex>(causticBeams);
+	}
+}
+
+SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
+	SpectrumGroup result;
+
+	const Point &x = bsdf.hitPoint.p;
+	const float r = params.caustic.lookUpRadius;
+	const float r2 = params.caustic.lookUpRadius2;
+
+	std::vector<PGICBeamIndex::Item> hits;
+	causticBeamsIndex->rt.query(bgi::intersects(PGICBeamIndex::BBox(
+			PGICBeamIndex::BPoint(x.x - r, x.y - r, x.z - r),
+			PGICBeamIndex::BPoint(x.x + r, x.y + r, x.z + r))),
+			back_inserter(hits));
+
+	for (auto const &hit : hits) {
+		const PhotonBeam &beam = causticBeams[hit.second];
+		// Segment/ball overlap: the range of beam parameter t for which
+		// p0 + t*d lies inside the lookup ball around x. Solving the
+		// quadratic gives t = s +/- sqrt(r^2 - d2) where s is the unclamped
+		// projection of x on the beam line and d2 the squared point-line
+		// distance. End-cap culling is handled by the [lo, hi] interval.
+		const float s = Dot(x - beam.p0, beam.d);
+		const float d2 = DistanceSquared(x, beam.p0 + s * beam.d);
+		if (d2 >= r2)
+			continue;
+
+		const float half = sqrtf(r2 - d2);
+		const float lo = Max(0.f, s - half);
+		const float hi = Min(beam.length, s + half);
+		if (hi <= lo)
+			continue;
+
+		// The point-photon volume kernel (4/3*pi*r^3) integrated along the
+		// beam direction is exactly this overlap length.
+		const Spectrum beamT = beam.volume->TransmittanceEstimate(
+				Ray(beam.p0, beam.d, 0.f, .5f * (lo + hi)), .5f);
+
+		BSDFEvent event;
+		float directPdfW;
+		Spectrum bsdfEval = bsdf.Evaluate(-beam.d, &event, &directPdfW, nullptr);
+		bsdfEval /= directPdfW;
+
+		// Flux per unit length times the integrated kernel footprint
+		result.Add(beam.lightID, beam.alpha * beamT * bsdfEval * ((hi - lo) / beam.length));
+	}
+
+	// Kernel-consistent with the point-photon volume estimator (the beam
+	// spreads the packet density along its length instead of a point)
+	result /= causticPhotonTracedCount * (4.f / 3.f * M_PI * r2 * r);
+
+	assert (result.IsValid());
+	return result;
+}
+
 SpectrumGroup PhotonGICache::ConnectWithCausticPaths(const BSDF &bsdf) const {
 	assert (IsPhotonGIEnabled(bsdf));
 
 	SpectrumGroup result;
-	if (causticPhotonsBVH) {
+	// Volume vertices in homogeneous media are answered by the beam
+	// estimator: every caustic point deposit in such a medium also produced
+	// a beam, so the two estimates stay disjoint. All other vertices
+	// (surfaces, heterogeneous/clear volumes) use the point-photon kernel.
+	if (bsdf.IsVolume() && params.caustic.volumeBeams && causticBeamsIndex &&
+			dynamic_observer_cast<const HomogeneousVolume>(bsdf.GetMaterial())) {
+		result = ConnectCausticBeams(bsdf);
+	} else if (causticPhotonsBVH) {
 		result = causticPhotonsBVH->ConnectAllNearEntries(bsdf);
-
-		assert (result.IsValid());
 	}
 
+	assert (result.IsValid());
 	return result;
 }
 

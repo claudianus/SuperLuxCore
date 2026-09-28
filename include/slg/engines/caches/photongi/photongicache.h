@@ -146,6 +146,27 @@ protected:
 	}
 };
 
+// A caustic photon flight segment inside a homogeneous participating
+// medium (Jarosz et al., "Progressive Photon Beams", 2011): the packet
+// spreads its flux along the segment instead of a single point, which
+// recovers thin focused shafts point photons almost never sample.
+// Session-local (not serialized; point photons still cover persistent caches).
+struct PhotonBeam {
+	PhotonBeam(const luxrays::Point &a, const luxrays::Point &b, const u_int id,
+			const luxrays::Spectrum &f, VolumeConstPtr vol) :
+			p0(a), d(b - a), lightID(id), alpha(f), volume(vol) {
+		length = d.Length();
+		d /= length;
+	}
+
+	luxrays::Point p0;
+	luxrays::Vector d;
+	u_int lightID;
+	luxrays::Spectrum alpha;
+	float length;
+	VolumeConstPtr volume;
+};
+
 struct RadiancePhoton : GenericPhoton {
 	RadiancePhoton(const luxrays::Point &pt, const luxrays::Normal &nm,
 		const luxrays::SpectrumGroup &rad, const bool isVol) :
@@ -211,6 +232,9 @@ typedef struct PhotonGICacheParams_t {
 		float lookUpRadius, lookUpRadius2, lookUpNormalAngle,
 				radiusReduction, minLookUpRadius;
 		u_int updateSpp;
+		// Deposit in-medium specular flight segments as photon beams and
+		// answer volume-vertex caustic queries with the beam estimator.
+		bool volumeBeams;
 	} caustic;
 
 	PhotonGIDebugType debugType;
@@ -253,6 +277,8 @@ protected:
 		ar & caustic.radiusReduction;
 		ar & caustic.minLookUpRadius;
 		ar & caustic.updateSpp;
+		if (version >= 7)
+			ar & caustic.volumeBeams;
 
 		ar & debugType;
 		
@@ -262,6 +288,7 @@ protected:
 } PhotonGICacheParams;
 
 class PGICSceneVisibility;
+class PGICBeamIndex;
 class TracePhotonsThread;
 class EyePathInfo;
 
@@ -276,6 +303,8 @@ public:
 	bool IsIndirectEnabled() const { return params.indirect.enabled; }
 	bool IsCausticEnabled() const { return params.caustic.enabled; }
 	bool IsPhotonGIEnabled(const BSDF &bsdf) const;
+	// Stricter gate for visibility-particle generation (upstream semantics)
+	bool IsVisibilityEnabled(const BSDF &bsdf) const;
 	float GetIndirectUsageThreshold(const BSDFEvent lastBSDFEvent,
 			const float lastGlossiness, const float u0) const;
 	bool IsDirectLightHitVisible(const EyePathInfo &pathInfo,
@@ -331,6 +360,8 @@ private:
 		std::atomic<u_int> &globalIndirectSize,
 		std::atomic<u_int> &globalCausticSize);
 	void TracePhotons(const bool indirectEnabled, const bool causticEnabled);
+	void BuildCausticBeamsIndex();
+	luxrays::SpectrumGroup ConnectCausticBeams(const BSDF &bsdf) const;
 	void FilterVisibilityParticlesRadiance(const std::vector<luxrays::SpectrumGroup> &radianceValues,
 			std::vector<luxrays::SpectrumGroup> &filteredRadianceValues) const;
 	void CreateRadiancePhotons();
@@ -367,6 +398,10 @@ private:
 	luxrays::SpillableArray<Photon> causticPhotons;
 	PGICPhotonBvh *causticPhotonsBVH;
 	u_int causticPhotonTracedCount, causticPhotonPass;
+
+	// Caustic photon beams (in-medium specular flight segments)
+	std::vector<PhotonBeam> causticBeams;
+	std::unique_ptr<PGICBeamIndex> causticBeamsIndex;
 };
 
 }
@@ -375,7 +410,7 @@ BOOST_CLASS_VERSION(slg::GenericPhoton, 1)
 BOOST_CLASS_VERSION(slg::PGICVisibilityParticle, 2)
 BOOST_CLASS_VERSION(slg::Photon, 2)
 BOOST_CLASS_VERSION(slg::RadiancePhoton, 2)
-BOOST_CLASS_VERSION(slg::PhotonGICacheParams, 6)
+BOOST_CLASS_VERSION(slg::PhotonGICacheParams, 7)
 BOOST_CLASS_VERSION(slg::PhotonGICache, 3)
 
 BOOST_CLASS_EXPORT_KEY(slg::GenericPhoton)
