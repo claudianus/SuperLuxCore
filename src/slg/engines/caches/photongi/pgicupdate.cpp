@@ -63,14 +63,21 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			initialUpdatePending = false;
 			updateFilmSPP = filmSPP;
 			updateCallback = threadZeroCallback;
+			// Seed the shadow traced count from the live one: ingest
+			// generations accumulate (trace generations reset it
+			// inside TracePhotons anyway)
+			updateCausticPhotonTracedCount = causticPhotonTracedCount;
 
-			updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
+			{
+				std::lock_guard<std::mutex> lock(updateThreadMutex);
+				updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
+			}
 		}
 	}
 
-	// The deferred initial generation (launched in Preprocess) carries no
-	// callback: adopt thread 0's callback so the swap still notifies
-	// GPU-side recompilation exactly once.
+	// The deferred initial generation (armed in Preprocess, launched by
+	// the first Update) carries no callback: adopt thread 0's callback
+	// so the swap still notifies GPU-side recompilation exactly once.
 	if ((threadIndex == 0) && updateInFlight && !updateCallback)
 		updateCallback = threadZeroCallback;
 
@@ -88,8 +95,15 @@ void PhotonGICache::FinishUpdate(const u_int threadIndex) {
 	// Wait for a possibly in-flight background update before the
 	// barrier dance; a ready shadow copy is then swapped in by the
 	// barrier completion step as usual.
-	if (updateThread)
-		updateThread.reset();
+	{
+		// All render threads pass through here (and ApplyPendingUpdate
+		// may concurrently reset inside this barrier's completion
+		// step): serialize the join+reset, the first thread to get
+		// the lock performs it
+		std::lock_guard<std::mutex> lock(updateThreadMutex);
+		if (updateThread)
+			updateThread.reset();
+	}
 
 	for (;;) {
 		if (finishUpdateFlag)

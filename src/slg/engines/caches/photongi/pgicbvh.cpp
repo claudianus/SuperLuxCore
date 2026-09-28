@@ -54,7 +54,7 @@ SpectrumGroup PGICPhotonBvh::ConnectCacheEntry(const Photon &photon, const BSDF 
 	if (!bsdf.IsVolume())
 		bsdfEval /= AbsDot(bsdf.hitPoint.shadeN, -photon.d);
 	else
-		bsdfEval /= directPdfW;
+		bsdfEval = (directPdfW > 0.f) ? bsdfEval / directPdfW : Spectrum();
 
 	SpectrumGroup result;
 	result.Add(photon.lightID, photon.alpha * bsdfEval);

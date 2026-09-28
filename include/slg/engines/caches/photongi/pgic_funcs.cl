@@ -36,7 +36,7 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsPhotonGIEnabled(__global const BSDF *bs
 		else if (bsdf->isVolume && causticVolumeBeams)
 			// Medium scatter vertices are caustic receivers regardless of
 			// the per-volume photongi.enable flag (volumes default it to
-			// false): beams on CPU, point photons on GPU.
+			// false): beams fill the medium on both CPU and GPU.
 			return true;
 		else
 			return BSDF_IsPhotonGIEnabled(bsdf MATERIALS_PARAM);
@@ -54,9 +54,9 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 	else if (!taskConfig->pathTracer.pgic.causticEnabled || !photonGICausticCacheUsed)
 		return true;
 	// Media-transparent chains: a pure-medium path is not caustic-class,
-	// its direct hit stays visible (CPU: EyePathInfo::IsCausticPath())
-	else if (!(pathInfo->isNearlyCaustic &&
-			(!pathInfo->lastFromVolume || pathInfo->causticHasSurface)) &&
+	// its direct hit stays visible. Calls the canonical predicate so
+	// the depth > 1 rule of EyePathInfo::IsCausticPath() applies too
+	else if (!EyePathInfo_IsCausticPath(pathInfo) &&
 			(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE))
 		return true;
 	else
@@ -179,7 +179,7 @@ OPENCL_FORCE_INLINE float3 PGICPhotonBvh_ConnectCacheEntry(__global const Photon
 	if (!bsdf->isVolume)
 		bsdfEval /= fabs(dot(VLOAD3F(&bsdf->hitPoint.shadeN.x), -photonDir));
 	else
-		bsdfEval /= directPdfW;
+		bsdfEval = (directPdfW > 0.f) ? bsdfEval / directPdfW : (float3)(0.f);
 
 	return VLOAD3F(photon->alpha.c) * bsdfEval;
 }
@@ -306,13 +306,15 @@ OPENCL_FORCE_INLINE bool PGICBeamBvh_ConnectAllNearEntries(__global const BSDF *
 					float directPdfW;
 					float3 bsdfEval = BSDF_Evaluate(bsdf, -d, &event, &directPdfW
 							MATERIALS_PARAM);
-					bsdfEval /= directPdfW;
+					if (directPdfW > 0.f) {
+						bsdfEval /= directPdfW;
 
-					// Flux per unit length times the integrated kernel footprint
-					const float3 alpha = VLOAD3F(beam->alpha.c) * beamT * bsdfEval *
-							((hi - lo) / beam->length) * factor;
-					VADD3F(radiance[beam->lightID].c, alpha * scale);
-					isEmpty = false;
+						// Flux per unit length times the integrated kernel footprint
+						const float3 alpha = VLOAD3F(beam->alpha.c) * beamT * bsdfEval *
+								((hi - lo) / beam->length) * factor;
+						VADD3F(radiance[beam->lightID].c, alpha * scale);
+						isEmpty = false;
+					}
 				}
 			}
 

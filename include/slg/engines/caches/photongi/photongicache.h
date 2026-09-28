@@ -156,7 +156,13 @@ struct PhotonBeam {
 			const luxrays::Spectrum &f, VolumeConstPtr vol) :
 			p0(a), d(b - a), lightID(id), alpha(f), volume(vol) {
 		length = d.Length();
-		d /= length;
+		// A degenerate segment keeps a zero direction (NaN arithmetic
+		// would otherwise poison every NaN-unsafe comparison in the
+		// query path); the overlap test culls it on length == 0.
+		if (length > 0.f)
+			d /= length;
+		else
+			d = luxrays::Vector(0.f, 0.f, 0.f);
 	}
 
 	luxrays::Point p0;
@@ -382,10 +388,12 @@ private:
 		std::atomic<u_int> &globalIndirectSize,
 		std::atomic<u_int> &globalCausticSize,
 		luxrays::SpillableArray<Photon> &dstCausticPhotons,
-		std::vector<PhotonBeam> &dstCausticBeams);
+		std::vector<PhotonBeam> &dstCausticBeams,
+		u_int &dstCausticTracedCount);
 	void TracePhotons(const bool indirectEnabled, const bool causticEnabled,
 		luxrays::SpillableArray<Photon> *dstCausticPhotons = nullptr,
-		std::vector<PhotonBeam> *dstCausticBeams = nullptr);
+		std::vector<PhotonBeam> *dstCausticBeams = nullptr,
+		u_int *dstCausticTracedCount = nullptr);
 	void BuildCausticBeamsIndex();
 	void BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
 			std::unique_ptr<PGICBeamIndex> &dst, const float radius);
@@ -440,9 +448,17 @@ private:
 	// traces photons and builds indices into these buffers while render
 	// threads keep using the live cache; the barrier completion step
 	// swaps them in atomically.
+	// Guards updateThread: the pointer is created on thread 0 in
+	// Update(), joined+reset inside the barrier completion step and
+	// joined+reset by every render thread in FinishUpdate().
+	std::mutex updateThreadMutex;
 	std::unique_ptr<luxrays::JThread> updateThread;
 	luxrays::SpillableArray<Photon> updateCausticPhotons;
 	std::vector<PhotonBeam> updateCausticBeams;
+	// Traced-path count of the pending generation: the worker writes
+	// here so the live causticPhotonTracedCount (read by in-flight
+	// queries) stays stable until the barrier swap publishes both.
+	u_int updateCausticPhotonTracedCount = 0;
 	PGICPhotonBvh *updateCausticPhotonsBVH = nullptr;
 	std::unique_ptr<PGICBeamIndex> updateCausticBeamsIndex;
 	float updateLookUpRadius;
