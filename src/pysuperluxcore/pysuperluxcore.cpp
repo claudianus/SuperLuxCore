@@ -2960,6 +2960,10 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 			<RenderConfigImpl&, RenderStateImplRPtr&, FilmImpl& >
 		),
 		py::keep_alive<1, 2>(),
+		// The engine holds a non-owning FilmPtr to the start film and
+		// dereferences it in Start() (film->AddFilm) - the film must
+		// outlive the session
+		py::keep_alive<1, 4>(),
 		py::call_guard<py::gil_scoped_release>()
 	)
 	//TODO
@@ -2992,7 +2996,11 @@ PYBIND11_MODULE(pysuperluxcore, m) {
          &luxcore::detail::RenderSessionImpl::SetRuntimeResolutionReduction,
          "Runtime override of the RTPATHOCL resolution reduction (0 restores "
          "the configured value; applies at the next frame boundary, no film reset)")
-    .def("GetFilm", &luxcore::detail::RenderSessionImpl::GetFilmPtr)
+    // The returned film is a FilmImplSession holding a non-owning
+    // back-link to the session: keep the session alive while the
+    // wrapper is in use (same as GetRenderConfig above).
+    .def("GetFilm", &luxcore::detail::RenderSessionImpl::GetFilmPtr,
+         py::keep_alive<0, 1>())
     .def("UpdateStats", &luxcore::detail::RenderSessionImpl::UpdateStats,
          py::call_guard<py::gil_scoped_release>())
     .def("GetStats", &luxcore::detail::RenderSessionImpl::GetStats)

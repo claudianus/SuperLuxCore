@@ -1944,11 +1944,19 @@ RenderConfigImpl::RenderConfigImpl(
 	// Read the render state
 	std::shared_ptr<slg::RenderState> st;
 	sif->GetArchive() >> st;
+	if (!st)
+		throw runtime_error(
+			"RenderConfig: null render state in serialized resume file"
+		);
 	startState = std::make_shared<RenderStateImpl>(st);
 
 	// Load the film (pointer root matching SaveRsmFile's Film* record)
 	slg::Film *sf = nullptr;
 	sif->GetArchive() >> sf;
+	if (!sf)
+		throw runtime_error(
+			"RenderConfig: null film pointer in serialized resume file"
+		);
 	startFilm = FilmImpl::Create(std::unique_ptr<slg::Film>(sf));
 
 	if (!sif->IsGood())
@@ -2158,7 +2166,11 @@ RenderSessionImpl::RenderSessionImpl(
 	stats(std::make_unique<Properties>())
 {
 
-	auto startFilm = slg::Film::LoadSerialized(startFilmFileName);
+	// The engine keeps a non-owning FilmPtr to the start film and
+	// dereferences it in Start() (film->AddFilm): the loaded film has to
+	// be owned by this session, not by a ctor-local unique_ptr that is
+	// destroyed before Start() runs (use-after-free)
+	resumeFilm = slg::Film::LoadSerialized(startFilmFileName);
 	auto startState = slg::RenderState::LoadSerialized(startStateFileName);
 
 	slg::RenderConfigRef rcfg(*config.renderConfig);
@@ -2166,7 +2178,7 @@ RenderSessionImpl::RenderSessionImpl(
 	renderSession = std::make_unique<slg::RenderSession>(
 		rcfg,
 		startState,
-		slg::FilmPtr(startFilm.get())
+		slg::FilmPtr(resumeFilm.get())
 	);
 }
 

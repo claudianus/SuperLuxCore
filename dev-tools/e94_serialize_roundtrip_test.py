@@ -12,8 +12,15 @@
 #      match, adaptiveError is rebound to the loaded film (not a stale
 #      nested copy): the reloaded film keeps producing sane stats.
 #   2. .rsm save (paused) -> RenderConfig.LoadResumeFile -> a session
-#      built on the start film keeps rendering (sample count grows).
-#   3. No crash / no leak diagnostics (process exits clean).
+#      built on the start film keeps rendering (sample count grows),
+#      with the Python film object dropped before Start() to exercise
+#      the binding's keep_alive (the engine's start-film pointer is
+#      non-owning).
+#   3. Filename resume: RenderState.Save(.rst) + film .flm ->
+#      RenderSession(cfg, rstFile, flmFile) - exercises the
+#      session-owned resumeFilm member (engine's start-film pointer is
+#      non-owning and is dereferenced in Start()).
+#   4. No crash / no leak diagnostics (process exits clean).
 #
 # Run from the workspace root:
 #   python3.13 dev-tools/e94_serialize_roundtrip_test.py
@@ -83,20 +90,42 @@ film.adaptiveerror.step = 2
 
     # --- .rsm resume round-trip -------------------------------------------
     ses.Pause()
+    rst = os.path.join(tmp, "state.rst")
+    ses.GetRenderState().Save(rst)
     ses.SaveResumeFile(rsm)
     ses.Stop()
 
     newCfg, startState, startFilm = pysuperluxcore.RenderConfig.LoadResumeFile(rsm)
     ses2 = pysuperluxcore.RenderSession(newCfg, startState, startFilm)
+    # The engine keeps a non-owning pointer to the start film and merges
+    # it in Start() - dropping the Python object must not free the film
+    # (covered by keep_alive on the binding)
+    del startFilm
+    import gc
+    gc.collect()
     ses2.Start()
     time.sleep(3.0)
     ses2.UpdateStats()
     spp_after = ses2.GetStats().Get("stats.renderengine.pass").GetFloat()
     ses2.Stop()
 
+    # --- filename resume (.rst + .flm) ------------------------------------
+    # RenderSession(cfg, stateFile, filmFile) loads the start film into a
+    # session-owned member: the engine's non-owning pointer must stay valid
+    # past the constructor (previously a ctor-local unique_ptr -> UAF)
+    scene3 = pysuperluxcore.Scene()
+    scene3.Parse(pysuperluxcore.Properties(str(SCENE)))
+    ses3 = pysuperluxcore.RenderSession(
+        pysuperluxcore.RenderConfig(cfg, scene3), rst, flm)
+    ses3.Start()
+    time.sleep(3.0)
+    ses3.UpdateStats()
+    spp3 = ses3.GetStats().Get("stats.renderengine.pass").GetFloat()
+    ses3.Stop()
+
     print(f"RESULT flm_ok=1 spp_loaded={spp_loaded:.2f} "
           f"noise_ok={int(noise_ok)} spp_before={spp_before} "
-          f"spp_after={spp_after} rsm_ok=1", flush=True)
+          f"spp_after={spp_after} rsm_ok=1 spp3={spp3}", flush=True)
 
 
 def check(ok, name, detail):
@@ -128,6 +157,9 @@ def main():
                     float(res.get("spp_after", 0)) > float(res.get("spp_before", 1)),
                     ".rsm resume keeps rendering",
                     f"spp {res.get('spp_before')} -> {res.get('spp_after')}")
+        ok &= check(float(res.get("spp3", 0)) > 0,
+                    ".rst + .flm filename resume keeps rendering",
+                    f"spp3={res.get('spp3')}")
 
     print(f"{'PASS' if ok else 'FAIL'} overall", flush=True)
     sys.exit(0 if ok else 1)

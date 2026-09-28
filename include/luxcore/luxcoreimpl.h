@@ -714,6 +714,9 @@ private:
 
 	// RenderSessionImpl creates and owns a slg::RenderSession and a FilmImpl
 	// RenderSession must not be shared
+	// Declared before renderSession so it outlives it on teardown: the
+	// engine holds a non-owning FilmPtr to the resume start-film
+	slg::FilmUPtr resumeFilm;
 	std::unique_ptr<slg::RenderSession> renderSession;
 	FilmImplUPtr film;
 	luxrays::PropertiesUPtr stats;

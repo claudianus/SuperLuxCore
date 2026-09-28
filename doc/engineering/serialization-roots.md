@@ -48,6 +48,32 @@ own `version<T>` reaches `T::load(ar, version)` unchanged.
 - `RenderSession(config, state, film)`: ctor bound to
   `FilmImplStandalone&`, an unregistered type — dead binding. Widened
   to base `FilmImpl&` (the ctor only calls virtual `GetSLGFilm()`).
+  The binding also needs `py::keep_alive<1, 4>`: the engine stores the
+  start film as a non-owning `FilmPtr` (observer_ptr) and dereferences
+  it in `RenderEngine::Start()` via `film->AddFilm(*startFilm)` (on
+  every start, including Stop→Start cycles), so the Python film object
+  must outlive the session. `state` is a copied `shared_ptr` and needs
+  no keep_alive; `config` already had `keep_alive<1, 2>`.
+
+## Start-film lifetime (same defect class, impl side)
+
+`RenderSessionImpl(config, stateFile, filmFile)` loaded the film into a
+ctor-local `unique_ptr` and passed `FilmPtr(startFilm.get())` to the
+session — the film was destroyed at ctor exit, leaving the engine's
+`startFilm` dangling → UAF in `Start()`. The loaded film is now owned
+by a `RenderSessionImpl::resumeFilm` member (declared before
+`renderSession` so it outlives it on teardown). The same guarantee for
+the object-based binding comes from `keep_alive<1, 4>` above; the C++
+`luxcore::RenderSession::Create(config, state, film&)` API keeps its
+caller-owns contract.
+
+## Loader hardening
+
+`RenderConfigImpl`'s `.rsm` ctor null-checks every archive entry:
+config via `ReadFromSIF<T>` (`t == nullptr` → throw), and the state +
+film entries explicitly. A null pointer record is a corrupt file, not
+a stream error — `IsGood()` alone does not catch it, and a null film
+otherwise surfaces later as a `GetSLGFilm()` null-deref.
 
 ## Verification
 
@@ -55,4 +81,6 @@ own `version<T>` reaches `T::load(ar, version)` unchanged.
 error enabled, then `.flm` save → `Film(path)` load (NOISE channel
 finite → `adaptiveError` rebound to the loaded film via `BindFilm`),
 `.rsm` save → `LoadResumeFile` → resumed session keeps accumulating
-samples. PASS.
+samples (with the Python film object dropped before `Start()` to
+exercise the binding's `keep_alive`), plus the `.rst` + `.flm`
+filename-resume path (`resumeFilm` ownership). PASS: 3/3.
