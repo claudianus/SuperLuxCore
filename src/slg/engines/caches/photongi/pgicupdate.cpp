@@ -14,6 +14,8 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include <stop_token>
+
 #include "slg/engines/caches/photongi/photongicache.h"
 
 using namespace std;
@@ -60,6 +62,7 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 
 			updateInFlight = true;
 			updateFailed = false;
+			updateAbortRequested = false;
 			initialUpdatePending = false;
 			updateFilmSPP = filmSPP;
 			updateCallback = threadZeroCallback;
@@ -70,7 +73,17 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 
 			{
 				std::lock_guard<std::mutex> lock(updateThreadMutex);
-				updateThread = std::make_unique<JThread>([this]() { UpdateWorker(); });
+				updateThread = std::make_unique<JThread>(
+						[this](std::stop_token stopToken) {
+							// Join/reset requests stop on the jthread:
+							// forward it to the flag the photon-tracing
+							// loops poll (their own jthread token is
+							// never signaled - Join() only waits)
+							std::stop_callback abortCb(stopToken, [this] {
+								updateAbortRequested.store(true);
+							});
+							UpdateWorker();
+						});
 			}
 		}
 	}
@@ -86,6 +99,15 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 
 	// All threads park here; the barrier completion step performs the
 	// shadow-cache swap while no query can be in flight.
+	// Two arrivals per participant, paired like FinishUpdate()'s two
+	// phases: a barrier phase only completes when every party has
+	// arrived, so all barrier entries must come in same-call pairs
+	// (Update's pending-swap path and FinishUpdate's drain path
+	// contribute 2 each). A single arrival here would consume a
+	// FinishUpdate thread's first phase and strand its second one -
+	// finishUpdateFlag is set between its phases and blocks every new
+	// arrival, hanging engine stop.
+	threadsSyncBarrier->arrive_and_wait();
 	threadsSyncBarrier->arrive_and_wait();
 
 	return (threadIndex == 0);

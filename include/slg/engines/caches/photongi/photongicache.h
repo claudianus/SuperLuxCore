@@ -424,7 +424,10 @@ private:
 	};
 	std::unique_ptr< std::barrier<completion_t> > threadsSyncBarrier;
 	u_int lastUpdateSpp, updateSeedBase;
-	bool finishUpdateFlag;
+	// Written by FinishUpdate() between its two barrier phases and read
+	// by peers outside any phase: atomic (and default-initialized, the
+	// serialization path does not restore it)
+	std::atomic<bool> finishUpdateFlag{false};
 
 	// Visibility map
 	luxrays::SpillableArray<PGICVisibilityParticle> visibilityParticles;
@@ -465,6 +468,11 @@ private:
 	u_int updateFilmSPP;
 	std::function<void()> updateCallback;
 	std::atomic<bool> updateInFlight{false}, updatePendingSwap{false}, updateFailed{false};
+	// Armed by the update jthread's stop callback on join/reset:
+	// UpdateWorker() checks it between stages and TracePhotonsThread
+	// work loops poll it, so engine stop never waits out a whole
+	// photon trace
+	std::atomic<bool> updateAbortRequested{false};
 	// Deferred initial generation: launched by the first Update() call
 	// (ingest mode is resolved by then, so GPU deposit sessions build
 	// gen-1 from device records instead of a CPU trace)

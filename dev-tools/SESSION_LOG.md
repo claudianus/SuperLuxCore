@@ -60,3 +60,40 @@ commits above plus doc/engineering/pgic-review-fixes.md:
 Verified: parity-regression 4/4, e90 all PASS (GPU parity ~1.0,
 progressive pgic self-consistent), e54 8/8 gates PASS, 720p GPU
 visual render correct.
+
+## Session — review round 2 fixes (barrier deadlock, abort, CL_TRUE)
+
+Second strict review of the C1-C8/B1' caustic stack found one blocker:
+
+- **FinishUpdate/Update barrier deadlock** (pgicupdate.cpp): Update()
+  arrived once on a pending swap while FinishUpdate() drains in two
+  phases (arrive -> flag -> arrive). A phase needs ALL parties; a
+  single Update arrival could consume a finisher's phase-1 while the
+  flag it then set blocked phase-2 arrivals -> stranded barrier ->
+  Stop() hang. Interleaving-dependent: needs a swap pending exactly
+  when threads exit at different times. Fixed: Update() arrives twice
+  (paired with FinishUpdate's two phases); every barrier entry now
+  contributes an even arrival count within one call.
+- finishUpdateFlag -> std::atomic<bool>{false}: cross-thread read
+  outside barrier phases (data race) and uninitialized in the
+  serialization ctor path.
+- Update worker cancellation: jthread callable now takes stop_token,
+  std::stop_callback arms updateAbortRequested; UpdateWorker checks it
+  before index builds and TracePhotonsThread::RenderFunc polls it in
+  all three work loops (their own jthread token is never signaled -
+  Join() only waits). Engine stop no longer waits out a full photon
+  trace (up to photon.maxTracedCount).
+- DrainPGIC zeroCounters write CL_FALSE -> CL_TRUE: stack source must
+  not outlive a nonblocking enqueue (same class as the taskConfigBuff
+  fix).
+- nVM/vmNorm after deposit-task retirement analyzed: NOT a bug.
+  Shared tasks (lightTracing/VC) keep running (only deposit append
+  stops); a dedicated tail parks whole tasks, freezing VM population
+  AND lightSampleCount together -> normalization stays consistent.
+  Documented in pgic-review-fixes.md so nobody "fixes" it.
+
+Verified: ninja Release build clean; e90 all PASS re-run (5 scenes,
+progressive pgic vs one-shot within ~1%); new e91_pgic_update_smoke.py
+3/3 (PATHCPU updatespp=4 haltspp, PATHOCL deposits+swaps, mid-flight
+Stop = 0.00 s). Doc: doc/engineering/pgic-review-fixes.md gained the
+barrier-pairing, abort, drain-ownership, retire-coherence sections.

@@ -418,7 +418,9 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 	const double startTime = WallClockTime();
 	double lastPrintTime = startTime;
 	bool foundUsefulFirstPrint = true;
-	while(!stop_token.stop_requested()) {
+	// The jthread's own token is never signaled (Join() only waits);
+	// pgic.updateAbortRequested is the engine-stop path
+	while(!stop_token.stop_requested() && !pgic.updateAbortRequested) {
 		// Get some work to do
 		u_int workCounter;
 		do {
@@ -517,7 +519,8 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 				u_int mutatedCount = 1;
 				u_int uniformCount = 1;
 				u_int workToDoIndex = workToDo;
-				while (workToDoIndex-- && !stop_token.stop_requested()) {
+				while (workToDoIndex-- && !stop_token.stop_requested() &&
+						!pgic.updateAbortRequested) {
 					UniformMutate(rndGen, uniformPathSamples);
 
 					if (TracePhotonPath(rndGen, uniformPathSamples, uniformIndirectPhotons,
@@ -596,7 +599,8 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 			// Trace light paths
 
 			u_int workToDoIndex = workToDo;
-			while (workToDoIndex-- && !stop_token.stop_requested()) {
+			while (workToDoIndex-- && !stop_token.stop_requested() &&
+					!pgic.updateAbortRequested) {
 				UniformMutate(rndGen, currentPathSamples);
 
 				TracePhotonPath(rndGen, currentPathSamples, currentIndirectPhotons, currentCausticPhotons,

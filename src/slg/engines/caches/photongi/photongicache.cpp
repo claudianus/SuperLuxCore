@@ -370,6 +370,14 @@ void PhotonGICache::UpdateWorker() {
 			ingestTracedCount = 0;
 		}
 
+		// Engine stop requested the join: discard this generation
+		// rather than spending the index-build time on it
+		if (updateAbortRequested.load()) {
+			updateInFlight = false;
+			SLG_LOG("PhotonGI cache update aborted");
+			return;
+		}
+
 		if (updateCausticPhotons.size() > 0) {
 			SLG_LOG("PhotonGI building caustic photons BVH");
 			updateCausticPhotonsBVH = new PGICPhotonBvh(&updateCausticPhotons,

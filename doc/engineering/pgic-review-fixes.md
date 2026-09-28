@@ -76,6 +76,59 @@ forever. `lightTaskCount = Min(taskCount - 8192u, …)` is guarded
 against `taskCount <= 8192` in both engines (unsigned wrap made
 `eyeTaskCount` ~4G → zero light tasks but ingest still armed).
 
+## Barrier arrival pairing (the deadlock fix)
+
+`threadsSyncBarrier` (std::barrier with `completion_t`) has exactly two
+entry points that arrive: `Update()`'s pending-swap path and
+`FinishUpdate()`'s drain loop — and **every arrival must come in a
+same-call pair**:
+
+- `FinishUpdate()` needs two phases: the first lets every thread reach
+  the barrier (incl. running `ApplyPendingUpdate` for a generation that
+  finished mid-drain), `finishUpdateFlag = true` between them blocks
+  all NEW arrivals, the second phase completes with only the in-pair
+  arrivals and releases everyone to the loop-top flag check.
+- `Update()`'s swap path therefore arrives TWICE, not once: a phase
+  completes only when all `threadCount` parties arrive, and a single
+  Update arrival would consume a FinishUpdate thread's first phase
+  while its flag blocks the second phase's remaining arrivals ->
+  stranded barrier, `Stop()` hangs forever. Nondeterministic: it needs
+  a pending swap to land exactly as some threads exit and others keep
+  rendering (mixed halt timing, multi-device).
+
+`finishUpdateFlag` is `std::atomic<bool>`: written by the first
+draining thread outside any phase, read by peers before they touch the
+barrier (plain bool = data race; the flag can also be read as stale
+`false`/`true` on some platforms). It is default-initialized — the
+serialization path rebuilds the barrier but never restores the flag.
+
+## Update worker cancellation
+
+`updateThread` is a `jthread` whose callable takes `std::stop_token`
+and registers a `std::stop_callback` -> `updateAbortRequested`.
+`Join()`/`reset()` (FinishUpdate, barrier completion, dtor) request
+stop on that token; the flag is polled by `UpdateWorker()` between
+stages and by `TracePhotonsThread::RenderFunc` loops (their own
+jthread token is never signaled — `TracePhotonsThread::Join()` only
+waits). Without this, engine stop blocks for a whole photon trace
+(up to `photon.maxTracedCount` paths).
+
+## DrainPGIC buffer ownership
+
+`EnqueueWriteBuffer(pgicDepositCountersBuff, ..., zeroCounters)` uses
+`CL_TRUE`: `zeroCounters` is stack storage; a `CL_FALSE` write may read
+it after return. Same rule as the `taskConfigBuff` uploads — member or
+static sources may be `CL_FALSE`, stack temporaries never.
+
+## Deposit retirement is estimator-coherent
+
+When deposit tasks retire (`pgicDepositsStopped`), either the tasks are
+shared with `lightTracing`/`vertexConnection` (they keep running; the
+VM population is untouched) or a dedicated tail parks in `MK_DONE`
+(stopping VM records AND `lightSampleCount` together). `vmNorm`/`mergePass`
+therefore never divide by a dead population — no normalization fix is
+needed; do not "correct" nVM for retired tasks.
+
 ## CPU/GPU parity notes
 
 - `PhotonGICache_IsDirectLightHitVisible` must mirror
@@ -92,7 +145,11 @@ against `taskCount <= 8192` in both engines (unsigned wrap made
 
 - `dev-tools/parity-regression.sh`: 4/4 PASS (CPU + Metal).
 - `dev-tools/e90_caustic_stress_test.py`: all PASS — CPU/GPU means
-  within ~2% on 5 scenes; progressive vs one-shot pgic within ~1%.
+  within ~2% on 5 scenes; progressive vs one-shot pgic within ~1%
+  (re-run after the barrier-pairing fix: still all PASS).
+- `dev-tools/e91_pgic_update_smoke.py`: PATHCPU progressive pgic to
+  haltspp, PATHOCL deposits + generation swaps, and a mid-flight
+  `Stop()` (abort path, 0.00 s) — all PASS.
 - `dev-tools/e54_media_caustic_test.py`: 8/8 gates PASS incl. GPU
   beam/point agreement (0.0079 vs 0.0070) and partition disjointness.
 - 720p GPU visual: focused-caustic-ring renders a correct ring

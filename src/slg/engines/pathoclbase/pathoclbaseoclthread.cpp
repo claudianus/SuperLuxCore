@@ -508,9 +508,11 @@ void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
 		intersectionDevice.EnqueueReadBuffer(pgicDepositBeamsBuff, CL_TRUE,
 				nBeams * sizeof(slg::ocl::PhotonBeam), beams.data());
 
-	// Reset cursors + per-drain overflow counts for the next round
+	// Reset cursors + per-drain overflow counts for the next round.
+	// Blocking write: zeroCounters is stack storage and must stay
+	// valid until the transfer completes
 	const u_int zeroCounters[4] = { 0u, 0u, 0u, 0u };
-	intersectionDevice.EnqueueWriteBuffer(pgicDepositCountersBuff, CL_FALSE,
+	intersectionDevice.EnqueueWriteBuffer(pgicDepositCountersBuff, CL_TRUE,
 			4 * sizeof(u_int), zeroCounters);
 
 	// Always ingest: tracedCountDelta feeds causticPhotonTracedCount
