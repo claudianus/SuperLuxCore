@@ -267,15 +267,23 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				EnqueueAdvancePathsWavefront();
 			else
 				EnqueueAdvancePathsKernel();
-
-			// Path guiding (P1-3 M2b-2): drain GPU training records
-			// every inner iteration (10ms-scale); new frozen round +
-			// re-upload every 10th drain (see DrainGuide)
-			DrainGuide();
 		}
 		totalIterations += iterations;
 
 		intersectionDevice.FinishQueue();
+
+		// Path guiding (P1-3 M2b-2): drain GPU training records once per
+		// batch, after the queue drain above. A per-iteration drain
+		// serializes the loop - each blocking read flushes the whole
+		// queue, so the deep queueing the adaptive batching exists to
+		// build never materializes (and the GPU idles between drain and
+		// re-enqueue). Records are overwrite-slots (task -> fixed slot),
+		// so a lower drain frequency only sub-samples in time - the
+		// 16x128 slots still deliver their latest record each drain,
+		// and with ~100+ tasks sharing each slot the data was already
+		// dominated by overwrite loss. New frozen round + re-upload
+		// every 10th drain (see DrainGuide).
+		DrainGuide();
 
 		const double timeKernelEnd = WallClockTime();
 		totalKernelTime += timeKernelEnd - timeKernelStart;
