@@ -161,7 +161,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	pathInfo->isTransmittedPath = pathInfo->isTransmittedPath && (event & TRANSMIT) && (event & (SPECULAR | GLOSSY));
 }
 
-OPENCL_FORCE_INLINE bool EyePathInfo_IsCausticPath(__global EyePathInfo *pathInfo) {
+OPENCL_FORCE_INLINE bool EyePathInfo_IsCausticPath(__global const EyePathInfo *pathInfo) {
 	return pathInfo->isNearlyCaustic && (pathInfo->depth.depth > 1) &&
 			(!pathInfo->lastFromVolume || pathInfo->causticHasSurface);
 }
