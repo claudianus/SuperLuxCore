@@ -20,6 +20,10 @@
 
 #include <math.h>
 
+#include <map>
+#include <mutex>
+#include <vector>
+
 #include <boost/format.hpp>
 
 #include <OpenImageDenoise/oidn.hpp>
@@ -48,6 +52,52 @@ BOOST_CLASS_EXPORT_IMPLEMENT(slg::IntelOIDN)
 void errorCallback(void* userPtr, lux::oidn::Error error, const char* message) {
   throw std::runtime_error(message);
 }
+
+namespace {
+
+// Process-wide OIDN device + filter pool. Device/filter creation used to
+// happen on every FilterImage call (3+ times per Apply with prefiltering):
+// Metal device init + filter commit dominated periodic/interactive denoise.
+// FilterRef objects are handed out exclusively (RAII checkout) so the
+// albedo/normal prefilters can still run concurrently.
+class OidnResourcePool {
+public:
+	lux::oidn::DeviceRef GetDevice() {
+		std::lock_guard<std::mutex> lock(mutex);
+		if (device)
+			return device;
+
+#if defined(__APPLE__)
+		// The macOS build of OIDN ships with a Metal backend. Use the GPU
+		// when available, and fall back to CPU otherwise.
+		device = lux::oidn::newDevice(lux::oidn::DeviceType::Metal);
+		const char *metalError;
+		if (device.getError(metalError) != lux::oidn::Error::None)
+			device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
+#else
+		device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
+#endif
+		const char *errorMessage;
+		if (device.getError(errorMessage) != lux::oidn::Error::None)
+			throw std::runtime_error(errorMessage);
+
+		device.setErrorFunction(errorCallback);
+		device.set("setAffinity", false);
+		device.commit();
+		return device;
+	}
+
+	// Idle filter objects, keyed by the full parameter signature
+	std::map<std::string, std::vector<lux::oidn::FilterRef>> idleFilters;
+	lux::oidn::DeviceRef device;
+	std::mutex mutex;
+};
+
+// Deliberately leaked: avoids static-destruction-order issues with the
+// OIDN library's own teardown at process exit.
+OidnResourcePool &g_oidnPool = *new OidnResourcePool();
+
+} // namespace
 
 IntelOIDN::IntelOIDN(const string ft, const int m, const float s, const bool pref,
 		const string dm, const bool demod, const bool de, const float fs) {
@@ -83,60 +133,76 @@ void IntelOIDN::FilterImage(const string &imageName,
 		const float *albedoBuffer, const float *normalBuffer,
 		const u_int width, const u_int height, const bool cleanAux) const {
 
-#if defined(__APPLE__)
-    // The macOS build of OIDN ships with a Metal backend. Use the GPU when
-    // available, and fall back to CPU otherwise.
-    lux::oidn::DeviceRef device = lux::oidn::newDevice(lux::oidn::DeviceType::Metal);
-    const char* metalError;
-    if (device.getError(metalError) != lux::oidn::Error::None) {
-        device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
+    lux::oidn::DeviceRef device = g_oidnPool.GetDevice();
+
+    // Filters are pooled per full parameter signature: re-binding the
+    // buffers + commit is much cheaper than newFilter (weights, plan and
+    // scratch setup are reused across periodic denoise calls).
+    const string filterKey = filterType + "|" + ToString(width) + "x" +
+            ToString(height) + "|" + (albedoBuffer ? "a" : "-") +
+            (normalBuffer ? "n" : "-") + "|" + (cleanAux ? "c" : "-") +
+            "|" + ToString(oidnMemLimit);
+    lux::oidn::FilterRef filter;
+    {
+        std::lock_guard<std::mutex> lock(g_oidnPool.mutex);
+        auto &idle = g_oidnPool.idleFilters[filterKey];
+        if (!idle.empty()) {
+            filter = idle.back();
+            idle.pop_back();
+        }
     }
-#else
-    lux::oidn::DeviceRef device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
-#endif
+    if (!filter)
+        filter = device.newFilter(filterType.c_str());
 
-    const char* errorMessage2;
-
-    if (device.getError(errorMessage2) != lux::oidn::Error::None) {
-      throw std::runtime_error(errorMessage2);
-    }
-
-    device.setErrorFunction(errorCallback);
-    device.set("verbose", 3);
-	device.set("setAffinity", false);
-    device.commit();
-
-    lux::oidn::FilterRef filter = device.newFilter(filterType.c_str());
+    // Return the filter to the pool unless an OIDN error fired (the
+    // error callback throws, leaving filter state undefined - drop it).
+    struct FilterGuard {
+        const string &key;
+        lux::oidn::FilterRef &ref;
+        bool keep = false;
+        ~FilterGuard() {
+            if (keep && ref) {
+                std::lock_guard<std::mutex> lock(g_oidnPool.mutex);
+                auto &idle = g_oidnPool.idleFilters[key];
+                if (idle.size() < 4)
+                    idle.push_back(ref);
+            }
+        }
+    } guard{filterKey, filter};
 
     lux::oidn::BufferRef colorBuf = device.newBuffer((float*)srcBuffer, width * height * 3 * sizeof(float));
-    lux::oidn::BufferRef albedoBuf = device.newBuffer((float*)albedoBuffer, width * height * 3 * sizeof(float));
-    lux::oidn::BufferRef normalBuf = device.newBuffer((float*)normalBuffer, width * height * 3 * sizeof(float));
     lux::oidn::BufferRef dstBuf = device.newBuffer((float*)dstBuffer, width * height * 3 * sizeof(float));
-
 
     filter.set("hdr", true);
 	filter.set("cleanAux", cleanAux);
 	filter.set("maxMemoryMB", oidnMemLimit);
     filter.setImage("color", colorBuf, lux::oidn::Format::Float3, width, height);
     if (albedoBuffer) {
+        lux::oidn::BufferRef albedoBuf = device.newBuffer((float*)albedoBuffer, width * height * 3 * sizeof(float));
         filter.setImage("albedo", albedoBuf, lux::oidn::Format::Float3, width, height);
 
         // Normals can only be used if albedo is supplied as well
-        if (normalBuffer)
+        if (normalBuffer) {
+            lux::oidn::BufferRef normalBuf = device.newBuffer((float*)normalBuffer, width * height * 3 * sizeof(float));
             filter.setImage("normal", normalBuf, lux::oidn::Format::Float3, width, height);
+        } else {
+            filter.unsetImage("normal");
+        }
+    } else {
+        filter.unsetImage("albedo");
+        filter.unsetImage("normal");
     }
-    
+
     filter.setImage("output", dstBuf, lux::oidn::Format::Float3, width, height);
     filter.commit();
 
-    SLG_LOG("IntelOIDNPlugin executing " + imageName + " filter");
-	const double startTime = WallClockTime();
     filter.execute();
-	SLG_LOG("IntelOIDNPlugin " + imageName + " filter took: " << (boost::format("%.1f") % (WallClockTime() - startTime)) << "secs");
 
     const char *errorMessage;
     if (device.getError(errorMessage) != lux::oidn::Error::None)
          SLG_LOG("IntelOIDNPlugin " + imageName + " filtering error: " << errorMessage);
+
+    guard.keep = true;
 }
 
 
