@@ -246,3 +246,41 @@
   `path.hybridbackforward.enable` in e51/e52 test configs - the tests
   "passed" while never exercising the feature. Grep test files for
   `= true` before trusting them.
+- **assert()-only bounds checks are Release-build OOB writes.** Every
+  framebuffer pixel op (`GenericFrameBuffer` Add/Set/Min/Max + atomic
+  variants, `CryptoFrameBuffer` AddCoverage/MergePixel) validated (x,y)
+  with `assert` only — in Release an out-of-range pixel was a raw heap
+  OOB write, which is exactly how latent corruption reaches a later
+  `free`/allocator pass. All mutating ops now early-out on
+  `x >= width || y >= height` (asserts kept for debug diagnosis; a
+  dropped sample still means an upstream bug, but it can no longer
+  poison the malloc arena). Same treatment for the Context /
+  IntersectionDevice lifecycle: `SetDataSet` on a started context,
+  `Start` without a data set etc. used to be asserts — now
+  `runtime_error`, because in Release the old path would free
+  accelerators under live device kernels.
+- **`EnqueueTraceRayBuffer` needs a rayCount-vs-capacity check.** None
+  of the four backends (Metal/OCL/CUDA/Vulkan) validated that
+  `rayCount * sizeof(Ray|RayHit)` fits the bound buffers — an oversized
+  dispatch is a device-side OOB write, and on unified memory it lands in
+  the process heap. All four now throw before dispatch.
+- **Metal `AllocBuffer` same-size reuse must drain in-flight work.**
+  The `size == metalBuff->size` fast path memcpy'd new contents into a
+  live MTLBuffer while a committed command buffer could still read it.
+  It now scans `inFlightWork` for the buffer and `FinishQueue()`s first
+  (the scan runs under `inFlightMutex`, the drain after releasing it —
+  `FinishQueue` takes the same mutex, so calling it under the lock is a
+  deadlock).
+- **Reading a Blender `.ips` crash: the "hang" thread is usually the
+  crash handler.** `sig_handle_crash_fn` serializes reports via
+  `std::call_once`, so one thread sits in `printf`-family logging for
+  10-20 s while every other thread parks in `__psynch_cvwait` — looks
+  exactly like a UI deadlock. Find the thread that took the signal
+  FIRST. Two threads faulting in different allocator walks
+  (e.g. `_xzm_segment_group_clear_chunk` vs Embree
+  `FastAllocator::Block::clear_list`) at the same moment means the heap
+  was corrupted EARLIER — chase OOB writes, not the free-list site.
+  Repro with `MallocGuardEdges=1 MallocScribble=1 MallocPreScribble=1
+  MallocNanoZone=0 MTL_SHADER_VALIDATION=1` so the fault lands at the
+  bad write itself. Regression: `dev-tools/geomedit_rebuild_stress.py`
+  (GEOMETRY_EDIT rebuild loops incl. scene.spill path).

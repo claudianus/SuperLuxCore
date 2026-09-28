@@ -18,7 +18,10 @@
 
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
+#include <stdexcept>
+
 #include "luxrays/devices/oclintersectiondevice.h"
+#include "luxrays/core/geometry/ray.h"
 
 using namespace std;
 
@@ -57,6 +60,8 @@ void OpenCLIntersectionDevice::SetDataSet(DataSetSPtr newDataSet) {
 }
 
 void OpenCLIntersectionDevice::Update() {
+	if (!kernel)
+		throw runtime_error("OpenCLIntersectionDevice::Update() without a kernel");
 	kernel->Update(dataSet);
 }
 
@@ -76,6 +81,13 @@ void OpenCLIntersectionDevice::Stop() {
 void OpenCLIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 			HardwareDeviceBuffer *rayHitBuff,
 			const unsigned int rayCount) {
+	// Fail loudly instead of dispatching a device-side OOB write.
+	if (rayCount * sizeof(Ray) > rayBuff->GetSize() ||
+			rayCount * sizeof(RayHit) > rayHitBuff->GetSize())
+		throw runtime_error("OpenCLIntersectionDevice::EnqueueTraceRayBuffer() rayCount exceeds buffer capacity");
+	if (!kernel)
+		throw runtime_error("OpenCLIntersectionDevice::EnqueueTraceRayBuffer() without a kernel");
+
 	// Enqueue the intersection kernel
 	kernel->EnqueueTraceRayBuffer(rayBuff, rayHitBuff, rayCount);
 	statsTotalDataParallelRayCount += rayCount;

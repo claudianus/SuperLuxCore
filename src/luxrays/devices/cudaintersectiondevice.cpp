@@ -18,7 +18,10 @@
 
 #if !defined(LUXRAYS_DISABLE_CUDA)
 
+#include <stdexcept>
+
 #include "luxrays/devices/cudaintersectiondevice.h"
+#include "luxrays/core/geometry/ray.h"
 
 using namespace std;
 
@@ -61,6 +64,8 @@ void CUDAIntersectionDevice::SetDataSet(DataSetSPtr newDataSet) {
 }
 
 void CUDAIntersectionDevice::Update() {
+	if (!kernel)
+		throw runtime_error("CUDAIntersectionDevice::Update() without a kernel");
 	kernel->Update(dataSet);
 }
 
@@ -80,6 +85,13 @@ void CUDAIntersectionDevice::Stop() {
 void CUDAIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 			HardwareDeviceBuffer *rayHitBuff,
 			const unsigned int rayCount) {
+	// Fail loudly instead of dispatching a device-side OOB write.
+	if (rayCount * sizeof(Ray) > rayBuff->GetSize() ||
+			rayCount * sizeof(RayHit) > rayHitBuff->GetSize())
+		throw runtime_error("CUDAIntersectionDevice::EnqueueTraceRayBuffer() rayCount exceeds buffer capacity");
+	if (!kernel)
+		throw runtime_error("CUDAIntersectionDevice::EnqueueTraceRayBuffer() without a kernel");
+
 	// Enqueue the intersection kernel
 	kernel->EnqueueTraceRayBuffer(rayBuff, rayHitBuff, rayCount);
 	statsTotalDataParallelRayCount += rayCount;

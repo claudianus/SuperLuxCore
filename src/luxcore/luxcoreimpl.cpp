@@ -552,7 +552,18 @@ void FilmImplSession::ApplyOIDN(const u_int index) {
 	slg::IntelOIDN oidn("RT", 6000, 0.f, true);
 
 	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
-	oidn.Apply(*renderSession.GetSLGRenderSession().film, index);
+	slg::Film &film = *renderSession.GetSLGRenderSession().film;
+
+	// OIDN denoises channel_IMAGEPIPELINEs[index] in place, which only
+	// holds the result of the *last* pipeline execution. Re-execute it
+	// first (under the same filmMutex hold) so the input always reflects
+	// the current samples: callers that suppress their own readbacks
+	// while denoising - like the interactive viewport denoiser - would
+	// otherwise feed OIDN a stale or never-executed (all-zero) channel.
+	// Films without radiance channels early-return inside
+	// ExecuteImagePipeline(), leaving the channel untouched.
+	film.ExecuteImagePipeline(index);
+	oidn.Apply(film, index);
 
 	API_END();
 }
@@ -913,6 +924,9 @@ void FilmImplStandalone::ApplyOIDN(const u_int index) {
 	API_BEGIN("{}", index);
 	slg::IntelOIDN oidn("RT", 6000, 0.f, true);
 
+	// Same contract as FilmImplSession::ApplyOIDN(): denoise the current
+	// output, not whatever the last pipeline execution left behind.
+	standAloneFilm->ExecuteImagePipeline(index);
 	oidn.Apply(*standAloneFilm, index);
 
 	API_END();

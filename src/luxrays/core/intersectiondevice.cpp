@@ -16,6 +16,8 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include <stdexcept>
+
 #include "luxrays/core/intersectiondevice.h"
 
 namespace luxrays {
@@ -33,13 +35,17 @@ IntersectionDevice::~IntersectionDevice() {
 }
 
 void IntersectionDevice::SetDataSet(DataSetSPtr newDataSet) {
-	assert (!started);
+	// Replacing the data set while the device is started frees the old
+	// accelerators under live kernels - see Context::SetDataSet.
+	if (started)
+		throw std::runtime_error("IntersectionDevice::SetDataSet() called on a started device");
 
 	dataSet = newDataSet;
 }
 
 void IntersectionDevice::Start() {
-	assert (dataSet != NULL);
+	if (dataSet == NULL)
+		throw std::runtime_error("IntersectionDevice::Start() called without a data set");
 
 	Device::Start();
 

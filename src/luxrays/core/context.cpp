@@ -216,7 +216,12 @@ Context::~Context() {
 }
 
 void Context::SetDataSet(DataSetSPtr dataSet) {
-	assert (!started);
+	// Swapping the data set under a started context frees the old
+	// accelerators while device kernels may still traverse them - a
+	// use-after-free that surfaces as arbitrary heap corruption later
+	// (observed: crash inside embree's FastAllocator free list).
+	if (started)
+		throw runtime_error("Context::SetDataSet() called on a started context");
 
 	currentDataSet = dataSet;
 
@@ -225,7 +230,8 @@ void Context::SetDataSet(DataSetSPtr dataSet) {
 }
 
 void Context::UpdateDataSet() {
-	assert (started);
+	if (!started)
+		throw runtime_error("Context::UpdateDataSet() called on a stopped context");
 
 	// Update the data set
 	currentDataSet->UpdateAccelerators();
@@ -251,7 +257,8 @@ void Context::UpdateDataSet() {
 }
 
 void Context::Start() {
-	assert (!started);
+	if (started)
+		throw runtime_error("Context::Start() called on a started context");
 
 	for (auto& device : devices) {
 		device->PushThreadCurrentDevice();
@@ -263,7 +270,8 @@ void Context::Start() {
 }
 
 void Context::Interrupt() {
-	assert (started);
+	if (!started)
+		throw runtime_error("Context::Interrupt() called on a stopped context");
 
 	for (auto& device : devices) {
 		device->PushThreadCurrentDevice();
@@ -273,7 +281,8 @@ void Context::Interrupt() {
 }
 
 void Context::Stop() {
-	assert (started);
+	if (!started)
+		throw runtime_error("Context::Stop() called on a stopped context");
 
 	Interrupt();
 
@@ -304,7 +313,8 @@ std::vector<IntersectionDeviceUPtr> Context::CreateIntersectionDevices(
 	const DeviceDescriptions &deviceDesc,
 	const size_t indexOffset
 ) {
-	assert (!started);
+	if (started)
+		throw runtime_error("Context::CreateIntersectionDevices() called on a started context");
 
 	LR_LOG((*this), "Creating " << deviceDesc.size() << " intersection device(s)");
 
@@ -394,7 +404,8 @@ std::vector<std::reference_wrapper<IntersectionDevice>>
 Context::AddIntersectionDevices(
 	const DeviceDescriptions & deviceDesc
 ) {
-	assert (!started);
+	if (started)
+		throw runtime_error("Context::AddIntersectionDevices() called on a started context");
 
 	std::vector<std::reference_wrapper<IntersectionDevice>> res;
 
@@ -416,7 +427,8 @@ std::vector<HardwareDeviceUPtr> Context::CreateHardwareDevices(
 	const DeviceDescriptions &deviceDesc,
 	const size_t indexOffset
 ) {
-	assert (!started);
+	if (started)
+		throw runtime_error("Context::CreateHardwareDevices() called on a started context");
 
 	LR_LOG((*this), "Creating " << deviceDesc.size() << " hardware device(s)");
 
@@ -500,7 +512,8 @@ std::vector<std::reference_wrapper<HardwareDevice>>
 Context::AddHardwareDevices(
 	const DeviceDescriptions & deviceDesc
 ) {
-	assert (!started);
+	if (started)
+		throw runtime_error("Context::AddHardwareDevices() called on a started context");
 	std::vector<std::reference_wrapper<HardwareDevice>> res;
 
 	auto newDevices = CreateHardwareDevices(deviceDesc, hdevices.size());

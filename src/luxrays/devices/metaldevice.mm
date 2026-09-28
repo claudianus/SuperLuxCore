@@ -1087,9 +1087,28 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 	if (metalBuff->metalBuff) {
 		// Check the size of the already allocated buffer
 		if (size == metalBuff->size) {
-			// I can reuse the buffer; just update the content
-			if (src)
+			// I can reuse the buffer; just update the content. A dispatch
+			// still in flight may read this buffer - overwrite only after
+			// it is done (same hazard EnqueueWriteBuffer checks for).
+			if (src) {
+				bool conflicting = false;
+				{
+					std::lock_guard<std::mutex> lock(inFlightMutex);
+						for (auto &w : inFlightWork) {
+							for (const MetalDeviceBuffer *b : w.buffers) {
+								if (b == metalBuff) {
+									conflicting = true;
+									break;
+								}
+							}
+							if (conflicting)
+								break;
+						}
+				}
+				if (conflicting)
+					FinishQueue();
 				memcpy([(__bridge id<MTLBuffer>)metalBuff->metalBuff contents], src, size);
+			}
 			return;
 		} else {
 			// Free the buffer

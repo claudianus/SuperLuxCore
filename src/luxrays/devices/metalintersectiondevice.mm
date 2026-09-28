@@ -81,6 +81,8 @@ void MetalIntersectionDevice::SetDataSet(DataSetSPtr newDataSet) {
 }
 
 void MetalIntersectionDevice::Update() {
+	if (!kernel)
+		throw runtime_error("MetalIntersectionDevice::Update() without a kernel");
 	kernel->Update(dataSet);
 }
 
@@ -113,6 +115,16 @@ void MetalIntersectionDevice::Stop() {
 void MetalIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 			HardwareDeviceBuffer *rayHitBuff,
 			const unsigned int rayCount) {
+	// A rayCount beyond the buffer capacity is a device-side OOB write:
+	// on unified memory it lands in the process heap and surfaces later
+	// as malloc/free-list corruption far from the fault. Fail loudly
+	// instead of dispatching.
+	if (rayCount * sizeof(Ray) > rayBuff->GetSize() ||
+			rayCount * sizeof(RayHit) > rayHitBuff->GetSize())
+		throw runtime_error("MetalIntersectionDevice::EnqueueTraceRayBuffer() rayCount exceeds buffer capacity");
+	if (!kernel)
+		throw runtime_error("MetalIntersectionDevice::EnqueueTraceRayBuffer() without a kernel");
+
 	// Enqueue the intersection kernel
 	kernel->EnqueueTraceRayBuffer(rayBuff, rayHitBuff, rayCount);
 	statsTotalDataParallelRayCount += rayCount;

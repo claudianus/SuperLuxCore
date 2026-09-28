@@ -33,6 +33,7 @@
 #include "luxrays/core/accelerator.h"
 #include "luxrays/core/context.h"
 #include "luxrays/core/dataset.h"
+#include "luxrays/core/geometry/ray.h"
 #include "luxrays/core/trianglemesh.h"
 #include "luxrays/utils/oclcache.h"
 
@@ -158,6 +159,10 @@ void VulkanIntersectionDevice::Stop() {
 void VulkanIntersectionDevice::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 		HardwareDeviceBuffer *rayHitBuff,
 		const unsigned int rayCount) {
+	// Fail loudly instead of dispatching a device-side OOB write.
+	if (rayCount * sizeof(Ray) > rayBuff->GetSize() ||
+			rayCount * sizeof(RayHit) > rayHitBuff->GetSize())
+		throw std::runtime_error("VulkanIntersectionDevice::EnqueueTraceRayBuffer() rayCount exceeds buffer capacity");
 	if (rtAccel) {
 		VkDevice dev = (VkDevice)device;
 		VkDescriptorBufferInfo rbi{

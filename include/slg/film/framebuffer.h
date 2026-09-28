@@ -58,6 +58,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return false;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		bool write = false;
@@ -76,6 +83,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return false;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		bool write = false;
@@ -94,6 +108,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		for (u_int i = 0; i < CHANNELS; ++i)
@@ -105,6 +126,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		if (WEIGHT_CHANNELS == 0) {
@@ -136,6 +164,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return false;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		bool write = false;
@@ -152,6 +187,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return false;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		bool write = false;
@@ -168,6 +210,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		for (u_int i = 0; i < CHANNELS; ++i)
@@ -179,6 +228,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		if (WEIGHT_CHANNELS == 0) {
@@ -208,6 +264,11 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		if ((x >= width) || (y >= height)) {
+			for (u_int i = 0; i < CHANNELS - 1; ++i)
+				dst[i] = 0;
+			return;
+		}
 
 		AccumulateWeightedPixel(x + y * width, dst);
 	}
@@ -215,6 +276,11 @@ public:
 	void AccumulateWeightedPixel(const u_int index, T *dst) const {
 		assert (index >= 0);
 		assert (index < width * height);
+		if (index >= width * height) {
+			for (u_int i = 0; i < CHANNELS - 1; ++i)
+				dst[i] = 0;
+			return;
+		}
 
 		const T *src = GetPixel(index);
 
@@ -235,6 +301,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		for (u_int i = 0; i < CHANNELS; ++i)
@@ -246,6 +319,13 @@ public:
 		assert (x < width);
 		assert (y >= 0);
 		assert (y < height);
+		// Release builds compile the asserts out: an out-of-range pixel is
+		// a heap OOB write, so drop it here too (it indicates an upstream
+		// bug, but a dropped sample is strictly better than corrupting
+		// the malloc arena - which is how this class of bug previously
+		// surfaced as free-list crashes far from the fault).
+		if ((x >= width) || (y >= height))
+			return;
 
 		T *pixel = &pixels[(x + y * width) * CHANNELS];
 		for (u_int i = 0; i < CHANNELS - 1; ++i)
@@ -297,6 +377,11 @@ public:
 	void GetWeightedPixel(const u_int index, T *dst) const {
 		assert (index >= 0);
 		assert (index < width * height);
+		if (index >= width * height) {
+			for (u_int i = 0; i < CHANNELS - 1; ++i)
+				dst[i] = 0;
+			return;
+		}
 
 		const T *src = GetPixel(index);
 
@@ -394,6 +479,8 @@ public:
 	}
 
 	void SetPixel(const u_int index, const float *v) {
+		if (index >= width * height)
+			return;
 		std::copy(v, v + STRIDE, &pixels[index * STRIDE]);
 	}
 	void SetPixel(const u_int x, const u_int y, const float *v) {
@@ -404,6 +491,8 @@ public:
 	// accumulates (including id==0 background samples) so coverages
 	// normalize to <= 1 per pixel.
 	void AddCoverage(const u_int index, const float id, const float weight) {
+		if (index >= width * height)
+			return;
 		float *pix = &pixels[index * STRIDE];
 		pix[LEVELS * 2] += weight;
 		MergePair(pix, id, weight);
@@ -416,6 +505,8 @@ public:
 	// the id bits then atomic-adds coverage; crypto ids always have
 	// exponent >= 1 so the 0 bit pattern is a safe empty marker.
 	void AtomicAddCoverage(const u_int index, const float id, const float weight) {
+		if (index >= width * height)
+			return;
 		float *pix = &pixels[index * STRIDE];
 		luxrays::AtomicAdd(&pix[LEVELS * 2], weight);
 		if ((id == 0.f) || (weight == 0.f))
@@ -442,6 +533,8 @@ public:
 	// each of its (id, coverage) pairs. Slot order can differ across
 	// sources, so element-wise add is NOT correct here.
 	void MergePixel(const u_int dstIndex, const float *srcPixel) {
+		if (dstIndex >= width * height)
+			return;
 		float *dst = &pixels[dstIndex * STRIDE];
 		dst[LEVELS * 2] += srcPixel[LEVELS * 2];
 		for (u_int i = 0; i < LEVELS; ++i)
