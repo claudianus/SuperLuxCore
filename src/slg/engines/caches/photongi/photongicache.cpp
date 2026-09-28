@@ -29,6 +29,7 @@
 
 #include "slg/samplers/sobol.h"
 #include "slg/utils/pathdepthinfo.h"
+#include "slg/cameras/camera.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/engines/caches/photongi/tracephotonsthread.h"
 #include "slg/utils/pathinfo.h"
@@ -125,6 +126,16 @@ bool PhotonGICache::IsVisibilityEnabled(const BSDF &bsdf) const {
 		return false;
 	else
 		return bsdf.IsPhotonGIEnabled();
+}
+
+bool PhotonGICache::UseFrustumCulling() const {
+	// RTPM-style photon culling replaces the visibility pre-pass: deposits
+	// outside the camera frustum are rejected at trace time. Only valid for
+	// caustic-only caches on projective cameras - indirect deposits need the
+	// visibility map, and environment cameras have no film frame to test.
+	const Camera::CameraType camType = scene->GetCamera().GetType();
+	return params.caustic.enabled && !params.indirect.enabled &&
+			((camType == Camera::PERSPECTIVE) || (camType == Camera::ORTHOGRAPHIC));
 }
 
 float PhotonGICache::GetIndirectUsageThreshold(const BSDFEvent lastBSDFEvent,
@@ -506,17 +517,25 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	// Trace visibility particles
 	//--------------------------------------------------------------------------
 
-	TraceVisibilityParticles();
-	if (visibilityParticles.size() == 0) {
-		if (!(params.caustic.enabled && params.caustic.volumeBeams)) {
-			SLG_LOG("PhotonGI WARNING: nothing is visible and/or cache enabled.");
-			return;
+	if (UseFrustumCulling()) {
+		// Caustic-only caches on projective cameras do not need the
+		// visibility pass at all: photon deposits are frustum-culled instead
+		// (RTPM-style photon culling). This removes the dominant pre-pass
+		// cost for the common "just caustics" configuration.
+		SLG_LOG("PhotonGI visibility pass skipped: frustum-culled caustic deposits");
+	} else {
+		TraceVisibilityParticles();
+		if (visibilityParticles.size() == 0) {
+			if (!(params.caustic.enabled && params.caustic.volumeBeams)) {
+				SLG_LOG("PhotonGI WARNING: nothing is visible and/or cache enabled.");
+				return;
+			}
+			// Caustic beams deposit on specular-prefix medium flights without
+			// any visibility gate, so photon tracing stays useful even with no
+			// particles (visibilityParticlesKdTree remains null and point
+			// deposits are simply skipped).
+			SLG_LOG("PhotonGI no visibility particles: caustic beams proceed anyway");
 		}
-		// Caustic beams deposit on specular-prefix medium flights without
-		// any visibility gate, so photon tracing stays useful even with no
-		// particles (visibilityParticlesKdTree remains null and point
-		// deposits are simply skipped).
-		SLG_LOG("PhotonGI no visibility particles: caustic beams proceed anyway");
 	}
 
 	//--------------------------------------------------------------------------

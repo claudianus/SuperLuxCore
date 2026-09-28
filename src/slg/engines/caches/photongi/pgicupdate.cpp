@@ -41,9 +41,11 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			SLG_LOG("Updating PhotonGI caustic cache after " << filmSPP << " samples/pixel (Pass " << causticPhotonPass << ")");
 
 			// A safety check to avoid the update if visibility map has been
-			// deallocated (caustic beams do not need it)
+			// deallocated (caustic beams and frustum-culled deposits do not
+			// need it)
 			if ((visibilityParticles.size() == 0) &&
-					!(params.caustic.enabled && params.caustic.volumeBeams)) {
+					!(params.caustic.enabled && params.caustic.volumeBeams) &&
+					!UseFrustumCulling()) {
 				SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
 				lastUpdateSpp = filmSPP;
 			} else {

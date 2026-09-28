@@ -302,6 +302,9 @@ public:
 
 	bool IsIndirectEnabled() const { return params.indirect.enabled; }
 	bool IsCausticEnabled() const { return params.caustic.enabled; }
+	// Caustic-only caches on projective cameras skip the visibility
+	// pre-pass: deposits are frustum-culled instead of entry-gated.
+	bool UseFrustumCulling() const;
 	bool IsPhotonGIEnabled(const BSDF &bsdf) const;
 	// Stricter gate for visibility-particle generation (upstream semantics)
 	bool IsVisibilityEnabled(const BSDF &bsdf) const;

@@ -236,7 +236,8 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 
 						// Check if the point is visible (the kd-tree can be
 						// absent in pure-medium scenes where beams carry the
-						// whole caustic cache)
+						// whole caustic cache, or in frustum-culled
+						// caustic-only mode where no visibility pass ran)
 						allNearEntryIndices.clear();
 						if (pgic.visibilityParticlesKdTree) {
 							pgic.visibilityParticlesKdTree->GetAllNearEntries(
@@ -246,14 +247,31 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 									pgic.params.visibility.lookUpNormalCosAngle);
 						}
 
-						if (allNearEntryIndices.size() > 0) {
+						bool causticReceiver = allNearEntryIndices.size() > 0;
+						if (!causticReceiver && pgic.UseFrustumCulling()) {
+							// No visibility pass: keep photons that project
+							// into the film frame (RTPM photon culling). A
+							// 10% border absorbs lookup-radius spill at the
+							// frame edges.
+							float filmX, filmY;
+							if (camera.ProjectPointToFilm(bsdf.hitPoint.p, time,
+									&filmX, &filmY)) {
+								const float padX = .1f * camera.filmWidth;
+								const float padY = .1f * camera.filmHeight;
+								causticReceiver =
+										(filmX >= -padX) && (filmX < camera.filmWidth + padX) &&
+										(filmY >= -padY) && (filmY < camera.filmHeight + padY);
+							}
+						}
+
+						{
 							// Media-transparent chains: isNearlyS survives
 							// medium scatter vertices, so multi-scatter
 							// deposits in volumes land here. firstVertexSeen
 							// keeps pure-medium prefixes (ambient
 							// in-scattering, no focusing surface) out.
 							if ((pathInfo.depth.depth > 0) && pathInfo.IsSpecularPath() &&
-									pathInfo.firstVertexSeen && !causticDone) {
+									pathInfo.firstVertexSeen && causticReceiver && !causticDone) {
 								// It is a caustic photon
 								newCausticPhotons.push_back(Photon(bsdf.hitPoint.p, nextEventRay.d,
 										light->GetID(), lightPathFlux, landingSurfaceNormal, bsdf.IsVolume()));
@@ -261,7 +279,7 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 								usefulPath = true;
 							}
 
-							if (!indirectDone) {
+							if (!indirectDone && (allNearEntryIndices.size() > 0)) {
 								// It is an indirect photon
 
 								// Add outgoingRadiance to each near visible entry 
