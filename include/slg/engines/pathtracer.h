@@ -76,6 +76,12 @@ public:
 	std::vector<SampleResult> & GetEyeSampleResults() { return std::ref(eyeSampleResults); }
 	std::vector<SampleResult> & GetLightSampleResults() { return std::ref(lightSampleResults); }
 
+	// SSP eye-side specular tail (path.ssp.enable): the eye sample records
+	// its leading delta-specular run here, the light sample of the same
+	// thread may consume it as an LMNEE chain seed. Thread-local scratch,
+	// reset at the start of every eye sample.
+	SspTail sspTail;
+
 	// Used for hybrid rendering
 	double eyeSampleCount, lightSampleCount;
 
@@ -137,12 +143,14 @@ public:
 		Sampler& sampler,
 		EyePathInfo &pathInfo,
 		luxrays::Ray &eyeRay, const luxrays::Spectrum &eyeTroughput,
-		std::vector<SampleResult> &sampleResults) const;
+		std::vector<SampleResult> &sampleResults,
+		SspTail *sspTail = nullptr) const;
 	void RenderEyeSample(
 		luxrays::IntersectionDeviceRef device,
 		SceneConstRef scene, FilmConstRef film,
 		Sampler& sampler,
-		std::vector<SampleResult> &sampleResults) const;
+		std::vector<SampleResult> &sampleResults,
+		SspTail *sspTail = nullptr) const;
 
 	void RenderLightSample(
 		luxrays::IntersectionDeviceRef device,
@@ -150,7 +158,8 @@ public:
 		FilmConstRef film,
 		Sampler& sampler,
 		std::vector<SampleResult> &sampleResults,
-		const ConnectToEyeCallBackType &ConnectToEyeCallBack) const;
+		const ConnectToEyeCallBackType &ConnectToEyeCallBack,
+		const SspTail *sspTail = nullptr) const;
 	void RenderLightSample(
 		luxrays::IntersectionDeviceRef device,
 		SceneConstRef scene,
@@ -245,6 +254,14 @@ public:
 	// The light-side (LMNEE) solves namespace their entries with a
 	// sentinel light index, exactly like the GPU mneeSeeds table.
 	bool mneeSeedCacheEnable;
+
+	// SSP eye-side specular tail (path.ssp.enable, effective only when
+	// mneeEnable): eye paths record their leading delta-specular vertex
+	// run (camera -> ... -> terminator) into a per-thread SspTail; a
+	// light-side camera connect blocked by a delta occluder rebuilds the
+	// chain from the recorded anchors instead of running the LMNEE
+	// discovery walk. See doc/features/ssp-tail.md.
+	bool sspEnable;
 	struct MneeSeedEntry {
 		std::atomic<float> vx{0.f}, vy{0.f}, vz{0.f};
 		std::atomic<float> nx{0.f}, ny{0.f}, nz{0.f};
@@ -409,6 +426,7 @@ private:
 			const float u0, const float u1, const float u2,
 			const LightSource &light,  const BSDF &bsdf,
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+			const SspTail *sspTail,
 			std::vector<SampleResult> &sampleResults) const;
 
 	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera
@@ -439,6 +457,19 @@ private:
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 			const BSDF *warmV0, const BSDF *warmV1,
+			std::vector<SampleResult> &sampleResults) const;
+
+	// SSP tail connect: rebuild the specular chain from a recorded eye
+	// tail (reproject + MneeChainVertexInit per anchor, light->lens order)
+	// and run the same solve/validate/splat path as LMNEEMultiConnectToEye.
+	// Returns true if a contribution was splatted.
+	bool LMNEETailConnectToEye(
+			luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene,
+			FilmConstRef film, const float time,
+			const LightSource &light, const BSDF &bsdf,
+			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+			const SspTail *sspTail, PathVolumeInfo &volInfo,
 			std::vector<SampleResult> &sampleResults) const;
 
 	// Caustic focus cache (CPU side of the GPU lightFocus rings):

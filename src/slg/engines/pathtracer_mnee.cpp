@@ -2381,6 +2381,18 @@ bool PathTracer::LMNEEConnectToEye(
 	return true;
 }
 
+// Shared post-topology stage of the light-side chain connects (defined
+// below): Newton solve + post-solve validity + geometric term + camera
+// projection + receiver eval + last-segment visibility, producing
+// radiance/filmX/filmY. Callers (discovery walk and SSP tail rebuild)
+// only differ in how chain[] was populated.
+static bool LMneeChainSolveAndEval(
+		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
+		const float time, const Point &x0p, const MneeEndpoint &ep,
+		MneeChainVertex *chain, const u_int n, const u_int maxIterations,
+		PathVolumeInfo volInfo, const BSDF &bsdf, const Spectrum &flux,
+		Spectrum &outRadiance, float &outFilmX, float &outFilmY);
+
 bool PathTracer::LMNEEMultiConnectToEye(
 		luxrays::IntersectionDeviceRef device,
 		SceneConstRef scene,
@@ -2419,14 +2431,36 @@ bool PathTracer::LMNEEMultiConnectToEye(
 		return false;
 	}
 
+	Spectrum radiance;
+	float filmX, filmY;
+	if (!LMneeChainSolveAndEval(device, scene, time, x0p, ep, chain, n,
+			mneeMaxIterations, volInfo, bsdf, flux, radiance, filmX, filmY))
+		return false;
 
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "chain", &x0p);
+	LightFocusCredit(scene, light.lightSceneIndex, x0p);
+	return true;
+}
+
+// Shared post-topology stage of the light-side chain connects: Newton
+// solve + post-solve validity + geometric term + camera projection +
+// receiver eval + last-segment visibility, producing radiance/filmX/filmY.
+// Callers (discovery walk and SSP tail rebuild) only differ in how chain[]
+// was populated.
+static bool LMneeChainSolveAndEval(
+		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
+		const float time, const Point &x0p, const MneeEndpoint &ep,
+		MneeChainVertex *chain, const u_int n, const u_int maxIterations,
+		PathVolumeInfo volInfo, const BSDF &bsdf, const Spectrum &flux,
+		Spectrum &outRadiance, float &outFilmX, float &outFilmY) {
+	const Point &lensPoint = ep.pos;
 
 	//--------------------------------------------------------------------------
 	// Newton solve on the whole chain
 	//--------------------------------------------------------------------------
 	const char *failWhy = "iterations";
 	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
-			mneeMaxIterations, &failWhy))
+			maxIterations, &failWhy))
 		{ LMNEE_REJ("ms-newton"); return false; }
 
 	//--------------------------------------------------------------------------
@@ -2555,7 +2589,57 @@ bool PathTracer::LMNEEMultiConnectToEye(
 	if (radiance.IsNaN() || radiance.IsInf())
 		{ LMNEE_REJ("ms-nan"); return false; }
 
-	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "chain", &x0p);
+	outRadiance = radiance;
+	outFilmX = filmX;
+	outFilmY = filmY;
+	return true;
+}
+
+//------------------------------------------------------------------------------
+// LMNEETailConnectToEye: rebuild the chain from a recorded SSP eye tail
+// instead of the discovery walk. The recorded anchors are reprojected and
+// re-validated (object match + solver acceptance), so a stale tail only
+// wastes a few Newton iterations - every solved chain still goes through
+// LMneeChainSolveAndEval's full physical validation.
+//------------------------------------------------------------------------------
+bool PathTracer::LMNEETailConnectToEye(
+		luxrays::IntersectionDeviceRef device,
+		SceneConstRef scene,
+		FilmConstRef film, const float time,
+		const LightSource &light, const BSDF &bsdf,
+		const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
+		const SspTail *sspTail, PathVolumeInfo &volInfo,
+		std::vector<SampleResult> &sampleResults) const {
+	const Point &x0p = bsdf.hitPoint.p;
+
+	MneeEndpoint ep;
+	ep.isDir = false;
+	ep.pos = pathInfo.lensPoint;
+	ep.dir = Vector(0.f, 0.f, 0.f);
+
+	// Light -> lens order: recorded vtx[0] is nearest the camera, so the
+	// solver's chain[0] (adjacent to x0) is the LAST recorded vertex
+	MneeChainVertex chain[MNEE_MS_MAX_VERTICES];
+	const u_int n = sspTail->specN;
+	for (u_int i = 0; i < n; ++i) {
+		const SspTailVertex &r = sspTail->vtx[n - 1 - i];
+		const float eps = Max(1e-5f, 1e-4f * Distance(x0p, r.p));
+		BSDF hitBSDF;
+		if (!MneeReproject(device, scene, time, r.p, r.gn, .5f * eps, hitBSDF))
+			{ LMNEE_REJ("tail-reproj"); return false; }
+		if (hitBSDF.hitPoint.objectID != r.objectID)
+			{ LMNEE_REJ("tail-stale"); return false; }
+		if (!MneeChainVertexInit(chain[i], hitBSDF))
+			{ LMNEE_REJ("tail-init"); return false; }
+	}
+
+	Spectrum radiance;
+	float filmX, filmY;
+	if (!LMneeChainSolveAndEval(device, scene, time, x0p, ep, chain, n,
+			mneeMaxIterations, volInfo, bsdf, flux, radiance, filmX, filmY))
+		return false;
+
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "tail", &x0p);
 	LightFocusCredit(scene, light.lightSceneIndex, x0p);
 	return true;
 }

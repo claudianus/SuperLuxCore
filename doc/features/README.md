@@ -55,6 +55,7 @@ ask for.
 | LPE AOV | [../engineering/lpe.md](../engineering/lpe.md) | `7a1622a86` (`film.lpe.N.expression`, bounded NFA ≤8) | `dev-tools/e42_lpe_test.py` + `e42_lpe_visual.py` | PATHCPU/PATHOCL only (no BIDIR/LT) |
 | Adaptive robust clamping | [../engineering/adaptive-clamping.md](../engineering/adaptive-clamping.md) | `8d05a4ef1` (`path.clamping.variance.*`) | `dev-tools/e42_adaptive_clamp_test.py` | CPU/OCL/Metal |
 | Adaptive error / noise-level halt (E5) | [adaptive-error.md](adaptive-error.md) | `film.adaptiveerror.*`, `stats.renderengine.noiselevel` | `dev-tools/e52_adaptive_noise_test.py` | CPU/OCL/Metal |
+| SSP eye-side specular tail | [ssp-tail.md](ssp-tail.md) | `path.ssp.enable` | `dev-tools/e93_ssp_tail_test.py`; `scenes/cornell/lmnee-slab.scn` | CPU (GPU pending) |
 | Light linking | [../engineering/light-linking.md](../engineering/light-linking.md) | `8d05a4ef1` 64-bit groups, `8d05a4ef1` DuplicateObject fix | `dev-tools/e41_lightlink_test.py` | CPU/OCL/Metal |
 | VARIANCE / MOTION_VECTOR / temporal accumulate | [aov-audit-temporal-denoise.md](aov-audit-temporal-denoise.md) | `a7c3ae282` channels, `17b020b31` TA, `17b020b31` components | `dev-tools/e2x` film tests | CPU/OCL/Metal |
 | GGX opt-in (S0) + Heitz'16 | [ggx-multibounce.md](ggx-multibounce.md) | `c92c2f340` metal2 MB + 6-material `distribution=ggx` series | `dev-tools/e33_glossy2_ggx_parity.py`, `scenes/ggxoptin/` | CPU/OCL/Metal |

@@ -111,6 +111,10 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 			pathTracer.varianceClampAdaptive, pathTracer.varianceClampScope,
 			pathTracer.varianceClampSigma);
 
+	// SSP: this thread's most recent eye-side specular tail (same
+	// thread-local pairing as PathTracerThreadState::sspTail)
+	SspTail sspTail;
+
 	for (u_int steps = 0; !stop_token.stop_requested(); ++steps) {
 		// Check if we are in pause or edit mode
 		if (engine->threadsPauseMode) {
@@ -144,7 +148,8 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 			eyeSampleCount += 1.0;
 
 			pathTracer.RenderEyeSample(device, engine->renderConfig.GetScene(),
-					engine->GetFilm(), *sampler, sampleResults);
+					engine->GetFilm(), *sampler, sampleResults,
+					pathTracer.sspEnable ? &sspTail : nullptr);
 
 			// Variance clamping
 			if (varianceClamping.hasClamping())
@@ -155,7 +160,9 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 			lightSampleCount += 1.0;
 
 			pathTracer.RenderLightSample(device, engine->renderConfig.GetScene(),
-					engine->GetFilm(), *lightSampler, lightSampleResults);
+					engine->GetFilm(), *lightSampler, lightSampleResults,
+					PathTracer::ConnectToEyeCallBackType(),
+					pathTracer.sspEnable ? &sspTail : nullptr);
 			lightSampler->NextSample(lightSampleResults);
 		}
 

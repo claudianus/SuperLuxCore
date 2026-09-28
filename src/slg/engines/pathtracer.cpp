@@ -110,7 +110,8 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		vertexConnectMergeAlpha(.95f),
 		spectralUpsamplingJH2019(false),
 		restirGI(nullptr), restirGIEnable(false), restirGICandidates(4),
-		restirGITemporalEnable(true), restirGISpatialEnable(true) {
+		restirGITemporalEnable(true), restirGISpatialEnable(true),
+		sspEnable(false) {
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -907,10 +908,49 @@ void ComputeFirstHitMotionVector(SceneConstRef scene, const float rayTime,
 
 }
 
+// SSP eye-side specular tail recorder: keeps the leading run of delta
+// specular vertices of the eye path (the camera-side caustic topology).
+// Only geometry anchors (position, geometric normal, objectID) are
+// stored - a consumer rebuilds full BSDFs via reprojection, so recording
+// is nearly free. See doc/features/ssp-tail.md.
+static void SspTailRecordVertex(SspTail *tail, const BSDF &bsdf,
+		const float cosSampledDir) {
+	if (!tail || !tail->IsOpen() || (cosSampledDir < 0.f) || bsdf.IsVolume())
+		// Run closed, pass-through pseudo-bounce or a medium scattering
+		// vertex (media-transparent caustic contract: it neither extends
+		// nor breaks the chain)
+		return;
+
+	const MaterialType mt = bsdf.GetMaterialType();
+	// Same acceptance as MneeChainVertexInit: only surfaces the chain
+	// solver can actually model are worth recording
+	const bool eligible = bsdf.IsDelta() &&
+			(bsdf.GetEventTypes() & SPECULAR) &&
+			((mt == MIRROR) || (mt == GLASS));
+	if (eligible) {
+		if (tail->specN < SSP_TAIL_MAX_VERTICES) {
+			SspTailVertex &v = tail->vtx[tail->specN++];
+			v.p = bsdf.hitPoint.p;
+			v.gn = bsdf.hitPoint.geometryN;
+			v.objectID = bsdf.hitPoint.objectID;
+		} else
+			// Run longer than the record: closed and marked unusable
+			tail->flags = 2u;
+		return;
+	}
+
+	// First non-eligible surface vertex: close the run and remember the
+	// terminator (reserved for receiver-endpoint tail solves)
+	tail->flags = 0u;
+	tail->termObjectID = bsdf.hitPoint.objectID;
+	tail->termP = bsdf.hitPoint.p;
+	tail->termGn = bsdf.hitPoint.geometryN;
+}
+
 void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		SceneConstRef scene, Sampler& sampler, EyePathInfo &pathInfo,
 		Ray &eyeRay,  const luxrays::Spectrum &eyeTroughput,
-		vector<SampleResult> &sampleResults) const {
+		vector<SampleResult> &sampleResults, SspTail *sspTail) const {
 	// To keep track of the number of rays traced
 	const double deviceRayCount = device.GetTotalRaysCount();
 
@@ -1763,6 +1803,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			sampleResult.firstPathVertexEvent = bsdfEvent;
 
 		pathInfo.AddVertex(bsdf, bsdfEvent, bsdfPdfW, hybridBackForwardGlossinessThreshold);
+		SspTailRecordVertex(sspTail, bsdf, cosSampledDir);
 
 		// Russian Roulette
 		float rrProb = 1.f;
@@ -1847,9 +1888,14 @@ void PathTracer::RenderEyeSample(
 	IntersectionDeviceRef device,
 	SceneConstRef scene, FilmConstRef film,
 	Sampler& sampler,
-	vector<SampleResult> &sampleResults
+	vector<SampleResult> &sampleResults,
+	SspTail *sspTail
 ) const {
 	ResetEyeSampleResults(sampleResults);
+
+	// SSP: open a fresh tail record for this path
+	if (sspTail)
+		sspTail->Reset();
 
 	// Spectral transport: draw the path wavelengths (the extra boot
 	// dimension allocated by ParseOptions) and activate them for the
@@ -1864,7 +1910,8 @@ void PathTracer::RenderEyeSample(
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
 
-	RenderEyePath(device, scene, sampler, pathInfo, eyeRay, Spectrum(1.f), sampleResults);
+	RenderEyePath(device, scene, sampler, pathInfo, eyeRay, Spectrum(1.f), sampleResults,
+			sspTail);
 
 	if (wlScope.Active()) {
 		for (auto &sr : sampleResults)
@@ -1893,6 +1940,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 		const float u0, const float u1, const float u2,
 		const LightSource &light, const BSDF &bsdf, 
 		const Spectrum &flux, const LightPathInfo &pathInfo,
+		const SspTail *sspTail,
 		vector<SampleResult> &sampleResults) const {
 	// I don't connect camera invisible objects with the eye
 	if (bsdf.IsCameraInvisible() || bsdf.IsDelta())
@@ -2026,17 +2074,49 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				if (!LMNEEConnectToEye(device, scene, film, time, light,
 						bsdf, flux, pathInfo, traceRayHit, bsdfConn,
 						mneeVolInfo, warmV0, warmV1, warmOk,
-						sampleResults) && (mneeMaxSpecular > 1)) {
-					// The single vertex solve found no solution. When it
-					// converged but its second segment re-blocked, warmV0/
-					// warmV1 carry the solved vertex + the re-blocker: a
-					// consistent seed pair on the solved ray's path.
-					PathVolumeInfo mneeChainVolInfo = pathInfo.volume;
-					LMNEEMultiConnectToEye(device, scene, film, time, light,
-							bsdf, flux, pathInfo, bsdfConn, mneeChainVolInfo,
-							warmOk ? &warmV0 : nullptr,
-							warmOk ? &warmV1 : nullptr,
-							sampleResults);
+						sampleResults)) {
+					// SSP tail: if a recorded eye path walked a specular
+					// chain ending at the blocker, rebuild it directly
+					// (cheaper and better-seeded than the discovery walk).
+					// Deterministic gate: the connect blocker must be one
+					// of the recorded surfaces.
+					bool tailOk = false;
+					static const bool sspDbg = (getenv("LUX_SSP_DBG") != nullptr);
+					if (sspDbg && sspTail) {
+						printf("SSP_GATE specN=%u ovf=%u blocker=%u ids=",
+								sspTail->specN, sspTail->HasOverflow() ? 1u : 0u,
+								bsdfConn.hitPoint.objectID);
+						for (u_int i = 0; i < sspTail->specN; ++i)
+							printf("%u ", sspTail->vtx[i].objectID);
+						printf("\n");
+						fflush(stdout);
+					}
+					if (sspTail && !sspTail->HasOverflow() &&
+							(sspTail->specN >= 1) &&
+							(sspTail->specN <= Min(mneeMaxSpecular, (u_int)4))) {
+						const u_int blockerID = bsdfConn.hitPoint.objectID;
+						for (u_int i = 0; i < sspTail->specN; ++i) {
+							if (sspTail->vtx[i].objectID == blockerID) {
+								PathVolumeInfo tailVolInfo = pathInfo.volume;
+								tailOk = LMNEETailConnectToEye(device, scene,
+										film, time, light, bsdf, flux, pathInfo,
+										sspTail, tailVolInfo, sampleResults);
+								break;
+							}
+						}
+					}
+					if (!tailOk && (mneeMaxSpecular > 1)) {
+						// The single vertex solve found no solution. When it
+						// converged but its second segment re-blocked, warmV0/
+						// warmV1 carry the solved vertex + the re-blocker: a
+						// consistent seed pair on the solved ray's path.
+						PathVolumeInfo mneeChainVolInfo = pathInfo.volume;
+						LMNEEMultiConnectToEye(device, scene, film, time, light,
+								bsdf, flux, pathInfo, bsdfConn, mneeChainVolInfo,
+								warmOk ? &warmV0 : nullptr,
+								warmOk ? &warmV1 : nullptr,
+								sampleResults);
+					}
 				}
 			}
 		}
@@ -2417,7 +2497,8 @@ void PathTracer::LightFocusEmitDistantU(SceneConstRef scene,
 void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		SceneConstRef scene, FilmConstRef film,
 		Sampler& sampler, vector<SampleResult> &sampleResults,
-		const ConnectToEyeCallBackType &ConnectToEyeCallBack) const {
+		const ConnectToEyeCallBackType &ConnectToEyeCallBack,
+		const SspTail *sspTail) const {
 	sampleResults.clear();
 
 	// Spectral transport: draw the path wavelengths (the extra boot
@@ -2539,7 +2620,7 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 						sampler.GetSample(sampleOffset + 1),
 						sampler.GetSample(sampleOffset + 2),
 						sampler.GetSample(sampleOffset + 3),
-						*light, bsdf, lightPathFlux, pathInfo, sampleResults);
+						*light, bsdf, lightPathFlux, pathInfo, sspTail, sampleResults);
 			}
 
 			// A connect that produced a screen contribution after
@@ -2662,7 +2743,8 @@ void PathTracer::RenderSample(PathTracerThreadState &state) const {
 				state.scene,
 				state.GetFilm(),
 				sampler,
-				sampleResults
+				sampleResults,
+				sspEnable ? &state.sspTail : nullptr
 			);
 			return std::make_tuple(std::ref(sampler), std::ref(sampleResults));
 		} else {
@@ -2674,7 +2756,9 @@ void PathTracer::RenderSample(PathTracerThreadState &state) const {
 				state.scene,
 				state.GetFilm(),
 				sampler,
-				sampleResults
+				sampleResults,
+				ConnectToEyeCallBackType(),
+				sspEnable ? &state.sspTail : nullptr
 			);
 			return std::make_tuple(std::ref(sampler), std::ref(sampleResults));
 		}
@@ -2803,6 +2887,11 @@ void PathTracer::ParseOptions(
 		mneeSeeds.reset(new MneeSeedEntry[1u << 14]());
 	else
 		mneeSeeds.reset();
+
+	// SSP tail recorder: active only when the MNEE solvers that consume
+	// it are enabled
+	sspEnable = cfg.Get(defaultProps.Get("path.ssp.enable")).Get<bool>() &&
+			mneeEnable;
 
 	// Path guiding (M1 CPU SD-tree/vMF; M2b-2 GPU trains a coarse table via
 	// the record drain loop into the shared PathGuidingCache)
@@ -2974,6 +3063,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxiterations")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxspecular")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
+			cfg.Get(GetDefaultProps()->Get("path.ssp.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
 			Property("path.guiding.risk")(
@@ -3054,6 +3144,11 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.mnee.maxiterations")(12) <<
 			Property("path.mnee.maxspecular")(1) <<
 			Property("path.mnee.seedcache")(true) <<
+			// SSP eye-side specular tail recorder (path.ssp.enable):
+			// eye paths record their leading delta-specular run so a
+			// blocked light->camera connect can rebuild the chain without
+			// the LMNEE discovery walk. Effective only with path.mnee.enable.
+			Property("path.ssp.enable")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.guiding.tablefile")("") <<
 			Property("path.guiding.risk")(0) <<

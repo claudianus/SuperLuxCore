@@ -264,6 +264,51 @@ inline std::ostream &operator<<(std::ostream &os, const LightPathInfo &lpi) {
 	return os;
 }
 
+//------------------------------------------------------------------------------
+// SspTail: eye-side specular tail recorder
+//
+// Records the LEADING run of delta specular vertices of an eye path
+// (camera -> s1 -> s2 -> ... -> sm -> terminator) plus the first
+// non-eligible surface vertex that closes the run. The record is a pure
+// geometry/material topology hint: a light-side camera connect blocked by
+// a delta occluder can skip the LMNEE discovery walk and rebuild the chain
+// directly from these anchors (reproject -> MneeChainVertexInit), then let
+// the Newton solver verify the physical constraint. A stale or wrong
+// record only wastes iterations - every solved chain is re-validated, so
+// the estimator stays unbiased.
+//
+// GPU mirror lives in pathinfo_types.cl once the GPU recorder lands.
+//------------------------------------------------------------------------------
+
+#define SSP_TAIL_MAX_VERTICES 8
+
+typedef struct SspTailVertex {
+	luxrays::Point p;			// reproject anchor
+	luxrays::Normal gn;			// reproject ray direction (-gn)
+	u_int objectID;				// scene object index: blocker/stale match gate
+	u_int pad;
+} SspTailVertex;
+
+typedef struct SspTail {
+	u_int specN;				// recorded specular vertices (eye order: vtx[0] nearest camera)
+	u_int flags;				// bit0 = run still open, bit1 = overflow (run longer than capacity)
+	// Terminator: first non-eligible surface vertex that closed the run.
+	// Phase-1 consumers only use the specular run; the terminator is kept
+	// for receiver-endpoint solves (Model B).
+	u_int termObjectID;
+	luxrays::Point termP;
+	luxrays::Normal termGn;
+	SspTailVertex vtx[SSP_TAIL_MAX_VERTICES];
+
+	void Reset() {
+		specN = 0;
+		flags = 1;				// open
+		termObjectID = 0xffffffffu;
+	}
+	bool IsOpen() const { return (flags & 1u) != 0; }
+	bool HasOverflow() const { return (flags & 2u) != 0; }
+} SspTail;
+
 }
 
 #endif	/* _SLG_PATHINFO_H */
