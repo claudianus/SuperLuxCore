@@ -46,11 +46,18 @@
 - **No dedicated TAIL_LOAD phase**: `LMneeChain_StartTail` sets
   `mnee->useTail` and aims the first MS_DISCOVER ray at the farthest
   anchor. Inside MS_DISCOVER each aimed hit is objectID-validated
-  (`vtx[specN-chainN]`); a mismatch just clears `useTail` and the walk
+  (`vtx[chainMaxV-chainN]`); a mismatch just clears `useTail` and the walk
   degrades to plain `MneeChain_WalkDir` discovery - the traced vertices
   stay physically valid, so the fallback is free. `chainMaxV = specN`
-  makes the regular vertex bound hand the loaded chain to the Newton
-  solve unchanged.
+  (the StartTail-time snapshot) makes the regular vertex bound hand the
+  loaded chain to the Newton solve unchanged.
+- **Snapshot indexing gotcha**: vtx[] indices must come from
+  `chainMaxV` (the specN snapshot), never a live `sspTail->specN` read.
+  The paired eye task rewrites the record between launches - a new path
+  resets specN to 0 - so a fresh read can shrink below `chainN` and
+  underflow `specN - chainN` into an out-of-bounds vtx[] access (seen in
+  review; fixed before merge). Content staleness remains guarded by the
+  per-vertex objectID match, which only ever costs steering quality.
 - No seqlock needed: producer (MK_GENERATE_NEXT_VERTEX_RAY) and
   consumer (MK_LIGHT_VERTEX) are separate serialized kernel launches;
   a record is only ever written/queried across launch boundaries.

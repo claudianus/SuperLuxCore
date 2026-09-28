@@ -51,6 +51,13 @@ namespace ocl {
 class PathTracer;
 class VarianceClamping;
 
+// Multi-specular MNEE chain capacity: the solver's fixed-size chain
+// budget. Shared by the solver (pathtracer_mnee.cpp), the SSP tail gate
+// (pathtracer.cpp) and mirrored by the GPU kernels'
+// pathoclbase_datatypes.cl MNEE_MS_MAX_VERTICES (a #define, so keep the
+// values in lockstep).
+inline constexpr u_int MNEE_MS_MAX_VERTICES = 4;
+
 class PathTracerThreadState {
 public:
 	PathTracerThreadState(

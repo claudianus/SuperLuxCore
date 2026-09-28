@@ -2081,19 +2081,9 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 					// Deterministic gate: the connect blocker must be one
 					// of the recorded surfaces.
 					bool tailOk = false;
-					static const bool sspDbg = (getenv("LUX_SSP_DBG") != nullptr);
-					if (sspDbg && sspTail) {
-						printf("SSP_GATE specN=%u ovf=%u blocker=%u ids=",
-								sspTail->specN, sspTail->HasOverflow() ? 1u : 0u,
-								bsdfConn.hitPoint.objectID);
-						for (u_int i = 0; i < sspTail->specN; ++i)
-							printf("%u ", sspTail->vtx[i].objectID);
-						printf("\n");
-						fflush(stdout);
-					}
 					if (sspTail && !sspTail->HasOverflow() &&
 							(sspTail->specN >= 1) &&
-							(sspTail->specN <= Min(mneeMaxSpecular, (u_int)4))) {
+							(sspTail->specN <= Min(mneeMaxSpecular, MNEE_MS_MAX_VERTICES))) {
 						const u_int blockerID = bsdfConn.hitPoint.objectID;
 						for (u_int i = 0; i < sspTail->specN; ++i) {
 							if (sspTail->vtx[i].objectID == blockerID) {

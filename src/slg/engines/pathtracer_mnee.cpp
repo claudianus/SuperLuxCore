@@ -1201,7 +1201,8 @@ struct MneeChainVertex {
 	observer_ptr<const GlassMaterial> glassMat;
 };
 
-static const u_int MNEE_MS_MAX_VERTICES = 4;
+// MNEE_MS_MAX_VERTICES is defined in pathtracer.h (shared with the SSP
+// tail gate in pathtracer.cpp and mirrored by the GPU kernels).
 
 // Block tridiagonal constraint Jacobian: the 2x2 blocks of x_{i-1}, x_i, x_{i+1}
 struct MneeJacobianBlock {

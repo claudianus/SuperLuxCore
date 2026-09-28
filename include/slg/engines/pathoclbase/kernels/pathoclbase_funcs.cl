@@ -5794,9 +5794,16 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		mnee->chainMatType[mnee->chainN] = hitMat->type;
 		mnee->chainN++;
 
+		// Tail indexing must use the specN snapshot taken by
+		// LMneeChain_StartTail (== chainMaxV), NOT a fresh
+		// sspTail->specN read: the paired eye task rewrites its record
+		// every iteration (a new path resets specN to 0), so a live read
+		// can shrink below chainN and underflow the index into a wild
+		// vtx[] access. Content staleness stays guarded by the objectID
+		// match itself.
 		if (mnee->useTail && sspTail &&
 				(taskMnee->mneeBsdf.hitPoint.objectID !=
-						sspTail->vtx[sspTail->specN - mnee->chainN].objectID))
+						sspTail->vtx[mnee->chainMaxV - mnee->chainN].objectID))
 			// Aimed anchor missed (stale/mismatched record): drop tail
 			// steering - the traced vertex itself stays a valid chain
 			// member, the walk degrades to plain discovery
@@ -5813,8 +5820,10 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 		float3 dir;
 		if (mnee->useTail && sspTail) {
 			// SSP tail replay: aim at the next recorded anchor
-			// (vtx[specN-1-chainN] is chain[chainN]'s eye record)
-			const uint ni = sspTail->specN - 1u - mnee->chainN;
+			// (vtx[chainMaxV-1-chainN] is chain[chainN]'s eye record;
+			// chainMaxV is the StartTail-time specN snapshot - see the
+			// staleness note above)
+			const uint ni = mnee->chainMaxV - 1 - mnee->chainN;
 			const float3 ap = MAKE_FLOAT3(sspTail->vtx[ni].pX,
 					sspTail->vtx[ni].pY, sspTail->vtx[ni].pZ);
 			dir = normalize(ap - VLOAD3F(&taskMnee->mneeBsdf.hitPoint.p.x));

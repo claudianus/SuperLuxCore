@@ -2300,8 +2300,13 @@ void RenderSessionImpl::WaitForDone() const {
 	// error) are only evaluated inside UpdateFilm()->Film::RunTests().
 	// Console/Blender pump it via UpdateStats() every ~1s, but a bare
 	// WaitForDone() caller would otherwise wait forever even when a halt
-	// is configured - pump it here while polling.
-	while (!renderSession->renderEngine->HasDone()) {
+	// is configured - pump it here while polling. Only while the engine
+	// is running: UpdateFilm() no-ops once stopped, and once stop is
+	// requested the plain WaitForDone() join below is the right wait
+	// (it also covers the never-started case, where HasDone() is
+	// already true).
+	while (renderSession->renderEngine->IsStarted() &&
+			!renderSession->renderEngine->HasDone()) {
 		renderSession->renderEngine->UpdateFilm();
 		std::this_thread::sleep_for(200ms);
 	}

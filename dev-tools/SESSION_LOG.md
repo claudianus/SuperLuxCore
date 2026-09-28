@@ -97,3 +97,38 @@ progressive pgic vs one-shot within ~1%); new e91_pgic_update_smoke.py
 3/3 (PATHCPU updatespp=4 haltspp, PATHOCL deposits+swaps, mid-flight
 Stop = 0.00 s). Doc: doc/engineering/pgic-review-fixes.md gained the
 barrier-pairing, abort, drain-ownership, retire-coherence sections.
+
+## Session — review round 3 fixes (SSP tail OOB, sspTails init, WaitForDone bound)
+
+External review of the SSP GPU port found one blocker plus hardening:
+
+- **vtx[] index underflow -> OOB device read** (pathoclbase_funcs.cl):
+  the MS_DISCOVER replay indexed `sspTail->vtx[specN - chainN]` with a
+  LIVE `specN` read. The paired eye task rewrites its record between
+  launches (a new path resets specN to 0, and diffuse-start paths keep
+  it 0), so specN could shrink below chainN -> unsigned underflow ->
+  vtx[~4G] wild global read (Metal command-buffer trap territory).
+  Fixed: index with `chainMaxV` — it already IS the StartTail-time
+  specN snapshot, so indices stay in [0, chainMaxV) ⊆ [0,4] regardless
+  of record generation. Content staleness still guarded by the
+  per-vertex objectID match. Documented in doc/engineering/ssp-tail.md.
+- **sspTailsBuff zero-init**: was AllocBufferRW(nullptr) — a light task
+  could read a garbage record (specN/flags) before the paired eye
+  task's first write, aiming the replay at uninitialized anchors.
+  Now allocated from a zeroed host image (all-zero = specN 0 = gate
+  rejects).
+- **WaitForDone pump bounded by IsStarted()**: the 200ms UpdateFilm
+  pump now only runs while the engine is started; a never-started or
+  just-stopped engine falls straight to WaitForDone()'s join. Same
+  externally visible behavior for the halt path; no pumping on a dead
+  engine.
+- **MNEE_MS_MAX_VERTICES hoisted to pathtracer.h** (inline constexpr):
+  the CPU SSP gate's literal 4 was a silent duplicate of the TU-local
+  solver capacity in pathtracer_mnee.cpp. Both now share one constant;
+  the GPU #define mirror is documented to stay in lockstep.
+- Removed the LUX_SSP_DBG printf block (bring-up instrumentation; e93
+  covers the feature).
+
+Verified: e93_ssp_tail 6/6 (GPU parity 0.99994, tail replay active),
+e52 adaptive-noise 5/5, WaitForDone haltspp=8 returns 0.41s on a bare
+caller, Release build clean.

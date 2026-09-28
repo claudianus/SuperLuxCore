@@ -1491,10 +1491,17 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// on the null buffer.
 	//--------------------------------------------------------------------------
 
-	if (threadTaskConfig.pathTracer.mnee.sspEnable)
-		intersectionDevice.AllocBufferRW(&sspTailsBuff, nullptr,
+	if (threadTaskConfig.pathTracer.mnee.sspEnable) {
+		// Zero-initialized: light tasks can read a record before the
+		// paired eye task's first write lands, and a garbage specN/flags
+		// would aim the replay at uninitialized (possibly NaN) anchors.
+		// All-zero = specN 0 = empty record, rejected by the gate.
+		const std::vector<char> sspTailZeros(
 				sizeof(slg::ocl::pathoclbase::SspTail) *
-				renderEngine->eyeTaskCount, "SspTails");
+				renderEngine->eyeTaskCount, 0);
+		intersectionDevice.AllocBufferRW(&sspTailsBuff, (void *)sspTailZeros.data(),
+				sspTailZeros.size(), "SspTails");
+	}
 
 	//--------------------------------------------------------------------------
 	// Allocate volume info buffers if required
