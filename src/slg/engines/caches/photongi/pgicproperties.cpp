@@ -88,8 +88,8 @@ PropertiesUPtr PhotonGICache::GetDefaultProps() {
 			Property("path.photongi.caustic.maxsize")(100000) <<
 			Property("path.photongi.caustic.updatespp")(8) <<
 			Property("path.photongi.caustic.updatespp.radiusreduction")(.96f) <<
-			Property("path.photongi.caustic.updatespp.minradius")(.003f) <<
-			Property("path.photongi.caustic.lookup.radius")(.15f) <<
+			Property("path.photongi.caustic.updatespp.minradius")(.0f) <<
+			Property("path.photongi.caustic.lookup.radius")(.0f) <<
 			Property("path.photongi.caustic.lookup.normalangle")(10.f) <<
 			Property("path.photongi.caustic.volumebeams")(true) <<
 			Property("path.photongi.debug.type")("none") <<
@@ -136,7 +136,7 @@ PhotonGICache *PhotonGICache::FromProperties(SceneConstRef scn, const Properties
 			params.caustic.maxSize = Max(0u, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.maxsize")).Get<u_int>());
 			params.caustic.updateSpp = Max(0u, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp")).Get<u_int>());
 
-			params.caustic.lookUpRadius = Max(DEFAULT_EPSILON_MIN_DBL, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.lookup.radius")).Get<double>());
+			params.caustic.lookUpRadius = Max(0.0, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.lookup.radius")).Get<double>());
 			params.caustic.lookUpNormalAngle = Max(DEFAULT_EPSILON_MIN_DBL, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.lookup.normalangle")).Get<double>());
 
 			params.caustic.radiusReduction = Max(0.0, cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp.radiusreduction")).Get<double>());

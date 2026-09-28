@@ -450,10 +450,25 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	// Evaluate best radius if required
 	//--------------------------------------------------------------------------
 
-	if (params.indirect.enabled && (params.indirect.lookUpRadius == 0.f)) {
-		params.indirect.lookUpRadius = EvaluateBestRadius();
-		SLG_LOG("PhotonGI best indirect cache radius: " << params.indirect.lookUpRadius);
+	// The eye-pass footprint probe is deterministic: run it once and share
+	// the result across every radius that asked for auto (0).
+	float autoRadius = 0.f;
+	if ((params.indirect.enabled && (params.indirect.lookUpRadius == 0.f)) ||
+			(params.caustic.enabled && (params.caustic.lookUpRadius == 0.f))) {
+		autoRadius = EvaluateBestRadius();
+		if (params.indirect.enabled && (params.indirect.lookUpRadius == 0.f)) {
+			params.indirect.lookUpRadius = autoRadius;
+			SLG_LOG("PhotonGI best indirect cache radius: " << autoRadius);
+		}
+		if (params.caustic.enabled && (params.caustic.lookUpRadius == 0.f)) {
+			params.caustic.lookUpRadius = autoRadius;
+			SLG_LOG("PhotonGI best caustic cache radius: " << autoRadius);
+		}
 	}
+	if (params.caustic.enabled && (params.caustic.minLookUpRadius == 0.f))
+		// The radius-reduction floor scales with the resolved radius
+		// (explicit radius or auto-derived), not an absolute value.
+		params.caustic.minLookUpRadius = params.caustic.lookUpRadius * .02f;
 
 	//--------------------------------------------------------------------------
 	// Initialize all parameters
@@ -474,7 +489,7 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 		if (params.visibility.lookUpRadius == 0.f) {
 			if (params.caustic.enabled) {
 				// Caustic radius is too small for visibility check
-				params.visibility.lookUpRadius = EvaluateBestRadius();
+				params.visibility.lookUpRadius = (autoRadius > 0.f) ? autoRadius : EvaluateBestRadius();
 				params.visibility.lookUpNormalAngle = params.caustic.lookUpNormalAngle;
 			} else
 				throw runtime_error("Indirect and/or caustic cache must be enabled in PhotonGI");
