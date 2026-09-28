@@ -2295,7 +2295,14 @@ static py::tuple RenderConfig_LoadResumeFile(const py::str &fileNameStr) {
 	  const std::string&, RenderStateImplRPtr&, FilmImplUPtr&
   >(fileName, startState, startFilm);
 
-  return py::make_tuple(config, startState, startFilm);
+  // Cast each element explicitly: make_tuple stores the unique_ptrs and
+  // the tuple caster forwards them as const&, which pybind rejects
+  // ("Invalid return_value_policy for const unique_ptr&").
+  py::tuple result(3);
+  result[0] = py::cast(std::move(config));
+  result[1] = py::cast(startState);
+  result[2] = py::cast(std::move(startFilm));
+  return result;
 }
 
 static std::unique_ptr<luxcore::detail::RenderConfigImpl>
@@ -2950,7 +2957,7 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 
 	.def(
 		py::init<>(&RenderSessionImpl::Create
-			<RenderConfigImpl&, RenderStateImplRPtr&, FilmImplStandalone& >
+			<RenderConfigImpl&, RenderStateImplRPtr&, FilmImpl& >
 		),
 		py::keep_alive<1, 2>(),
 		py::call_guard<py::gil_scoped_release>()

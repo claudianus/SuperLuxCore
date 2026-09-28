@@ -538,15 +538,20 @@ PropertiesUPtr RenderConfig::ToProperties(const Properties &cfg) {
 RenderConfigUPtr RenderConfig::LoadSerialized(const std::string &fileName) {
 	SerializationInputFile sif(fileName);
 
-	RenderConfigUPtr renderConfig;
+	// Pointer root matching SaveSerialized()'s RenderConfig* record
+	RenderConfig *renderConfig = nullptr;
 	sif.GetArchive() >> renderConfig;
+	if (!renderConfig)
+		throw runtime_error(
+			"Error while loading serialized render configuration: " + fileName
+		);
 
 	if (!sif.IsGood())
 		throw runtime_error(
 			"Error while loading serialized render configuration: " + fileName
 		);
 
-	return renderConfig;
+	return RenderConfigUPtr(renderConfig);
 }
 
 // Save serialized method - pointer argument
@@ -569,7 +574,9 @@ void RenderConfig::SaveSerialized(
 	renderConfig->saveAdditionalCfg.Clear();
 	renderConfig->saveAdditionalCfg.Set(additionalCfg);
 
-	sof.GetArchive() << renderConfig;
+	// Serialize through a pointer root: LoadSerialized() reads a raw
+	// RenderConfig* record (see the ConstRef overload below).
+	sof.GetArchive() << renderConfig.get();
 
 	renderConfig->saveAdditionalCfg.Clear();
 
@@ -599,7 +606,11 @@ void RenderConfig::SaveSerialized(
 	renderConfig.saveAdditionalCfg.Clear();
 	renderConfig.saveAdditionalCfg.Set(additionalCfg);
 
-	sof.GetArchive() << renderConfig;
+	// Serialize through a pointer root: LoadSerialized() and the .rsm
+	// loader read a raw RenderConfig* record; a by-value root wrote an
+	// object record that no loader could consume.
+	const RenderConfig *renderConfigPtr = &renderConfig;
+	sof.GetArchive() << renderConfigPtr;
 
 	renderConfig.saveAdditionalCfg.Clear();
 

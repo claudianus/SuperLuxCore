@@ -369,16 +369,20 @@ void RenderSession::CheckPeriodicSave(const bool force) {
 static size_t SaveRsmFile(RenderSession *renderSession, const std::string &fileName) {
 	SerializationOutputFile sof(fileName);
 
-	// Save the render configuration and the scene
-	sof.GetArchive() << renderSession->renderConfig;
+	// Save the render configuration and the scene. Pointer root: the
+	// loader reads a raw RenderConfig* record; a by-value root wrote an
+	// object record that no loader could consume.
+	RenderConfig *renderConfigPtr = &renderSession->renderConfig;
+	sof.GetArchive() << renderConfigPtr;
 
 	// Save the render state
 	auto renderState = renderSession->GetRenderState();
 	sof.GetArchive() << renderState;
 	renderState.reset();
 
-	// Save the film
-	sof.GetArchive() << renderSession->film;
+	// Save the film. Same pointer-root convention as the config above:
+	// the loader reads a raw Film* record.
+	sof.GetArchive() << renderSession->film.get();
 
 	if (!sof.IsGood())
 		throw runtime_error("Error while saving serialized render configuration: " + fileName);

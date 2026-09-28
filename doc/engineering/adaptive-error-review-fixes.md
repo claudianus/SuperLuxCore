@@ -37,9 +37,18 @@ load `adaptiveError->film` bound to that frozen duplicate — the test
 queried save-time totals and never re-triggered after a resume.
 
 Version 2 drops the field; `Film::load` calls `adaptiveError->BindFilm(this)`.
-v1 archives still consume the legacy nested copy for stream alignment
-(it is deleted immediately). `IsTestUpdateRequired()` early-outs on an
-unbound `film` so orphaned objects stay inert.
+v1 archives still consume the legacy pointer field for stream alignment —
+but it must **not** be deleted: `FilmConstPtr` is an observer_ptr
+serialized as a boost-tracked raw pointer, so on load it resolves either
+to the parent film currently inside `Film::load` (pointer-rooted
+archives) or to the nested copy that `convTest->film` /
+`noiseEstimation->film` still legitimately reference. `delete`ing it
+frees a live (or mid-deserialization) object → `~Film` re-enters and
+deletes the very `FilmAdaptiveError` whose `serialize` is running →
+UAF/double-free. The one-time copy stays alive exactly as it did under
+v1 semantics. `IsTestUpdateRequired()` early-outs on an unbound `film`
+so orphaned objects stay inert; all scalar members are initialized in
+the default ctor for the same reason.
 
 Note: `FilmConvTest`/`FilmNoiseEstimation` carry the identical upstream
 `ar & film` pattern — deliberately left untouched (shipped v1 format
@@ -51,13 +60,12 @@ compatibility).
 mid-session (`filmSPP < lastUpdateSpp`), relaunching an update worker
 every poll. Guarded with `filmSPP > lastUpdateSpp`.
 
-## Pre-existing finding (not from this session)
+## Pre-existing finding — fixed in this round
 
-Standalone `.flm` and `.rsm` round-trips are broken at the archive
-root: `pyluxcore.Film(path)` / `RenderConfig.LoadResumeFile(path)` throw
-`RuntimeError: class version unique_ptr<Film/RenderConfig>` even with
-adaptive error disabled — `SaveSerialized`/`SaveRsmFile` write
-`observer_ptr`/by-value roots while the loaders read `unique_ptr`.
-Reproduce: render any scene, `GetFilm().SaveFilm("x.flm")`, then
-`pyluxcore.Film("x.flm")`. The fix above is compatible with the path
-once that is repaired.
+Standalone `.flm` / `.rsm` / `.rst` / config round-trips were broken at
+the archive root (upstream-inherited): by-value or smart-pointer save
+roots vs `unique_ptr`/`shared_ptr` load roots never matched — boost root
+records are per-type. Repaired by moving every archive root to a raw
+`T*` record on both sides; see `serialization-roots.md` for the full
+mechanism and the pyluxcore binding fixes. Verified by
+`dev-tools/e94_serialize_roundtrip_test.py`.

@@ -49,7 +49,20 @@ FilmAdaptiveError::FilmAdaptiveError(
 }
 
 FilmAdaptiveError::FilmAdaptiveError() :
-	film(nullptr) {
+	// Members in declaration order; serialize() overwrites them all,
+	// but an unbound object must be inert rather than UB if Test() is
+	// ever reached before a load
+	noiseLevel(numeric_limits<float>::infinity()),
+	convergedRatio(0.f),
+	todoPixelsCount(0),
+	errorTarget(0.f),
+	warmup(0),
+	testStep(0),
+	minSamples(0),
+	haltEnabled(false),
+	film(nullptr),
+	lastSamplesCount(0.0),
+	firstTest(true) {
 }
 
 FilmAdaptiveError::~FilmAdaptiveError() {
@@ -221,11 +234,15 @@ template<class Archive> void FilmAdaptiveError::serialize(Archive &ar, const u_i
 	// to that frozen duplicate (GetFilm() then queried stale data and
 	// the test never re-triggered after a resume). Version >= 2 drops
 	// the field; Film::load rebinds it via BindFilm(). The v1 payload
-	// still has to be consumed for stream alignment.
+	// still has to be consumed for stream alignment - but it must NOT
+	// be deleted: the pointer is boost-tracked, so it resolves either to
+	// the parent film itself (pointer-rooted archives) or to the nested
+	// copy that convTest->film / noiseEstimation->film still legitimately
+	// reference. Freeing it would be a use-after-free; the one-time copy
+	// stays alive exactly as it did under v1.
 	if (version < 2) {
 		FilmConstPtr legacyFilm = nullptr;
 		ar & legacyFilm;
-		delete const_cast<Film *>(legacyFilm.get());
 	}
 	ar & errorVector;
 	ar & noiseLevel;

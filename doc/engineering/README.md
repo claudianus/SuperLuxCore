@@ -28,4 +28,5 @@ docs live in `doc/features/` (see its README for the index).
 | [pgic-review-fixes.md](pgic-review-fixes.md) | Review-fix invariants: live/shadow fields, updateThread lifecycle, per-thread threadTaskConfig, PATHOCL-only deposit gate, parity guards |
 | [metal-cb-batching.md](metal-cb-batching.md) | Metal deferred command-buffer batching: pending encoder batch, sync-point flush rules, ordering argument |
 | [gpu-task-memory.md](gpu-task-memory.md) | Per-task GPU buffer diet: GPUTaskMnee split, ~115MB/thread saved when MNEE off, KERNEL_ARGS + NULL-slot pattern |
-| [adaptive-error-review-fixes.md](adaptive-error-review-fixes.md) | Adaptive-error/NaN-collapse fixes, film-pointer serialization rebind (v2), PGIC update u_int wrap, broken standalone .flm/.rsm load finding |
+| [adaptive-error-review-fixes.md](adaptive-error-review-fixes.md) | Adaptive-error/NaN-collapse fixes, film-pointer serialization rebind (v2), PGIC update u_int wrap |
+| [serialization-roots.md](serialization-roots.md) | Archive-root record symmetry: .flm/.rsm/.rst/config round-trip repair (T* roots both sides), pyluxcore unique_ptr/tuple binding gotchas |

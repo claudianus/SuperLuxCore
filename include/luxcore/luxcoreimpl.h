@@ -661,7 +661,7 @@ public:
 		Private priv,
 		RenderConfigImplRef config,  // Back link, not owned
 		std::shared_ptr<RenderStateImpl>& startState,
-		FilmImplStandalone& startFilm
+		FilmImpl& startFilm
 	);
 	RenderSessionImpl(
 		Private priv,

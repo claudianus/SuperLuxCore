@@ -1921,8 +1921,12 @@ T RenderConfigImpl::ReadFromSIF() const {
 		"RenderConfig: trying to read from serialization but input is not available"
 	);
 
-	T t;
+	T t{};
 	sif->GetArchive() >> t;
+	if (t == nullptr)
+		throw std::runtime_error(
+			"RenderConfig: null pointer in serialized resume file"
+		);
 	return t;
 }
 
@@ -1933,7 +1937,7 @@ RenderConfigImpl::RenderConfigImpl(
 		std::unique_ptr<FilmImpl>& startFilm  // Out parameter
 ) :
 	sif(fileName),
-	renderConfig(ReadFromSIF<slg::RenderConfigUPtr>()),
+	renderConfig(slg::RenderConfigUPtr(ReadFromSIF<slg::RenderConfig *>())),
 	internalScene(SceneImpl::Create(std::ref(renderConfig->GetScene()))),
 	sceneRef(*internalScene)
 {
@@ -1942,10 +1946,10 @@ RenderConfigImpl::RenderConfigImpl(
 	sif->GetArchive() >> st;
 	startState = std::make_shared<RenderStateImpl>(st);
 
-	// Load the film
-	std::unique_ptr<slg::Film> sf;
+	// Load the film (pointer root matching SaveRsmFile's Film* record)
+	slg::Film *sf = nullptr;
 	sif->GetArchive() >> sf;
-	startFilm = FilmImpl::Create(std::move(sf));
+	startFilm = FilmImpl::Create(std::unique_ptr<slg::Film>(sf));
 
 	if (!sif->IsGood())
 		throw runtime_error(
@@ -2130,7 +2134,7 @@ RenderSessionImpl::RenderSessionImpl(
 	Private priv,
 	RenderConfigImplRef config,
 	std::shared_ptr<RenderStateImpl>& startState,
-	FilmImplStandalone& startFilm
+	FilmImpl& startFilm
 ) :
 	renderConfig(config),
 	stats(std::make_unique<Properties>())
