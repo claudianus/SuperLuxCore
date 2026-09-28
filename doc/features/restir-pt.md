@@ -50,6 +50,20 @@ The M-cap, representative gate, and ratio clamp bound the failure
 modes; e95 gates mean parity at 5% (vs GI's 3%) plus RMSE and
 merge-explosion tripwires.
 
+## Measured (PATHCPU, 1280×720)
+
+| Scene | spp | RMSE off | RMSE PT | ratio |
+|---|---|---|---|---|
+| pg-indirect | 32 | 0.0435 | 0.0369 | **0.85 (PT wins)** |
+| cornell | 48 | 0.0223 | 0.0516 | 2.31 (diffuse-flat — no win) |
+
+pg-indirect mean parity: off −6.6%, PT −20.6% at 32 spp — the
+bounded-bias symptom: rare high-radiance suffixes contribute only
+after a path first probes them, so consumed picks underfill early.
+Converges toward parity as reservoirs populate; tighten spp or
+candidate count to close the gap. PT is a variance-reallocation tool:
+enable it on indirect-heavy/caustic scenes, not flat diffuse.
+
 ## Known limits (PT-1)
 
 - Consumed contributions are booked to light group 0 and the
