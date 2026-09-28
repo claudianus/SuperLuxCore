@@ -180,6 +180,9 @@ public:
 	// PhotonGI caustic cache
 	luxrays::SpillableArray<slg::ocl::Photon> pgicCausticPhotons;
 	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> pgicCausticPhotonsBVHArrayNode;
+	// PhotonGI caustic beams (in-medium specular flight segments)
+	luxrays::SpillableArray<slg::ocl::PhotonBeam> pgicCausticBeams;
+	luxrays::SpillableArray<luxrays::ocl::IndexBVHArrayNode> pgicCausticBeamsBVHArrayNode;
 
 	// All global settings
 	slg::ocl::PathTracer compiledPathTracer;

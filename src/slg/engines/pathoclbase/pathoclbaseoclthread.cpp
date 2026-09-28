@@ -110,6 +110,8 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	pgicRadiancePhotonsBVHNodesBuff = nullptr;
 	pgicCausticPhotonsBuff = nullptr;
 	pgicCausticPhotonsBVHNodesBuff = nullptr;
+	pgicCausticBeamsBuff = nullptr;
+	pgicCausticBeamsBVHNodesBuff = nullptr;
 	guideDbgBuff = nullptr;
 	for (u_int i = 0u; i < 16u; ++i)
 		guideRecBuff[i] = nullptr;
@@ -231,6 +233,8 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&pgicRadiancePhotonsBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBVHNodesBuff);
+	intersectionDevice.FreeBuffer(&pgicCausticBeamsBuff);
+	intersectionDevice.FreeBuffer(&pgicCausticBeamsBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&guideNodesBuff);
 	intersectionDevice.FreeBuffer(&guideLeavesBuff);
 	intersectionDevice.FreeBuffer(&guideDbgBuff);

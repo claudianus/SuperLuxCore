@@ -246,14 +246,114 @@ OPENCL_FORCE_INLINE bool PGICPhotonBvh_ConnectAllNearEntries(__global const BSDF
 	return isEmpty;
 }
 
+// Caustic beams (Jarosz'11): medium vertices in homogeneous volumes are
+// answered by the beam estimator - point photons in such media also
+// produced a beam, so the two estimates stay disjoint. Mirrors
+// PhotonGICache::ConnectCausticBeams one to one.
+OPENCL_FORCE_INLINE bool PGICBeamBvh_ConnectAllNearEntries(__global const BSDF *bsdf,
+		__global const PhotonBeam* restrict pgicCausticBeams,
+		__global const IndexBVHArrayNode* restrict pgicCausticBeamsBVHNodes,
+		const uint pgicCausticPhotonTracedCount,
+		const float pgicCausticLookUpRadius,
+		const float3 scale,
+		__global Spectrum *radiance,
+		// Scratch: tmpRay is backed up and restored around the traversal
+		// (Volume_TransmittanceEstimate requires global address space)
+		__global Ray *tmpRay, __global HitPoint *tmpHitPoint
+		MATERIALS_PARAM_DECL) {
+	const float3 x = VLOAD3F(&bsdf->hitPoint.p.x);
+	const float r2 = pgicCausticLookUpRadius * pgicCausticLookUpRadius;
+	// Same volume kernel normalization as the point estimator
+	const float factor = 1.f / (pgicCausticPhotonTracedCount *
+			(4.f / 3.f * M_PI_F * r2 * pgicCausticLookUpRadius));
+	const Ray rayBackup = *tmpRay;
+
+	uint currentNode = 0; // Root Node
+	const uint stopNode = IndexBVHNodeData_GetSkipIndex(pgicCausticBeamsBVHNodes[0].nodeData); // Non-existent
+
+	bool isEmpty = true;
+	while (currentNode < stopNode) {
+		__global const IndexBVHArrayNode* restrict node = &pgicCausticBeamsBVHNodes[currentNode];
+		const uint nodeData = node->nodeData;
+
+		if (IndexBVHNodeData_IsLeaf(nodeData)) {
+			__global const PhotonBeam* restrict beam = &pgicCausticBeams[node->entryLeaf.entryIndex];
+			const float3 p0 = VLOAD3F(&beam->p0.x);
+			const float3 d = VLOAD3F(&beam->d.x);
+
+			// Segment/ball overlap: t range where p0 + t*d lies inside the
+			// lookup ball. s is the unclamped projection of x on the beam
+			// line and d2 the squared point-line distance.
+			const float s = dot(x - p0, d);
+			const float d2 = DistanceSquared(x, p0 + s * d);
+			if (d2 < r2) {
+				const float halfChord = sqrt(r2 - d2);
+				const float lo = max(0.f, s - halfChord);
+				const float hi = min(beam->length, s + halfChord);
+				if (hi > lo) {
+					// Beam transmittance at the overlap midpoint
+					tmpRay->o.x = p0.x; tmpRay->o.y = p0.y; tmpRay->o.z = p0.z;
+					tmpRay->d.x = d.x; tmpRay->d.y = d.y; tmpRay->d.z = d.z;
+					tmpRay->mint = 0.f;
+					tmpRay->maxt = .5f * (lo + hi);
+					tmpRay->time = 0.f;
+					const float3 beamT = Volume_TransmittanceEstimate(
+							&mats[beam->volumeIndex],
+							tmpRay, tmpRay->maxt, .5f, tmpHitPoint
+							TEXTURES_PARAM);
+
+					BSDFEvent event;
+					float directPdfW;
+					float3 bsdfEval = BSDF_Evaluate(bsdf, -d, &event, &directPdfW
+							MATERIALS_PARAM);
+					bsdfEval /= directPdfW;
+
+					// Flux per unit length times the integrated kernel footprint
+					const float3 alpha = VLOAD3F(beam->alpha.c) * beamT * bsdfEval *
+							((hi - lo) / beam->length) * factor;
+					VADD3F(radiance[beam->lightID].c, alpha * scale);
+					isEmpty = false;
+				}
+			}
+
+			++currentNode;
+		} else {
+			// It is a node, check the bounding box
+			if (x.x >= node->bvhNode.bboxMin[0] && x.x <= node->bvhNode.bboxMax[0] &&
+					x.y >= node->bvhNode.bboxMin[1] && x.y <= node->bvhNode.bboxMax[1] &&
+					x.z >= node->bvhNode.bboxMin[2] && x.z <= node->bvhNode.bboxMax[2])
+				++currentNode;
+			else {
+				// I don't need to use IndexBVHNodeData_GetSkipIndex() here because
+				// I already know the leaf flag is 0
+				currentNode = nodeData;
+			}
+		}
+	}
+
+	*tmpRay = rayBackup;
+	return isEmpty;
+}
+
 OPENCL_FORCE_INLINE bool PhotonGICache_ConnectWithCausticPaths(__global const BSDF *bsdf,
 		__global const Photon* restrict pgicCausticPhotons,
 		__global const IndexBVHArrayNode* restrict pgicCausticPhotonsBVHNodes,
+		__global const PhotonBeam* restrict pgicCausticBeams,
+		__global const IndexBVHArrayNode* restrict pgicCausticBeamsBVHNodes,
+		const bool causticVolumeBeams,
 		const uint pgicCausticPhotonTracedCount,
 		const float pgicCausticLookUpRadius, const float pgicCausticLookUpNormalCosAngle,
 		const float3 scale,
-		__global Spectrum *radiance
+		__global Spectrum *radiance,
+		__global Ray *tmpRay, __global HitPoint *tmpHitPoint
 		MATERIALS_PARAM_DECL) {
+	if (bsdf->isVolume && causticVolumeBeams &&
+			pgicCausticBeams && pgicCausticBeamsBVHNodes &&
+			(mats[bsdf->materialIndex].type == HOMOGENEOUS_VOL))
+		return PGICBeamBvh_ConnectAllNearEntries(bsdf, pgicCausticBeams,
+				pgicCausticBeamsBVHNodes, pgicCausticPhotonTracedCount,
+				pgicCausticLookUpRadius, scale, radiance, tmpRay, tmpHitPoint
+				MATERIALS_PARAM);
 
 	return pgicCausticPhotons ?
 		PGICPhotonBvh_ConnectAllNearEntries(bsdf, pgicCausticPhotons, pgicCausticPhotonsBVHNodes,

@@ -426,11 +426,14 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 				if (isPhotonGIEnabled) {
 					PhotonGICache_ConnectWithCausticPaths(bsdf,
 							pgicCausticPhotons, pgicCausticPhotonsBVHNodes,
+							pgicCausticBeams, pgicCausticBeamsBVHNodes,
+							taskConfig->pathTracer.pgic.causticVolumeBeams,
 							taskConfig->pathTracer.pgic.causticPhotonTracedCount,
 							taskConfig->pathTracer.pgic.causticLookUpRadius,
 							taskConfig->pathTracer.pgic.causticLookUpNormalCosAngle,
 							WHITE,
-							&sampleResult->radiancePerPixelNormalized[0]
+							&sampleResult->radiancePerPixelNormalized[0],
+							&rays[gid], &tasks[gid].tmpHitPoint
 							MATERIALS_PARAM);
 				}
 				taskState->state = MK_SPLAT_SAMPLE;
@@ -471,11 +474,14 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 							(!taskConfig->pathTracer.hybridBackForward.enabled || (pathInfo->depth.depth != 0))) {
 						const bool isEmpty = PhotonGICache_ConnectWithCausticPaths(bsdf,
 								pgicCausticPhotons, pgicCausticPhotonsBVHNodes,
+								pgicCausticBeams, pgicCausticBeamsBVHNodes,
+								taskConfig->pathTracer.pgic.causticVolumeBeams,
 								taskConfig->pathTracer.pgic.causticPhotonTracedCount,
 								taskConfig->pathTracer.pgic.causticLookUpRadius,
 								taskConfig->pathTracer.pgic.causticLookUpNormalCosAngle,
 								VLOAD3F(taskState->throughput.c),
-								&sampleResult->radiancePerPixelNormalized[0]
+								&sampleResult->radiancePerPixelNormalized[0],
+								&rays[gid], &tasks[gid].tmpHitPoint
 								MATERIALS_PARAM);
 
 						if (!isEmpty)

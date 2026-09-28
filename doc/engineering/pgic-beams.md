@@ -68,5 +68,32 @@ after: 1.7s (≈30×).
   `VolumeConstPtr`/`Material` checks — plain `dynamic_cast` does not
   compile on observer pointers.
 - `pgic_funcs.cl`/`pathtracer_types.cl` mirror the receiver eligibility
-  with `causticVolumeBeams`; GPU still runs **point** queries — CPU is
-  the beam path until a GPU segment index exists.
+  with `causticVolumeBeams`. GPU beam traversal landed with the flat-BVH
+  index (below) — same estimator math as the CPU query.
+
+## GPU index (flat IndexBvh)
+
+`PGICBeamIndex` no longer uses Boost R-tree: segment AABBs are expanded
+by the lookup radius, fed to `BuildIndexBVH` (Embree builder → flat
+`luxrays::ocl::IndexBVHArrayNode` array). The same node array serves
+CPU `Query()` and the device upload in `CompiledScene::CompilePhotonGI`
+(`pgicCausticBeams` + `pgicCausticBeamsBVHArrayNode`).
+
+Kernel side (`PGICBeamBvh_ConnectAllNearEntries`) repeats the CPU math
+one to one: point→line projection, quadratic chord `[lo,hi]` clamped to
+the segment, `beam.alpha * T * bsdfEval * (hi-lo)/length` with the same
+`1/(N·4/3πr³)` normalization.
+
+- **`Volume_TransmittanceEstimate` requires `__global` storage** for
+  both the ray and the scratch `HitPoint` — private/local structs fail
+  the Metal compile (address-space overload resolution). The caller
+  passes `&rays[gid]` + `&tasks[gid].tmpHitPoint`; the helper backs the
+  ray up once and restores it after the traversal.
+- **`half` is a reserved MSL type** — naming a `float` local `half`
+  breaks the cl2msl output. Use `halfChord` etc.
+- `VSTORE3F` has no private-address overload: write `Ray` fields
+  component-wise or use `VLOAD3F`/`VADD3F` only where the pointed-to
+  storage lives in global space (kernel radiance accumulation is fine).
+- CPU and GPU measured within noise: fog+glass Cornell, 32 spp —
+  CPU beams 0.0079 / points 0.0069 (+14 %); GPU beams 0.00797 /
+  points 0.00708 (+12.6 %).

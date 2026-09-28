@@ -318,6 +318,8 @@ protected:
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBVHNodesBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBVHNodesBuff;
+	luxrays::HardwareDeviceBuffer *pgicCausticBeamsBuff;
+	luxrays::HardwareDeviceBuffer *pgicCausticBeamsBVHNodesBuff;
 	// Path guiding (P1-3 M4e): flattened SD-tree nodes (uint4/node)
 	// + per-leaf vMF mixture records (24 floats/leaf)
 	luxrays::HardwareDeviceBuffer *guideNodesBuff;

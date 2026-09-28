@@ -617,6 +617,8 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicRadiancePhotonsBVHNodesBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBVHNodesBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticBeamsBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticBeamsBVHNodesBuff);
 
 	// Path guiding (P1-3 M4e): flattened SD-tree nodes + leaf vMF
 	// records + enable. Buffers are null (and guidingEnable 0) when

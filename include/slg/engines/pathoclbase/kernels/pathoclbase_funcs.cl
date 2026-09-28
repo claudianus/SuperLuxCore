@@ -6397,7 +6397,9 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global const Spectrum* restrict pgicRadiancePhotonsValues \
 		, __global const IndexBVHArrayNode* restrict pgicRadiancePhotonsBVHNodes \
 		, __global const Photon* restrict pgicCausticPhotons \
-		, __global const IndexBVHArrayNode* restrict pgicCausticPhotonsBVHNodes
+		, __global const IndexBVHArrayNode* restrict pgicCausticPhotonsBVHNodes \
+		, __global const PhotonBeam* restrict pgicCausticBeams \
+		, __global const IndexBVHArrayNode* restrict pgicCausticBeamsBVHNodes
 
 #define KERNEL_ARGS \
 		__constant const GPUTaskConfiguration* restrict taskConfig \

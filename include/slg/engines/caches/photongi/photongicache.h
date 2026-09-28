@@ -334,6 +334,8 @@ public:
 	const luxrays::SpillableArray<Photon> &GetCausticPhotons() const { return causticPhotons; }
 	const PGICPhotonBvh *GetCausticPhotonsBVH() const { return causticPhotonsBVH; }
 	const u_int GetCausticPhotonTracedCount() const { return causticPhotonTracedCount; }
+	const std::vector<PhotonBeam> &GetCausticBeams() const { return causticBeams; }
+	const luxrays::ocl::IndexBVHArrayNode *GetCausticBeamsBVHArrayNodes(u_int *count = nullptr) const;
 
 	static PhotonGISamplerType String2SamplerType(const std::string &type);
 	static std::string SamplerType2String(const PhotonGISamplerType type);
@@ -369,7 +371,7 @@ private:
 		std::vector<PhotonBeam> *dstCausticBeams = nullptr);
 	void BuildCausticBeamsIndex();
 	void BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
-			std::unique_ptr<PGICBeamIndex> &dst);
+			std::unique_ptr<PGICBeamIndex> &dst, const float radius);
 	void UpdateWorker();
 	void ApplyPendingUpdate() noexcept;
 	luxrays::SpectrumGroup ConnectCausticBeams(const BSDF &bsdf) const;

@@ -33,6 +33,16 @@ typedef struct {
 	int isVolume;
 } Photon;
 
+// In-medium specular flight segment (Jarosz'11 photon beam): p0 + d*t
+// for t in [0, length]; alpha is the per-chunk packet flux.
+typedef struct {
+	Vector p0, d;
+	unsigned int lightID;
+	Spectrum alpha;
+	float length;
+	unsigned int volumeIndex;
+} PhotonBeam;
+
 typedef enum {
 	PGIC_DEBUG_NONE, PGIC_DEBUG_SHOWINDIRECT, PGIC_DEBUG_SHOWCAUSTIC,
 	PGIC_DEBUG_SHOWINDIRECTPATHMIX

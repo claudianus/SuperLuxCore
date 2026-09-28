@@ -25,6 +25,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include "luxrays/core/bvh/bvhbuild.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/engines/pathoclbase/compiledscene.h"
 #include "slg/engines/caches/photongi/photongicache.h"
 #include "slg/kernels/kernels.h"
@@ -48,6 +49,12 @@ void CompiledScene::CompilePhotonGI() {
 
 	pgicCausticPhotonsBVHArrayNode.clear();
 	pgicCausticPhotonsBVHArrayNode.shrink_to_fit();
+
+	pgicCausticBeams.clear();
+	pgicCausticBeams.shrink_to_fit();
+
+	pgicCausticBeamsBVHArrayNode.clear();
+	pgicCausticBeamsBVHArrayNode.shrink_to_fit();
 
 	compiledPathTracer.pgic.indirectEnabled = false;
 	compiledPathTracer.pgic.causticEnabled = false;
@@ -169,6 +176,36 @@ void CompiledScene::CompilePhotonGI() {
 			compiledPathTracer.pgic.causticPhotonTracedCount = photonGICache->GetCausticPhotonTracedCount();
 			compiledPathTracer.pgic.causticLookUpRadius = causticPhotonsBVH->GetEntryRadius();
 			compiledPathTracer.pgic.causticLookUpNormalCosAngle = causticPhotonsBVH->GetEntryNormalCosAngle();
+		} else {
+			// Beams can exist without a photon BVH (flights ending on delta
+			// surfaces never make a point deposit): radius/count come from
+			// the cache params so the beam kernel normalization stays sane.
+			compiledPathTracer.pgic.causticPhotonTracedCount = photonGICache->GetCausticPhotonTracedCount();
+			compiledPathTracer.pgic.causticLookUpRadius = photonGICache->GetParams().caustic.lookUpRadius;
+		}
+
+		// Compile caustic beams (in-medium specular flight segments)
+
+		const std::vector<PhotonBeam> &causticBeams = photonGICache->GetCausticBeams();
+		u_int nBeamNodes;
+		const luxrays::ocl::IndexBVHArrayNode *beamNodes =
+				photonGICache->GetCausticBeamsBVHArrayNodes(&nBeamNodes);
+		if ((causticBeams.size() > 0) && beamNodes) {
+			pgicCausticBeams.resize(causticBeams.size());
+			for (u_int i = 0; i < causticBeams.size(); ++i) {
+				const PhotonBeam &beam = causticBeams[i];
+				slg::ocl::PhotonBeam &oclBeam = pgicCausticBeams[i];
+
+				ASSIGN_VECTOR(oclBeam.p0, beam.p0);
+				ASSIGN_VECTOR(oclBeam.d, beam.d);
+				oclBeam.lightID = beam.lightID;
+				ASSIGN_SPECTRUM(oclBeam.alpha, beam.alpha);
+				oclBeam.length = beam.length;
+				oclBeam.volumeIndex = scene.GetMaterials().GetMaterialIndex(beam.volume);
+			}
+
+			pgicCausticBeamsBVHArrayNode.resize(nBeamNodes);
+			copy(&beamNodes[0], &beamNodes[0] + nBeamNodes, pgicCausticBeamsBVHArrayNode.begin());
 		}
 	}
 }

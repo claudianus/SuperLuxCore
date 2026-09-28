@@ -19,8 +19,6 @@
 #include <math.h>
 
 #include <boost/format.hpp>
-#include <boost/geometry.hpp>
-#include <boost/geometry/index/rtree.hpp>
 #include <chrono>
 #include <filesystem>
 
@@ -41,33 +39,69 @@ using namespace luxrays;
 using namespace slg;
 
 //------------------------------------------------------------------------------
-// PGICBeamIndex: segment AABBs of caustic photon beams in a boost R-tree.
-// Point queries test the lookup sphere against each candidate segment.
+// PGICBeamIndex: flat Embree BVH over beam segment AABBs (each inflated
+// by the lookup radius of its generation). The same node array is
+// uploaded to the GPU, so the CPU query mirrors the kernel-side
+// traversal one to one.
 //------------------------------------------------------------------------------
-
-namespace bgi = boost::geometry::index;
 
 class slg::PGICBeamIndex {
 public:
-	typedef boost::geometry::model::point<float, 3, boost::geometry::cs::cartesian> BPoint;
-	typedef boost::geometry::model::box<BPoint> BBox;
-	typedef std::pair<BBox, u_int> Item;
-	typedef bgi::rtree<Item, bgi::quadratic<8> > RT;
-
-	PGICBeamIndex(const std::vector<PhotonBeam> &beams) {
-		std::vector<Item> items;
-		items.reserve(beams.size());
-		for (u_int i = 0; i < beams.size(); ++i) {
+	PGICBeamIndex(const std::vector<PhotonBeam> &beams, const float radius) {
+		std::vector<RTCBuildPrimitive> prims(beams.size());
+		for (u_int i = 0; i < prims.size(); ++i) {
 			const PhotonBeam &b = beams[i];
 			const Point p1 = b.p0 + b.length * b.d;
-			items.push_back(Item(BBox(
-					BPoint(Min(b.p0.x, p1.x), Min(b.p0.y, p1.y), Min(b.p0.z, p1.z)),
-					BPoint(Max(b.p0.x, p1.x), Max(b.p0.y, p1.y), Max(b.p0.z, p1.z))), i));
+			RTCBuildPrimitive &prim = prims[i];
+
+			prim.lower_x = Min(b.p0.x, p1.x) - radius;
+			prim.lower_y = Min(b.p0.y, p1.y) - radius;
+			prim.lower_z = Min(b.p0.z, p1.z) - radius;
+			prim.geomID = 0;
+
+			prim.upper_x = Max(b.p0.x, p1.x) + radius;
+			prim.upper_y = Max(b.p0.y, p1.y) + radius;
+			prim.upper_z = Max(b.p0.z, p1.z) + radius;
+			prim.primID = i;
 		}
-		rt = RT(items.begin(), items.end());
+		arrayNodes = luxrays::buildembreebvh::BuildEmbreeBVH<4>(
+				RTC_BUILD_QUALITY_HIGH, prims, &nNodes);
 	}
 
-	RT rt;
+	// Depth-first traversal over the nodes containing x. Mirrors the
+	// IndexBVHArrayNode walk in pgic_funcs.cl exactly.
+	template<class F>
+	void Query(const Point &x, const F &visit) const {
+		u_int currentNode = 0;
+		const u_int stopNode = IndexBVHNodeData_GetSkipIndex(arrayNodes[0].nodeData);
+
+		while (currentNode < stopNode) {
+			const luxrays::ocl::IndexBVHArrayNode *node = &arrayNodes[currentNode];
+			const u_int nodeData = node->nodeData;
+
+			if (IndexBVHNodeData_IsLeaf(nodeData)) {
+				visit(node->entryLeaf.entryIndex);
+				++currentNode;
+			} else {
+				if ((x.x >= node->bvhNode.bboxMin[0]) && (x.x <= node->bvhNode.bboxMax[0]) &&
+						(x.y >= node->bvhNode.bboxMin[1]) && (x.y <= node->bvhNode.bboxMax[1]) &&
+						(x.z >= node->bvhNode.bboxMin[2]) && (x.z <= node->bvhNode.bboxMax[2]))
+					++currentNode;
+				else
+					currentNode = nodeData;
+			}
+		}
+	}
+
+	const luxrays::ocl::IndexBVHArrayNode *GetArrayNodes(u_int *count = nullptr) const {
+		if (count)
+			*count = nNodes;
+		return arrayNodes.get();
+	}
+
+private:
+	std::unique_ptr<luxrays::ocl::IndexBVHArrayNode[]> arrayNodes;
+	u_int nNodes;
 };
 
 //------------------------------------------------------------------------------
@@ -268,7 +302,8 @@ void PhotonGICache::UpdateWorker() {
 			updateCausticPhotonsBVH = new PGICPhotonBvh(&updateCausticPhotons,
 					causticPhotonTracedCount, updateLookUpRadius, params.caustic.lookUpNormalAngle);
 		}
-		BuildCausticBeamsIndex(updateCausticBeams, updateCausticBeamsIndex);
+		BuildCausticBeamsIndex(updateCausticBeams, updateCausticBeamsIndex,
+				updateLookUpRadius);
 	} catch (std::exception &e) {
 		SLG_LOG("ERROR: PhotonGI cache background update failed: " << e.what());
 		updateFailed = true;
@@ -788,16 +823,20 @@ const SpectrumGroup *PhotonGICache::GetIndirectRadiance(const BSDF &bsdf) const 
 	return nullptr;
 }
 
+const luxrays::ocl::IndexBVHArrayNode *PhotonGICache::GetCausticBeamsBVHArrayNodes(u_int *count) const {
+	return causticBeamsIndex ? causticBeamsIndex->GetArrayNodes(count) : nullptr;
+}
+
 void PhotonGICache::BuildCausticBeamsIndex() {
-	BuildCausticBeamsIndex(causticBeams, causticBeamsIndex);
+	BuildCausticBeamsIndex(causticBeams, causticBeamsIndex, params.caustic.lookUpRadius);
 }
 
 void PhotonGICache::BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
-		std::unique_ptr<PGICBeamIndex> &dst) {
+		std::unique_ptr<PGICBeamIndex> &dst, const float radius) {
 	dst.reset();
 	if (params.caustic.volumeBeams && (src.size() > 0)) {
 		SLG_LOG("PhotonGI building caustic beams index (" << src.size() << " beams)");
-		dst = std::make_unique<PGICBeamIndex>(src);
+		dst = std::make_unique<PGICBeamIndex>(src, radius);
 	}
 }
 
@@ -808,14 +847,8 @@ SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
 	const float r = params.caustic.lookUpRadius;
 	const float r2 = params.caustic.lookUpRadius2;
 
-	std::vector<PGICBeamIndex::Item> hits;
-	causticBeamsIndex->rt.query(bgi::intersects(PGICBeamIndex::BBox(
-			PGICBeamIndex::BPoint(x.x - r, x.y - r, x.z - r),
-			PGICBeamIndex::BPoint(x.x + r, x.y + r, x.z + r))),
-			back_inserter(hits));
-
-	for (auto const &hit : hits) {
-		const PhotonBeam &beam = causticBeams[hit.second];
+	causticBeamsIndex->Query(x, [&](const u_int beamIndex) {
+		const PhotonBeam &beam = causticBeams[beamIndex];
 		// Segment/ball overlap: the range of beam parameter t for which
 		// p0 + t*d lies inside the lookup ball around x. Solving the
 		// quadratic gives t = s +/- sqrt(r^2 - d2) where s is the unclamped
@@ -824,13 +857,13 @@ SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
 		const float s = Dot(x - beam.p0, beam.d);
 		const float d2 = DistanceSquared(x, beam.p0 + s * beam.d);
 		if (d2 >= r2)
-			continue;
+			return;
 
 		const float half = sqrtf(r2 - d2);
 		const float lo = Max(0.f, s - half);
 		const float hi = Min(beam.length, s + half);
 		if (hi <= lo)
-			continue;
+			return;
 
 		// The point-photon volume kernel (4/3*pi*r^3) integrated along the
 		// beam direction is exactly this overlap length.
@@ -844,7 +877,7 @@ SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
 
 		// Flux per unit length times the integrated kernel footprint
 		result.Add(beam.lightID, beam.alpha * beamT * bsdfEval * ((hi - lo) / beam.length));
-	}
+	});
 
 	// Kernel-consistent with the point-photon volume estimator (the beam
 	// spreads the packet density along its length instead of a point)

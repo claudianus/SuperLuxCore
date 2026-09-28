@@ -406,6 +406,16 @@ void PathOCLBaseOCLRenderThread::InitPhotonGI() {
 		intersectionDevice.FreeBuffer(&pgicCausticPhotonsBuff);
 		intersectionDevice.FreeBuffer(&pgicCausticPhotonsBVHNodesBuff);
 	}
+
+	if (cscene->pgicCausticBeams.size() > 0) {
+		intersectionDevice.AllocBuffer(&pgicCausticBeamsBuff, memTypeFlags, &cscene->pgicCausticBeams[0],
+			cscene->pgicCausticBeams.size() * sizeof(slg::ocl::PhotonBeam), "PhotonGI caustic cache all beams");
+		intersectionDevice.AllocBuffer(&pgicCausticBeamsBVHNodesBuff, memTypeFlags, &cscene->pgicCausticBeamsBVHArrayNode[0],
+			cscene->pgicCausticBeamsBVHArrayNode.size() * sizeof(luxrays::ocl::IndexBVHArrayNode), "PhotonGI caustic cache beams BVH nodes");
+	} else {
+		intersectionDevice.FreeBuffer(&pgicCausticBeamsBuff);
+		intersectionDevice.FreeBuffer(&pgicCausticBeamsBVHNodesBuff);
+	}
 }
 
 void PathOCLBaseOCLRenderThread::InitGuide() {
