@@ -14,6 +14,7 @@ docs live in `doc/features/` (see its README for the index).
 | [lpe.md](lpe.md) | Light Path Expressions (LPE) |
 | [cryptomatte.md](cryptomatte.md) | Cryptomatte AOVs |
 | [path-guiding.md](path-guiding.md) | Path guiding — implementation notes |
+| [restir-pt-design.md](restir-pt-design.md) | ReSTIR PT — estimator design, payload, staged plan |
 | [gotchas.md](gotchas.md) | Build / platform / debugging gotchas |
 | [openpbr-sss-findings.md](openpbr-sss-findings.md) | OpenPBR / SSS debugging findings |
 | [huang-hair-findings.md](huang-hair-findings.md) | Huang hair — porting findings |
