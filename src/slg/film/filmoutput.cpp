@@ -23,6 +23,8 @@
 
 #include <boost/lexical_cast.hpp>
 
+#include <oneapi/tbb.h>
+
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/imagebuf.h>
 
@@ -1020,14 +1022,27 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 	if (index > GetOutputCount(type))
 		throw runtime_error("Film output index not defined in Film::GetOutput<float>(): " + ToString(type) + "/" + ToString(index));
 
+	// Per-pixel output loops are pure reads into disjoint buffer
+	// slots - fan them out over TBB. GetOutput runs under filmMutex
+	// on every film refresh, so serial scans were a real cost at
+	// 4K x multi-channel.
+	auto parallelPixels = [nPixels = pixelCount](auto &&body) {
+		tbb::parallel_for(tbb::blocked_range<u_int>(0, nPixels),
+			[&](const tbb::blocked_range<u_int> &r) {
+				for (u_int i = r.begin(); i < r.end(); ++i)
+					body(i);
+			});
+	};
+
 	switch (type) {
 		case FilmOutputs::RGB: {
 			const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				GetPixelFromMergedSampleBuffers(0,
-						RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
-						i, &buffer[i * 3]);
+				RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
+				i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::RGB_IMAGEPIPELINE:
@@ -1039,13 +1054,13 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 		case FilmOutputs::RGBA: {
 			const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
-			for (u_int i = 0; i < pixelCount; ++i) {
+			parallelPixels([&](const u_int i) {
 				const u_int offset = i * 4;
 				GetPixelFromMergedSampleBuffers(0,
 						RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
 						i, &buffer[offset]);
 				channel_ALPHA->GetWeightedPixel(i, &buffer[offset + 3]);
-			}
+			});
 			break;
 		}
 		case FilmOutputs::RGBA_IMAGEPIPELINE: {
@@ -1054,17 +1069,18 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 
 			float *srcRGB = channel_IMAGEPIPELINEs[index]->GetPixels();
 			float *dst = buffer;
-			for (u_int i = 0; i < pixelCount; ++i) {
+			parallelPixels([&](const u_int i) {
 				*dst++ = *srcRGB++;
 				*dst++ = *srcRGB++;
 				*dst++ = *srcRGB++;
 				channel_ALPHA->GetWeightedPixel(i, dst++);
-			}
+			});
 			break;
 		}
 		case FilmOutputs::ALPHA: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_ALPHA->GetWeightedPixel(i, &buffer[i]);
+			});
 			break;
 		}
 		case FilmOutputs::DEPTH:
@@ -1080,98 +1096,117 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 			copy(channel_SHADING_NORMAL->GetPixels(), channel_SHADING_NORMAL->GetPixels() + pixelCount * 3, buffer);
 			break;
 		case FilmOutputs::DIRECT_DIFFUSE: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_DIFFUSE->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_DIFFUSE_REFLECT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_DIFFUSE_REFLECT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_DIFFUSE_TRANSMIT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_DIFFUSE_TRANSMIT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_GLOSSY: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_GLOSSY->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_GLOSSY_REFLECT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_GLOSSY_REFLECT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_GLOSSY_TRANSMIT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_GLOSSY_TRANSMIT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::EMISSION: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_EMISSION->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_DIFFUSE: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_DIFFUSE->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_DIFFUSE_REFLECT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_DIFFUSE_REFLECT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_DIFFUSE_TRANSMIT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_DIFFUSE_TRANSMIT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_GLOSSY: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_GLOSSY->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_GLOSSY_REFLECT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_GLOSSY_REFLECT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_GLOSSY_TRANSMIT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_GLOSSY_TRANSMIT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_SPECULAR: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_SPECULAR->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_SPECULAR_REFLECT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_SPECULAR_REFLECT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_SPECULAR_TRANSMIT: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_SPECULAR_TRANSMIT->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::MATERIAL_ID_MASK: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_MATERIAL_ID_MASKs[index]->GetWeightedPixel(i, &buffer[i]);
+			});
 			break;
 		}
 		case FilmOutputs::DIRECT_SHADOW_MASK: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_DIRECT_SHADOW_MASK->GetWeightedPixel(i, &buffer[i]);
+			});
 			break;
 		}
 		case FilmOutputs::INDIRECT_SHADOW_MASK: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_INDIRECT_SHADOW_MASK->GetWeightedPixel(i, &buffer[i]);
+			});
 			break;
 		}
 		case FilmOutputs::RADIANCE_GROUP: {
@@ -1181,7 +1216,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 				const ImagePipeline *ip = (imagePipelines.size() > 0) ? imagePipelines[0] : NULL;
 
 				float *dst = buffer;
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					float c[3];
 					channel_RADIANCE_PER_PIXEL_NORMALIZEDs[index]->GetWeightedPixel(i, c);
 					if (ip)
@@ -1190,7 +1225,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 					*dst++ += c[0];
 					*dst++ += c[1];
 					*dst++ += c[2];
-				}
+				});
 			}
 
 			if (index < channel_RADIANCE_PER_SCREEN_NORMALIZEDs.size()) {
@@ -1198,7 +1233,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 				const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
 				float *dst = buffer;
-				for (u_int i = 0; i < pixelCount; ++i) {
+				parallelPixels([&](const u_int i) {
 					float c[3];
 					channel_RADIANCE_PER_SCREEN_NORMALIZEDs[index]->GetWeightedPixel(i, c);
 					if (ip)
@@ -1208,7 +1243,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 					*dst++ += factor * c[0];
 					*dst++ += factor * c[1];
 					*dst++ += factor * c[2];
-				}
+				});
 			}
 			break;
 		}
@@ -1219,41 +1254,48 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 			copy(channel_RAYCOUNT->GetPixels(), channel_RAYCOUNT->GetPixels() + pixelCount, buffer);
 			break;
 		case FilmOutputs::BY_MATERIAL_ID: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_BY_MATERIAL_IDs[index]->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::IRRADIANCE: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_IRRADIANCE->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::OBJECT_ID_MASK: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_OBJECT_ID_MASKs[index]->GetWeightedPixel(i, &buffer[i]);
+			});
 			break;
 		}
 		case FilmOutputs::BY_OBJECT_ID: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_BY_OBJECT_IDs[index]->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::CONVERGENCE:
 			copy(channel_CONVERGENCE->GetPixels(), channel_CONVERGENCE->GetPixels() + pixelCount, buffer);
 			break;
 		case FilmOutputs::MATERIAL_ID_COLOR: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_MATERIAL_ID_COLOR->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::ALBEDO: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_ALBEDO->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::AVG_SHADING_NORMAL: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_AVG_SHADING_NORMAL->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::NOISE:
@@ -1265,10 +1307,11 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 		case FilmOutputs::CAUSTIC: {
 			const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				GetPixelFromMergedSampleBuffers(0, false, true,
-						RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
-						i, &buffer[i * 3]);
+				RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
+				i, &buffer[i * 3]);
+			});
 			break;
 		}
 		case FilmOutputs::VARIANCE: {
@@ -1276,7 +1319,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 			// derive Var[x] = max(E[x^2] - E[x]^2, 0)
 			const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
-			for (u_int i = 0; i < pixelCount; ++i) {
+			parallelPixels([&](const u_int i) {
 				float *dst = &buffer[i * 3];
 				channel_VARIANCE->GetWeightedPixel(i, dst);
 
@@ -1286,7 +1329,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 						i, mean);
 				for (u_int c = 0; c < 3; ++c)
 					dst[c] = Max(dst[c] - mean[c] * mean[c], 0.f);
-			}
+			});
 			break;
 		}
 		case FilmOutputs::MOTION_VECTOR:
@@ -1296,7 +1339,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 		case FilmOutputs::CRYPTOMATTE_MATERIAL: {
 			const auto &channel = (type == FilmOutputs::CRYPTOMATTE_OBJECT) ?
 					channel_CRYPTOMATTE_OBJECT : channel_CRYPTOMATTE_MATERIAL;
-			for (u_int i = 0; i < pixelCount; ++i) {
+			parallelPixels([&](const u_int i) {
 				float *dst = &buffer[i * SLG_CRYPTO_LEVELS * 2];
 				float ids[SLG_CRYPTO_LEVELS], covs[SLG_CRYPTO_LEVELS];
 				const u_int n = channel->GetSortedPairs(i, ids, covs);
@@ -1306,12 +1349,13 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 					dst[j * 2] = (j < n) ? ids[j] : 0.f;
 					dst[j * 2 + 1] = (j < n) ? covs[j] * k : 0.f;
 				}
-			}
+			});
 			break;
 		}
 		case FilmOutputs::LPE: {
-			for (u_int i = 0; i < pixelCount; ++i)
+			parallelPixels([&](const u_int i) {
 				channel_LPEs[index]->GetWeightedPixel(i, &buffer[i * 3]);
+			});
 			break;
 		}
 		default:
