@@ -286,6 +286,24 @@ protected:
 
 	std::mutex inFlightMutex;
 	std::vector<InFlightDispatch> inFlightWork;
+
+	// Deferred command-buffer batching: consecutive EnqueueKernel()
+	// calls encode into pendingCB and are committed together at the
+	// first synchronization point (FinishQueue/EnqueueReadBuffer/
+	// EnqueueWriteBuffer-conflict/AllocBuffer/FreeBuffer) or when the
+	// encoder cap is hit. The dense microkernel loop otherwise pays a
+	// full command-buffer + commit + track cycle per dispatch (~15x
+	// per iteration in dense PATHOCL).
+	// pendingBuffers duplicates inFlightWork.buffers semantics for the
+	// still-uncommitted encoders so EnqueueWriteBuffer's conflict scan
+	// sees them too. All pending state is under inFlightMutex.
+	MTLCommandBufferHandle pendingCB;
+	std::vector<const MetalDeviceBuffer *> pendingBuffers;
+	u_int pendingEncoderCount;
+
+	// Commit pendingCB into inFlightWork. inFlightMutex must be held.
+	void CommitPendingLocked();
+	void FlushPending();   // lock + CommitPendingLocked, no wait
 };
 
 }

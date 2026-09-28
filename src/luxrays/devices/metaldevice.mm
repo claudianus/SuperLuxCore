@@ -117,7 +117,9 @@ MetalDevice::MetalDevice(const Context & context,
 		HardwareDevice(),
 		deviceDesc(desc),
 		device(desc.GetMetalDevice()),
-		queue(nullptr) {
+		queue(nullptr),
+		pendingCB(nullptr),
+		pendingEncoderCount(0) {
 	[(__bridge id<MTLDevice>)device retain];
 	queue = (__bridge void *)[(__bridge id<MTLDevice>)device newCommandQueue];
 	deviceName = desc.GetName() + " MetalIntersect";
@@ -756,6 +758,14 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// render threads run this thousands of times and thread-exit otherwise
 	// releases the whole TLS pool at once - after the device/queue may be
 	// gone (observed as an objc_release crash at thread teardown).
+	// Deferred batching: encode this dispatch into the shared pendingCB
+	// and commit lazily (see header). The in-order queue semantics are
+	// preserved because encoders within one command buffer serialize in
+	// encode order and every synchronization path commits pending work
+	// first. inFlightMutex is held across the whole encode because the
+	// pending command buffer is shared mutable state (FinishQueue may
+	// run on the session thread to flush it).
+	std::lock_guard<std::mutex> lock(inFlightMutex);
 	@autoreleasepool {
 	auto& metalDeviceKernel = dynamic_cast<MetalDeviceKernelRef>(*kernel);
 	auto &m = metalDeviceKernel.marsh;
@@ -765,8 +775,12 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// vs caller-owned) is ambiguous across SDKs - a wrong guess once left
 	// command buffers alive only in the autorelease pool, and FinishQueue
 	// then waited/released freed objects (objc zombie: waitUntilCompleted
-	// sent to a deallocated instance).
-	id<MTLCommandBuffer> cb = [[q commandBuffer] retain];
+	// sent to a deallocated instance). pendingCB is retained at creation
+	// and survives this pool; CommitPendingLocked() transfers ownership
+	// to inFlightWork.
+	if (!pendingCB)
+		pendingCB = [[q commandBuffer] retain];
+	id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)pendingCB;
 	id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
 
 	[e setComputePipelineState:(__bridge id<MTLComputePipelineState>)metalDeviceKernel.pipeline];
@@ -942,22 +956,35 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 
 	[e endEncoding];
 
-	// Commit + track under one lock: FinishQueue (which can run on the
-	// self-halt session thread) must never observe a committed-but-
-	// untracked buffer (queue outlived) nor a tracked-but-uncommitted
-	// one (waitUntilCompleted on an uncommitted buffer). Committing is
-	// just an enqueue - cheap to hold the lock for.
-	{
-		std::lock_guard<std::mutex> lock(inFlightMutex);
-		// NOTE: (__bridge_retained) is a NO-OP under MRC - it only retains
-		// under ARC. Use an explicit -retain so the tracked command buffer
-		// actually survives the autoreleasepool drain; FinishQueue()
-		// balances it with -release after waitUntilCompleted.
-		inFlightWork.push_back({(MTLCommandBufferHandle)[cb retain], usedBuffers});
-		[cb commit];
-	}
+	// Register this dispatch's buffers with the pending batch so the
+	// EnqueueWriteBuffer conflict scan sees uncommitted work too.
+	pendingBuffers.insert(pendingBuffers.end(),
+			usedBuffers.begin(), usedBuffers.end());
+	if (++pendingEncoderCount >= 64)   // bound CB memory / latency
+		CommitPendingLocked();
 
 	}   // @autoreleasepool
+}
+
+void MetalDevice::CommitPendingLocked() {
+	// inFlightMutex must be held by the caller.
+	if (!pendingCB)
+		return;
+
+	// NOTE: (__bridge_retained) is a NO-OP under MRC - it only retains
+	// under ARC. pendingCB was retained at creation; ownership transfers
+	// to inFlightWork which FinishQueue() releases after
+	// waitUntilCompleted.
+	inFlightWork.push_back({pendingCB, pendingBuffers});
+	pendingBuffers.clear();
+	[(__bridge id<MTLCommandBuffer>)pendingCB commit];
+	pendingCB = nullptr;
+	pendingEncoderCount = 0;
+}
+
+void MetalDevice::FlushPending() {
+	std::lock_guard<std::mutex> lock(inFlightMutex);
+	CommitPendingLocked();
 }
 
 void MetalDevice::CommitAndTrackInFlight(MTLCommandBufferHandle commandBuffer,
@@ -968,7 +995,10 @@ void MetalDevice::CommitAndTrackInFlight(MTLCommandBufferHandle commandBuffer,
 	// one lock so FinishQueue() never observes a committed-but-untracked
 	// buffer and EnqueueWriteBuffer() can still detect conflicts.
 	// (__bridge_retained) would be a no-op under MRC - explicit -retain.
+	// CommitPendingLocked() first: the externally encoded CB must not
+	// overtake batched work the engine enqueued before it.
 	std::lock_guard<std::mutex> lock(inFlightMutex);
+	CommitPendingLocked();
 	inFlightWork.push_back({(MTLCommandBufferHandle)[cb retain], buffers});
 	[cb commit];
 }
@@ -1029,6 +1059,17 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 				if (conflicting)
 					break;
 			}
+			// Uncommitted batched encoders reference the buffer too: a
+			// host memcpy here would race with their not-yet-scheduled
+			// reads, so count them as conflicts.
+			if (!conflicting) {
+				for (const MetalDeviceBuffer *b : pendingBuffers) {
+					if (b == metalBuff) {
+						conflicting = true;
+						break;
+					}
+				}
+			}
 		}
 
 		if (conflicting)
@@ -1041,6 +1082,9 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 }
 
 void MetalDevice::FlushQueue() {
+	// Commit pending batched work without waiting - starts the GPU
+	// earlier and keeps the OpenCL flush semantics.
+	FlushPending();
 }
 
 void MetalDevice::FinishQueue() {
@@ -1051,6 +1095,9 @@ void MetalDevice::FinishQueue() {
 	std::vector<InFlightDispatch> waiting;
 	{
 		std::lock_guard<std::mutex> lock(inFlightMutex);
+		// Commit the batched encoders first so the wait below covers
+		// them too.
+		CommitPendingLocked();
 		waiting.swap(inFlightWork);
 	}
 	for (auto &w : waiting) {
@@ -1103,6 +1150,14 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 							}
 							if (conflicting)
 								break;
+						}
+						if (!conflicting) {
+							for (const MetalDeviceBuffer *b : pendingBuffers) {
+								if (b == metalBuff) {
+									conflicting = true;
+									break;
+								}
+							}
 						}
 				}
 				if (conflicting)
