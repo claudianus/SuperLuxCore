@@ -859,6 +859,8 @@ void PathOCLBaseOCLRenderThread::SetKernelArgs() {
 		intersectionDevice.SetKernelArg(advancePathsKernel_QueuePrefix, argIndex++, taskQueueBaseBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_QueuePrefix, argIndex++, taskQueueTotalsBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_QueuePrefix, argIndex++, WAVEFRONT_NUM_STATES);
+		intersectionDevice.SetKernelArg(advancePathsKernel_QueuePrefix, argIndex++,
+				wavefrontFlatQueues ? 1u : 0u);
 	}
 
 	//--------------------------------------------------------------------------
@@ -964,26 +966,37 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	const u_int taskCount = renderEngine->taskCount;
 
-	// Per-(state, lambda) histogram (AdvancePaths_BucketHistogram). The
-	// counters were re-zeroed by the previous iteration's QueuePrefix
-	// (and zero-initialized at buffer creation for iteration 0) - no
-	// host write inside the wavefront loop.
-	intersectionDevice.EnqueueKernel(advancePathsKernel_BucketHistogram,
-			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
-
-	// Device-side exclusive prefix (M3a): QueuePrefix writes the lambda
-	// segment bases (consumed as atomic cursors by BuildQueues), the
-	// per-state totals (the WAVEFRONT_GUARD lane bound) and re-zeroes
-	// the histogram counters - replacing the old host prefix + blocking
-	// bases upload. The totals are read back once per iteration to size
-	// the state launches: compact launches are the wavefront win, and a
-	// single 72-byte read is cheap next to the launches it enables
-	// (stale sizing starves tail entries for a whole resync period).
 	const size_t prefixSize = ((size_t)WAVEFRONT_NUM_STATES +
 			advancePathsWorkGroupSize - 1) / advancePathsWorkGroupSize *
 			advancePathsWorkGroupSize;
-	intersectionDevice.EnqueueKernel(advancePathsKernel_QueuePrefix,
-			HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
+
+	if (wavefrontFlatQueues) {
+		// Flat append (non-spectral): BuildQueues runs first, leaving
+		// each state's cursor at the exact queue length; QueuePrefix
+		// then publishes the cursors as totals and re-zeros them. The
+		// BucketHistogram sweep is skipped entirely - a whole
+		// taskCount-lane pass saved per iteration.
+		intersectionDevice.EnqueueKernel(advancePathsKernel_BuildQueues,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+		intersectionDevice.EnqueueKernel(advancePathsKernel_QueuePrefix,
+				HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
+	} else {
+		// Per-(state, lambda) histogram (AdvancePaths_BucketHistogram).
+		// The counters were re-zeroed by the previous iteration's
+		// QueuePrefix (and zero-initialized at buffer creation for
+		// iteration 0) - no host write inside the wavefront loop.
+		intersectionDevice.EnqueueKernel(advancePathsKernel_BucketHistogram,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+
+		// Device-side exclusive prefix (M3a): QueuePrefix writes the
+		// lambda segment bases (consumed as atomic cursors by
+		// BuildQueues), the per-state totals (the WAVEFRONT_GUARD lane
+		// bound) and re-zeroes the histogram counters - replacing the
+		// old host prefix + blocking bases upload. The totals are read
+		// back once per iteration to size the state launches.
+		intersectionDevice.EnqueueKernel(advancePathsKernel_QueuePrefix,
+				HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
+	}
 
 	// Peek the totals through the shared-storage mapping when the
 	// device exposes one: on Metal EnqueueReadBuffer drains the whole
@@ -1006,8 +1019,10 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 
 	// Refill the queues: tasks land in lambda-contiguous segments of
 	// their state's flat queue region (AdvancePaths_BuildQueues).
-	intersectionDevice.EnqueueKernel(advancePathsKernel_BuildQueues,
-			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// Flat mode already appended them before QueuePrefix above.
+	if (!wavefrontFlatQueues)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_BuildQueues,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 
 	// Vertex merging (M7): rebuild the spatial hash once per wavefront
 	// iteration - the MK_VC_CONNECT state launch below consumes it.
@@ -1028,21 +1043,30 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	static const bool wavefrontDebug = getenv("LUXRAYS_WAVEFRONT_DEBUG") != nullptr;
 	static u_int dbgIter = 0;
 	if (wavefrontDebug && dbgIter++ < 8) {
-		// M3a: the histogram counters are re-zeroed by QueuePrefix, so
-		// the per-(state, lambda) counts are reconstructed from the
-		// post-BuildQueues segment cursors (taskQueueBase ends each
-		// segment): count[s][l] = end[s][l] - end[s][l-1].
-		std::vector<u_int> segEnds(WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA);
-		intersectionDevice.EnqueueReadBuffer(taskQueueBaseBuff,
-				CL_TRUE, sizeof(u_int) * segEnds.size(), segEnds.data());
-		for (u_int s = 0; s < WAVEFRONT_NUM_STATES; ++s) {
-			u_int prev = 0;
-			for (u_int l = 0; l < WAVEFRONT_NUM_LAMBDA; ++l) {
-				const u_int end = segEnds[s * WAVEFRONT_NUM_LAMBDA + l];
-				wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA + l] = end - prev;
-				prev = end;
+		if (wavefrontFlatQueues) {
+			// Flat mode: QueuePrefix already published the cursors as
+			// totals and re-zeroed the bases - segment ends no longer
+			// exist, every entry is lambda 0.
+			for (u_int s = 0; s < WAVEFRONT_NUM_STATES; ++s)
+				wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA] =
+						wavefrontQueueTotals[s];
+		} else {
+			// M3a: the histogram counters are re-zeroed by QueuePrefix,
+			// so the per-(state, lambda) counts are reconstructed from
+			// the post-BuildQueues segment cursors (taskQueueBase ends
+			// each segment): count[s][l] = end[s][l] - end[s][l-1].
+			std::vector<u_int> segEnds(WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA);
+			intersectionDevice.EnqueueReadBuffer(taskQueueBaseBuff,
+					CL_TRUE, sizeof(u_int) * segEnds.size(), segEnds.data());
+			for (u_int s = 0; s < WAVEFRONT_NUM_STATES; ++s) {
+				u_int prev = 0;
+				for (u_int l = 0; l < WAVEFRONT_NUM_LAMBDA; ++l) {
+					const u_int end = segEnds[s * WAVEFRONT_NUM_LAMBDA + l];
+					wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA + l] = end - prev;
+					prev = end;
+				}
+				wavefrontQueueTotals[s] = prev;
 			}
-			wavefrontQueueTotals[s] = prev;
 		}
 		std::vector<u_int> q(WAVEFRONT_NUM_STATES * taskCount);
 		intersectionDevice.EnqueueReadBuffer(taskQueueBuff,
@@ -1050,9 +1074,10 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		std::vector<slg::ocl::pathoclbase::GPUTaskState> st(taskCount);
 		intersectionDevice.EnqueueReadBuffer(tasksStateBuff,
 				CL_TRUE, sizeof(st[0]) * taskCount, st.data());
-		std::vector<u_int> lam(taskCount);
-		intersectionDevice.EnqueueReadBuffer(taskLambdaBuff,
-				CL_TRUE, sizeof(u_int) * taskCount, lam.data());
+		std::vector<u_int> lam(taskCount, 0);
+		if (!wavefrontFlatQueues)
+			intersectionDevice.EnqueueReadBuffer(taskLambdaBuff,
+					CL_TRUE, sizeof(u_int) * taskCount, lam.data());
 		u_int total = 0, badState = 0, badLambda = 0, dup = 0, oob = 0;
 		u_int lamTrans = 0;
 		std::vector<u_int> seen(taskCount, 0);

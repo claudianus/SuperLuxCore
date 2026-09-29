@@ -183,6 +183,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	// compile+buffer-time, so it must land before InitGPUTaskBuffer and
 	// InitKernels run).
 	wavefrontQueues = false;
+	wavefrontFlatQueues = false;
 	taskQueueBuff = nullptr;
 	taskQueueCountBuff = nullptr;
 	taskQueueBaseBuff = nullptr;

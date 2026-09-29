@@ -479,6 +479,11 @@ protected:
 	luxrays::HardwareDeviceBuffer *taskQueueTotalsBuff;
 	luxrays::HardwareDeviceBuffer *taskLambdaBuff;
 	bool wavefrontQueues;
+	// Flat append mode (non-spectral renders): BuildQueues' atomic
+	// cursor already ends at the exact per-state count, so the
+	// BucketHistogram sweep is skipped and QueuePrefix publishes the
+	// cursors as totals instead of consuming histogram counters.
+	bool wavefrontFlatQueues;
 	// wavefrontQueueTotals is the per-iteration totals readback used to
 	// size the state launches (compact launches are the wavefront win;
 	// measured: stale sizing starves tail entries and costs ~6x).

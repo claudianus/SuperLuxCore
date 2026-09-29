@@ -4266,9 +4266,15 @@ __kernel void AdvancePaths_BuildQueues(
 		return;
 
 	// taskQueueBase doubles as the append cursor: the uploaded segment
-	// base advances on every append, ending at the segment end.
+	// base advances on every append, ending at the segment end. The
+	// lambda bin is recomputed inline (Wavefront_TaskLambda reads
+	// spectralHeroAlive, which nothing mutates between the histogram
+	// and this pass), so the flat (non-spectral) path can skip
+	// AdvancePaths_BucketHistogram entirely and let the cursor alone
+	// produce the per-state total.
 	const uint slot = atomic_inc(
-			&taskQueueBase[state * SLG_SPECTRAL_BINS + taskLambda[gid]]);
+			&taskQueueBase[state * SLG_SPECTRAL_BINS +
+					Wavefront_TaskLambda(&sampleResultsBuff[gid])]);
 	taskQueueBuf[state * taskQueueStride + slot] = gid;
 }
 
@@ -4287,19 +4293,30 @@ __kernel void AdvancePaths_QueuePrefix(
 		__global uint *taskQueueCount,
 		__global uint *taskQueueBase,
 		__global uint *taskQueueTotals,
-		const uint queueStateCount
+		const uint queueStateCount,
+		const uint flatQueues
 		) {
 	const uint s = get_global_id(0);
 	if (s >= queueStateCount)
 		return;
 
-	uint base = 0;
-	for (uint l = 0; l < SLG_SPECTRAL_BINS; ++l) {
-		taskQueueBase[s * SLG_SPECTRAL_BINS + l] = base;
-		base += taskQueueCount[s * SLG_SPECTRAL_BINS + l];
-		taskQueueCount[s * SLG_SPECTRAL_BINS + l] = 0;
+	if (flatQueues) {
+		// Flat append mode (non-spectral): BuildQueues already ran and
+		// each state's lambda-0 cursor ended at the exact queue length.
+		// Publish it as the launch bound and reset the cursors for the
+		// next iteration's appends - no histogram pass needed.
+		taskQueueTotals[s] = taskQueueBase[s * SLG_SPECTRAL_BINS];
+		for (uint l = 0; l < SLG_SPECTRAL_BINS; ++l)
+			taskQueueBase[s * SLG_SPECTRAL_BINS + l] = 0;
+	} else {
+		uint base = 0;
+		for (uint l = 0; l < SLG_SPECTRAL_BINS; ++l) {
+			taskQueueBase[s * SLG_SPECTRAL_BINS + l] = base;
+			base += taskQueueCount[s * SLG_SPECTRAL_BINS + l];
+			taskQueueCount[s * SLG_SPECTRAL_BINS + l] = 0;
+		}
+		taskQueueTotals[s] = base;
 	}
-	taskQueueTotals[s] = base;
 }
 
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

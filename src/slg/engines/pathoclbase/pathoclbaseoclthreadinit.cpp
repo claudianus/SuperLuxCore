@@ -908,7 +908,10 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 		static const u_int zeros[WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA] = { 0u };
 		intersectionDevice.AllocBufferRW(&taskQueueCountBuff, (void *)zeros,
 				sizeof(zeros), "taskQueueCount");
-		intersectionDevice.AllocBufferRW(&taskQueueBaseBuff, nullptr,
+		// The append cursors must start zeroed: flat mode (non-spectral)
+		// runs BuildQueues before the first QueuePrefix, and spectral
+		// mode rewrites them each iteration anyway.
+		intersectionDevice.AllocBufferRW(&taskQueueBaseBuff, (void *)zeros,
 				sizeof(u_int) * WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA,
 				"taskQueueBase");
 		intersectionDevice.AllocBufferRW(&taskQueueTotalsBuff, nullptr,
@@ -1164,13 +1167,13 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// Wavefront per-state task queues (E3): pathocl.wavefront =
 	// auto|on|off, LUXRAYS_WAVEFRONT_QUEUES env overrides. The decision
 	// is compile+buffer-time so it must precede InitGPUTaskBuffer() and
-	// InitKernels(). AUTO currently resolves to OFF: the current tree
-	// measures wavefront slower than dense on cornell (-16%),
-	// classroom-hdr (-24%) and pg-indirect (-21%) at 1280x720/64K-262K
-	// tasks on Metal M5 Pro (dev-tools/wf_auto_bench.py). The earlier
-	// +153% figure was a branch-era measurement and does not
-	// reproduce on main - re-enable only when a scene-aware heuristic
-	// shows it wins where it is enabled.
+	// InitKernels(). AUTO currently resolves to OFF: clean-GPU
+	// measurements (dev-tools/wf_auto_bench.py, Metal M5 Pro, 720p)
+	// show wavefront at parity to +15% (earlier regressions were
+	// benchmark contamination from a concurrent GPU process; earlier
+	// +153% was a branch-era figure that does not reproduce on main).
+	// Re-enable auto only when a consistent win is shown across
+	// task counts and divergent scenes.
 	//--------------------------------------------------------------------------
 	{
 		const string wavefrontMode = renderEngine->renderConfig.GetConfig().Get(
@@ -1180,9 +1183,16 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 			wavefrontQueues = (atoi(env) != 0);
 		else
 			wavefrontQueues = (wavefrontMode == "on");
+		// Flat append (non-spectral): BuildQueues' append cursors double
+		// as exact per-state counts, so the histogram sweep is skipped.
+		// Spectral keeps lambda-segmented queues, which need the
+		// histogram+prefix to compute per-(state,lambda) segment bases.
+		wavefrontFlatQueues = wavefrontQueues &&
+				!renderEngine->pathTracer.spectralEnable;
 		if (wavefrontQueues)
 			SLG_LOG("[PathOCLBaseRenderThread] Wavefront task queues "
-					"enabled (mode=" << wavefrontMode << ")");
+					"enabled (mode=" << wavefrontMode
+					<< (wavefrontFlatQueues ? ", flat" : ", spectral") << ")");
 	}
 
 	//--------------------------------------------------------------------------
