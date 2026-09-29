@@ -58,7 +58,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-minor: [10, 11, 12, 13, 14]
+        # The addon requires Blender >= 5.2, which bundles Python 3.13
+        # (blender_manifest.toml: blender_version_min = "5.2.0").
+        python-minor: [13]
         #os: [ubuntu-latest, windows-2022, macos-15-intel, macos-15, windows-11-arm]
         os: [ubuntu-latest, windows-2022, macos-15-intel, macos-15]
     env:
