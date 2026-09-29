@@ -377,6 +377,41 @@ parallel pool cmp-equal the serially-produced ones on the same input;
 cross-run diffs are only the cache-dir path embedded in the module
 (`source_filename`), pre-existing behaviour.
 
+## CUDA/NVRTC: `--Ofast-compile` + adaptive `--split-compile` (Windows,
+RTX 5060, 2026-09-30)
+
+The PathOCL megakernel (~100k lines preprocessed) cold compile on an
+RTX 5060 / 16-core / 32GB box:
+
+| mode | compile time | notes |
+|---|---|---|
+| SASS, NVRTC 12.8, `--split-compile=4` (old default) | ~21–22 min | ~12GB peak at 4 ptxas units |
+| SASS, NVRTC 12.9.86, `--Ofast-compile=mid`, split=8 | **~1–29s** | first-ever run ~29s (PCH+driver warmup), steady-state ~1s; parent peak WS ~0.5–1.5GB |
+| PTX forced (`LUX_CUDA_SASS=0`) | ~15min | driver-side JIT is single-threaded; ~1.7–3.5GB — the intended low-RAM fallback |
+
+Kernel throughput unaffected: 10.4–10.6M samples/s (same scene as the
+~10.5M pre-change baseline).
+
+Changes in `src/luxrays/utils/cuda.cpp`:
+
+- `CudaOfastLevel()`: `--Ofast-compile=<level>` for NVRTC >= 12.9
+  (`cuewNvrtcVersion() >= 129`, i.e. `10*major+minor`). Default `mid`;
+  `LUX_CUDA_OFAST=none|min|mid|max` overrides — but the env is gated by
+  the version check too, because passing the flag to NVRTC < 12.9 fails
+  the whole compile (option is case-sensitive: `--Ofast-compile`, not
+  `--ofast-compile`).
+- `CudaSplitUnits()`: `--split-compile=N` for cubin compiles scales as
+  `min(cores, RAM/4GB)` clamped to `[1,16]` (was fixed 4).
+  `LUX_CUDA_SPLIT` overrides. PTX keeps `--split-compile=0`.
+- NVRTC pin bumped `nvidia-cuda-nvrtc-cu12` 12.8.93 -> 12.9.86
+  (pyproject, dev wheel packers, addon `cmake/bundled-wheels-*.txt`).
+  The 12.9 wheel needs `nvrtc-builtins64_129.dll` loadable — the pip
+  wheel's `nvidia/cuda_nvrtc/bin` layout provides it.
+
+Unchanged: `LUX_CUDA_SASS` (0 forces PTX, non-empty nonzero forces
+SASS), the 20GB RAM threshold for defaulting to SASS, and the
+cubin-compile -> PTX fallback on NVRTC failure.
+
 Regression: `dev-tools/vulkan-regression.sh --full` ALL PASSED both runs (Stage A 15/15 HWRT+SW, Stage B centre 4.0000 vs 4.0±0.20, Stage
 C AS rebuild). A direct `LUXRAYS_VULKAN_RT=0 vk_intersect_test` run
 also exercised the SW-traversal CompileProgram path on the new code.

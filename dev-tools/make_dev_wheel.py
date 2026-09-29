@@ -42,7 +42,7 @@ Summary: SuperLuxCore Python bindings
 Keywords: raytracing,ray tracing,rendering,pbr,physical based rendering,path tracing
 Author: SuperLuxCore contributors
 Requires-Python: >=3.10
-Requires-Dist: nvidia-cuda-nvrtc-cu12 == 12.8.93; sys_platform != 'darwin' and platform_machine != 'ARM64'
+Requires-Dist: nvidia-cuda-nvrtc-cu12 == 12.9.86; sys_platform != 'darwin' and platform_machine != 'ARM64'
 """
 
 WHEEL = f"""\

@@ -22,6 +22,7 @@
 #include <iostream>
 #include <fstream>
 #include <string.h>
+#include <thread>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -78,6 +79,45 @@ static bool CudaSassRequested() {
 static bool CudaCubinCapable(const bool forcePTX) {
 	return !forcePTX && CudaSassRequested() &&
 			(nvrtcGetCUBIN != nullptr) && (nvrtcGetCUBINSize != nullptr);
+}
+
+// NVRTC 12.9 added --Ofast-compile={none,min,mid,max}, which skips part of
+// the single-threaded NVVM optimization pipeline — the dominant cost when
+// compiling the ~100k-line PathOCL megakernel. Default "mid" (mostly
+// preserved kernel performance, much faster compile); LUX_CUDA_OFAST
+// accepts none|min|mid|max.
+static const char *CudaOfastLevel() {
+	static const char *v = [] {
+		// Option is NVRTC >= 12.9 only (12.9 -> 129); forcing it on an older
+		// NVRTC would fail the whole compile, so gate the env override too.
+		if (cuewNvrtcVersion() < 129)
+			return "none";
+		const char *e = getenv("LUX_CUDA_OFAST");
+		if (e && e[0])
+			for (const char *lvl : {"none", "min", "mid", "max"})
+				if (!strcmp(e, lvl))
+					return e;
+		return "mid";
+	}();
+	return v;
+}
+
+// Parallel ptxas units for SASS compilation. Each unit adds module-level
+// overhead (~12 GB peak measured at 4 units on the megakernel, before
+// --Ofast-compile), so scale with cores but cap by RAM:
+// min(cores, RAM/4 GB), clamped to [1, 16]. LUX_CUDA_SPLIT overrides.
+static int CudaSplitUnits() {
+	static const int v = [] {
+		if (const char *e = getenv("LUX_CUDA_SPLIT")) {
+			const int n = atoi(e);
+			if (n > 0)
+				return n;
+		}
+		const unsigned cores = std::thread::hardware_concurrency();
+		const uint64_t gb = PhysMemBytes() >> 30;
+		return std::min(std::max((int)std::min<uint64_t>(cores ? cores : 4, gb / 4), 1), 16);
+	}();
+	return v;
 }
 
 static string GetCuda10Architecture() {
@@ -155,13 +195,20 @@ bool cudaKernelCache::ForcedCompilePTX(
 		cudaOpts.push_back("-Xcudafe");
 		cudaOpts.push_back("--diag_suppress=68");
 
-		// Accelerate compilation
-		//cudaOpts.push_back("--Ofast-compile=min"); # Only 12.9+
+		// Accelerate compilation: NVRTC >= 12.9 --Ofast-compile level
+		// (LUX_CUDA_OFAST). Storage must outlive nvrtcCompileProgram.
+		const string ofastOpt = string("--Ofast-compile=") + CudaOfastLevel();
+		if (CudaOfastLevel() != string("none"))
+			cudaOpts.push_back(ofastOpt.c_str());
+
 		// SASS mode needs split-compile: the embedded ptxas run with
 		// --split-compile=0 OOM-aborts the process on the PathOCL
-		// megakernel (~100k lines). 4 parallel units measured ~12GB peak
-		// and produced a valid 64MB sm_120 cubin in ~8min.
-		cudaOpts.push_back(toCubin ? "--split-compile=4" : "--split-compile=0");
+		// megakernel (~100k lines). Unit count scales with cores/RAM
+		// (LUX_CUDA_SPLIT); 4 units measured ~12GB peak and produced a
+		// valid 64MB sm_120 cubin in ~8min.
+		const string splitOpt = string("--split-compile=") +
+				to_string(toCubin ? CudaSplitUnits() : 0);
+		cudaOpts.push_back(splitOpt.c_str());
 
 		// Enable pre-compiled headers
 		cudaOpts.push_back("--pch");
