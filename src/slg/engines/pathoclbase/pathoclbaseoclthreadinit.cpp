@@ -519,9 +519,8 @@ void PathOCLBaseOCLRenderThread::DrainGuide() {
 	// the args must be re-bound (the old chunk table never reallocated
 	// and could skip this).
 	{
-		static u_int drainCount = 0u;
-		if (++drainCount >= 10u) {
-			drainCount = 0u;
+		if (++guideDrainCount >= 10u) {
+			guideDrainCount = 0u;
 			renderEngine->guideCache->ForceSwap();
 			renderEngine->guideCache->SnapshotTree(&renderEngine->guideNodes,
 					&renderEngine->guideLeaves);

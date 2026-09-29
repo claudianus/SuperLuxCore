@@ -4200,6 +4200,7 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 			// at contribution assembly (mnee->dispersive).
 			dispersive = true;
 			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					MAKE_FLOAT3(-1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 0.f),
 					&occlBsdf->hitPoint) / nc;
 #else
 			// No wavelength state on the path: keep skipping dispersive
@@ -4704,6 +4705,7 @@ OPENCL_FORCE_INLINE float MneeChain_InitVtxZero(
 			// dispersive flag marks the connect for hero collapse.
 			mnee->dispersive = 1;
 			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					MAKE_FLOAT3(-1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 0.f),
 					&occlBsdf->hitPoint) / nc;
 #else
 			return -1.f;
@@ -5094,6 +5096,7 @@ OPENCL_FORCE_NOT_INLINE void MneeChain_ProcessState(
 				// bin only, the contribution collapses at assembly.
 				mnee->dispersive = 1;
 				etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+						MAKE_FLOAT3(-1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 0.f),
 						&taskMnee->mneeBsdf.hitPoint) / nc;
 #else
 				vertexOk = false;
@@ -5988,6 +5991,7 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 			// collapses at assembly via mnee->dispersive.
 			dispersive = true;
 			etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+					MAKE_FLOAT3(-1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 0.f),
 					&occlBsdf->hitPoint) / nc;
 #else
 			return 0;
@@ -6513,6 +6517,7 @@ OPENCL_FORCE_NOT_INLINE void LMneeChain_ProcessState(
 				// bin only, the contribution collapses at assembly.
 				mnee->dispersive = 1;
 				etaVertex = Spectral_DispersiveIOR(nt, cauchyB,
+						MAKE_FLOAT3(-1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 0.f),
 						&taskMnee->mneeBsdf.hitPoint) / nc;
 #else
 				vertexOk = false;

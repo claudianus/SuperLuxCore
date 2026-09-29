@@ -125,6 +125,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 		guideRecBuff[i] = nullptr;
 	guideNodesBuff = nullptr;
 	guideLeavesBuff = nullptr;
+	guideDrainCount = 0u;
 	portalRectsBuff = nullptr;
 
 	// OpenCL task related buffers

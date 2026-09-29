@@ -395,17 +395,10 @@ OPENCL_FORCE_INLINE float Spectral_WaveLength2IOR(const float waveLength,
 	return ior + B / ((waveLength * 0.001f) * (waveLength * 0.001f));
 }
 
-OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
-		const float cauchyB, __global const HitPoint *hitPoint) {
-	if (cauchyB <= 0.f)
-		return nt;
-	const uint hero = min((hitPoint->spectralHeroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
-			SLG_SPECTRAL_BINS - 1u);
-	return Spectral_WaveLength2IOR(hitPoint->spectralW[hero], nt, cauchyB);
-}
-
-// Dispersion-enabled variants: sellB.x < 0 -> Cauchy path via cauchyB
-// (unchanged behaviour), otherwise 3-term Sellmeier n(lambda).
+// Single-form dispersive IOR (OpenCL C has no overloading): sellB.x
+// < 0 selects the Cauchy path via cauchyB - identical to the old
+// 3-arg variant since Spectral_WaveLength2IORSellmeier falls back to
+// Cauchy internally. Otherwise 3-term Sellmeier n(lambda).
 OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
 		const float cauchyB, const float3 sellB, const float3 sellC,
 		__global const HitPoint *hitPoint) {
@@ -417,10 +410,14 @@ OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
 			cauchyB, sellB, sellC);
 }
 
+// Single-form dispersive Fresnel: sellB.x < 0 -> per-bin Cauchy,
+// otherwise per-bin Sellmeier. sellB.x < 0 && cauchyB <= 0 means no
+// dispersion at all - uniform base-IOR Fresnel.
 OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
-		const float nc, const float cauchyB, const float cosTheta,
+		const float nc, const float cauchyB, const float3 sellB,
+		const float3 sellC, const float cosTheta,
 		__global const HitPoint *hitPoint) {
-	if (cauchyB <= 0.f)
+	if (sellB.x < 0.f && cauchyB <= 0.f)
 		return MAKE_FLOAT3(FresnelCauchy_Evaluate(nt / nc, cosTheta),
 				FresnelCauchy_Evaluate(nt / nc, cosTheta),
 				FresnelCauchy_Evaluate(nt / nc, cosTheta));
@@ -430,30 +427,12 @@ OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
 	float3 F = BLACK;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
 		if (aliveMask & (1u << i)) {
-			const float r = FresnelCauchy_Evaluate(
-					Spectral_WaveLength2IOR(hitPoint->spectralW[i], nt, cauchyB) / nc,
-					cosTheta);
-			if (i == 0) F.x = r; else if (i == 1) F.y = r; else F.z = r;
-		}
-	}
-	return F;
-}
-
-OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
-		const float nc, const float cauchyB, const float3 sellB,
-		const float3 sellC, const float cosTheta,
-		__global const HitPoint *hitPoint) {
-	if (sellB.x < 0.f)
-		return Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosTheta, hitPoint);
-
-	const uint aliveMask = hitPoint->spectralHeroAlive & SLG_SW_ALIVE_MASK;
-	float3 F = BLACK;
-	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
-		if (aliveMask & (1u << i)) {
-			const float r = FresnelCauchy_Evaluate(
-					Spectral_WaveLength2IORSellmeier(hitPoint->spectralW[i], nt,
-							cauchyB, sellB, sellC) / nc,
-					cosTheta);
+			const float ior = (sellB.x < 0.f) ?
+					Spectral_WaveLength2IOR(hitPoint->spectralW[i],
+							nt, cauchyB) :
+					Spectral_WaveLength2IORSellmeier(hitPoint->spectralW[i],
+							nt, cauchyB, sellB, sellC);
+			const float r = FresnelCauchy_Evaluate(ior / nc, cosTheta);
 			if (i == 0) F.x = r; else if (i == 1) F.y = r; else F.z = r;
 		}
 	}

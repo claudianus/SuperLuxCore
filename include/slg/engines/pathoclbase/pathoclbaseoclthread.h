@@ -345,6 +345,11 @@ protected:
 	luxrays::HardwareDeviceBuffer *guideDbgBuff;
 	// Path guiding (P1-3 M2b-2): per-task training records (float4/task)
 	luxrays::HardwareDeviceBuffer *guideRecBuff[16];
+	// Per-thread drain counter - a function-static counter was shared
+	// across render threads AND leaked across sessions (drains-per-swap
+	// divided by the thread count, stale state carried to the next
+	// render).
+	u_int guideDrainCount;
 	// Portal bounce proposal (M5): 4 float4 records per aperture rect
 	luxrays::HardwareDeviceBuffer *portalRectsBuff;
 

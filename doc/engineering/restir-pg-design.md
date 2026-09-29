@@ -129,5 +129,16 @@ GI-side symmetry (landed, same commit):
   the existing 0x01–0x04/0x40+ stream map.
 - Regressions: e19 GI 10/10 (CPU+GPU Release), e95 6/6, e96 7/7.
 
-Open: depth>=1 reservoir records; longer renders on caustic-heavy
-scenes.
+Note: reservoirs only exist at depth-0, so "depth>=1 reservoir
+records" is moot - and deeper coverage is already provided by the
+ordinary deferred per-vertex records (guidePending on CPU; the
+localValue/arrival emit in the micro-kernel on GPU), which credit
+EVERY non-delta vertex's taken direction with measured continuation
+radiance - including directions chosen by GI/PT winners (the record
+trains the vertex the ray LEFT, so a GI winner at x1 is recorded at
+the next iteration automatically). The explicit ReSTIR-PG emits add
+an immediate proxy/measure record on top - redundant-but-harmless
+for armed/landed picks, and the ONLY record for consumed stored
+winners (the path terminates - no next vertex to defer to).
+
+Open: longer renders on caustic-heavy scenes.

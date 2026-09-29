@@ -173,7 +173,11 @@ EOF
 
 FAIL=0
 run_case cornell        scenes/cornell/cornell.scn          0 64 || FAIL=1
-run_case cornell_spectral scenes/cornell/cornell-spectral.scn 1 128 || FAIL=1
+# Spectral: the image is near-black (mean ~0.003) and firefly-dominated,
+# so the dense/wavefront RNG-order difference needs 512spp for the 0.20
+# mean tolerance to hold (128spp measured 0.22, 512spp 0.07 - pure MC
+# noise scaling).
+run_case cornell_spectral scenes/cornell/cornell-spectral.scn 1 512 || FAIL=1
 # strands.hair covers the ExtTriangleMesh alpha/color layer path
 # (9.3M tris + curve data) — it is the regression test for the
 # sizeless-ExtMeshProp-layer crash fixed in the E7 fallback work.
