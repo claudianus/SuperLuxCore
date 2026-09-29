@@ -45,7 +45,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_SSSCoeffs(
 			sqrt(9.59217f + 41.6808f * A + 17.7126f * A * A);
 	const float3 s2 = x * x;
 	*alpha = clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
-	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
+	*sigmaT = 1.f / max(mfp, MAKE_FLOAT3(1e-6f, 1e-6f, 1e-6f));
 }
 
 // "cb15" parametrization, mirror of HomogeneousVolume_SSSCoeffsCB15 in

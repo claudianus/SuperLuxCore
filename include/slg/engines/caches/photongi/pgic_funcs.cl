@@ -179,7 +179,7 @@ OPENCL_FORCE_INLINE float3 PGICPhotonBvh_ConnectCacheEntry(__global const Photon
 	if (!bsdf->isVolume)
 		bsdfEval /= fabs(dot(VLOAD3F(&bsdf->hitPoint.shadeN.x), -photonDir));
 	else
-		bsdfEval = (directPdfW > 0.f) ? bsdfEval / directPdfW : (float3)(0.f);
+		bsdfEval = (directPdfW > 0.f) ? bsdfEval / directPdfW : MAKE_FLOAT3(0.f, 0.f, 0.f);
 
 	return VLOAD3F(photon->alpha.c) * bsdfEval;
 }

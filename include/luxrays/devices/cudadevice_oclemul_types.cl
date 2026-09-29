@@ -22,6 +22,9 @@
 #define __global
 #define __local __shared__
 #define __constant
+// CUDA has no "private" address space qualifier: plain locals are already
+// per-thread, so __private maps to nothing.
+#define __private
 #define restrict __restrict__
 
 // This is a workaround to long compilation time
@@ -34,6 +37,8 @@ typedef unsigned int uint;
 typedef unsigned long long ulong;
 
 #define INFINITY __int_as_float(0x7f800000)
+// OpenCL C defines MAXFLOAT; CUDA device code does not.
+#define MAXFLOAT __int_as_float(0x7f7fffff)
 #define M_PI_F 3.141592654f
 #define M_1_PI_F (1.f / 3.141592654f)
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

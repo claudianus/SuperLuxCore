@@ -319,6 +319,25 @@ __forceinline__ float sqrt(const float x) {
 	return sqrtf(x);
 }
 
+__forceinline__ float2 sqrt(const float2 x) {
+	return MAKE_FLOAT2(sqrtf(x.x), sqrtf(x.y));
+}
+
+__forceinline__ float3 sqrt(const float3 x) {
+	return MAKE_FLOAT3(sqrtf(x.x), sqrtf(x.y), sqrtf(x.z));
+}
+
+__forceinline__ float4 sqrt(const float4 x) {
+	return MAKE_FLOAT4(sqrtf(x.x), sqrtf(x.y), sqrtf(x.z), sqrtf(x.w));
+}
+
+// OpenCL native_sqrt() maps to the regular (correctly rounded) sqrt: CUDA has
+// no faster intrinsic we can rely on without extra flags and --use_fast_math
+// already substitutes the approximate version where beneficial.
+__forceinline__ float native_sqrt(const float x) {
+	return sqrtf(x);
+}
+
 //------------------------------------------------------------------------------
 // pow()
 //------------------------------------------------------------------------------
@@ -430,6 +449,27 @@ __forceinline__ float fmax(const float x, const float y) {
 
 __forceinline__ float3 fmax(const float3 x, const float3 y) {
 	return MAKE_FLOAT3(fmaxf(x.x, y.x), fmaxf(x.y, y.y), fmaxf(x.z, y.z));
+}
+
+__forceinline__ float3 fmax(const float3 x, const float y) {
+	return MAKE_FLOAT3(fmaxf(x.x, y), fmaxf(x.y, y), fmaxf(x.z, y));
+}
+
+__forceinline__ float3 fmax(const float x, const float3 y) {
+	return fmax(y, x);
+}
+
+// OpenCL max()/min() on float vectors behave like fmax()/fmin()
+__forceinline__ float3 max(const float3 x, const float3 y) {
+	return fmax(x, y);
+}
+
+__forceinline__ float3 max(const float3 x, const float y) {
+	return fmax(x, y);
+}
+
+__forceinline__ float3 max(const float x, const float3 y) {
+	return fmax(x, y);
 }
 
 //------------------------------------------------------------------------------

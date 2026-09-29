@@ -675,7 +675,7 @@ OPENCL_FORCE_NOT_INLINE float3 BevelTexture_Bump(__global const HitPoint *hitPoi
 
 	const float3 normal = VLOAD3F(&hitPoint->geometryN.x);
 
-	float3 bevelN = (float3)(0.f, 0.f, 0.f);
+	float3 bevelN = MAKE_FLOAT3(0.f, 0.f, 0.f);
 	bool hasBevel = false;
 
 	// Rotate the normal around each edge by an angle linearly interpolated

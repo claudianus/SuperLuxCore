@@ -455,7 +455,7 @@ OPENCL_FORCE_INLINE float3 Microfacet_FresnelConductor(const float cosI,
 
 // Gulbrandsen 2014 (F0, edge-tint) -> (n, k) fit.
 OPENCL_FORCE_INLINE void Microfacet_GulbrandsenNK(const float3 F0,
-		const float3 edgeTint, __private float3 *n, __private float3 *k) {
+		const float3 edgeTint, float3 *n, float3 *k) {
 	for (int i = 0; i < 3; ++i) {
 		const float f0 = (i == 0) ? F0.x : ((i == 1) ? F0.y : F0.z);
 		const float g = (i == 0) ? edgeTint.x : ((i == 1) ? edgeTint.y : edgeTint.z);

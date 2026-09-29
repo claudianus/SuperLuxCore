@@ -94,17 +94,14 @@ OPENCL_FORCE_NOT_INLINE void MathFuncTexture_EvalOp(
 			break;
 		}
 		case EVAL_SPECTRUM: {
-			float3 tex2 = 0.f;
+			float3 tex2 = MAKE_FLOAT3(0.f, 0.f, 0.f);
 			if (MathFuncTexture_IsBinary(op)) {
 				EvalStack_PopFloat3(tex2);
 			}
 			float3 tex1;
 			EvalStack_PopFloat3(tex1);
 
-			const float3 eval = (float3)(
-					MathFuncTexture_Apply(op, tex1.x, tex2.x),
-					MathFuncTexture_Apply(op, tex1.y, tex2.y),
-					MathFuncTexture_Apply(op, tex1.z, tex2.z));
+			const float3 eval = MAKE_FLOAT3(MathFuncTexture_Apply(op, tex1.x, tex2.x), MathFuncTexture_Apply(op, tex1.y, tex2.y), MathFuncTexture_Apply(op, tex1.z, tex2.z));
 			EvalStack_PushFloat3(eval);
 			break;
 		}

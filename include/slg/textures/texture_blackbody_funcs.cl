@@ -201,10 +201,8 @@ OPENCL_FORCE_INLINE float3 BlackBody_LutRGB(const float temperature,
 	const int i = min((int)x, SLG_BLACKBODY_LUT_N - 2);
 	const float f = x - i;
 
-	const float3 a = (float3)(kBlackBodyRgbLut[i * 3],
-			kBlackBodyRgbLut[i * 3 + 1], kBlackBodyRgbLut[i * 3 + 2]);
-	const float3 b = (float3)(kBlackBodyRgbLut[(i + 1) * 3],
-			kBlackBodyRgbLut[(i + 1) * 3 + 1], kBlackBodyRgbLut[(i + 1) * 3 + 2]);
+	const float3 a = MAKE_FLOAT3(kBlackBodyRgbLut[i * 3], kBlackBodyRgbLut[i * 3 + 1], kBlackBodyRgbLut[i * 3 + 2]);
+	const float3 b = MAKE_FLOAT3(kBlackBodyRgbLut[(i + 1) * 3], kBlackBodyRgbLut[(i + 1) * 3 + 1], kBlackBodyRgbLut[(i + 1) * 3 + 2]);
 	return mix(a, b, f) * rgbScale;
 }
 

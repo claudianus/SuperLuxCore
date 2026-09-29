@@ -31,6 +31,16 @@
 // strandIndexBits}.
 //------------------------------------------------------------------------------
 
+// CUDA's native float4 has no .xyz/.xy swizzles ??take the components
+// explicitly (OpenCL forbids &v.x, so VLOAD3F is not an option on a
+// __global float4 l-value either).
+OPENCL_FORCE_INLINE float3 Curve_CpPoint(const float4 v) {
+	return MAKE_FLOAT3(v.x, v.y, v.z);
+}
+OPENCL_FORCE_INLINE float2 Curve_CpFloat2(const float4 v) {
+	return MAKE_FLOAT2(v.x, v.y);
+}
+
 OPENCL_FORCE_INLINE float3 Curve_EvalPoint(const float3 p0, const float3 p1,
 		const float3 p2, const float3 p3, const float u) {
 	const float u2 = u * u;
@@ -66,10 +76,10 @@ OPENCL_FORCE_INLINE float3 Curve_GetNormal(
 		EXTMESH_PARAM_DECL) {
 	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
 	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
-	// OpenCL forbids &float4.x: load the whole float4 and swizzle .xyz.
+	// OpenCL forbids &float4.x and CUDA's float4 has no .xyz — Curve_CpPoint.
 	const float3 centerObj = Curve_EvalPoint(
-			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
-			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+			Curve_CpPoint(curveCps[cpStart]), Curve_CpPoint(curveCps[cpStart + 1]),
+			Curve_CpPoint(curveCps[cpStart + 2]), Curve_CpPoint(curveCps[cpStart + 3]), u);
 
 	float3 n;
 	switch (meshDesc->type) {
@@ -102,21 +112,21 @@ OPENCL_FORCE_INLINE float3 Curve_GetNormal(
 	// Degenerate (hit on the centerline): fall back to a direction
 	// perpendicular to the segment tangent.
 	const float3 t = Curve_EvalTangent(
-			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
-			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+			Curve_CpPoint(curveCps[cpStart]), Curve_CpPoint(curveCps[cpStart + 1]),
+			Curve_CpPoint(curveCps[cpStart + 2]), Curve_CpPoint(curveCps[cpStart + 3]), u);
 	float3 v1, v2;
 	CoordinateSystem(t, &v1, &v2);
 	return v1;
 }
 
-// Strand tangent in object space (analytic Catmull-Rom derivative) — same
+// Strand tangent in object space (analytic Catmull-Rom derivative) ??same
 // space as the HAIR_TANGENT_* vertex AOV layers on the tessellation.
 OPENCL_FORCE_INLINE float3 Curve_GetTangentObj(const uint meshIndex,
 		const uint triangleIndex, const float u EXTMESH_PARAM_DECL) {
 	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
 	return Curve_EvalTangent(
-			curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
-			curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+			Curve_CpPoint(curveCps[cpStart]), Curve_CpPoint(curveCps[cpStart + 1]),
+			Curve_CpPoint(curveCps[cpStart + 2]), Curve_CpPoint(curveCps[cpStart + 3]), u);
 }
 
 // Per-strand random: recomputed from the strand index with the same hash
@@ -136,16 +146,16 @@ OPENCL_FORCE_INLINE float2 Curve_GetInterpolateUV(const uint meshIndex,
 	if (dataIndex != 0)
 		return MAKE_FLOAT2(0.f, 0.f);
 	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
-	const float2 uv1 = curveCpAttrs[2 * (cpStart + 1) + 1].xy;
-	const float2 uv2 = curveCpAttrs[2 * (cpStart + 2) + 1].xy;
+	const float2 uv1 = Curve_CpFloat2(curveCpAttrs[2 * (cpStart + 1) + 1]);
+	const float2 uv2 = Curve_CpFloat2(curveCpAttrs[2 * (cpStart + 2) + 1]);
 	return mix(uv1, uv2, u);
 }
 
 OPENCL_FORCE_INLINE float3 Curve_GetInterpolateColor(const uint meshIndex,
 		const uint triangleIndex, const float u EXTMESH_PARAM_DECL) {
 	const uint cpStart = Curve_GetCpStart(meshIndex, triangleIndex EXTMESH_PARAM);
-	const float3 c1 = curveCpAttrs[2 * (cpStart + 1)].xyz;
-	const float3 c2 = curveCpAttrs[2 * (cpStart + 2)].xyz;
+	const float3 c1 = Curve_CpPoint(curveCpAttrs[2 * (cpStart + 1)]);
+	const float3 c2 = Curve_CpPoint(curveCpAttrs[2 * (cpStart + 2)]);
 	return mix(c1, c2, u);
 }
 
@@ -167,8 +177,8 @@ OPENCL_FORCE_INLINE float Curve_GetVertexAOV(const uint meshIndex,
 	switch (dataIndex) {
 		case 4: case 5: case 6: {
 			const float3 t = Curve_EvalTangent(
-					curveCps[cpStart].xyz, curveCps[cpStart + 1].xyz,
-					curveCps[cpStart + 2].xyz, curveCps[cpStart + 3].xyz, u);
+					Curve_CpPoint(curveCps[cpStart]), Curve_CpPoint(curveCps[cpStart + 1]),
+					Curve_CpPoint(curveCps[cpStart + 2]), Curve_CpPoint(curveCps[cpStart + 3]), u);
 			return (dataIndex == 4) ? t.x : ((dataIndex == 5) ? t.y : t.z);
 		}
 		case 7: {

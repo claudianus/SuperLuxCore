@@ -427,8 +427,9 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 	// Jacobian lives in the pdf, so the sampled weight reduces to
 	// T * G2 / (G1 * eta^2) — the (n_i/n_t)^2 radiance scaling matches the
 	// specular glass convention (same as roughglass).
-	return T * (fabs(wiH) * woH * D * G2 /
+	const float w = T * (fabs(wiH) * woH * D * G2 /
 			fmax(fabs(wor.z) * lengthSquared, 1e-7f));
+	return MAKE_FLOAT3(w, w, w);
 }
 
 //------------------------------------------------------------------------------

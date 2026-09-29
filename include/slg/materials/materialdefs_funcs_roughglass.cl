@@ -402,7 +402,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 #if defined(SLG_SPECTRAL)
 				const float3 Fvec = F;
 #else
-				const float3 Fvec = (float3)(F, F, F);
+				const float3 Fvec = MAKE_FLOAT3(F, F, F);
 #endif
 				msComp = Microfacet_GgxMSCompensation(fabs(fixedDir.z), alpha,
 						Microfacet_GgxFresnelAverage(Fvec, WHITE)).x;

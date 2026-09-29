@@ -104,7 +104,7 @@ OPENCL_FORCE_INLINE void Hair_Ap(const float cosThetaO, const float eta, const f
 	const float cosGammaO = Hair_SafeSqrt(1.f - h * h);
 	const float cosTheta = cosThetaO * cosGammaO;
 	const float f = FresnelCauchy_Evaluate(eta, cosTheta);
-	ap[0] = f;
+	ap[0] = MAKE_FLOAT3(f, f, f);
 
 	ap[1] = (1.f - f) * (1.f - f) * T;
 
@@ -557,17 +557,17 @@ OPENCL_FORCE_INLINE float3 HairH_EvalTRRT(const float T, const float R,
 
 OPENCL_FORCE_INLINE float2 HairH_QuadWh1(const int q) {
 	const float2 pts[HAIRH_QWH1] = {
-		(float2)(0.125f, 0.0625f), (float2)(0.625f, 0.1875f),
-		(float2)(0.375f, 0.3125f), (float2)(0.875f, 0.4375f),
-		(float2)(0.250f, 0.5625f), (float2)(0.750f, 0.6875f),
-		(float2)(0.500f, 0.8125f), (float2)(0.0625f, 0.9375f)
+		MAKE_FLOAT2(0.125f, 0.0625f), MAKE_FLOAT2(0.625f, 0.1875f),
+		MAKE_FLOAT2(0.375f, 0.3125f), MAKE_FLOAT2(0.875f, 0.4375f),
+		MAKE_FLOAT2(0.250f, 0.5625f), MAKE_FLOAT2(0.750f, 0.6875f),
+		MAKE_FLOAT2(0.500f, 0.8125f), MAKE_FLOAT2(0.0625f, 0.9375f)
 	};
 	return pts[q];
 }
 OPENCL_FORCE_INLINE float2 HairH_QuadWh2(const int q) {
 	const float2 pts[HAIRH_QWH2] = {
-		(float2)(0.19f, 0.41f), (float2)(0.69f, 0.83f),
-		(float2)(0.44f, 0.09f), (float2)(0.94f, 0.61f)
+		MAKE_FLOAT2(0.19f, 0.41f), MAKE_FLOAT2(0.69f, 0.83f),
+		MAKE_FLOAT2(0.44f, 0.09f), MAKE_FLOAT2(0.94f, 0.61f)
 	};
 	return pts[q];
 }

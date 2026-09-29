@@ -814,7 +814,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 			// initialized - a garbage ray could produce NaNs if the
 			// flag handling ever changed.
 			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
-					(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+					MAKE_FLOAT3(0.f, 0.f, 1.f), 0.f, 0.f, time);
 			candRays[i].flags = RAY_FLAGS_MASKED;
 			continue;
 		}
@@ -830,7 +830,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 				LIGHTS_PARAM);
 		if (Spectrum_IsBlack(candRadiance) || (candPdfW <= 0.f)) {
 			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
-					(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+					MAKE_FLOAT3(0.f, 0.f, 1.f), 0.f, 0.f, time);
 			candRays[i].flags = RAY_FLAGS_MASKED;
 			continue;
 		}
@@ -865,7 +865,7 @@ OPENCL_FORCE_NOT_INLINE bool DirectLight_RestirEnqueueVisibility(
 		// happen - consistent with the gate-fail continues below)
 		candData[slot].lightIndex = NULL_INDEX;
 		Ray_Init4(&candRays[slot], VLOAD3F(&bsdf->hitPoint.p.x),
-				(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+				MAKE_FLOAT3(0.f, 0.f, 1.f), 0.f, 0.f, time);
 		candRays[slot].flags = RAY_FLAGS_MASKED;
 
 		if (!restirSpatialEnable || !lightDist)
@@ -1557,7 +1557,7 @@ OPENCL_FORCE_NOT_INLINE bool RestirGI_EnqueueBounce(
 			rec->pdfW = 0.f;
 			rec->miss = 0u;
 			Ray_Init4(&candRays[i], VLOAD3F(&bsdf->hitPoint.p.x),
-					(float3)(0.f, 0.f, 1.f), 0.f, 0.f, time);
+					MAKE_FLOAT3(0.f, 0.f, 1.f), 0.f, 0.f, time);
 			candRays[i].flags = RAY_FLAGS_MASKED;
 			candRays[K + i].flags = RAY_FLAGS_MASKED;
 			continue;
@@ -1703,7 +1703,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 	// which the resolve treats identically to the CPU's !hasDir.
 	__global Ray *vRay = &candRays[2u * K];
 	const __global RestirGIReservoir *storedRes = &giReservoirs[pixelIndex];
-	float3 vDir = (float3)(0.f, 0.f, 1.f);
+	float3 vDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 	float vMax = 0.f;
 	bool queueV = false;
 	if (temporalEnable && (storedRes->m > 0u) && (storedRes->pass < pass) &&
@@ -1800,15 +1800,15 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 	//------------------------------------------------------------------
 	// Winner record (fresh candidate, stored reservoir or neighbour).
 	//------------------------------------------------------------------
-	float3 outDir = (float3)(0.f, 0.f, 1.f);
+	float3 outDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 	float3 outFcos = BLACK;
 	float outTarget = 0.f;
 	float3 outLHat = BLACK;
 	uint outEvent = 0u;
 	float outPdfW = 0.f;
 	uint outIsMiss = 0u;
-	float3 outX2 = (float3)(0.f, 0.f, 0.f);
-	float3 outX2n = (float3)(0.f, 1.f, 0.f);
+	float3 outX2 = MAKE_FLOAT3(0.f, 0.f, 0.f);
+	float3 outX2n = MAKE_FLOAT3(0.f, 1.f, 0.f);
 	bool haveOut = false;
 	bool outIsFresh = false;
 	if (winner >= 0) {
@@ -1865,7 +1865,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			float J = 1.f;
 			bool hasDir = false;
 			bool mergeVisible = true;
-			float3 stDir = (float3)(0.f, 0.f, 1.f);
+			float3 stDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 			float3 stEval = BLACK;
 			uint stEvent = 0u;
 			if (snap.isMiss) {
@@ -2041,7 +2041,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 			if (nbr->pass != np0)
 				continue;
 
-			float3 nbDir = (float3)(0.f, 0.f, 1.f);
+			float3 nbDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 			float J = 1.f;
 			bool hasDir = false;
 			if (nSnap.isMiss) {
@@ -2321,7 +2321,7 @@ OPENCL_FORCE_NOT_INLINE void RestirPT_Bounce(
 
 	__global Ray *vRay = &candRays[2u * K];
 	const __global RestirPTReservoir *storedRes = &ptReservoirs[pixelIndex];
-	float3 vDir = (float3)(0.f, 0.f, 1.f);
+	float3 vDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 	float vMax = 0.f;
 	bool queueV = false;
 	if (temporalEnable && (storedRes->m > 0u) && (storedRes->pass < pass) &&
@@ -2351,7 +2351,7 @@ OPENCL_FORCE_NOT_INLINE void RestirPT_Bounce(
 		__global Ray *sRay = &candRays[2u * K + 1u + k];
 		result->vSeqS[k] = 0xFFFFFFFFu;
 		bool queueS = false;
-		float3 sDir = (float3)(0.f, 0.f, 1.f);
+		float3 sDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 		float sMax = 0.f;
 		if (spatialEnable) {
 			const uint h = SobolSequence_BlueNoiseHash(baseSeed ^
@@ -2464,15 +2464,15 @@ OPENCL_FORCE_NOT_INLINE bool RestirPT_Resolve(
 	//------------------------------------------------------------------
 	// Winner record (fresh candidate, stored reservoir or neighbour).
 	//------------------------------------------------------------------
-	float3 outDir = (float3)(0.f, 0.f, 1.f);
+	float3 outDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 	float3 outFcos = BLACK;
 	float outTarget = 0.f;
 	float3 outLsuf = BLACK;
 	uint outEvent = 0u;
 	float outPdfW = 0.f;
 	uint outIsMiss = 0u;
-	float3 outX2 = (float3)(0.f, 0.f, 0.f);
-	float3 outX2n = (float3)(0.f, 1.f, 0.f);
+	float3 outX2 = MAKE_FLOAT3(0.f, 0.f, 0.f);
+	float3 outX2n = MAKE_FLOAT3(0.f, 1.f, 0.f);
 	bool haveOut = false;
 	bool outIsFresh = false;
 	if (winner >= 0) {
@@ -2514,7 +2514,7 @@ OPENCL_FORCE_NOT_INLINE bool RestirPT_Resolve(
 			float J = 1.f;
 			bool hasDir = false;
 			bool mergeVisible = true;
-			float3 stDir = (float3)(0.f, 0.f, 1.f);
+			float3 stDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 			float3 stEval = BLACK;
 			uint stEvent = 0u;
 			if (snap.isMiss) {
@@ -2645,7 +2645,7 @@ OPENCL_FORCE_NOT_INLINE bool RestirPT_Resolve(
 			if (nbr->pass != np0)
 				continue;
 
-			float3 nbDir = (float3)(0.f, 0.f, 1.f);
+			float3 nbDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 			float J = 1.f;
 			bool hasDir = false;
 			bool mergeVisible = true;

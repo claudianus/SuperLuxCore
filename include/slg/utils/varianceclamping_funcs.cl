@@ -245,7 +245,7 @@ OPENCL_FORCE_INLINE void VarianceClamping_Clamp(
 				VLOAD3F(sampleResult->directDiffuseTransmit.c) +
 				VLOAD3F(sampleResult->directGlossyReflect.c) +
 				VLOAD3F(sampleResult->directGlossyTransmit.c);
-		float3 total = 0.f;
+		float3 total = MAKE_FLOAT3(0.f, 0.f, 0.f);
 		for (uint i = 0; i < film->radianceGroupCount; ++i)
 			total += VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c);
 

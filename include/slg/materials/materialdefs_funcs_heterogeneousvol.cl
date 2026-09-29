@@ -66,7 +66,7 @@ OPENCL_FORCE_INLINE float3 SchlickScatter_Evaluate(
 	if (phaseFunc) {
 		const float3 value = HGValue(gValue, dotEyeLight);
 		if (directPdfW)
-			*directPdfW = HGValue((float3)(Spectrum_Filter(gValue)), dotEyeLight).x;
+			*directPdfW = HGValue(MAKE_FLOAT3(Spectrum_Filter(gValue), Spectrum_Filter(gValue), Spectrum_Filter(gValue)), dotEyeLight).x;
 		return SchlickScatter_GetColor(sigmaS, sigmaA) * value;
 	}
 
@@ -121,7 +121,7 @@ OPENCL_FORCE_INLINE float3 SchlickScatter_Sample(
 			2.f * M_PI_F * u1, x, y, fixedDir);
 
 	if (phaseFunc)
-		*pdfW = HGValue((float3)(gFilter), cost).x;
+		*pdfW = HGValue(MAKE_FLOAT3(gFilter, gFilter, gFilter), cost).x;
 	else {
 		// The - becomes a + because cost has been reversed above
 		const float compcost = 1.f + kFilter * cost;

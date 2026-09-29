@@ -209,7 +209,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffs(__global const Volume *vol,
 			sqrt(9.59217f + 41.6808f * A + 17.7126f * A * A);
 	const float3 s2 = x * x;
 	*alpha = clamp((1.f - s2) / (1.f - g * s2), 0.f, 0.999999f);
-	*sigmaT = 1.f / max(mfp, (float3)(1e-6f, 1e-6f, 1e-6f));
+	*sigmaT = 1.f / max(mfp, MAKE_FLOAT3(1e-6f, 1e-6f, 1e-6f));
 }
 
 // "cb15" SSS parametrization, mirror of SSSRemapCB15 in homogenous.cpp:
@@ -331,7 +331,7 @@ OPENCL_FORCE_INLINE float HomogeneousVolume_Scatter(__global const Volume *vol,
 		float weightsSum = 0.f;
 		for (uint i = 0u; i < eqLightCount; ++i) {
 			const float4 lp = eqLightPoints[i];
-			const float3 toL = ((float3)(lp.x, lp.y, lp.z)) - rayOrig;
+			const float3 toL = (MAKE_FLOAT3(lp.x, lp.y, lp.z)) - rayOrig;
 			const float dlt = dot(toL, rayDir);
 			const float D = sqrt(max(1e-10f, dot(toL, toL) - dlt * dlt));
 			const float thA = atan2(ray->mint - dlt, D);
@@ -343,7 +343,7 @@ OPENCL_FORCE_INLINE float HomogeneousVolume_Scatter(__global const Volume *vol,
 			float acc = 0.f;
 			for (uint i = 0u; i < eqLightCount; ++i) {
 				const float4 lp = eqLightPoints[i];
-				const float3 toL = ((float3)(lp.x, lp.y, lp.z)) - rayOrig;
+				const float3 toL = (MAKE_FLOAT3(lp.x, lp.y, lp.z)) - rayOrig;
 				const float dlt = dot(toL, rayDir);
 				const float D = sqrt(max(1e-10f, dot(toL, toL) - dlt * dlt));
 				const float thA = atan2(ray->mint - dlt, D);
@@ -358,7 +358,7 @@ OPENCL_FORCE_INLINE float HomogeneousVolume_Scatter(__global const Volume *vol,
 			lightIdx = min((uint)(u1 * eqLightCount), eqLightCount - 1u);
 
 		const float4 lp = eqLightPoints[lightIdx];
-		const float3 lightPos = (float3)(lp.x, lp.y, lp.z);
+		const float3 lightPos = MAKE_FLOAT3(lp.x, lp.y, lp.z);
 
 		// delta: projection of the light on the ray (absolute t domain);
 		// D: perpendicular distance of the light from the ray
@@ -583,8 +583,8 @@ OPENCL_FORCE_INLINE void VolWalk_Init(VolMajorantWalk *w,
 	__global const HeterogenousVolumeParam *p = &vol->volume.heterogenous;
 
 	// Slab test of the ray against the grid domain
-	const float3 bmin = (float3)(p->majorantBBoxMinX, p->majorantBBoxMinY, p->majorantBBoxMinZ);
-	const float3 bmax = (float3)(p->majorantBBoxMaxX, p->majorantBBoxMaxY, p->majorantBBoxMaxZ);
+	const float3 bmin = MAKE_FLOAT3(p->majorantBBoxMinX, p->majorantBBoxMinY, p->majorantBBoxMinZ);
+	const float3 bmax = MAKE_FLOAT3(p->majorantBBoxMaxX, p->majorantBBoxMaxY, p->majorantBBoxMaxZ);
 	const float3 invD = 1.f / rayDir;
 	const float3 ta = (bmin - rayOrig) * invD;
 	const float3 tb = (bmax - rayOrig) * invD;
@@ -652,8 +652,7 @@ OPENCL_FORCE_INLINE bool VolWalk_Next(VolMajorantWalk *w,
 				if (!w->gridInit) {
 					// 3D DDA setup at the domain entry point
 					const float3 pos = rayOrig + w->t * rayDir;
-					const float3 bmin = (float3)(p->majorantBBoxMinX,
-							p->majorantBBoxMinY, p->majorantBBoxMinZ);
+					const float3 bmin = MAKE_FLOAT3(p->majorantBBoxMinX, p->majorantBBoxMinY, p->majorantBBoxMinZ);
 					const float cellSize = p->majorantCellSize;
 
 					const float gx = (pos.x - bmin.x) / cellSize;
