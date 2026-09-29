@@ -293,6 +293,10 @@ public:
 		std::atomic<float> nx{0.f}, ny{0.f}, nz{0.f};
 		std::atomic<u_int> lightIndex{0}, meshIndex{0};
 		std::atomic<u_int> mirrorMode{0}, valid{0};
+		// Energy-aware retention (manifold path guiding): the throughput
+		// luminance of the solve that produced the entry. Colliding
+		// stores keep the historically brighter basin.
+		std::atomic<float> fluxWeight{0.f};
 	};
 	// The table is shared by all render threads: seeds are last-writer-wins
 	// hints (a stale entry only wastes Newton iterations, the constraint is

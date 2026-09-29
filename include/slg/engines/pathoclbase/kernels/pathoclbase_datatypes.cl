@@ -712,7 +712,7 @@ typedef struct {
 // mirrored-light seed trace. The seed only selects the Newton basin: the
 // solve still verifies the half-vector constraint, so a stale or torn entry
 // can cost iterations but never biases the result.
-// 32 bytes.
+// 44 bytes.
 typedef struct {
 	// Solved vertex position and shading normal
 	float vx, vy, vz;
@@ -722,6 +722,9 @@ typedef struct {
 	// 1 = mirror-mode solve, 0 = glass-mode solve
 	unsigned int mirrorMode;
 	unsigned int valid;
+	// Energy-aware retention (manifold path guiding): throughput
+	// luminance of the solve that produced the entry
+	float fluxWeight;
 } MneeSeedEntry;
 
 // Persistent MNEE state, one per task (lives in GPUTaskDirectLight). It

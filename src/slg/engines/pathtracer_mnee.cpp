@@ -548,8 +548,16 @@ static bool MneeSeedLookup(const PathTracer::MneeSeedEntry *cache,
 
 static void MneeSeedStore(PathTracer::MneeSeedEntry *cache,
 		const u_int key, const Point &p, const Normal &n,
-		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode) {
+		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode,
+		const float fluxWeight) {
 	PathTracer::MneeSeedEntry &e = cache[key];
+	// Energy-aware retention (manifold path guiding, Fan et al. 2023): a
+	// converged basin that historically carried more flux keeps the slot;
+	// a fresher or brighter solve displaces it. Seeds only select the
+	// Newton basin — retention cannot bias the estimator.
+	if (e.valid.load(std::memory_order_relaxed) &&
+			(e.fluxWeight.load(std::memory_order_relaxed) > fluxWeight))
+		return;
 	e.vx.store(p.x, std::memory_order_relaxed);
 	e.vy.store(p.y, std::memory_order_relaxed);
 	e.vz.store(p.z, std::memory_order_relaxed);
@@ -559,6 +567,7 @@ static void MneeSeedStore(PathTracer::MneeSeedEntry *cache,
 	e.lightIndex.store(lightIndex, std::memory_order_relaxed);
 	e.meshIndex.store(meshIndex, std::memory_order_relaxed);
 	e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
+	e.fluxWeight.store(fluxWeight, std::memory_order_relaxed);
 	e.valid.store(1u, std::memory_order_relaxed);
 }
 
@@ -1137,7 +1146,8 @@ bool PathTracer::MNEEDirectSampling(
 	// valued by the solved vertex (GPU SolveEnd parity).
 	if (mneeSeedCacheEnable && mneeSeeds)
 		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
-				seedLightIndex, seedMesh, mirrorMat != nullptr);
+				seedLightIndex, seedMesh, mirrorMat != nullptr,
+				pathThroughput.Y());
 
 	return true;
 }
@@ -2378,7 +2388,7 @@ bool PathTracer::LMNEEConnectToEye(
 	if (mneeSeedCacheEnable && mneeSeeds)
 		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
 				LMNEE_CAMERA_SEED_ID, seedMesh,
-				mirrorMat != nullptr);
+				mirrorMat != nullptr, radiance.Y());
 	return true;
 }
 

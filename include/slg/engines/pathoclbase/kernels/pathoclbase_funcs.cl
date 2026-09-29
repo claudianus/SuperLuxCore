@@ -4055,13 +4055,19 @@ OPENCL_FORCE_INLINE uint Mnee_SeedKey(
 OPENCL_FORCE_INLINE void Mnee_SeedCacheStore(
 		__global MneeSeedEntry *mneeSeeds,
 		const uint key, const float3 p, const float3 n,
-		const uint lightIndex, const uint meshIndex, const int mirrorMode) {
+		const uint lightIndex, const uint meshIndex, const int mirrorMode,
+		const float fluxWeight) {
 	__global MneeSeedEntry *e = &mneeSeeds[key];
+	// Energy-aware retention (manifold path guiding): keep the
+	// historically brighter basin; seeds only select the Newton basin
+	if (e->valid && (e->fluxWeight > fluxWeight))
+		return;
 	e->vx = p.x; e->vy = p.y; e->vz = p.z;
 	e->nx = n.x; e->ny = n.y; e->nz = n.z;
 	e->lightIndex = lightIndex;
 	e->meshIndex = meshIndex;
 	e->mirrorMode = (unsigned int)(mirrorMode ? 1 : 0);
+	e->fluxWeight = fluxWeight;
 	e->valid = 1u;
 }
 
@@ -5910,7 +5916,8 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 						occlP, cellSize),
 					vp, vn, taskDirectLight->illumInfo.lightIndex,
 					mnee->shadowMeshIndex * 2u + mnee->shadowSide,
-					mnee->mirrorMode);
+					mnee->mirrorMode,
+					Spectrum_Y(VLOAD3F(taskState->throughput.c)));
 		}
 	}
 
@@ -6287,7 +6294,7 @@ OPENCL_FORCE_NOT_INLINE void LMnee_SolveEnd(
 					occlP, cellSize),
 				v.p, v.n, LMNEE_CAMERA_SEED_ID,
 				mnee->shadowMeshIndex * 2u + mnee->shadowSide,
-				mnee->mirrorMode);
+				mnee->mirrorMode, Spectrum_Y(radiance));
 	}
 
 	lpi->mneeActive = false;

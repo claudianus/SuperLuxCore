@@ -22,6 +22,7 @@ docs live in `doc/features/` (see its README for the index).
 | [diffraction.md](diffraction.md) | Diffraction grating material — implementation notes |
 | [kernel-compile-performance.md](kernel-compile-performance.md) | Cold GPU kernel-compile time: parallel GetKernel, cache layout, benchmark gotchas |
 | [hot-loop-allocations.md](hot-loop-allocations.md) | SpectrumGroup per-connect allocs, light-path result vector growth; PATHCPU +21% |
+| [manifold-path-guiding.md](manifold-path-guiding.md) | MPG/PMS research survey + seed-importance design (E4 last item) |
 | [threadfilm-transfers.md](threadfilm-transfers.md) | ThreadFilm SendFilm/RecvFilm layout mismatch — padded tile widths vs engine film (RTPATHOCL Metal crash) |
 | [rtcpu-barrier-lifecycle.md](rtcpu-barrier-lifecycle.md) | RTPATHCPU pause barrier deadlocks: stale session Pause, edit-parked Stop |
 | [pgic-beams.md](pgic-beams.md) | PhotonGI caustic beams: estimator math, chunking, volume photongi.enable=false gotcha, visibility/query gate split |
