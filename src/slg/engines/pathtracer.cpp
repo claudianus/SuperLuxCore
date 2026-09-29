@@ -1475,20 +1475,26 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					Vector giDir;
 					float giPdfW;
 					BSDFEvent giEvent;
-					Spectrum giEval;
+					Spectrum giEval, giLHat;
 					if (restirGI->ResampleFirstBounce(device, scene,
 							eyeRay.time, bsdf, pathInfo.volume,
 							bsdf.hitPoint.p,
 							sampleResult.pixelX, sampleResult.pixelY,
 							sampler.GetPass(), restirGICandidates,
 							restirGITemporalEnable, restirGISpatialEnable,
-							&giDir, &giEval, &giPdfW, &giEvent)) {
+							&giDir, &giEval, &giPdfW, &giEvent, &giLHat,
+							pathGuidingCache, guidingStrength)) {
 						sampledDir = giDir;
 						bsdfSample = giEval;
 						bsdfPdfW = giPdfW;
 						cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN, giDir));
 						bsdfEvent = giEvent;
 						giSelected = true;
+						// ReSTIR PG feed: train the guide field on the
+						// accepted direction (proxy lHat payload).
+						if (pathGuidingCache)
+							pathGuidingCache->Record(bsdf.hitPoint.p,
+									giDir, giLHat.Y());
 					}
 				}
 				// ReSTIR PT (PT-1): same depth-0 non-delta hook as GI,

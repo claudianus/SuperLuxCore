@@ -28,6 +28,7 @@
 #include <atomic>
 
 #include "slg/engines/restirgi.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/lights/light.h"
@@ -134,7 +135,8 @@ bool RestirGI::ResampleFirstBounce(
 		const u_int candidateCount, const bool temporalEnable,
 		const bool spatialEnable,
 		Vector *outDir, Spectrum *outEval, float *outPdfW,
-		BSDFEvent *outEvent) {
+		BSDFEvent *outEvent, Spectrum *outLHat,
+		const PathGuidingCache *guideCache, const float guideStrength) {
 	const u_int baseSeed = (pixelX * 73856093u) ^
 			(pixelY * 19349663u) ^ (pass * 83492791u);
 
@@ -167,18 +169,46 @@ bool RestirGI::ResampleFirstBounce(
 	// (systematic brightening). eps is derived from the candidate set so
 	// it stays proportional to the scene's proxy scale.
 	//----------------------------------------------------------------------
+	// ReSTIR PG: same guide-vs-BSDF candidate mix as ResampleSuffix -
+	// pdfs[] gets the mixture density so the RIS weight stays exact.
+	const bool isVol = bsdf.IsVolume();
+	float wG = 0.f;
+	if (guideCache && guideCache->CanGuide(x1))
+		wG = guideStrength * PathGuidingCache::MixWeight(
+				guideCache->ReadCount(x1), guideCache->ReadPeak(x1));
 	for (u_int i = 0; i < K; ++i) {
 		const u_int seed = baseSeed ^ (i * 0x9E3779B9u);
 		++mTotal;
 
-		float pdfW, cosDir;
-		const Spectrum bsdfSample = bsdf.Sample(&dirs[i],
-				GIRandom(seed, 0x01u), GIRandom(seed, 0x02u),
-				&pdfW, &cosDir, &events[i]);
-		if (bsdfSample.Black() || !(pdfW > 0.f))
+		float pdfW = 0.f, cosDir = 0.f;
+		if (GIRandom(seed, 0x05u) < wG) {
+			float gPdf, bPdf;
+			if (guideCache->Sample(x1, bsdf.hitPoint.shadeN,
+					GIRandom(seed, 0x06u), GIRandom(seed, 0x01u),
+					GIRandom(seed, 0x02u), &dirs[i], &gPdf, isVol) &&
+					(gPdf > 0.f)) {
+				fcos[i] = bsdf.Evaluate(dirs[i], &events[i], &bPdf);
+				if (bsdf.GetMaterialType() == DISNEY) {
+					const float cl = fabsf(
+							bsdf.GetFrame().ToLocal(dirs[i]).z);
+					fcos[i] = (cl > 1e-3f) ? fcos[i] / cl : Spectrum();
+				}
+				pdfW = (1.f - wG) * bPdf + wG * gPdf;
+			}
+		} else {
+			const Spectrum bsdfSample = bsdf.Sample(&dirs[i],
+					GIRandom(seed, 0x01u), GIRandom(seed, 0x02u),
+					&pdfW, &cosDir, &events[i]);
+			if (!bsdfSample.Black() && (pdfW > 0.f)) {
+				fcos[i] = bsdfSample * pdfW;
+				if (wG > 0.f)
+					pdfW += wG * (guideCache->Pdf(x1,
+							bsdf.hitPoint.shadeN, dirs[i], isVol) - pdfW);
+			}
+		}
+		if (fcos[i].Black() || !(pdfW > 0.f))
 			continue;
 		pdfs[i] = pdfW;
-		fcos[i] = bsdfSample * pdfW;
 
 		Ray ray(bsdf.GetRayOrigin(dirs[i]), dirs[i]);
 		PathVolumeInfo rayVolInfo = volInfo;
@@ -630,6 +660,8 @@ bool RestirGI::ResampleFirstBounce(
 	*outEval = out.fcos * W;
 	*outPdfW = risPdfW;
 	*outEvent = out.event;
+	if (outLHat)
+		*outLHat = out.lHat; // ReSTIR PG record payload
 
 	return true;
 }

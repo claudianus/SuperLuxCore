@@ -50,6 +50,7 @@ namespace slg {
 
 class Scene;
 class BSDF;
+class PathGuidingCache;
 class PathVolumeInfo;
 
 class RestirGI {
@@ -110,7 +111,10 @@ public:
 			const u_int candidateCount, const bool temporalEnable,
 			const bool spatialEnable,
 			luxrays::Vector *outDir, luxrays::Spectrum *outEval,
-			float *outPdfW, BSDFEvent *outEvent);
+			float *outPdfW, BSDFEvent *outEvent,
+			luxrays::Spectrum *outLHat = nullptr,
+			const PathGuidingCache *guideCache = nullptr,
+			const float guideStrength = 1.f);
 
 private:
 	u_int filmW, filmH;

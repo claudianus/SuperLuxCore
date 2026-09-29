@@ -480,6 +480,9 @@ typedef struct {
 	// resolve can never pair a stale occlusion test with a new sample.
 	// 0xFFFFFFFF = no ray queued.
 	unsigned int vSeq;
+	// Winner's proxy incident radiance (emis+NEE at x2) - the ReSTIR PG
+	// training-record payload; only valid while pending == 1.
+	float lHatR, lHatG, lHatB;
 } RestirGIResult;
 
 // ReSTIR PT (PT-2 GPU): per-pixel suffix reservoir, appended to

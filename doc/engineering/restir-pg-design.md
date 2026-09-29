@@ -113,6 +113,21 @@ leaves gate themselves out via PeakGate as designed. On
 focused-caustic-ring (concentrated directional transport) the sign
 flips: 0.991 at 256spp — the loop engages where the paper predicts.
 Verified live via LUX_PG_DEBUG: records drain and the tree swaps
-(`leaves=9 kept=20466 warm=1` at ~4s). Open: GI-side emit (winner
-dirs from GI resolves also feed the field); depth>=1 reservoir
-records; longer renders on caustic-heavy scenes.
+(`leaves=9 kept=20466 warm=1` at ~4s).
+
+GI-side symmetry (landed, same commit):
+
+- `RestirGIResult` carries the winner's proxy radiance `lHatR/G/B`
+  (populated in `RestirGI_Resolve` for fresh/temporal/spatial picks);
+  `MK_RT_GI_RESOLVE` emits a record at x1/dir with flux `Y(lHat)`
+  when `pending == 1` (winner), nothing on the pending==2 fallback.
+- CPU `ResampleFirstBounce` gained `outLHat` plus the same
+  `guideCache`/`guideStrength` mixture as `ResampleSuffix` — GI
+  candidates draw from `(1-wG)*BSDF + wG*guide` and `pdfs[]` holds
+  the mixture density; the caller records x1/dir/`lHat.Y()` on
+  success. Fresh `GIRandom` streams 0x05/0x06 avoid collisions with
+  the existing 0x01–0x04/0x40+ stream map.
+- Regressions: e19 GI 10/10 (CPU+GPU Release), e95 6/6, e96 7/7.
+
+Open: depth>=1 reservoir records; longer renders on caustic-heavy
+scenes.

@@ -2141,6 +2141,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 	VSTORE3F(outFcos * W, &result->bsdfR);
 	result->pdfW = 1.f / W; // risPdfW: RIS marginal selection density
 	result->event = outEvent;
+	VSTORE3F(outLHat, &result->lHatR); // ReSTIR PG record payload
 	result->pending = 1u;
 }
 

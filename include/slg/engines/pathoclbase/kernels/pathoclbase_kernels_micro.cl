@@ -1247,6 +1247,21 @@ __kernel void AdvancePaths_MK_RT_GI_RESOLVE(
 		candRays[giK + i].flags = RAY_FLAGS_MASKED;
 	candRays[2u * giK].flags = RAY_FLAGS_MASKED;
 
+	// ReSTIR PG feed: an accepted winner is a target-proportional
+	// direction sample - train the guide field on it. pending == 2 is
+	// the no-winner fallback (nothing accepted - no record).
+	if ((guidingEnable != 0u) && (giResult->pending == 1u)) {
+		const float flux = Spectrum_Y(MAKE_FLOAT3(giResult->lHatR,
+				giResult->lHatG, giResult->lHatB));
+		if (flux > 0.f)
+			Guide_EmitRec(gid, VLOAD3F(&bsdf->hitPoint.p.x),
+					VLOAD3F(&giResult->dirX), flux,
+					guideRec0, guideRec1, guideRec2, guideRec3,
+					guideRec4, guideRec5, guideRec6, guideRec7,
+					guideRec8, guideRec9, guideRec10, guideRec11,
+					guideRec12, guideRec13, guideRec14, guideRec15);
+	}
+
 	// Hand the resolved winner (or the normal-sample fallback, pending
 	// == 2) back to the shared continuation path.
 	taskState->state = MK_GENERATE_NEXT_VERTEX_RAY;
