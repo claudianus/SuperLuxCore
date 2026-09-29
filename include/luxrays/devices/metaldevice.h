@@ -25,6 +25,7 @@
 // etc. in C++ mode and poison __OBJC__ for everything after).
 
 #include <atomic>
+#include <unordered_set>
 
 #include "luxrays/core/hardwaredevice.h"
 #include "luxrays/core/intersectiondevice.h"
@@ -320,7 +321,10 @@ protected:
 	// still-uncommitted encoders so EnqueueWriteBuffer's conflict scan
 	// sees them too. All pending state is under inFlightMutex.
 	MTLCommandBufferHandle pendingCB;
-	std::vector<const MetalDeviceBuffer *> pendingBuffers;
+	// Set, not vector: the EnqueueWriteBuffer conflict scan runs on
+	// every upload, and ~64 pending encoders x their buffer lists made
+	// the linear scan O(thousands) per write.
+	std::unordered_set<const MetalDeviceBuffer *> pendingBuffers;
 	u_int pendingEncoderCount;
 
 	// Commit pendingCB into inFlightWork. inFlightMutex must be held.

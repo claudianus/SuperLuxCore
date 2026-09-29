@@ -974,8 +974,7 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 
 	// Register this dispatch's buffers with the pending batch so the
 	// EnqueueWriteBuffer conflict scan sees uncommitted work too.
-	pendingBuffers.insert(pendingBuffers.end(),
-			metalDeviceKernel.marshalUsed.begin(),
+	pendingBuffers.insert(metalDeviceKernel.marshalUsed.begin(),
 			metalDeviceKernel.marshalUsed.end());
 	if (++pendingEncoderCount >= 64)   // bound CB memory / latency
 		CommitPendingLocked();
@@ -992,7 +991,8 @@ void MetalDevice::CommitPendingLocked() {
 	// under ARC. pendingCB was retained at creation; ownership transfers
 	// to inFlightWork which FinishQueue() releases after
 	// waitUntilCompleted.
-	inFlightWork.push_back({pendingCB, pendingBuffers});
+	inFlightWork.push_back({pendingCB,
+			{pendingBuffers.begin(), pendingBuffers.end()}});
 	pendingBuffers.clear();
 	[(__bridge id<MTLCommandBuffer>)pendingCB commit];
 	pendingCB = nullptr;
@@ -1085,14 +1085,8 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 			// Uncommitted batched encoders reference the buffer too: a
 			// host memcpy here would race with their not-yet-scheduled
 			// reads, so count them as conflicts.
-			if (!conflicting) {
-				for (const MetalDeviceBuffer *b : pendingBuffers) {
-					if (b == metalBuff) {
-						conflicting = true;
-						break;
-					}
-				}
-			}
+			if (!conflicting)
+				conflicting = pendingBuffers.count(metalBuff) != 0;
 		}
 
 		if (conflicting)
@@ -1174,14 +1168,8 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 							if (conflicting)
 								break;
 						}
-						if (!conflicting) {
-							for (const MetalDeviceBuffer *b : pendingBuffers) {
-								if (b == metalBuff) {
-									conflicting = true;
-									break;
-								}
-							}
-						}
+						if (!conflicting)
+							conflicting = pendingBuffers.count(metalBuff) != 0;
 				}
 				if (conflicting)
 					FinishQueue();
