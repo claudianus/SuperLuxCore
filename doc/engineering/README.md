@@ -32,3 +32,4 @@ docs live in `doc/features/` (see its README for the index).
 | [adaptive-error-review-fixes.md](adaptive-error-review-fixes.md) | Adaptive-error/NaN-collapse fixes, film-pointer serialization rebind (v2), PGIC update u_int wrap |
 | [serialization-roots.md](serialization-roots.md) | Archive-root record symmetry: .flm/.rsm/.rst/config round-trip repair (T* roots both sides), pyluxcore unique_ptr/tuple binding gotchas |
 | [cl2msl-scanner.md](cl2msl-scanner.md) | cl2msl translator span-scanner invariants: comment-paren trap, offline repro recipe, ReSTIR tail-ray coverage |
+| [restir-pg-design.md](restir-pg-design.md) | ReSTIR PG (Zeng et al. SA2025) design — reservoir winners feed the GuideTree vMF fit, no new infrastructure |
