@@ -21,6 +21,9 @@
 #if !defined(LUXRAYS_DISABLE_CUDA)
 
 
+#include <filesystem>
+#include <fstream>
+
 #include "luxrays/devices/ocldevice.h"
 #include "luxrays/devices/cudadevice.h"
 #include "luxrays/kernels/kernels.h"
@@ -253,6 +256,18 @@ HardwareDeviceProgramUPtr CUDADevice::CompileProgram(
 	LR_LOG(deviceContext, "[" << programName << "] Cache directory: " << kernelCache->GetCacheDir(kernelCache->GetApplicationName()));
 
 	const string cudaProgramSource = GetKernelSource(programSource);
+
+	// LUX_DUMP_KERNEL_SRC=<dir>: dump the assembled program source + compiler
+	// opts for offline NVRTC experiments (e.g. nvrtc_probe sass mode).
+	if (const char *dumpDir = getenv("LUX_DUMP_KERNEL_SRC")) {
+		std::filesystem::create_directories(dumpDir);
+		const std::filesystem::path base = std::filesystem::path(dumpDir) / programName;
+		std::ofstream(base.string() + ".cl", std::ios::binary) << cudaProgramSource;
+		std::ofstream optsFile(base.string() + ".opts", std::ios::binary);
+		for (auto const &p : cudaProgramParameters)
+			optsFile << p << "\n";
+		LR_LOG(deviceContext, "[" << programName << "] Kernel source dumped to " << base.string());
+	}
 
 	bool cached;
 	string error;

@@ -316,6 +316,8 @@ tnvrtcDestroyProgram *nvrtcDestroyProgram;
 tnvrtcCompileProgram *nvrtcCompileProgram;
 tnvrtcGetPTXSize *nvrtcGetPTXSize;
 tnvrtcGetPTX *nvrtcGetPTX;
+tnvrtcGetCUBINSize *nvrtcGetCUBINSize;
+tnvrtcGetCUBIN *nvrtcGetCUBIN;
 tnvrtcGetProgramLogSize *nvrtcGetProgramLogSize;
 tnvrtcGetProgramLog *nvrtcGetProgramLog;
 tnvrtcAddNameExpression *nvrtcAddNameExpression;
@@ -670,6 +672,8 @@ static int cuewNvrtcInit(void) {
   NVRTC_LIBRARY_FIND(nvrtcCompileProgram);
   NVRTC_LIBRARY_FIND(nvrtcGetPTXSize);
   NVRTC_LIBRARY_FIND(nvrtcGetPTX);
+  NVRTC_LIBRARY_FIND(nvrtcGetCUBINSize);
+  NVRTC_LIBRARY_FIND(nvrtcGetCUBIN);
   NVRTC_LIBRARY_FIND(nvrtcGetProgramLogSize);
   NVRTC_LIBRARY_FIND(nvrtcGetProgramLog);
   NVRTC_LIBRARY_FIND(nvrtcAddNameExpression);

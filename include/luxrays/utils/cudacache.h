@@ -37,9 +37,12 @@ public:
 		const std::string &kernelSource, const std::string &programName,
 		bool *cached, std::string *error) = 0;
 	
+	// forcePTX: always emit PTX (compute_<cap>) even when CUBIN output is
+	// available — required by OptiX, which only accepts PTX modules.
 	static bool ForcedCompilePTX(const std::vector<std::string> &kernelsParameters,
 		const std::string &kernelSource, const std::string &programName,
-		std::unique_ptr<char[]> * ptx, size_t *ptxSize, std::string *error);
+		std::unique_ptr<char[]> * ptx, size_t *ptxSize, std::string *error,
+		bool forcePTX = false);
 };
 
 // WARNING: this class is not thread safe !
@@ -50,7 +53,8 @@ public:
 
 	bool CompilePTX(const std::vector<std::string> &kernelsParameters,
 		const std::string &kernelSource, const std::string &programName,
-		std::unique_ptr<char[]> * ptx, size_t *ptxSize, bool *cached, std::string *error);
+		std::unique_ptr<char[]> * ptx, size_t *ptxSize, bool *cached, std::string *error,
+		bool forcePTX = false);
 
 	virtual CUmodule Compile(const std::vector<std::string> &kernelsParameters,
 		const std::string &kernelSource, const std::string &programName,

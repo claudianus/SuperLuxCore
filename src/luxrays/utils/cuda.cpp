@@ -23,6 +23,12 @@
 #include <fstream>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/trim.hpp>
 
@@ -37,6 +43,42 @@
 
 using namespace std;
 using namespace luxrays;
+
+// Physical RAM in bytes (0 when undetectable — treated as "not enough").
+static uint64_t PhysMemBytes() {
+#if defined(_WIN32)
+	MEMORYSTATUSEX ms;
+	ms.dwLength = sizeof(ms);
+	return GlobalMemoryStatusEx(&ms) ? ms.ullTotalPhys : 0;
+#elif defined(__linux__)
+	return (uint64_t)sysconf(_SC_PHYS_PAGES) * (uint64_t)sysconf(_SC_PAGESIZE);
+#else
+	return 0;
+#endif
+}
+
+// Compile kernels to SASS (sm_<cap> cubin) instead of PTX. Default: on when
+// the machine has >= 20 GB RAM — with --split-compile, NVRTC's embedded
+// ptxas peaks around ~12 GB on the ~100k-line PathOCL megakernel, and a
+// ptxas OOM inside NVRTC aborts the process before the PTX fallback can
+// run (below the guard we stay on PTX + driver JIT: slower first start,
+// never fatal). SASS skips the driver PTX->SASS JIT entirely (~20 min for
+// the megakernel) and survives driver updates, unlike the NVIDIA compute
+// cache. LUX_CUDA_SASS=0 forces PTX; any other non-empty value forces SASS.
+static bool CudaSassRequested() {
+	static const bool v = [] {
+		const char *e = getenv("LUX_CUDA_SASS");
+		if (e && e[0])
+			return e[0] != '0';
+		return PhysMemBytes() >= (20ull << 30);
+	}();
+	return v;
+}
+
+static bool CudaCubinCapable(const bool forcePTX) {
+	return !forcePTX && CudaSassRequested() &&
+			(nvrtcGetCUBIN != nullptr) && (nvrtcGetCUBINSize != nullptr);
+}
 
 static string GetCuda10Architecture() {
 	CUdevice device;
@@ -67,79 +109,112 @@ static string GetCuda10Architecture() {
 
 bool cudaKernelCache::ForcedCompilePTX(
 	const vector<string> &kernelsParameters, const string &kernelSource,
-	const string &programName, std::unique_ptr<char[]> * ptx, size_t *ptxSize, string *error
+	const string &programName, std::unique_ptr<char[]> * ptx, size_t *ptxSize, string *error,
+	bool forcePTX
 ) {
 	if (error)
 		*error = "";
 
-	nvrtcProgram prog;
-	CHECK_NVRTC_ERROR(nvrtcCreateProgram(&prog, kernelSource.c_str(), programName.c_str(), 0, nullptr, nullptr));
-  
-	vector<const char *> cudaOpts;
-	cudaOpts.push_back("--device-as-default-execution-space");
-	//cudaOpts.push_back("--disable-warnings");
-       
-        // Set target architecture, based on current device's capability
-        string targetArch = "--gpu-architecture=compute_" + GetCuda10Architecture();
-        cudaOpts.push_back(targetArch.c_str());
+	// Prefer compiling straight to SASS (cubin): it skips the driver's PTX JIT
+	// step entirely and does not depend on the driver's PTX ISA version
+	// (NVRTC can be newer than the installed driver). Fall back to PTX
+	// (compute_<cap>) when CUBIN output is unavailable or the arch is unknown
+	// to the loaded NVRTC. forcePTX (e.g. OptiX modules) skips the SASS path.
+	const string arch = GetCuda10Architecture();
+	const bool cubinCapable = CudaCubinCapable(forcePTX);
+	const int archModes = cubinCapable ? 2 : 1;
 
-	// To display warning numbers
-	cudaOpts.push_back("-Xcudafe");
-	cudaOpts.push_back("--display_error_number");
-	
-	// To suppress warning: warning #550-D: variable "xyz" was set but never used
-	cudaOpts.push_back("-Xcudafe");
-	cudaOpts.push_back("--diag_suppress=550");
-	
-	// To suppress warning: warning #1055-D: types cannot be declared in anonymous unions
-	cudaOpts.push_back("-Xcudafe");
-	cudaOpts.push_back("--diag_suppress=1055");
+	for (int mode = 0; mode < archModes; ++mode) {
+		const bool toCubin = cubinCapable && (mode == 0);
+		const string targetArch = "--gpu-architecture=" +
+				(toCubin ? "sm_" + arch : "compute_" + arch);
 
-	// To suppress warning: warning #68-D: integer conversion resulted in a change of sign
-	cudaOpts.push_back("-Xcudafe");
-	cudaOpts.push_back("--diag_suppress=68");
+		nvrtcProgram prog;
+		CHECK_NVRTC_ERROR(nvrtcCreateProgram(&prog, kernelSource.c_str(), programName.c_str(), 0, nullptr, nullptr));
 
-	// Accelerate compilation
-	//cudaOpts.push_back("--Ofast-compile=min"); # Only 12.9+
-	cudaOpts.push_back("--split-compile=0");
+		vector<const char *> cudaOpts;
+		cudaOpts.push_back("--device-as-default-execution-space");
+		//cudaOpts.push_back("--disable-warnings");
 
-	// Enable pre-compiled headers
-	cudaOpts.push_back("--pch");
+		// Set target architecture, based on current device's capability
+		cudaOpts.push_back(targetArch.c_str());
 
-	// Enable debug info
-	//cudaOpts.push_back("-G");
-	// Enable only debug line info
-	//cudaOpts.push_back("--generate-line-info");
+		// To display warning numbers
+		cudaOpts.push_back("-Xcudafe");
+		cudaOpts.push_back("--display_error_number");
 
-	for	(auto const &p : kernelsParameters)
-		cudaOpts.push_back(p.c_str());
+		// To suppress warning: warning #550-D: variable "xyz" was set but never used
+		cudaOpts.push_back("-Xcudafe");
+		cudaOpts.push_back("--diag_suppress=550");
 
-	// For some debug
-	//for (uint i = 0; i < cudaOpts.size(); ++i)
-	//	cout << "Opt #" << i <<" : [" << cudaOpts[i] << "]\n";
+		// To suppress warning: warning #1055-D: types cannot be declared in anonymous unions
+		cudaOpts.push_back("-Xcudafe");
+		cudaOpts.push_back("--diag_suppress=1055");
 
-	const nvrtcResult compilationResult = nvrtcCompileProgram(prog,
-			cudaOpts.size(),
-			(cudaOpts.size() > 0) ? &cudaOpts[0] : nullptr);
+		// To suppress warning: warning #68-D: integer conversion resulted in a change of sign
+		cudaOpts.push_back("-Xcudafe");
+		cudaOpts.push_back("--diag_suppress=68");
 
-	size_t logSize;
-	CHECK_NVRTC_ERROR(nvrtcGetProgramLogSize(prog, &logSize));
-	auto log = std::make_unique<char[]>(logSize);
-	CHECK_NVRTC_ERROR(nvrtcGetProgramLog(prog, log.get()));
+		// Accelerate compilation
+		//cudaOpts.push_back("--Ofast-compile=min"); # Only 12.9+
+		// SASS mode needs split-compile: the embedded ptxas run with
+		// --split-compile=0 OOM-aborts the process on the PathOCL
+		// megakernel (~100k lines). 4 parallel units measured ~12GB peak
+		// and produced a valid 64MB sm_120 cubin in ~8min.
+		cudaOpts.push_back(toCubin ? "--split-compile=4" : "--split-compile=0");
 
-	*error = string(log.get());
+		// Enable pre-compiled headers
+		cudaOpts.push_back("--pch");
 
-	if (compilationResult != NVRTC_SUCCESS)
-		return false;
+		// Enable debug info
+		//cudaOpts.push_back("-G");
+		// Enable only debug line info
+		//cudaOpts.push_back("--generate-line-info");
 
-	// Obtain PTX from the program.
-	CHECK_NVRTC_ERROR(nvrtcGetPTXSize(prog, ptxSize));
-	*ptx = std::make_unique<char[]>(*ptxSize);
-	CHECK_NVRTC_ERROR(nvrtcGetPTX(prog, ptx->get()));
+		for	(auto const &p : kernelsParameters)
+			cudaOpts.push_back(p.c_str());
 
-	CHECK_NVRTC_ERROR(nvrtcDestroyProgram(&prog));
+		// For some debug
+		//for (uint i = 0; i < cudaOpts.size(); ++i)
+		//	cout << "Opt #" << i <<" : [" << cudaOpts[i] << "]\n";
 
-	return true;
+		const nvrtcResult compilationResult = nvrtcCompileProgram(prog,
+				cudaOpts.size(),
+				(cudaOpts.size() > 0) ? &cudaOpts[0] : nullptr);
+
+		size_t logSize;
+		CHECK_NVRTC_ERROR(nvrtcGetProgramLogSize(prog, &logSize));
+		auto log = std::make_unique<char[]>(logSize);
+		CHECK_NVRTC_ERROR(nvrtcGetProgramLog(prog, log.get()));
+
+		*error = string(log.get());
+
+		if (compilationResult != NVRTC_SUCCESS) {
+			CHECK_NVRTC_ERROR(nvrtcDestroyProgram(&prog));
+			// Retry as PTX if the SASS target failed
+			if (toCubin && archModes > 1)
+				continue;
+			return false;
+		}
+
+		if (toCubin) {
+			// Obtain the SASS cubin (ELF) from the program.
+			CHECK_NVRTC_ERROR(nvrtcGetCUBINSize(prog, ptxSize));
+			*ptx = std::make_unique<char[]>(*ptxSize);
+			CHECK_NVRTC_ERROR(nvrtcGetCUBIN(prog, ptx->get()));
+		} else {
+			// Obtain PTX from the program.
+			CHECK_NVRTC_ERROR(nvrtcGetPTXSize(prog, ptxSize));
+			*ptx = std::make_unique<char[]>(*ptxSize);
+			CHECK_NVRTC_ERROR(nvrtcGetPTX(prog, ptx->get()));
+		}
+
+		CHECK_NVRTC_ERROR(nvrtcDestroyProgram(&prog));
+
+		return true;
+	}
+
+	return false;
 }
 
 //------------------------------------------------------------------------------
@@ -162,17 +237,25 @@ cudaKernelPersistentCache::~cudaKernelPersistentCache() {
 
 bool cudaKernelPersistentCache::CompilePTX(const vector<string> &kernelsParameters,
 		const string &kernelSource, const string &programName,
-		std::unique_ptr<char[]> *ptx, size_t *ptxSize, bool *cached, string *error) {
+		std::unique_ptr<char[]> *ptx, size_t *ptxSize, bool *cached, string *error,
+		bool forcePTX) {
 	if (error)
 		*error = "";
 
 	// Check if the kernel is available in the cache
 
+	// CUBIN-capable NVRTC compiles to SASS (sm_<cap>); older ones produce PTX
+	// (compute_<cap>). cuModuleLoadDataEx auto-detects either format, so the
+	// suffix is only a cache-key detail. forcePTX callers (OptiX) always get
+	// PTX since optixModuleCreateFromPTX cannot ingest cubins.
+	const bool cubinCapable = CudaCubinCapable(forcePTX);
 	const string kernelName =
 			oclKernelPersistentCache::HashString(oclKernelPersistentCache::ToOptsString(kernelsParameters))
 			+ "-" +
 			oclKernelPersistentCache::HashString(kernelSource) +
-                        "_compute_" + GetCuda10Architecture() + ".ptx";
+                        (cubinCapable ?
+				"_sm_" + GetCuda10Architecture() + ".cubin" :
+				"_compute_" + GetCuda10Architecture() + ".ptx");
 	const std::filesystem::path dirPath = GetCacheDir(appName);
 	const std::filesystem::path filePath = dirPath / kernelName;
 	const string fileName = filePath.generic_string();
@@ -182,7 +265,7 @@ bool cudaKernelPersistentCache::CompilePTX(const vector<string> &kernelsParamete
 		// It isn't available, compile the source
 
 		// Create the file only if the binaries include something
-		if (ForcedCompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, error)) {
+		if (ForcedCompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, error, forcePTX)) {
 			// Add the kernel to the cache
 			std::filesystem::create_directories(dirPath);
 
@@ -241,7 +324,7 @@ bool cudaKernelPersistentCache::CompilePTX(const vector<string> &kernelsParamete
 			if (hashBin != oclKernelPersistentCache::HashBin(ptx->get(), *ptxSize)) {
 				// Something wrong in the file, remove the file and retry
 				std::filesystem::remove(filePath);
-				return CompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, cached, error);
+				return CompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, cached, error, forcePTX);
 			} else {
 				*cached = true;
 
@@ -250,7 +333,7 @@ bool cudaKernelPersistentCache::CompilePTX(const vector<string> &kernelsParamete
 		} else {
 			// Something wrong in the file, remove the file and retry
 			std::filesystem::remove(filePath);
-			return CompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, cached, error);
+			return CompilePTX(kernelsParameters, kernelSource, programName, ptx, ptxSize, cached, error, forcePTX);
 		}
 	}
 }

@@ -371,8 +371,10 @@ public:
 		size_t ptxSize;
 		bool cached;
 		string ptxError;
+		// optixModuleCreateFromPTX() accepts PTX only — never SASS cubins
 		if (!cudaDevice->GetCUDAKernelCache()->CompilePTX(cudaProgramParameters,
-				kernelSource, "OptixAccel", &ptx, &ptxSize, &cached, &ptxError)) {
+				kernelSource, "OptixAccel", &ptx, &ptxSize, &cached, &ptxError,
+				true /* forcePTX */)) {
 			LR_LOG(device.GetContext(), "[OptixAccel] CUDA program compilation error: " << endl << ptxError);
 
 			throw runtime_error("OptixAccel CUDA program compilation error");
@@ -386,8 +388,9 @@ public:
 
 		OptixModuleCompileOptions moduleCompileOptions = {};
 		moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
-		moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
-		moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO;
+		moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_3;
+		// LINEINFO only inflates register pressure on the release path
+		moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
 		OptixPipelineCompileOptions pipelineCompileOptions = {};
 		pipelineCompileOptions.usesMotionBlur = usesMotionBlur;
@@ -489,7 +492,7 @@ public:
 
 		OptixPipelineLinkOptions pipelineLinkOptions = {};
 		pipelineLinkOptions.maxTraceDepth = 1;
-		pipelineLinkOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO;
+		pipelineLinkOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
 		optixErrLogSize = sizeof(optixErrLog);
 		CHECK_OPTIX_ERROR(optixPipelineCreate(
