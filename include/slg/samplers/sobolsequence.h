@@ -62,6 +62,9 @@ public:
 		blueNoiseSeed = seed;
 		pixelShift = shift;
 		owenEnable = true;
+		// The index-shuffle seed is a per-pixel constant — hoisted out of
+		// GetSample so the hot path does one hash instead of two
+		owenShuffleSeed = BlueNoiseHash(seed ^ 0x70efbc49u);
 	}
 	void DisableOwen() { owenEnable = false; }
 
@@ -89,6 +92,7 @@ private:
 	bool blueNoiseEnable;
 	bool owenEnable;
 	u_int blueNoiseSeed;
+	u_int owenShuffleSeed;
 	float pixelShift;
 };
 

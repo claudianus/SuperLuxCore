@@ -38,6 +38,7 @@ SobolSequence::SobolSequence() : directions(NULL) {
 	blueNoiseEnable = false;
 	owenEnable = false;
 	blueNoiseSeed = 0;
+	owenShuffleSeed = 0;
 	pixelShift = -1.f;
 }
 
@@ -107,9 +108,8 @@ float SobolSequence::GetSample(const u_int pass, const u_int index) {
 		// nested-uniform scramble (decorrelating sample order across
 		// pixels), then each dimension is scrambled with a per-pixel,
 		// per-dimension seed. No Cranley-Patterson rotation is needed.
-		const u_int shuffleSeed = BlueNoiseHash(blueNoiseSeed ^ 0x70efbc49u);
 		const u_int dimSeed = BlueNoiseHash(blueNoiseSeed ^ (index * 0x9e3779b9u + 0x85ebca6bu));
-		const u_int i = NestedUniformScramble(pass, shuffleSeed);
+		const u_int i = NestedUniformScramble(pass, owenShuffleSeed);
 		iResult = NestedUniformScramble(SobolDimension(i, index), dimSeed);
 		// Blue-noise Cranley-Patterson offset: the scalar rank offset is
 		// staggered per dimension by an irrational stride so dims stay
