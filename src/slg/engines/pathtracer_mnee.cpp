@@ -487,12 +487,33 @@ static bool MneeRejXEnabled() {
 
 #define LMNEE_CAMERA_SEED_ID 0xFFFFFFFEu
 
+// Lookup hit-rate diagnostics (LUX_MNEE_SEED_STATS=1 prints at exit):
+// the only consumer is eye/light-side seed reuse, so the counters stay
+// env-gated off the hot path.
+static const bool g_seedStatsOn = getenv("LUX_MNEE_SEED_STATS") != nullptr;
+// LUX_MNEE_SELFSEED=0 disables solve-triggered stores so the lookup
+// stats isolate photon-injected seeds (MPG-lite Phase B validation).
+static const bool g_selfSeedOn = !getenv("LUX_MNEE_SELFSEED") ||
+		(getenv("LUX_MNEE_SELFSEED")[0] != '0');
+static struct MneeSeedStats {
+	~MneeSeedStats() {
+		if (tries.load() > 0)
+			fprintf(stderr, "[MNEE seeds] lookups=%llu hits=%llu (%.1f%%)\n",
+					(unsigned long long)tries.load(),
+					(unsigned long long)hits.load(),
+					100.0 * hits.load() / tries.load());
+	}
+	std::atomic<unsigned long long> tries{0}, hits{0};
+} g_mneeSeedStats;
+
 // Returns true and fills *v when a usable seed was found (the flat tangent
 // frame fallback like the GPU Mnee_SeedCacheLookup; the first proposal
 // re-projects onto the real surface anyway).
 static bool MneeSeedLookup(const MneeSeedEntry *cache,
 		const u_int key, const u_int lightIndex, const u_int meshIndex,
 		const bool mirrorMode, const float eta, MneeVertex *v) {
+	if (g_seedStatsOn)
+		g_mneeSeedStats.tries.fetch_add(1, std::memory_order_relaxed);
 	const MneeSeedEntry &e = cache[key];
 	if (!e.valid.load(std::memory_order_relaxed) ||
 			(e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
@@ -520,6 +541,8 @@ static bool MneeSeedLookup(const MneeSeedEntry *cache,
 	v->dndv = Normal();
 	v->eta = eta;
 	MneeOrthonormalize(*v);
+	if (g_seedStatsOn)
+		g_mneeSeedStats.hits.fetch_add(1, std::memory_order_relaxed);
 	return true;
 }
 
@@ -1096,7 +1119,7 @@ bool PathTracer::MNEEDirectSampling(
 	// out-compete the cold line seed (~5% caustic energy loss measured on
 	// the bumpy-sphere seedcache scene). Keyed by the blocker-hit cell,
 	// valued by the solved vertex (GPU SolveEnd parity).
-	if (mneeSeedCacheEnable && mneeSeeds)
+	if (mneeSeedCacheEnable && mneeSeeds && g_selfSeedOn)
 		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
 				seedLightIndex, seedMesh, mirrorMat != nullptr,
 				pathThroughput.Y());
@@ -2337,7 +2360,7 @@ bool PathTracer::LMNEEConnectToEye(
 	// Publish the converged vertex as a warm-start seed only after the
 	// full connect validated (eye-side parity: solved-but-unusable roots
 	// pollute the cache and drain the caustic on multi-root casters).
-	if (mneeSeedCacheEnable && mneeSeeds)
+	if (mneeSeedCacheEnable && mneeSeeds && g_selfSeedOn)
 		MneeSeedStore(mneeSeeds.get(), seedKey, vtx.p, vtx.n,
 				LMNEE_CAMERA_SEED_ID, seedMesh,
 				mirrorMat != nullptr, radiance.Y());
