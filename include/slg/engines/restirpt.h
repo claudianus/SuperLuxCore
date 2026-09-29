@@ -92,9 +92,16 @@ public:
 		BSDFEvent event;
 		luxrays::Point x2;
 		luxrays::Normal x2n;
-		float wSum;			// post-merge totals for the store
+		float wSum;			// post-merge totals (estimator only)
 		float storeEps;		// support floor used by this call
 		u_int m;
+		// Store-side totals: pre-spatial merge wSum/m. Storing the
+		// post-spatial values would feed neighbour-inflated weight back
+		// into the same entries next pass - the merge-explosion
+		// pathology the GI pre-spatial store fixed (see the GPU
+		// RestirGI_Resolve comment).
+		float storeWSum;
+		u_int storeM;
 		u_int miss;
 		bool consumed;		// true = stored suffix, path ends here
 		bool storeable;		// true = caller may Commit() this pick

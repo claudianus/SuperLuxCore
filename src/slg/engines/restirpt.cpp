@@ -323,6 +323,14 @@ bool RestirPT::ResampleSuffix(
 		mTotal = mCap;
 	}
 
+	// Pre-spatial store totals (GI parity): the reservoir record must
+	// carry the state BEFORE the spatial merges below, else a
+	// neighbour-inflated wSum feeds back into the same entries next
+	// pass (the merge-explosion pathology). The estimator's W still
+	// uses the post-merge totals.
+	float storeWSum = wSum;
+	u_int storeM = mTotal;
+
 	struct WinRec {
 		Vector dir;
 		Spectrum fcos;
@@ -541,6 +549,8 @@ bool RestirPT::ResampleSuffix(
 	pick->x2n = out.x2n;
 	pick->wSum = wSum;
 	pick->m = mTotal;
+	pick->storeWSum = storeWSum;
+	pick->storeM = storeM;
 	pick->miss = out.miss;
 	pick->consumed = out.measured;
 	pick->storeEps = eps;
@@ -582,9 +592,9 @@ void RestirPT::Commit(const u_int pixelX, const u_int pixelY,
 	slot->dir[2] = pick.dir.z;
 	slot->lsuf[0] = suf.c[0]; slot->lsuf[1] = suf.c[1];
 	slot->lsuf[2] = suf.c[2];
-	slot->wSum = pick.wSum;
+	slot->wSum = pick.storeWSum;
 	slot->target = tgt;
-	slot->m = pick.m;
+	slot->m = pick.storeM;
 	slot->isMiss = pick.miss;
 	std::atomic_ref<u_int>(slot->pass).store(pass,
 			std::memory_order_release);
