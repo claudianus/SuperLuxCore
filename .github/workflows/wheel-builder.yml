@@ -33,7 +33,7 @@ on:
         type: string
       build-type:
         description: 'Build type'
-        required: true
+        required: false
         default: 'Release'
         type: string
     outputs:
@@ -254,7 +254,7 @@ jobs:
         run: |
           import json
           from pathlib import Path
-          if (input_version := "${{ inputs.release-version }}"):
+          if (input_version := "${{ inputs.version }}"):
             result = input_version
           else:
             build_settings_file = Path("build-system", "build-settings.json")

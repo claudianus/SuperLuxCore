@@ -25,7 +25,12 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-VERSION = "2.11.2"
+VERSION = ".".join(
+    json.loads(
+        (Path(__file__).resolve().parents[1] / "build-system" / "build-settings.json").read_text()
+    )["DefaultVersion"][k]
+    for k in ("major", "minor", "patch")
+)
 TAG = "cp313-cp313-macosx_14_0_arm64"
 PKG = "pysuperluxcore"
 
