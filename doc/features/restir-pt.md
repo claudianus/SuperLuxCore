@@ -55,14 +55,16 @@ merge-explosion tripwires.
 | Scene | spp | RMSE off | RMSE PT | ratio |
 |---|---|---|---|---|
 | pg-indirect | 32 | 0.0435 | 0.0369 | **0.85 (PT wins)** |
+| pg-glossy | 32 | 0.0349 | 0.0272 | **0.78 (PT wins)** |
 | cornell | 48 | 0.0223 | 0.0516 | 2.31 (diffuse-flat — no win) |
 
-pg-indirect mean parity: off −6.6%, PT −20.6% at 32 spp — the
-bounded-bias symptom: rare high-radiance suffixes contribute only
-after a path first probes them, so consumed picks underfill early.
-Converges toward parity as reservoirs populate; tighten spp or
-candidate count to close the gap. PT is a variance-reallocation tool:
-enable it on indirect-heavy/caustic scenes, not flat diffuse.
+Mean parity sits at −16..−21% at 32 spp on the pg scenes (off is
+−5..−7%): the bounded-bias symptom — rare high-radiance suffixes
+contribute only after a path first probes them, so consumed picks
+underfill early. Converges toward parity as reservoirs populate;
+tighten spp or candidate count to close the gap. PT is a
+variance-reallocation tool: enable it on indirect-heavy/caustic
+scenes, not flat diffuse.
 
 ## Known limits (PT-1)
 
