@@ -160,6 +160,20 @@
   `metal` rejects `.msl` as a linker input) and `xcrun -sdk macosx
   metal -c /tmp/m.metal`.
 
+- **MSVC PCH + `WINDOWS_EXPORT_ALL_SYMBOLS` = bogus `__` export**: MSVC
+  embeds a `__@@_PchSym_@00@<digest>` integrity symbol in the
+  `cmake_pch.cxx.obj` of every PCH-enabled target. When the `luxcore`
+  SHARED target generates `exports.def` via `cmake -E __create_def`,
+  the symbol name is truncated at the first `@` (module-definition
+  ordinal syntax) and lands in the .def as a bare `__` DATA export →
+  `LNK2001 unresolved external symbol '__'` / `LNK1120` linking
+  `luxcore.dll`. Only the target's OWN objects feed the def
+  (`exports.def.objs`), so static PCH targets (luxrays, slg-core,
+  slg-film, luxcore_static) are harmless — their pch objects never
+  reach a .def. Fix: skip `target_precompile_headers` on the SHARED
+  `luxcore` target under `if(NOT MSVC)` (src/luxcore/CMakeLists.txt);
+  it is ~4 TUs, so the compile-time loss is negligible.
+
 - **Manual `ninja` runs need the conan env**: `luxparse.y` regenerates via
   the Conan bison 3.8.2 binary, which execs GNU m4 found through the
   `M4` env var. Without it, macOS `/usr/bin/m4` (BSD) dies mid-grammar
@@ -284,3 +298,82 @@
   MallocNanoZone=0 MTL_SHADER_VALIDATION=1` so the fault lands at the
   bad write itself. Regression: `dev-tools/geomedit_rebuild_stress.py`
   (GEOMETRY_EDIT rebuild loops incl. scene.spill path).
+- **PathOCL-on-CUDA is OpenCL compiled by NVRTC — keep kernel .cl files
+  dual-syntax.** The CUDA device compiles the same .cl sources through
+  `cudadevice_oclemul_*` shims, so anything OpenCL-only must go through
+  the portability macros, not raw OpenCL syntax:
+  `(float3)(a, b, c)` vector literals and `float3 x = 0.f` scalar
+  splats are invalid C++ — always use `MAKE_FLOATn(...)` (and splat
+  explicitly as `MAKE_FLOAT3(v, v, v)`); `.xyz`/`.xy` swizzles don't
+  exist on CUDA vector types — extract components or use helpers
+  (`Float4_ToFloat3` in exttrianglemesh_funcs.cl); `__private`,
+  `MAXFLOAT`, `native_sqrt`, and vector `sqrt`/`fmax`/`max` overloads
+  live in `cudadevice_oclemul_types.cl` / `_funcs.cl` — extend the
+  emulation layer rather than scattering `#ifdef LUXRAYS_CUDA_DEVICE`.
+  NVRTC reports "CUDA program compilation error" with the full
+  diagnostics embedded; grep the log for `error:` to find them.
+- **`__private` pointer parameters reject `__generic` arguments under
+  OpenCL.** `Microfacet_GulbrandsenNK(f0, edge, n, k)` took
+  `__private float3 *` while `Metal2Material_*` passed its generic
+  `float3 *` params — legal under CUDA (`__private` is a no-op) but
+  `CL_BUILD_PROGRAM_FAILURE` under OpenCL. Drop `__private` from
+  pointer params unless the contract genuinely requires private
+  (generic accepts private AND generic args; the reverse is rejected).
+- **First-run kernel compile on NVIDIA is minutes, not a hang.** The
+  ~100k-line PathOCL kernel takes ~17min under NVIDIA's OpenCL
+  compiler and ~15min under NVRTC (sm_120, --use_fast_math). Results
+  land in `%TEMP%\luxcorerender.org\ocl_kernel_cache` and the OptiX
+  disk cache (key includes `sm_120` + driver version), so subsequent
+  runs compile in <1s. Don't kill a "stuck" first render.
+- **`cuewInit` failure left `isCudaAvilable=true` → crash in
+  `cuInit`-dependent paths.** `src/luxrays/core/init.cpp` now ORs the
+  cuewInit result into the flag instead of ignoring it, so a missing
+  nvrtc/cudart DLL degrades to OpenCL instead of crashing device
+  enumeration (`CUDA_ERROR_NOT_INITIALIZED`).
+- **`install(... RUNTIME_DEPENDENCIES DIRECTORIES "${VAR}")` silently
+  breaks dependency resolution.** `CONAN_RUNTIME_LIB_DIRS` contains
+  per-config generator entries that evaluate to "" for non-matching
+  configs; quoting the variable preserves them as empty list elements,
+  and `file(GET_RUNTIME_DEPENDENCIES)` then fails to resolve ANY of the
+  deps in the real dirs ("Could not resolve runtime dependencies" even
+  though the DLLs are right there and `objdump` works). Expanded
+  unquoted (`DIRECTORIES ${CONAN_RUNTIME_LIB_DIRS}`) the empties are
+  dropped from the argument list — that's why the `luxcore.dll` block
+  resolved fine while `luxcoreconsole`/`luxcoreui` (quoted) failed.
+  Reproduce a resolution without installing:
+  `cmake -P` a script calling `file(GET_RUNTIME_DEPENDENCIES
+  RESOLVED_DEPENDENCIES_VAR d UNRESOLVED_DEPENDENCIES_VAR u
+  EXECUTABLES <exe> DIRECTORIES <dirs>)` — needs `objdump`/`dumpbin`
+  on PATH (winlibs ships one at `D:\tools\winlibs\mingw64\bin`).
+  Related: `PRE_EXCLUDE_REGEXES` must literally list `"api-ms-"`,
+  `"ext-ms-"` (and `"clang_rt"` for ASan) — the empty `${DEP_EXCLUDE}`
+  in luxcoreui let every `api-ms-win-crt-*` surface as unresolved.
+- **`install(DIRECTORY ${DOC_BUILD_DIR}/html/ ...)` needs `OPTIONAL`.**
+  Doxygen is found on PATH on Windows (winlibs bundles it), so the
+  `doc` component install rule is generated even though `doc/html` only
+  exists after building the `doc` target — a bare `cmake --install`
+  then dies on the missing directory mid-script.
+- **CUDA SASS (cubin) vs PTX for the PathOCL megakernel.** PathOCL-on-
+  CUDA compiles ~100k lines through NVRTC. PTX output (default before)
+  still needs the driver's PTX→SASS JIT inside `cuModuleLoadDataEx` —
+  ~20min on first run — which is repeated unless the NVIDIA compute
+  cache (`%APPDATA%\NVIDIA\ComputeCache`, driver-managed) retains it.
+  Compiling straight to `sm_<cap>` cubin via `nvrtcGetCUBIN` skips the
+  JIT entirely: `cuModuleLoadData*` accepts either format. BUT the
+  embedded ptxas aborts the whole process on OOM unless
+  `--split-compile=<N>` is passed (N>0 splits the module for parallel
+  assembly; measured: 4 units ≈ 12GB peak, ~8min for a 64MB sm_120
+  cubin — `--split-compile=0` was a fatal OOM). SASS is on by default
+  only when the machine has ≥20GB RAM and NVRTC exports
+  `nvrtcGetCUBIN`; `LUX_CUDA_SASS=0` forces PTX, any other non-empty
+  value forces SASS. Failed SASS compiles fall back to PTX. OptiX
+  modules NEVER take cubin — `optixModuleCreateFromPTX` rejects it with
+  `OPTIX_ERROR_INVALID_INPUT` — so `CompilePTX(..., forcePTX=true)`
+  stays on the `compute_<cap>` path. Cache files carry the format in
+  the name (`_sm_<cap>.cubin` vs `_compute_<cap>.ptx`) so PTX and cubin
+  caches can't collide.
+- **`LUX_DUMP_KERNEL_SRC=<dir>` dumps the assembled CUDA kernel**
+  source + compiler options (`<program>.cl` + `<program>.opts`) at
+  `CUDADevice::CompileProgram` — feed the dump to
+  `dev-tools/nvrtc_probe.exe` (`sass` mode) to experiment with NVRTC
+  options (e.g. split-compile counts) without a 20min render loop.

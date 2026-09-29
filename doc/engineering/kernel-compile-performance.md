@@ -377,8 +377,7 @@ parallel pool cmp-equal the serially-produced ones on the same input;
 cross-run diffs are only the cache-dir path embedded in the module
 (`source_filename`), pre-existing behaviour.
 
-Regression: `dev-tools/vulkan-regression.sh --full` ALL PASSED both
-runs (Stage A 15/15 HWRT+SW, Stage B centre 4.0000 vs 4.0±0.20, Stage
+Regression: `dev-tools/vulkan-regression.sh --full` ALL PASSED both runs (Stage A 15/15 HWRT+SW, Stage B centre 4.0000 vs 4.0±0.20, Stage
 C AS rebuild). A direct `LUXRAYS_VULKAN_RT=0 vk_intersect_test` run
 also exercised the SW-traversal CompileProgram path on the new code.
 
@@ -594,3 +593,28 @@ genuinely use Material/BSDF definitions.
    Debug↔Release/branch switches, at the cost of dropping PCH.
    Kept as opt-in: `SUPERLUXCORE_CCACHE=1` makes `luxmake config` pass
    `CMAKE_{C,CXX}_COMPILER_LAUNCHER` when sccache/ccache is on PATH.
+
+## Windows / NVRTC: PTX-vs-SASS (cubin) cold start on RTX 5060 (sm_120)
+
+Measured on a 16-core Windows box, GeForce RTX 5060 (8GB, driver
+616.92 / CUDA 13.4 UMD), ~100k-line PathOCL program,
+`--use_fast_math`, NVRTC 12.8:
+
+| path | NVRTC compile | load | total first-run | notes |
+|---|---|---|---|---|
+| PTX (`compute_120`) | ~minutes | driver PTX→SASS JIT ~20min inside `cuModuleLoadDataEx` | ~24min | warm runs hit `%APPDATA%\NVIDIA\ComputeCache` (driver-managed) → ~172ms program compile |
+| CUBIN (`sm_120`, `--split-compile=4`) | 485s (~12GB peak, embedded ptxas) | `cuModuleLoadData` ≈ instant | ~8min | 64.6MB cubin on disk; no driver JIT at all |
+
+- `--split-compile=0` (default) makes embedded ptxas OOM-*abort the
+  process* on this kernel — no fallback possible, the call never
+  returns. `=4` was the sweet spot; higher counts did not help further.
+- PTX JIT ~20min is *not* NVRTC compile time — it's the driver
+  translating PTX inside `cuModuleLoadDataEx`, and it happens on every
+  cold start until the NVIDIA compute cache kicks in. CUBIN output
+  bypasses that stage completely and survives driver updates (cache key
+  is content-based, not driver-based).
+- SASS is therefore the default when RAM ≥ 20GB and NVRTC exposes
+  `nvrtcGetCUBIN`; `LUX_CUDA_SASS=0` forces PTX, PTX failure-free
+  fallback preserved. OptiX always stays on PTX
+  (`optixModuleCreateFromPTX` rejects cubin — `forcePTX` flag on
+  `CompilePTX`/`ForcedCompilePTX`).
