@@ -31,6 +31,7 @@
 
 #include "slg/slg.h"
 #include "slg/usings.h"
+#include "slg/engines/mneeseedcache.h"
 #include "slg/samplers/sobol.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
@@ -369,6 +370,15 @@ public:
 	void SetIngestOnly(const bool v) { ingestOnly = v; }
 	bool IsIngestOnly() const { return ingestOnly; }
 
+	// MPG-lite Phase B: caustic photon deposits record their last
+	// delta-specular vertex as an MNEE seed candidate (the photon already
+	// walked the exact specular manifold an eye-side connection needs).
+	// The PathTracer seed table may not exist yet when photons trace
+	// (PATHCPU preprocesses before ParseOptions), so candidates collect
+	// here and MergeMneeSeeds() drains them once the table is wired.
+	void SetMneeSeedCache(MneeSeedEntry *cache) { mneeSeedCache = cache; }
+	void MergeMneeSeeds();
+
 	friend class PGICSceneVisibility;
 	friend class TracePhotonsThread;
 	friend class boost::serialization::access;
@@ -488,6 +498,13 @@ private:
 	// true when photons arrive via device deposits and no CPU trace
 	// runs at all (GPU engines): the worker becomes ingest + build
 	bool ingestOnly = false;
+
+	// MPG-lite Phase B seed staging: TracePhotonsThread pushes one
+	// record per caustic deposit; TracePhotons() folds the per-thread
+	// vectors in here, and MergeMneeSeeds() replays them into the
+	// PathTracer seed table (non-owning pointer, wired by the engine).
+	std::vector<MneeSeedRecord> mneeSeedRecords;
+	MneeSeedEntry *mneeSeedCache = nullptr;
 };
 
 }

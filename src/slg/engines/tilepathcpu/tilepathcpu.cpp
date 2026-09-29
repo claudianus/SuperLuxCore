@@ -115,9 +115,13 @@ void TilePathCPURenderEngine::StartLockLess() {
 	if ((GetType() != RTPATHCPU) && !photonGICache) {
 		photonGICache = PhotonGICache::FromProperties(renderConfig.GetScene(), cfg);
 
-		// photonGICache will be nullptr if the cache is disabled
-		if (photonGICache)
+		// photonGICache will be nullptr if the cache is disabled.
+		// ParseOptions ran above, so the MNEE seed table already exists:
+		// wire it before the trace so deposits inject seeds directly.
+		if (photonGICache) {
+			photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
 			photonGICache->Preprocess(renderThreads.size());
+		}
 	}
 
 	//--------------------------------------------------------------------------

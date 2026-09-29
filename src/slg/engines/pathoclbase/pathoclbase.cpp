@@ -503,9 +503,14 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 		delete photonGICache;
 		photonGICache = PhotonGICache::FromProperties(renderConfig.GetScene(), cfg);
 
-		// photonGICache will be nullptr if the cache is disabled
-		if (photonGICache)
+		// photonGICache will be nullptr if the cache is disabled. The
+		// derived engine ran ParseOptions already, so the MNEE seed table
+		// exists: wire it before the trace so deposits inject seeds
+		// directly (the table is uploaded to the device at thread init).
+		if (photonGICache) {
+			photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
 			photonGICache->Preprocess(renderNativeThreads.size() + renderOCLThreads.size());
+		}
 	}
 
 	pathTracer.SetPhotonGICache(photonGICache);

@@ -135,6 +135,14 @@ void PathCPURenderEngine::StartLockLess() {
 
 	pathTracer.ParseOptions(cfg, *GetDefaultProps());
 
+	// MPG-lite Phase B: the PhotonGI preprocess above ran before the
+	// seed table existed - wire it now and drain the photon-vertex
+	// seeds the caustic trace collected.
+	if (photonGICache) {
+		photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
+		photonGICache->MergeMneeSeeds();
+	}
+
 	if (pathTracer.hybridBackForwardEnable)
 		lightSamplerSharedData = MetropolisSamplerSharedData::FromProperties(Properties(), seedBaseGenerator, GetFilm());
 

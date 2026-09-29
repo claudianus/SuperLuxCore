@@ -129,9 +129,13 @@ void BiDirCPURenderEngine::StartLockLess() {
 	if (!photonGICache) {
 		photonGICache = PhotonGICache::FromProperties(renderConfig.GetScene(), cfg);
 
-		// photonGICache will be nullptr if the cache is disabled
-		if (photonGICache)
+		// photonGICache will be nullptr if the cache is disabled. The
+		// MNEE seed table already exists (ParseOptions ran above): wire
+		// it before the trace so deposits inject seeds directly.
+		if (photonGICache) {
+			photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
 			photonGICache->Preprocess(renderThreads.size());
+		}
 	}
 	
 	//--------------------------------------------------------------------------

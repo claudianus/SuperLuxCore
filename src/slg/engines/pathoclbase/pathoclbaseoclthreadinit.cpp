@@ -1616,6 +1616,29 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	if (threadTaskConfig.pathTracer.mnee.enabled) {
 		std::vector<slg::ocl::pathoclbase::MneeSeedEntry> zeroSeeds(
 				MNEE_SEED_CACHE_SIZE);
+		// MPG-lite Phase B: the CPU seed table may already carry
+		// caustic-photon vertices (PhotonGI preprocess ran before thread
+		// init) - upload them so GPU solves warm-start identically.
+		const MneeSeedEntry *cpuSeeds = renderEngine->pathTracer.mneeSeeds.get();
+		if (cpuSeeds) {
+			for (u_int i = 0; i < MNEE_SEED_CACHE_SIZE; ++i) {
+				const MneeSeedEntry &s = cpuSeeds[i];
+				if (!s.valid.load(std::memory_order_relaxed))
+					continue;
+				slg::ocl::pathoclbase::MneeSeedEntry &d = zeroSeeds[i];
+				d.vx = s.vx.load(std::memory_order_relaxed);
+				d.vy = s.vy.load(std::memory_order_relaxed);
+				d.vz = s.vz.load(std::memory_order_relaxed);
+				d.nx = s.nx.load(std::memory_order_relaxed);
+				d.ny = s.ny.load(std::memory_order_relaxed);
+				d.nz = s.nz.load(std::memory_order_relaxed);
+				d.lightIndex = s.lightIndex.load(std::memory_order_relaxed);
+				d.meshIndex = s.meshIndex.load(std::memory_order_relaxed);
+				d.mirrorMode = s.mirrorMode.load(std::memory_order_relaxed);
+				d.valid = 1u;
+				d.fluxWeight = s.fluxWeight.load(std::memory_order_relaxed);
+			}
+		}
 		intersectionDevice.AllocBufferRW(&mneeSeedsBuff, zeroSeeds.data(),
 				sizeof(slg::ocl::pathoclbase::MneeSeedEntry) *
 				MNEE_SEED_CACHE_SIZE, "MneeSeeds");

@@ -261,8 +261,19 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 		dstCausticBeams.insert(dstCausticBeams.end(), renderThreads[i]->causticBeams.begin(),
 				renderThreads[i]->causticBeams.end());
 
+		mneeSeedRecords.insert(mneeSeedRecords.end(),
+				renderThreads[i]->mneeSeedRecords.begin(),
+				renderThreads[i]->mneeSeedRecords.end());
+
 		renderThreads[i].reset();
 	}
+
+	// Bound the staging when nothing drains it (seed cache disabled or
+	// never wired): 4x the table size keeps the freshest records.
+	const size_t seedCap = 4 * MNEE_SEED_CACHE_SIZE_CPU;
+	if (mneeSeedRecords.size() > seedCap)
+		mneeSeedRecords.erase(mneeSeedRecords.begin(),
+				mneeSeedRecords.end() - seedCap);
 
 	// Update the count only if I have traced this kind of photons
 	if (!indirectCacheDone)
@@ -275,6 +286,23 @@ void PhotonGICache::TracePhotons(const u_int seedBase, const u_int photonTracedC
 	SLG_LOG("PhotonGI additional caustic photon stored: " << causticPhotonStored);
 	// photonReacedCount isn't exactly but it is quite near
 	SLG_LOG("PhotonGI total photon traced: " << Max(indirectPhotonTracedCount, dstCausticTracedCount));
+
+	// Photon seeds merge as they arrive when the table already exists
+	// (update generations run after engine wiring; the initial
+	// preprocess may run before ParseOptions, drained via the engine's
+	// MergeMneeSeeds call instead)
+	if (mneeSeedCache)
+		MergeMneeSeeds();
+}
+
+void PhotonGICache::MergeMneeSeeds() {
+	if (!mneeSeedCache || mneeSeedRecords.empty())
+		return;
+	for (const MneeSeedRecord &r : mneeSeedRecords)
+		MneeSeedStore(mneeSeedCache, r);
+	SLG_LOG("PhotonGI injected " << mneeSeedRecords.size() <<
+			" caustic-photon MNEE seed(s)");
+	mneeSeedRecords.clear();
 }
 
 //------------------------------------------------------------------------------

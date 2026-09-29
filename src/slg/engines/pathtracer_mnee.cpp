@@ -477,46 +477,23 @@ static bool MneeRejXEnabled() {
 
 //------------------------------------------------------------------------------
 // MNEE manifold seed cache (path.mnee.seedcache, GPU mneeSeeds port).
-//
-// Every converged single-vertex solve stores its vertex in a fixed-size
-// world-space hash grid keyed by (endpoint id, occluder mesh, quantized
-// blocker-hit position). A later attempt blocked by the same occluder
-// region warm-starts Newton from the cached vertex instead of the line
-// seed, which is what makes solves on a curved caster converge at all (the
-// straight-line seed sits far outside the Newton basin there). The seed
-// only selects the basin: the solver still verifies the half-vector
-// constraint on re-projected surface vertices, so a stale or colliding
-// entry costs iterations but never biases the estimator. Eye-side solves
-// namespace entries by the light pointer; light-side (LMNEE) solves share
-// one camera sentinel - the same split as the GPU table.
+// The entry type, key function and store live in
+// slg/engines/mneeseedcache.h - shared with the PhotonGI caustic tracer,
+// which injects photon-traversed delta vertices as seeds (MPG-lite
+// Phase B). Eye-side solves namespace entries by the light pointer;
+// light-side (LMNEE) solves share one camera sentinel - the same split
+// as the GPU table.
 //------------------------------------------------------------------------------
 
-#define MNEE_SEED_CACHE_SIZE_CPU (1u << 14)
-#define MNEE_SEED_CELL_FRAC_CPU 64.f
 #define LMNEE_CAMERA_SEED_ID 0xFFFFFFFEu
-
-static u_int MneeSeedKey(const u_int lightIndex, const u_int meshIndex,
-		const Point &p, const float cellSize) {
-	const int cx = Floor2Int(p.x / cellSize);
-	const int cy = Floor2Int(p.y / cellSize);
-	const int cz = Floor2Int(p.z / cellSize);
-	u_int h = (u_int)cx * 73856093u ^ (u_int)cy * 19349663u ^
-			(u_int)cz * 83492791u;
-	h ^= lightIndex * 2654435761u;
-	h ^= meshIndex * 40503u;
-	h ^= h >> 16;
-	h *= 2246822519u;
-	h ^= h >> 13;
-	return h & (MNEE_SEED_CACHE_SIZE_CPU - 1u);
-}
 
 // Returns true and fills *v when a usable seed was found (the flat tangent
 // frame fallback like the GPU Mnee_SeedCacheLookup; the first proposal
 // re-projects onto the real surface anyway).
-static bool MneeSeedLookup(const PathTracer::MneeSeedEntry *cache,
+static bool MneeSeedLookup(const MneeSeedEntry *cache,
 		const u_int key, const u_int lightIndex, const u_int meshIndex,
 		const bool mirrorMode, const float eta, MneeVertex *v) {
-	const PathTracer::MneeSeedEntry &e = cache[key];
+	const MneeSeedEntry &e = cache[key];
 	if (!e.valid.load(std::memory_order_relaxed) ||
 			(e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
 			(e.meshIndex.load(std::memory_order_relaxed) != meshIndex) ||
@@ -544,31 +521,6 @@ static bool MneeSeedLookup(const PathTracer::MneeSeedEntry *cache,
 	v->eta = eta;
 	MneeOrthonormalize(*v);
 	return true;
-}
-
-static void MneeSeedStore(PathTracer::MneeSeedEntry *cache,
-		const u_int key, const Point &p, const Normal &n,
-		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode,
-		const float fluxWeight) {
-	PathTracer::MneeSeedEntry &e = cache[key];
-	// Energy-aware retention (manifold path guiding, Fan et al. 2023): a
-	// converged basin that historically carried more flux keeps the slot;
-	// a fresher or brighter solve displaces it. Seeds only select the
-	// Newton basin — retention cannot bias the estimator.
-	if (e.valid.load(std::memory_order_relaxed) &&
-			(e.fluxWeight.load(std::memory_order_relaxed) > fluxWeight))
-		return;
-	e.vx.store(p.x, std::memory_order_relaxed);
-	e.vy.store(p.y, std::memory_order_relaxed);
-	e.vz.store(p.z, std::memory_order_relaxed);
-	e.nx.store(n.x, std::memory_order_relaxed);
-	e.ny.store(n.y, std::memory_order_relaxed);
-	e.nz.store(n.z, std::memory_order_relaxed);
-	e.lightIndex.store(lightIndex, std::memory_order_relaxed);
-	e.meshIndex.store(meshIndex, std::memory_order_relaxed);
-	e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
-	e.fluxWeight.store(fluxWeight, std::memory_order_relaxed);
-	e.valid.store(1u, std::memory_order_relaxed);
 }
 
 // Single-vertex Newton solve of the specular constraint between x0p and the

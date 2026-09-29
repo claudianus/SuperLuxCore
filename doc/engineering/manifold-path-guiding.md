@@ -48,13 +48,38 @@ importance") — **implemented**:
    it. Reservoir-style weighted retention and `chainLen`
    stratification deliberately deferred (measure first).
 
-Phase B (photon-vertex seeding — PMS):
-4. Extend `Photon`/`PhotonBeam` records with the specular vertex that
-   produced the deposit (one extra Point+Normal per beam).
-5. On a blocked LMNEE connect, query `causticBeamsIndex` for beams
-   near the receiver; use their stored specular vertex as a Newton
-   seed with the Bernoulli/uniques bookkeeping PMS uses for
-   unbiasedness (biased variant first — simpler, still useful).
+Phase B (photon-vertex seeding — PMS) — **implemented, simpler than
+the original plan** (no beam-index query at connect time, no endpoint
+pdf bookkeeping):
+4. The photon walk snapshots its last strict-delta vertex per
+   iteration (`bsdfEvent & SPECULAR` && chain still specular). A
+   caustic deposit queues an `MneeSeedRecord` carrying that vertex —
+   the light sub-path already traversed the exact manifold an
+   eye-side MNEE connection must Newton-solve, so the vertex is a
+   zero-cost warm start.
+5. Records are keyed like eye-side entries ((light ptr, occluder
+   mesh*2+side, quantized occluder-side position)) and replayed into
+   the PathTracer seed table via `MneeSeedStore`, so the Phase-A
+   energy-aware retention policy arbitrates them for free. The seed
+   stays basin-only — the solver verifies the half-vector constraint
+   — so NO endpoint-pdf bookkeeping is needed and unbiasedness holds
+   automatically (the PMS gotcha below only applies to seeding that
+   perturbs the estimate itself).
+
+   Wiring (`include/slg/engines/mneeseedcache.h` is the shared
+   entry/key/store): `TracePhotonsThread::TracePhotonPath` records,
+   `PhotonGICache::TracePhotons` folds per-thread vectors into
+   `mneeSeedRecords`, `MergeMneeSeeds()` drains into the table.
+   Engines call `SetMneeSeedCache` + `MergeMneeSeeds` where
+   ParseOptions order demands it (PATHCPU/BAKECPU preprocess BEFORE
+   ParseOptions — records defer; TILEPATHCPU/PATHOCLBASE/BIDIRCPU
+   wire the pointer before Preprocess — records merge at join).
+   PATHOCL uploads the seeded CPU table into `mneeSeedsBuff` at
+   thread init; GPU-deposit (ingestOnly) sessions skip CPU tracing,
+   so their table stays empty — same estimator, GPU keeps
+   self-seeding (feature-parity safe; kernel-side injection is the
+   Phase B follow-up for the MK_LIGHT_VERTEX deposit path).
+   Record staging is bounded at 4x table size (~64k records).
 
 Phase C (dim-reduced solver):
 6. 1D-curve solve for single-vertex chains (Granizo-Hidalgo'24) —

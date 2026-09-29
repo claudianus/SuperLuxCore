@@ -169,3 +169,72 @@ vs 0.18 Ms/s baseline). e90/e91/e54 PASS. Doc:
 
 Post-change profile: dynamic_cast family = **0** hits.
 e9 vertex-motion parity (MBVH/BVH/EMBREE): all PASS.
+
+## Corona-parity defaults (BLC) + `Get<float>` lexical_cast bugfix
+
+Adapter `scene.superluxcore` stock defaults flipped to fire-and-forget
+(the "turn it on and it works" UX target):
+
+- `config.mnee_enable` True (SDS caustics out of the box; ~zero cost
+  without delta occluders)
+- `config.envlight_cache.enabled` True (final renders only, env-type
+  lights/worlds)
+- `denoiser.enabled` True (OIDN COMPONENTS + periodic refresh — every
+  render carries a DENOISED pass)
+- `halt.enable` True, `halt.use_noise_level` True @ 3%,
+  `halt.samples` 2048 as backstop (Corona default-time equivalent)
+
+e49 extended: 154/154 PASS including the new halt/denoiser pins
+(`photongi.caustic_updatespp_minradius` pin corrected to 0.0 =
+automatic, an intended engine-side default).
+
+### E50 zero-config e2e found a real engine bug
+
+`RenderSession` ctor died with `bad lexical cast` whenever
+`film.adaptiveerror.target > 0` **only via the API path** — `.cfg`
+file loads worked. Bisect + lldb (catch-vs-throw separation — the
+`GetAllUniqueSubNames` sort comparator deliberately throws/catches)
+traced it to `Film::Parse -> PropertyValue::Get<float>`:
+`boost::lexical_cast<float>(double)` demands an exact roundtrip and
+throws on `0.03`. Python floats are stored as DOUBLE_VAL; `.cfg` files
+store STRING_VAL -> istringstream, which never threw — a latent
+API-path landmine for every `Get<float>` consumer.
+
+Fix `8ff73e24b`: `lcast<T,S>` narrows arithmetic sources to float via
+`static_cast`; all other `Get<T>` targets keep lexical_cast (integer
+signedness/exactness guards preserved). Doc:
+`doc/engineering/property-variant-casts.md`.
+
+Post-fix: full session creation OK; e50 zero-config render completes —
+adaptive error 47.7% -> 2.48%, OIDN refreshes periodically, auto-halt
+fires, DENOISED pass uploaded, ACES 2.0 + 1280x720 artifacts kept
+under `/tmp/e50/`.
+
+### MPG-lite Phase A (earlier this session, `940664923`)
+
+Energy-aware MNEE seed retention: `MneeSeedEntry.fluxWeight` on CPU
+and mirrored `.cl` layout; colliding slots keep the higher-flux basin.
+Basin-selection only — estimator weights untouched. CPU/GPU parity:
+cache-on/off mean 1.1406 (GPU) / 1.1415 (CPU), caustic energy
+preserved 1.0583 both sides.
+
+### MPG-lite Phase B: caustic-photon -> MNEE seed injection
+
+`tracephotonsthread.cpp` now snapshots each walk's last strict-delta
+vertex (`bsdfEvent & SPECULAR` on an unbroken specular chain); every
+caustic deposit queues an `MneeSeedRecord` (vertex p/n, light ptr id,
+occluder mesh*2+flipped-side bit, bucket key, photon fluxWeight).
+`MneeSeedEntry`/`MneeSeedKey`/`MneeSeedStore` moved to the shared
+`include/slg/engines/mneeseedcache.h`; `PhotonGICache` collects
+per-thread records and replays them into the PathTracer seed table
+(deferred, because PATHCPU preprocesses before ParseOptions allocates
+the table). PATHOCL uploads the seeded CPU table into `mneeSeedsBuff`
+at thread init; ingestOnly (GPU-deposit) sessions skip CPU tracing ->
+no records, GPU keeps self-seeding (basin hints only, estimator
+unchanged). Side-bit flips vs the eye convention (opposite traversal
+direction through the interface); reflect events are approximate - a
+miss costs nothing.
+
+Verified: PATHCPU + photongi.caustic logs `injected 65536
+caustic-photon MNEE seed(s)` per generation (4x table cap engaged);
+e17 GPU ALL PASS; no crashes on PATHOCL ingest mode.

@@ -2997,7 +2997,7 @@ void PathTracer::ParseOptions(
 	// hashed grid, same size and key function).
 	mneeSeedCacheEnable = cfg.Get(defaultProps.Get("path.mnee.seedcache")).Get<bool>();
 	if (mneeSeedCacheEnable)
-		mneeSeeds.reset(new MneeSeedEntry[1u << 14]());
+		mneeSeeds.reset(new MneeSeedEntry[MNEE_SEED_CACHE_SIZE_CPU]());
 	else
 		mneeSeeds.reset();
 

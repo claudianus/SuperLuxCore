@@ -186,6 +186,13 @@ void BakeCPURenderEngine::StartLockLess() {
 
 	pathTracer.ParseOptions(cfg, *GetDefaultProps());
 
+	// MPG-lite Phase B: photon tracing ran above, before the seed table
+	// existed - wire it and drain the collected caustic-vertex seeds.
+	if (photonGICache) {
+		photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
+		photonGICache->MergeMneeSeeds();
+	}
+
 	if (pathTracer.hybridBackForwardEnable) {
 		auto sharedData = MetropolisSamplerSharedData::FromProperties(
 			Properties(), seedBaseGenerator, GetFilm()

@@ -63,6 +63,10 @@ public:
 	std::vector<RadiancePhotonEntry> indirectPhotons;
 	std::vector<Photon> causticPhotons;
 	std::vector<PhotonBeam> causticBeams;
+	// MPG-lite Phase B: one record per caustic deposit carrying the
+	// walk's last delta-specular vertex - drained into the PathTracer
+	// MNEE seed table after the threads join.
+	std::vector<MneeSeedRecord> mneeSeedRecords;
 
 	friend class PhotonGICache;
 

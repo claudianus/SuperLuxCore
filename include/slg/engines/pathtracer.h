@@ -31,6 +31,7 @@
 #include "slg/film/filmsamplesplatter.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/mneeseedcache.h"
 #include "slg/engines/pathguiding.h"
 #include "slg/engines/restirgi.h"
 #include "slg/engines/restirpt.h"
@@ -288,19 +289,11 @@ public:
 	// chain from the recorded anchors instead of running the LMNEE
 	// discovery walk. See doc/features/ssp-tail.md.
 	bool sspEnable;
-	struct MneeSeedEntry {
-		std::atomic<float> vx{0.f}, vy{0.f}, vz{0.f};
-		std::atomic<float> nx{0.f}, ny{0.f}, nz{0.f};
-		std::atomic<u_int> lightIndex{0}, meshIndex{0};
-		std::atomic<u_int> mirrorMode{0}, valid{0};
-		// Energy-aware retention (manifold path guiding): the throughput
-		// luminance of the solve that produced the entry. Colliding
-		// stores keep the historically brighter basin.
-		std::atomic<float> fluxWeight{0.f};
-	};
 	// The table is shared by all render threads: seeds are last-writer-wins
 	// hints (a stale entry only wastes Newton iterations, the constraint is
-	// still verified), so relaxed atomics are sufficient.
+	// still verified), so relaxed atomics are sufficient. Also the merge
+	// target for PhotonGI's caustic photon seeds (MPG-lite Phase B, see
+	// slg/engines/mneeseedcache.h).
 	std::unique_ptr<MneeSeedEntry[]> mneeSeeds;
 
 	// ReSTIR GI (G1) settings (path.restir.gi.*): the CPU implementation

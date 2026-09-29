@@ -155,6 +155,15 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 			// Trace the light path
 			//------------------------------------------------------------------
 
+			// MPG-lite Phase B: the last strict-delta vertex of the walk is
+			// tracked so a caustic deposit can inject it into the MNEE seed
+			// cache - the light sub-path already solved (by construction) the
+			// specular manifold an eye-side connection would have to Newton-
+			// iterate for. Seeds only pick the solve basin, so an occasional
+			// stale or colliding record can cost iterations, never bias.
+			MneeSeedRecord specSeed;
+			bool specSeedValid = false;
+
 			LightPathInfo pathInfo;
 			for (;;) {
 				const u_int sampleOffset = sampleBootSize +	pathInfo.depth.depth * sampleStepSize;
@@ -276,6 +285,18 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 								newCausticPhotons.push_back(Photon(bsdf.hitPoint.p, nextEventRay.d,
 										light->GetID(), lightPathFlux, landingSurfaceNormal, bsdf.IsVolume()));
 
+								// The last delta vertex of this walk sits on the
+								// specular manifold the MNEE solver needs: queue it
+								// as a warm-start seed for eye paths connecting the
+								// same (light, occluder cell) pair. Keyed by the
+								// occluder-side hit position like the eye-side
+								// entries; fluxWeight carries the photon energy for
+								// the retention policy.
+								if (specSeedValid) {
+									specSeed.fluxWeight = lightPathFlux.Y();
+									mneeSeedRecords.push_back(specSeed);
+								}
+
 								usefulPath = true;
 							}
 
@@ -311,6 +332,27 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 						break;
 
 					pathInfo.AddVertex(bsdf, bsdfEvent, pgic.params.glossinessUsageThreshold);
+
+					// Snapshot the vertex when it is a strict-delta event on an
+					// unbroken specular chain: it becomes the seed the next
+					// caustic deposit injects. The side bit mirrors the
+					// eye-side convention (Dot(connectDir, geometryN) > 0):
+					// the eye connection ray traverses the interface opposite
+					// to the photon, so the photon-side sign is flipped.
+					if ((bsdfEvent & SPECULAR) && pathInfo.IsSpecularPath()) {
+						specSeed.p = bsdf.hitPoint.p;
+						specSeed.n = bsdf.hitPoint.geometryN;
+						specSeed.lightIndex = (u_int)(uintptr_t)light.get();
+						specSeed.meshIndex = nextEventRayHit.meshIndex * 2u +
+								(Dot(nextEventRay.d, bsdf.hitPoint.geometryN) < 0.f ? 1u : 0u);
+						specSeed.mirrorMode =
+								(bsdf.GetMaterial()->GetType() == MIRROR) ? 1u : 0u;
+						specSeed.key = MneeSeedKey(specSeed.lightIndex,
+								specSeed.meshIndex, specSeed.p,
+								Max(scene.GetDataSet().GetBSphere().rad /
+										MNEE_SEED_CELL_FRAC_CPU, 1e-4f));
+						specSeedValid = true;
+					}
 
 					// If I have to fill only the caustic cache and last BSDF event
 					// is not a (nearly) specular one, I can stop with this path
