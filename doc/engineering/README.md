@@ -31,3 +31,4 @@ docs live in `doc/features/` (see its README for the index).
 | [gpu-task-memory.md](gpu-task-memory.md) | Per-task GPU buffer diet: GPUTaskMnee split, ~115MB/thread saved when MNEE off, KERNEL_ARGS + NULL-slot pattern |
 | [adaptive-error-review-fixes.md](adaptive-error-review-fixes.md) | Adaptive-error/NaN-collapse fixes, film-pointer serialization rebind (v2), PGIC update u_int wrap |
 | [serialization-roots.md](serialization-roots.md) | Archive-root record symmetry: .flm/.rsm/.rst/config round-trip repair (T* roots both sides), pyluxcore unique_ptr/tuple binding gotchas |
+| [cl2msl-scanner.md](cl2msl-scanner.md) | cl2msl translator span-scanner invariants: comment-paren trap, offline repro recipe, ReSTIR tail-ray coverage |

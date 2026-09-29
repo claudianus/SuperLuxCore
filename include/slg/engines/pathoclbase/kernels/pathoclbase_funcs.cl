@@ -2103,6 +2103,692 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Resolve(
 
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+// ReSTIR PT (PT-2 GPU) - measured path-suffix reservoir resampling.
+//
+// Kernel port of RestirPT::ResampleSuffix/Commit (src/slg/engines/
+// restirpt.cpp, see doc/engineering/restir-pt-design.md). The estimator
+// is identical to the CPU side:
+//
+//   pi_hat(dir) = Y(f_r * cos)(dir) * (Y(L) + eps)
+//
+// where L is a one-sample proxy for fresh candidates (x2 emission +
+// one NEE shadow ray - the GI recipe) and the STORED MEASURED suffix
+// radiance L_suf for temporal/spatial merge candidates. A stored win
+// "consumes" the path: thr * fcos * W * L_suf is paid directly and
+// the walk ends at x1. A fresh win continues the path along the
+// winning direction and the measured suffix is committed back to the
+// reservoir at path end (L_suf = (radiance_end - rad_x2) / thr_x2).
+//
+// GPU decomposition mirrors GI with two deltas:
+//
+//   MK_GENERATE_NEXT_VERTEX_RAY  -- K BSDF proposals ride the PT tail
+//       of rays[] (slots [0,K) of the task's 2K+3 block at
+//       ptCandRayBase); consuming a fresh winner (pending == 1) arms
+//       the pick record (pending -> 3).
+//   MK_PT_BOUNCE                 -- same body as MK_RT_GI_BOUNCE plus
+//       the spatial-merge visibility rays: PT consumes merge wins, so
+//       a V-free transfer would contribute light through occluders.
+//       Slots: [K,2K) NEE probes, 2K temporal vis, [2K+1,2K+3) spatial.
+//   MK_RT_NEXT_VERTEX            -- pending == 3: capture the walked
+//       landing (x2/x2n/miss) and snapshot throughput + radiance
+//       (pending -> 4).
+//   MK_PT_RESOLVE                -- NEE visibility fold, RIS + merges,
+//       then either hand the fresh winner to MK_GENERATE (pending = 1)
+//       or pay the consumed contribution, republish the reservoir and
+//       end the path (MK_SPLAT_SAMPLE).
+//   MK_SPLAT_SAMPLE              -- pending == 4: commit the measured
+//       suffix to the pixel's reservoir (pending -> 0). pending == 3
+//       (armed winner killed before landing) is dropped silently.
+//
+// Volume caveat (v1, documented): tail rays carry no PathVolumeInfo,
+// so the reconnected edge's transmittance is folded as 1 - the GI
+// tail has the same approximation for its candidate segments.
+//------------------------------------------------------------------------------
+
+// Phase 2 (MK_PT_BOUNCE): consume the bounce hits into candidate
+// records (x2 normal, emission/env, NEE probe) and queue the merge
+// visibility rays - temporal at slot 2K, the two spatial candidates
+// at 2K+1/2K+2 (predicted by the same neighbour hash the resolve
+// uses; a gate that fails there just wastes a masked ray).
+OPENCL_FORCE_NOT_INLINE void RestirPT_Bounce(
+		__global const BSDF *x1bsdf,
+		__global BSDF *tmpBsdf,
+		__global PathVolumeInfo *scratchVolInfo,
+		__global const EyePathInfo *pathInfo,
+		__global HitPoint *tmpHitPoint,
+		__global PathDepthInfo *tmpPathDepthInfo,
+		__global Ray *candRays,
+		__global const RayHit *candHits,
+		__global RestirGICandidate *candData,
+		__global RestirPTResult *result,
+		__global const RestirPTReservoir *ptReservoirs,
+		const uint pixelIndex, const uint pass, const int temporalEnable,
+		const int spatialEnable,
+		const uint filmWidth, const uint reservoirCount,
+		const uint K, const uint baseSeed, const float time,
+		const float worldCenterX, const float worldCenterY,
+		const float worldCenterZ, const float worldRadius
+		LIGHTS_PARAM_DECL) {
+	for (uint i = 0; i < K; ++i) {
+		__global RestirGICandidate *rec = &candData[i];
+		if (!(rec->pdfW > 0.f))
+			continue;
+
+		__global Ray *bRay = &candRays[i];
+		const float3 dir = VLOAD3F(&rec->dirX);
+
+		if (candHits[i].meshIndex == NULL_INDEX) {
+			// Environment miss: the proxy is the env radiance along the
+			// direction (part of the indirect integral).
+			rec->miss = 1u;
+			float3 env = BLACK;
+			float directPdfA;
+			for (uint e = 0; e < envLightCount; ++e)
+				env += EnvLight_GetRadiance(&lights[envLightIndices[e]],
+						worldRadius, x1bsdf, -dir, &directPdfA, NULL
+						LIGHTS_PARAM);
+			VSTORE3F(env, &rec->emisR);
+			candRays[i].flags = RAY_FLAGS_MASKED;
+			continue;
+		}
+
+		// Surface hit: build x2's BSDF in the task's scratch slot (the
+		// candidate BSDFs are evaluated sequentially, one per loop
+		// trip). The volume info copy keeps BSDF_Init's interior/
+		// exterior updates off the path's live PathVolumeInfo.
+		*scratchVolInfo = pathInfo->volume;
+		BSDF_Init(tmpBsdf, false, bRay, &candHits[i],
+				RestirGI_Hash(baseSeed ^ (i * 0x9E3779B9u), 0x03u),
+				scratchVolInfo
+				MATERIALS_PARAM);
+		// The candidate vertex sits one bounce (of the sampled event)
+		// past the current path vertex
+		*tmpPathDepthInfo = pathInfo->depth;
+		PathDepthInfo_IncDepths(tmpPathDepthInfo, rec->event);
+		HitPoint_SetRayContext(&tmpBsdf->hitPoint, EYE_RAY | INDIRECT_RAY,
+				rec->event, tmpPathDepthInfo, candHits[i].t);
+		VSTORE3F(VLOAD3F(&tmpBsdf->hitPoint.geometryN.x), &rec->x2nX);
+
+		float directPdfA;
+		float3 lHat = BSDF_IsLightSource(tmpBsdf) ?
+				BSDF_GetEmittedRadiance(tmpBsdf, &directPdfA, NULL
+						LIGHTS_PARAM) : BLACK;
+
+		// One-sample NEE probe (light pick + shadow ray): the binary
+		// visibility is folded in at resolve once the tail trace has
+		// run.
+		const uint seed = baseSeed ^ (i * 0x9E3779B9u);
+		float pickPdf;
+		const uint lightIndex = LightStrategy_SampleLights(
+				lightsDistribution,
+				dlscAllEntries, dlscDistributions, dlscBVHNodes,
+				dlscRadius2, dlscNormalCosAngle,
+				lightBVHNodes, lightBVHLightToLeaf, lightBVHMinDist2,
+				VLOAD3F(&tmpBsdf->hitPoint.p.x),
+				BSDF_GetLandingShadeN(tmpBsdf),
+				tmpBsdf->isVolume,
+				RestirGI_Hash(seed, 0x72u), &pickPdf);
+		bool neeQueued = false;
+		if ((lightIndex != NULL_INDEX) && (pickPdf > 0.f)) {
+			float directPdfW;
+			const float3 lightRadiance = Light_Illuminate(
+					&lights[lightIndex],
+					tmpBsdf, time,
+					RestirGI_Hash(seed, 0x73u), RestirGI_Hash(seed, 0x74u),
+					RestirGI_Hash(seed, 0x75u),
+					worldCenterX, worldCenterY, worldCenterZ, worldRadius,
+					tmpHitPoint,
+					&candRays[K + i], &directPdfW, NULL, NULL
+					LIGHTS_PARAM);
+			if (!Spectrum_IsBlack(lightRadiance) && (directPdfW > 0.f)) {
+				BSDFEvent event2;
+				float pdfW2;
+				const float3 eval2 = BSDF_Evaluate(tmpBsdf,
+						VLOAD3F(&candRays[K + i].d.x), &event2, &pdfW2
+						MATERIALS_PARAM);
+				if (!Spectrum_IsBlack(eval2)) {
+					const float3 nee = lightRadiance * eval2 /
+							(directPdfW * pickPdf);
+					VSTORE3F(nee, &rec->neeR);
+					neeQueued = true;
+				}
+			}
+		}
+		if (!neeQueued)
+			candRays[K + i].flags = RAY_FLAGS_MASKED;
+
+		VSTORE3F(lHat, &rec->emisR);
+		candRays[i].flags = RAY_FLAGS_MASKED;
+	}
+
+	// Merge visibility rays (CPU parity: restirpt.cpp traces each
+	// reconnected x1->x2' segment and rejects occluded transfers - for
+	// PT this test pays REAL contribution, so unlike GI the spatial
+	// merges cannot stay V-free: a consumed occluded transfer leaks
+	// light. Three tail slots after the NEE half: 2K = temporal,
+	// 2K+1/2K+2 = the two spatial candidates (same hashed neighbours
+	// the resolve visits). A masked slot means "no usable segment"
+	// which the resolve treats identically to the CPU's !hasDir.
+	const float3 x1 = VLOAD3F(&x1bsdf->hitPoint.p.x);
+
+	__global Ray *vRay = &candRays[2u * K];
+	const __global RestirPTReservoir *storedRes = &ptReservoirs[pixelIndex];
+	float3 vDir = (float3)(0.f, 0.f, 1.f);
+	float vMax = 0.f;
+	bool queueV = false;
+	if (temporalEnable && (storedRes->m > 0u) && (storedRes->pass < pass) &&
+			(storedRes->wSum > 0.f) && (storedRes->target > 0.f) &&
+			!storedRes->isMiss) {
+		const float3 sx2 = MAKE_FLOAT3(storedRes->x2X, storedRes->x2Y,
+				storedRes->x2Z);
+		const float3 dv = sx2 - x1;
+		const float dCur = length(dv);
+		if (dCur > MachineEpsilon_E_Float3(x1)) {
+			vDir = dv / dCur;
+			vMax = dCur;
+			queueV = true;
+		}
+	}
+	if (queueV)
+		Ray_Init4(vRay, BSDF_GetRayOrigin(x1bsdf, vDir), vDir, 0.f, vMax, time);
+	else
+		vRay->flags = RAY_FLAGS_MASKED;
+	result->vSeq = queueV ? storedRes->pass : 0xFFFFFFFFu;
+
+	// Spatial candidate visibility rays: predict the resolve's hashed
+	// neighbours and tag each ray with the entry's pass stamp.
+	const uint px = pixelIndex % filmWidth;
+	const uint py = pixelIndex / filmWidth;
+	for (uint k = 0; k < RESTIR_PIXEL_MERGES_MAX; ++k) {
+		__global Ray *sRay = &candRays[2u * K + 1u + k];
+		result->vSeqS[k] = 0xFFFFFFFFu;
+		bool queueS = false;
+		float3 sDir = (float3)(0.f, 0.f, 1.f);
+		float sMax = 0.f;
+		if (spatialEnable) {
+			const uint h = SobolSequence_BlueNoiseHash(baseSeed ^
+					(k * 0x85EBCA6Bu) ^ 0x5A5A5A5Au);
+			uint off = h % 25u;
+			if (off == 12u)
+				off = 24u;
+			const int nx = (int)px + (int)(off % 5u) - 2;
+			const int ny = (int)py + (int)(off / 5u) - 2;
+			if ((nx >= 0) && (ny >= 0)) {
+				const uint nIdx = (uint)ny * filmWidth + (uint)nx;
+				if ((nIdx < reservoirCount) &&
+						(nIdx != pixelIndex)) {
+					const __global RestirPTReservoir *nbr =
+							&ptReservoirs[nIdx];
+					const uint np0 = nbr->pass;
+					const RestirPTReservoir nSnap = *nbr;
+					if ((np0 != 0xFFFFFFFFu) && (nSnap.m > 0u) &&
+							(nSnap.wSum > 0.f) && (nSnap.target > 0.f) &&
+							(nbr->pass == np0) && !nSnap.isMiss) {
+						const float3 nx2 = MAKE_FLOAT3(nSnap.x2X,
+								nSnap.x2Y, nSnap.x2Z);
+						const float3 dv = nx2 - x1;
+						const float dCur = length(dv);
+						if (dCur > MachineEpsilon_E_Float3(x1)) {
+							sDir = dv / dCur;
+							sMax = dCur;
+							queueS = true;
+							result->vSeqS[k] = np0;
+						}
+					}
+				}
+			}
+		}
+		if (queueS)
+			Ray_Init4(sRay, BSDF_GetRayOrigin(x1bsdf, sDir), sDir,
+					0.f, sMax, time);
+		else
+			sRay->flags = RAY_FLAGS_MASKED;
+	}
+}
+
+// Phase 3 (MK_PT_RESOLVE): fold the NEE visibility into the proxy
+// targets, run the RIS + temporal/spatial merges, then either record
+// the fresh winner (+ armed pick record) for MK_GENERATE or pay the
+// consumed contribution and republish the stored reservoir.
+// Returns true when a stored suffix won (the path is consumed).
+OPENCL_FORCE_NOT_INLINE bool RestirPT_Resolve(
+		__global const BSDF *x1bsdf,
+		__global const Ray *candRays,
+		__global const RayHit *candHits,
+		__global RestirGICandidate *candData,
+		__global RestirPTResult *result,
+		__global RestirPTReservoir *ptReservoirs,
+		const uint pixelIndex, const uint pass,
+		const uint K, const uint baseSeed,
+		const int temporalEnable, const int spatialEnable,
+		const uint filmWidth,
+		const uint reservoirCount, const float worldRadius
+		MATERIALS_PARAM_DECL) {
+	__global RestirPTReservoir *stored = &ptReservoirs[pixelIndex];
+	const float3 x1 = VLOAD3F(&x1bsdf->hitPoint.p.x);
+	const float3 x1n = VLOAD3F(&x1bsdf->hitPoint.geometryN.x);
+
+	// Proxy radiance per fresh candidate: emission/env + V * NEE term
+	// (the measured suffix replaces the proxy for merge candidates).
+	const uint Kv = min(K, 8u);
+	float lHatY[8];
+	float lHatMax = 0.f;
+	for (uint i = 0; i < Kv; ++i) {
+		lHatY[i] = 0.f;
+		__global RestirGICandidate *rec = &candData[i];
+		if (!(rec->pdfW > 0.f))
+			continue;
+		float lY = Spectrum_Y(MAKE_FLOAT3(rec->emisR, rec->emisG,
+				rec->emisB));
+		if ((rec->miss == 0u) &&
+				(candHits[K + i].meshIndex == NULL_INDEX) &&
+				!(candRays[K + i].flags & RAY_FLAGS_MASKED))
+			lY += Spectrum_Y(MAKE_FLOAT3(rec->neeR, rec->neeG,
+					rec->neeB));
+		lHatY[i] = lY;
+		lHatMax = fmax(lHatMax, lY);
+	}
+	const float eps = 0.05f * lHatMax;
+
+	//------------------------------------------------------------------
+	// RIS over the fresh candidates (culled proposals count in M).
+	//------------------------------------------------------------------
+	float wSum = 0.f;
+	uint mTotal = 0;
+	int winner = -1;
+	float wTarget = 0.f;
+	for (uint i = 0; i < Kv; ++i) {
+		__global RestirGICandidate *rec = &candData[i];
+		if (!(rec->pdfW > 0.f))
+			continue;
+		++mTotal;
+		const float target = Spectrum_Y(MAKE_FLOAT3(rec->fcosR,
+				rec->fcosG, rec->fcosB)) * (lHatY[i] + eps);
+		const float w = target / rec->pdfW;
+		wSum += w;
+		const float r = RestirGI_Hash(baseSeed ^ (i * 0x9E3779B9u), 0x04u);
+		if ((winner < 0) || (r < w / wSum)) {
+			winner = (int)i;
+			wTarget = target;
+		}
+	}
+
+	//------------------------------------------------------------------
+	// Winner record (fresh candidate, stored reservoir or neighbour).
+	//------------------------------------------------------------------
+	float3 outDir = (float3)(0.f, 0.f, 1.f);
+	float3 outFcos = BLACK;
+	float outTarget = 0.f;
+	float3 outLsuf = BLACK;
+	uint outEvent = 0u;
+	float outPdfW = 0.f;
+	uint outIsMiss = 0u;
+	float3 outX2 = (float3)(0.f, 0.f, 0.f);
+	float3 outX2n = (float3)(0.f, 1.f, 0.f);
+	bool haveOut = false;
+	bool outIsFresh = false;
+	if (winner >= 0) {
+		__global RestirGICandidate *rec = &candData[winner];
+		outDir = VLOAD3F(&rec->dirX);
+		outFcos = VLOAD3F(&rec->fcosR);
+		outTarget = wTarget;
+		outLsuf = MAKE_FLOAT3(rec->emisR, rec->emisG, rec->emisB);
+		if ((rec->miss == 0u) &&
+				(candHits[K + winner].meshIndex == NULL_INDEX) &&
+				!(candRays[K + winner].flags & RAY_FLAGS_MASKED))
+			outLsuf += MAKE_FLOAT3(rec->neeR, rec->neeG, rec->neeB);
+		outEvent = rec->event;
+		outPdfW = rec->pdfW;
+		outIsMiss = rec->miss;
+		if (outIsMiss == 0u) {
+			outX2 = VLOAD3F(&candRays[winner].o.x) +
+					candHits[winner].t * VLOAD3F(&candRays[winner].d.x);
+			outX2n = VLOAD3F(&rec->x2nX);
+		}
+		haveOut = true;
+		outIsFresh = true;
+	}
+
+	//------------------------------------------------------------------
+	// Temporal merge: reconnect the pixel's stored suffix to this x1.
+	// The payload is the measured L_suf (the merge's whole point: its
+	// payoff estimate is exact, only the prefix edge changes). Binary
+	// visibility arrives through tail slot 2K (queued by MK_PT_BOUNCE,
+	// vSeq-tagged).
+	//------------------------------------------------------------------
+	const uint p0 = stored->pass;
+	if (temporalEnable && (p0 != 0xFFFFFFFFu) && (p0 < pass)) {
+		const RestirPTReservoir snap = *stored;
+		if ((snap.m > 0u) && (snap.wSum > 0.f) && (snap.target > 0.f) &&
+				(snap.target >= 0.05f * snap.wSum / (float)snap.m) &&
+				(stored->pass == p0)) {
+			float piNew = 0.f;
+			float J = 1.f;
+			bool hasDir = false;
+			bool mergeVisible = true;
+			float3 stDir = (float3)(0.f, 0.f, 1.f);
+			float3 stEval = BLACK;
+			uint stEvent = 0u;
+			if (snap.isMiss) {
+				stDir = MAKE_FLOAT3(snap.dirX, snap.dirY, snap.dirZ);
+				hasDir = true;
+			} else {
+				const float3 sx2 = MAKE_FLOAT3(snap.x2X, snap.x2Y,
+						snap.x2Z);
+				const float3 dv = sx2 - x1;
+				const float dCur = length(dv);
+				if (dCur > MachineEpsilon_E_Float3(x1)) {
+					stDir = dv / dCur;
+					hasDir = true;
+
+					// Jacobian of the solid-angle shift src -> cur
+					const float3 toSrc = MAKE_FLOAT3(snap.x1X,
+							snap.x1Y, snap.x1Z) - sx2;
+					const float dSrc = length(toSrc);
+					if (dSrc > 0.f) {
+						const float3 n2 = MAKE_FLOAT3(snap.x2nX,
+								snap.x2nY, snap.x2nZ);
+						const float cosCur = fabs(dot(n2, -stDir));
+						const float cosSrc = fabs(dot(n2, toSrc / dSrc));
+						const float denom = cosSrc * dCur * dCur;
+						if (denom > 0.f)
+							J = (cosCur * dSrc * dSrc) / denom;
+					}
+				}
+			}
+			if (hasDir && (snap.isMiss == 0u))
+				mergeVisible = (result->vSeq == p0) &&
+						!(candRays[2u * K].flags & RAY_FLAGS_MASKED) &&
+						(candHits[2u * K].meshIndex == NULL_INDEX);
+			if (hasDir && mergeVisible) {
+				// Failed shifts are rejected without counting their
+				// mass (same rule as CPU/GI).
+				mTotal += snap.m;
+
+				float pdfS;
+				BSDFEvent evS;
+				stEval = BSDF_Evaluate(x1bsdf, stDir, &evS, &pdfS
+						MATERIALS_PARAM);
+				stEvent = (uint)evS;
+				piNew = Spectrum_Y(stEval) * (Spectrum_Y(MAKE_FLOAT3(
+						snap.lsufR, snap.lsufG, snap.lsufB)) + eps);
+			}
+
+			const float ratio = fmin((piNew / snap.target) * J,
+					RESTIR_MERGE_MAX_TARGET_RATIO);
+			const float bNbr = snap.wSum * ratio;
+			wSum += bNbr;
+			const float r = RestirGI_Hash(baseSeed, 0x41u);
+			if ((!haveOut && (bNbr > 0.f)) || (r < bNbr / wSum)) {
+				outDir = stDir;
+				outFcos = stEval;
+				outTarget = piNew;
+				outLsuf = MAKE_FLOAT3(snap.lsufR, snap.lsufG,
+						snap.lsufB);
+				outIsMiss = snap.isMiss;
+				if (!outIsMiss) {
+					outX2 = MAKE_FLOAT3(snap.x2X, snap.x2Y,
+							snap.x2Z);
+					outX2n = MAKE_FLOAT3(snap.x2nX, snap.x2nY,
+							snap.x2nZ);
+				}
+				outEvent = stEvent;
+				outPdfW = 0.f;
+				haveOut = true;
+				outIsFresh = false;
+			}
+		}
+	}
+
+	// M cap + pre-spatial store totals (GI parity: the reservoir record
+	// must carry the state BEFORE the spatial merges below - storing
+	// the post-spatial wSum feeds neighbour-inflated weight back into
+	// the same entries next pass = the merge-explosion pathology).
+	const uint mCap = 2u * K;
+	if (mTotal > mCap) {
+		wSum *= (float)mCap / (float)mTotal;
+		mTotal = mCap;
+	}
+	const float storeWSum = wSum;
+	const uint storeM = mTotal;
+
+	//------------------------------------------------------------------
+	// Spatial merge: 2 hashed neighbours in a 5x5 window, same-surface
+	// gated on x1, Jacobian shift + binary visibility through the
+	// speculative tail rays at slots 2K+1/2K+2 (vSeqS-tagged like the
+	// temporal slot).
+	//------------------------------------------------------------------
+	if (spatialEnable) {
+		const float maxDist2 = RESTIR_PIXEL_MERGE_DIST2 * worldRadius *
+				worldRadius;
+		const uint px = pixelIndex % filmWidth;
+		const uint py = pixelIndex / filmWidth;
+		for (uint k = 0; k < RESTIR_PIXEL_MERGES_MAX; ++k) {
+			const uint h = SobolSequence_BlueNoiseHash(baseSeed ^
+					(k * 0x85EBCA6Bu) ^ 0x5A5A5A5Au);
+			uint off = h % 25u;
+			if (off == 12u)
+				off = 24u; // skip the centre cell (self)
+			const int nx = (int)px + (int)(off % 5u) - 2;
+			const int ny = (int)py + (int)(off / 5u) - 2;
+			if ((nx < 0) || (ny < 0))
+				continue;
+			const uint nIdx = (uint)ny * filmWidth + (uint)nx;
+			if (nIdx >= reservoirCount)
+				continue;
+			__global RestirPTReservoir *nbr = &ptReservoirs[nIdx];
+			if (nbr == stored)
+				continue;
+			const uint np0 = nbr->pass;
+			const RestirPTReservoir nSnap = *nbr;
+			if ((np0 == 0xFFFFFFFFu) || !(nSnap.m > 0u) ||
+					!(nSnap.wSum > 0.f) || !(nSnap.target > 0.f))
+				continue;
+			if (nSnap.target < 0.05f * nSnap.wSum / (float)nSnap.m)
+				continue;
+			const float ddx = nSnap.x1X - x1.x, ddy = nSnap.x1Y - x1.y,
+					ddz = nSnap.x1Z - x1.z;
+			if (ddx * ddx + ddy * ddy + ddz * ddz > maxDist2)
+				continue;
+			const float dn = nSnap.x1nX * x1n.x + nSnap.x1nY * x1n.y +
+					nSnap.x1nZ * x1n.z;
+			if (dn < RESTIR_PIXEL_MERGE_NORM)
+				continue;
+			if (nbr->pass != np0)
+				continue;
+
+			float3 nbDir = (float3)(0.f, 0.f, 1.f);
+			float J = 1.f;
+			bool hasDir = false;
+			bool mergeVisible = true;
+			if (nSnap.isMiss) {
+				nbDir = MAKE_FLOAT3(nSnap.dirX, nSnap.dirY, nSnap.dirZ);
+				hasDir = true;
+			} else {
+				const float3 nx2 = MAKE_FLOAT3(nSnap.x2X, nSnap.x2Y,
+						nSnap.x2Z);
+				const float3 dv = nx2 - x1;
+				const float dCur = length(dv);
+				if (dCur > MachineEpsilon_E_Float3(x1)) {
+					nbDir = dv / dCur;
+					hasDir = true;
+					const float3 toSrc = MAKE_FLOAT3(nSnap.x1X,
+							nSnap.x1Y, nSnap.x1Z) - nx2;
+					const float dSrc = length(toSrc);
+					if (dSrc > 0.f) {
+						const float3 n2 = MAKE_FLOAT3(nSnap.x2nX,
+								nSnap.x2nY, nSnap.x2nZ);
+						const float cosCur = fabs(dot(n2, -nbDir));
+						const float cosSrc = fabs(dot(n2, toSrc / dSrc));
+						const float denom = cosSrc * dCur * dCur;
+						if (denom > 0.f)
+							J = (cosCur * dSrc * dSrc) / denom;
+					}
+					// Binary visibility through the speculative tail
+					// ray, paired by the vSeqS stamp.
+					mergeVisible = (result->vSeqS[k] == np0) &&
+							!(candRays[2u * K + 1u + k].flags &
+								RAY_FLAGS_MASKED) &&
+							(candHits[2u * K + 1u + k].meshIndex ==
+								NULL_INDEX);
+				}
+			}
+
+			float piNew = 0.f;
+			float3 nbEval = BLACK;
+			uint nbEvent = 0u;
+			float3 nbLsuf = BLACK;
+			if (hasDir && mergeVisible) {
+				mTotal += nSnap.m;
+
+				float pdfS;
+				BSDFEvent evS;
+				nbEval = BSDF_Evaluate(x1bsdf, nbDir, &evS, &pdfS
+						MATERIALS_PARAM);
+				nbEvent = (uint)evS;
+				nbLsuf = MAKE_FLOAT3(nSnap.lsufR, nSnap.lsufG,
+						nSnap.lsufB);
+				piNew = Spectrum_Y(nbEval) * (Spectrum_Y(nbLsuf) + eps);
+			}
+
+			const float ratio = fmin((piNew / nSnap.target) * J,
+					RESTIR_MERGE_MAX_TARGET_RATIO);
+			const float bNbr = nSnap.wSum * ratio;
+			wSum += bNbr;
+			const float r = RestirGI_Hash(baseSeed, 0x60u + k);
+			if ((!haveOut && (bNbr > 0.f)) || (r < bNbr / wSum)) {
+				outDir = nbDir;
+				outFcos = nbEval;
+				outTarget = piNew;
+				outLsuf = nbLsuf;
+				outIsMiss = nSnap.isMiss;
+				if (!outIsMiss) {
+					outX2 = MAKE_FLOAT3(nSnap.x2X, nSnap.x2Y,
+							nSnap.x2Z);
+					outX2n = MAKE_FLOAT3(nSnap.x2nX, nSnap.x2nY,
+							nSnap.x2nZ);
+				}
+				outEvent = nbEvent;
+				outPdfW = 0.f;
+				haveOut = true;
+				outIsFresh = false;
+			}
+		}
+
+		if (mTotal > mCap) {
+			wSum *= (float)mCap / (float)mTotal;
+			mTotal = mCap;
+		}
+	}
+
+	//------------------------------------------------------------------
+	// Winner resolution.
+	//------------------------------------------------------------------
+	if (!haveOut) {
+		result->pending = 2u; // normal BSDF sample
+		return false;
+	}
+	float W = 0.f;
+	if ((outTarget > 0.f) && (wSum > 0.f))
+		W = wSum / (mTotal * outTarget);
+	if (!isfinite(W) || !(W > 0.f)) {
+		if (!outIsFresh) {
+			result->pending = 2u;
+			return false;
+		}
+		// The fresh winner is a plain proposal draw: returning it with
+		// the BSDF payoff (W = 1/pdfW) is unbiased.
+		W = 1.f / outPdfW;
+	}
+
+	VSTORE3F(outDir, &result->dirX);
+	VSTORE3F(outFcos * W, &result->bsdfR);
+	result->pdfW = 1.f / W; // risPdfW: RIS marginal selection density
+	result->event = outEvent;
+
+	if (outIsFresh) {
+		// Arm the pending pick: MK_GENERATE consumes the direction and
+		// MK_RT_NEXT_VERTEX captures the walked landing into the pX2/
+		// thr/rad fields; MK_SPLAT_SAMPLE commits the measured suffix.
+		VSTORE3F(x1, &result->x1X);
+		VSTORE3F(x1n, &result->x1nX);
+		VSTORE3F(outFcos, &result->fcosR);
+		result->storeWSum = storeWSum;
+		result->storeM = storeM;
+		result->storeEps = eps;
+		result->pending = 1u;
+		return false;
+	}
+
+	// Stored-suffix win: republish the merged record to this pixel's
+	// reservoir (the CPU republishes through Commit() with the stored
+	// lsuf). The target is rebased to the measured suffix.
+	result->consumed = 1u;
+	VSTORE3F(outLsuf, &result->lsufR);
+
+	stored->pass = 0xFFFFFFFFu;
+	stored->x1X = x1.x; stored->x1Y = x1.y; stored->x1Z = x1.z;
+	stored->x1nX = x1n.x; stored->x1nY = x1n.y; stored->x1nZ = x1n.z;
+	stored->x2X = outX2.x; stored->x2Y = outX2.y; stored->x2Z = outX2.z;
+	stored->x2nX = outX2n.x; stored->x2nY = outX2n.y;
+	stored->x2nZ = outX2n.z;
+	stored->dirX = outDir.x; stored->dirY = outDir.y;
+	stored->dirZ = outDir.z;
+	stored->lsufR = outLsuf.x; stored->lsufG = outLsuf.y;
+	stored->lsufB = outLsuf.z;
+	stored->wSum = storeWSum;
+	stored->target = Spectrum_Y(outFcos) * (Spectrum_Y(outLsuf) + eps);
+	stored->m = storeM;
+	stored->isMiss = outIsMiss;
+	stored->pass = pass;
+	return true;
+}
+
+// Phase 4 (MK_SPLAT_SAMPLE): commit the measured suffix of an armed,
+// landed pick. L_suf = max(0, (radEnd - radX2) / thrX2) guarded per
+// channel (CPU parity: restirpt.cpp's caller-side divide).
+OPENCL_FORCE_INLINE void RestirPT_Commit(
+		__global RestirPTReservoir *stored,
+		__global const RestirPTResult *result,
+		const float3 radEnd, const uint pass) {
+	const float3 thr = MAKE_FLOAT3(result->thrR, result->thrG,
+			result->thrB);
+	const float3 radX2 = MAKE_FLOAT3(result->radR, result->radG,
+			result->radB);
+	const float3 fcos = MAKE_FLOAT3(result->fcosR, result->fcosG,
+			result->fcosB);
+	const float3 dRad = radEnd - radX2;
+	float3 lsuf = BLACK;
+	if ((dRad.x > 0.f) && (thr.x > 1e-9f))
+		lsuf.x = dRad.x / thr.x;
+	if ((dRad.y > 0.f) && (thr.y > 1e-9f))
+		lsuf.y = dRad.y / thr.y;
+	if ((dRad.z > 0.f) && (thr.z > 1e-9f))
+		lsuf.z = dRad.z / thr.z;
+	const float tgt = Spectrum_Y(fcos) *
+			(Spectrum_Y(lsuf) + result->storeEps);
+
+	stored->pass = 0xFFFFFFFFu;
+	stored->x1X = result->x1X; stored->x1Y = result->x1Y;
+	stored->x1Z = result->x1Z;
+	stored->x1nX = result->x1nX; stored->x1nY = result->x1nY;
+	stored->x1nZ = result->x1nZ;
+	stored->x2X = result->pX2X; stored->x2Y = result->pX2Y;
+	stored->x2Z = result->pX2Z;
+	stored->x2nX = result->pX2nX; stored->x2nY = result->pX2nY;
+	stored->x2nZ = result->pX2nZ;
+	stored->dirX = result->dirX; stored->dirY = result->dirY;
+	stored->dirZ = result->dirZ;
+	stored->lsufR = lsuf.x; stored->lsufG = lsuf.y; stored->lsufB = lsuf.z;
+	stored->wSum = result->storeWSum;
+	stored->target = tgt;
+	stored->m = result->storeM;
+	stored->isMiss = result->pMiss;
+	stored->pass = pass;
+}
+
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
 // Path guiding (P1-3 M4e): flattened SD-tree + per-leaf vMF mixture.
 //
 // Ports PathGuidingCache::Sample/Pdf exactly - the GPU queries the same

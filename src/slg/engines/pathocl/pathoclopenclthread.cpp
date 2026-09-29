@@ -249,7 +249,10 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				RESTIR_PIXEL_MERGES_MAX) : 0u) +
 				2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
 				((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
-				1u : 0u));
+				1u : 0u) +
+				2u * threadTaskConfig.pathTracer.restirPT.ptCandCount +
+				((threadTaskConfig.pathTracer.restirPT.ptCandCount > 0u) ?
+				3u : 0u));
 		for (u_int i = 0; i < iterations; ++i) {
 			// Mid-batch abort check: each iteration is ~10ms of queued
 			// work, so a scene edit/stop arriving here would otherwise

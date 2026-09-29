@@ -46,8 +46,9 @@ class PathOCLBaseRenderEngine;
 // Number of per-state wavefront task queues: mirrors the PathState
 // enum in pathoclbase_datatypes.cl (0..14 eye states + MK_LIGHT_INIT/
 // MK_LIGHT_VERTEX of the light-task population + MK_VC_CONNECT of the
-// vertex-connection eye state).
-inline constexpr u_int WAVEFRONT_NUM_STATES = 18;
+// vertex-connection eye state + MK_PT_BOUNCE/MK_PT_RESOLVE of the
+// ReSTIR PT suffix-reservoir states).
+inline constexpr u_int WAVEFRONT_NUM_STATES = 20;
 // Spectral hero-wavelength buckets per state queue (B2/E3 M2). Matches
 // SLG_SPECTRAL_BINS (3 spectral bins ride in the float3 channels).
 // Non-spectral builds bucket everything into lambda 0, which reproduces
@@ -434,6 +435,8 @@ protected:
 	// candidate rays queued by MK_GENERATE_NEXT_VERTEX_RAY.
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_GI_BOUNCE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_GI_RESOLVE;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_PT_BOUNCE;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_PT_RESOLVE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;

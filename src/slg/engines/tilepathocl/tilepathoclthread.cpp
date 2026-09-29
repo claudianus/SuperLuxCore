@@ -137,17 +137,21 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 	// ReSTIR GI (G1 GPU): the depth-0 vertex needs 2 more trace passes
 	// (candidate bounce rays, then their NEE shadow rays) before the
 	// resolve hands the winner back to MK_GENERATE_NEXT_VERTEX_RAY.
+	// ReSTIR PT (PT-2) needs the same 2 passes (mutually exclusive).
 	const u_int giPasses =
 			(threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
 			2u : 0u;
+	const u_int ptPasses =
+			(threadTaskConfig.pathTracer.restirPT.ptCandCount > 0u) ?
+			2u : 0u;
 	const u_int worstCaseIterationCount =
-			(maxDepth == 1) ? (visCands ? 3 : 2) + giPasses :
+			(maxDepth == 1) ? (visCands ? 3 : 2) + giPasses + ptPasses :
 			(maxDepth * (visCands ? 3u : 2u) - (visCands ? 2u : 1u) +
-			giPasses);
+			giPasses + ptPasses);
 	for (u_int i = 0; i < worstCaseIterationCount; ++i) {
 		// Trace rays (tail slots hold the light camera-visibility rays
 		// - lightVisRayBase - then the ReSTIR visibility candidate
-		// shadow rays and the GI bounce/NEE rays)
+		// shadow rays and the GI/PT bounce/NEE/merge-visibility rays)
 		intersectionDevice.EnqueueTraceRayBuffer(raysBuff, hitsBuff,
 				engine->taskCount + engine->lightTaskCount +
 				engine->taskCount *
@@ -155,7 +159,10 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 				(visCands ? RESTIR_PIXEL_MERGES_MAX : 0u) +
 				2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
 				((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
-				1u : 0u)));
+				1u : 0u) +
+				2u * threadTaskConfig.pathTracer.restirPT.ptCandCount +
+				((threadTaskConfig.pathTracer.restirPT.ptCandCount > 0u) ?
+				3u : 0u)));
 
 		// Advance to next path state
 		EnqueueAdvancePathsKernel();

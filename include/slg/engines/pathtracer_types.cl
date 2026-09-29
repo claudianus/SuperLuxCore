@@ -97,6 +97,30 @@ typedef struct {
 		unsigned int giCandCount;		// effective K (memory clamped)
 	} restirGI;
 
+	// ReSTIR PT (PT-2 GPU): per-pixel path-suffix reservoir reusing the
+	// measured suffix radiance L_suf of the winning reconnection vertex
+	// (kernel port of RestirPT::ResampleSuffix/Commit; see
+	// doc/engineering/restir-pt-design.md). Same arena + tail pattern
+	// as GI: the reservoirs live in restirReservoirs[] after the GI
+	// region, the per-task candidate/result record block follows them,
+	// and the tail of rays[]/rayHits[] carries K bounce rays + K NEE
+	// shadow rays + 1 temporal-merge visibility ray per task.
+	// Mutually exclusive with restirGI (CPU parse resolves the tie).
+	struct {
+		int enabled;
+		unsigned int candidateCount;	// requested K
+		int temporalEnable;
+		int spatialEnable;
+		unsigned int reservoirCount;	// PT per-pixel reservoir count
+		unsigned int ptReservoirOffset;	// first PT reservoir slot
+		unsigned int ptCandDataOffset;	// first candidate-record slot
+		unsigned int ptCandStride;		// per-task record block stride
+										// (K RestirGICandidate + 1
+										// RestirPTResult, slot units)
+		unsigned int ptCandRayBase;		// first PT tail slot in rays[]
+		unsigned int ptCandCount;		// effective K (memory clamped)
+	} restirPT;
+
 	// MNEE (Manifold Next Event Estimation): direct light sampling through
 	// a delta specular chain x0 -> ... -> y. The kernel port of
 	// PathTracer::MNEEDirectSampling() (single vertex) and

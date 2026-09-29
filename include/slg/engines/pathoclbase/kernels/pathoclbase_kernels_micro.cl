@@ -118,6 +118,40 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 
 	// If continueToTrace, there is nothing to do, just keep the same state
 	if (!continueToTrace) {
+		// ReSTIR PT (PT-2): the armed pick's landing vertex (or miss) is
+		// the reconnection vertex x2. Scene_Intersect has already folded
+		// pass-throughs and the connection throughput, so this entry is
+		// the WALKED landing - record what the path actually hit and
+		// snapshot the pre-contribution ledger (radiance has not yet
+		// received this vertex's emission/DL terms, matching the CPU
+		// capture between Intersect() and the contribution section).
+		if (taskConfig->pathTracer.restirPT.enabled &&
+				(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
+			const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+			__global RestirPTResult *ptResult = (__global RestirPTResult *)
+					(((__global RestirGICandidate *)(restirReservoirs +
+					taskConfig->pathTracer.restirPT.ptCandDataOffset +
+					gid * taskConfig->pathTracer.restirPT.ptCandStride)) +
+					ptK);
+			if (ptResult->pending == 3u) {
+				const bool missed =
+						(rayHits[gid].meshIndex == NULL_INDEX);
+				ptResult->pMiss = missed ? 1u : 0u;
+				if (!missed) {
+					VSTORE3F(VLOAD3F(&taskState->bsdf.hitPoint.p.x),
+							&ptResult->pX2X);
+					VSTORE3F(VLOAD3F(&taskState->bsdf.hitPoint.geometryN.x),
+							&ptResult->pX2nX);
+				}
+				VSTORE3F(VLOAD3F(&rays[gid].d.x), &ptResult->dirX);
+				VSTORE3F(VLOAD3F(taskState->throughput.c),
+						&ptResult->thrR);
+				VSTORE3F(VLOAD3F(&sampleResult->
+						radiancePerPixelNormalized[0].c[0]),
+						&ptResult->radR);
+				ptResult->pending = 4u;
+			}
+		}
 		if (rayHits[gid].meshIndex == NULL_INDEX)
 			taskState->state = MK_HIT_NOTHING;
 		else {
@@ -1224,6 +1258,237 @@ __kernel void AdvancePaths_MK_RT_GI_RESOLVE(
 //------------------------------------------------------------------------------
 // Evaluation of the Path finite state machine.
 //
+// From: MK_PT_BOUNCE (queued by MK_GENERATE_NEXT_VERTEX_RAY)
+// To: MK_PT_RESOLVE
+//
+// ReSTIR PT (PT-2 GPU): consumes the candidate bounce-ray hits
+// (traced this iteration), builds each hit candidate's x2 record and
+// queues the NEE + merge-visibility shadow rays into the second half
+// of the task's PT tail (2K+3 slots).
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_PT_BOUNCE(
+		KERNEL_ARGS
+		) {
+	WAVEFRONT_GUARD
+
+	// Read the path state
+	__global GPUTask *task = &tasks[gid];
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_PT_BOUNCE(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_PT_BOUNCE)
+		return;
+
+	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	__global EyePathInfo *pathInfo = &eyePathInfos[gid];
+	__global BSDF *bsdf = &taskState->bsdf;
+
+	// Read the seed
+	Seed seedValue = task->seed;
+	// This trick is required by SAMPLER_PARAM macro
+	Seed *seed = &seedValue;
+
+	__constant const Scene* restrict scene = &taskConfig->scene;
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+	const uint ptRayBase = taskConfig->pathTracer.restirPT.ptCandRayBase +
+			gid * (2u * ptK + 3u);
+	__global Ray *candRays = &rays[ptRayBase];
+	__global RayHit *candHits = &rayHits[ptRayBase];
+	__global RestirGICandidate *candData = (__global RestirGICandidate *)
+			(restirReservoirs + taskConfig->pathTracer.restirPT.ptCandDataOffset +
+			gid * taskConfig->pathTracer.restirPT.ptCandStride);
+	__global RestirPTResult *ptResult =
+			(__global RestirPTResult *)(candData + ptK);
+
+	const uint ptPass = GuidingPass(taskConfig, gid, samplesBuff);
+	const uint baseSeed = (sampleResult->pixelX * 73856093u) ^
+			(sampleResult->pixelY * 19349663u) ^
+			(ptPass * 83492791u) ^
+			seedValue.s1;
+
+	RestirPT_Bounce(
+			bsdf,
+			&task->tmpBsdf,
+			&directLightVolInfos[gid],
+			pathInfo,
+			&task->tmpHitPoint,
+			&task->tmpPathDepthInfo,
+			candRays, candHits, candData,
+			ptResult,
+			(__global RestirPTReservoir *)(restirReservoirs +
+					taskConfig->pathTracer.restirPT.ptReservoirOffset),
+			sampleResult->pixelY * filmWidth + sampleResult->pixelX,
+			ptPass,
+			taskConfig->pathTracer.restirPT.temporalEnable,
+			taskConfig->pathTracer.restirPT.spatialEnable,
+			filmWidth,
+			taskConfig->pathTracer.restirPT.reservoirCount,
+			ptK, baseSeed, rays[gid].time,
+			worldCenterX, worldCenterY, worldCenterZ, worldRadius
+			LIGHTS_PARAM);
+
+	// The NEE/merge-visibility rays land in rayHits on the next trace
+	// pass; the resolve must skip this task until then (dense dispatch
+	// runs the resolve kernel later in THIS same pass).
+	ptResult->needsTrace = 1u;
+	taskState->state = MK_PT_RESOLVE;
+
+	// Save the seed
+	task->seed = seedValue;
+}
+
+//------------------------------------------------------------------------------
+// Evaluation of the Path finite state machine.
+//
+// From: MK_PT_RESOLVE
+// To: MK_GENERATE_NEXT_VERTEX_RAY (fresh winner or fallback) or
+//     MK_SPLAT_SAMPLE (stored-suffix win consumed the path)
+//
+// Folds the NEE/merge visibility into the candidate targets, runs the
+// RIS + temporal/spatial merges over the measured-suffix reservoirs,
+// then either hands the fresh winner to MK_GENERATE (pending = 1) or
+// pays thr * fcos * W * L_suf directly and ends the path.
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_PT_RESOLVE(
+		KERNEL_ARGS
+		) {
+	WAVEFRONT_GUARD
+
+	// Read the path state
+	__global GPUTask *task = &tasks[gid];
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_PT_RESOLVE(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_PT_RESOLVE)
+		return;
+
+	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	__global BSDF *bsdf = &taskState->bsdf;
+
+	// Read the seed
+	Seed seedValue = task->seed;
+	// This trick is required by SAMPLER_PARAM macro
+	Seed *seed = &seedValue;
+
+	__constant const Scene* restrict scene = &taskConfig->scene;
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+	const uint ptRayBase = taskConfig->pathTracer.restirPT.ptCandRayBase +
+			gid * (2u * ptK + 3u);
+	__global Ray *candRays = &rays[ptRayBase];
+	__global RayHit *candHits = &rayHits[ptRayBase];
+	__global RestirGICandidate *candData = (__global RestirGICandidate *)
+			(restirReservoirs + taskConfig->pathTracer.restirPT.ptCandDataOffset +
+			gid * taskConfig->pathTracer.restirPT.ptCandStride);
+	__global RestirPTResult *ptResult =
+			(__global RestirPTResult *)(candData + ptK);
+
+	// Dense dispatch runs this kernel in the same pass that queued the
+	// NEE/visibility rays: skip until they have actually been traced
+	// (GI parity: redundant under wavefront queue rebuilds).
+	if (ptResult->needsTrace) {
+		ptResult->needsTrace = 0u;
+		if (!wavefrontEnable)
+			return;
+	}
+
+	const uint pixelIndex =
+			sampleResult->pixelY * filmWidth + sampleResult->pixelX;
+	const uint ptPass = GuidingPass(taskConfig, gid, samplesBuff);
+	const uint baseSeed = (sampleResult->pixelX * 73856093u) ^
+			(sampleResult->pixelY * 19349663u) ^
+			(ptPass * 83492791u) ^ seedValue.s1;
+
+	const bool consumed = RestirPT_Resolve(
+			bsdf,
+			candRays, candHits, candData,
+			ptResult,
+			(__global RestirPTReservoir *)(restirReservoirs +
+					taskConfig->pathTracer.restirPT.ptReservoirOffset),
+			pixelIndex, ptPass,
+			ptK, baseSeed,
+			taskConfig->pathTracer.restirPT.temporalEnable,
+			taskConfig->pathTracer.restirPT.spatialEnable,
+			filmWidth,
+			taskConfig->pathTracer.restirPT.reservoirCount,
+			worldRadius
+			MATERIALS_PARAM);
+
+	// Re-mask the whole tail (bounce + NEE + merge-visibility): slots
+	// written by an earlier PT resolve stay valid forever otherwise and
+	// every subsequent trace pass would re-trace them.
+	for (uint i = 0; i < 2u * ptK + 3u; ++i)
+		candRays[i].flags = RAY_FLAGS_MASKED;
+
+	if (consumed) {
+		// Stored-suffix win: pay thr * (fcos*W) * L_suf directly and
+		// end the path (CPU parity: radiance[0] += pathThroughput *
+		// pick.eval * pick.connThr * pick.lsuf; connThr folds as 1 -
+		// the tail rays carry no volume info, documented v1 limit).
+		const float3 contrib = VLOAD3F(taskState->throughput.c) *
+				VLOAD3F(&ptResult->bsdfR) *
+				MAKE_FLOAT3(ptResult->lsufR, ptResult->lsufG,
+						ptResult->lsufB);
+		VADD3F(sampleResult->radiancePerPixelNormalized[0].c, contrib);
+		// AOV bookkeeping mirrors the CPU hook: bucket the consumed
+		// contribution by the winning event type.
+		if (ptResult->event & DIFFUSE)
+			VADD3F(sampleResult->indirectDiffuseReflect.c, contrib);
+		else if (ptResult->event & GLOSSY)
+			VADD3F(sampleResult->indirectGlossyReflect.c, contrib);
+		else
+			VADD3F(sampleResult->indirectSpecularReflect.c, contrib);
+		sampleResult->firstPathVertexEvent = (BSDFEvent)ptResult->event;
+		ptResult->pending = 0u;
+		taskState->state = MK_SPLAT_SAMPLE;
+	} else {
+		// Fresh winner (pending = 1, consumed by MK_GENERATE) or
+		// fallback to a normal BSDF sample (pending = 2).
+		taskState->state = MK_GENERATE_NEXT_VERTEX_RAY;
+	}
+
+	// Save the seed
+	task->seed = seedValue;
+}
+
+//------------------------------------------------------------------------------
+// Evaluation of the Path finite state machine.
+//
 // From: MK_DL_ILLUMINATE
 // To: MK_DL_SAMPLE_BSDF or MK_GENERATE_NEXT_VERTEX_RAY
 //------------------------------------------------------------------------------
@@ -1602,6 +1867,72 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			cosSampledDir = -1.f;
 			bsdfEvent = pathInfo->lastBSDFEvent;
 		} else {
+			// ReSTIR PT (PT-2 GPU): measured-suffix resampling at the
+			// depth-0 non-delta vertex - same hook slot as GI (mutually
+			// exclusive: path.restir.pt.enable overrides gi on the host
+			// parse). The resolve hands the fresh winner back through
+			// the task's RestirPTResult record:
+			//   pending == 1: consume (dir, fcos*W, risPdfW, event) in
+			//       place of a fresh BSDF draw, then arm the pick record
+			//       (pending -> 3; MK_RT_NEXT_VERTEX captures the
+			//       landing, MK_SPLAT_SAMPLE commits the measured
+			//       suffix);
+			//   pending == 2: the resolve found no usable winner - take
+			//       a normal BSDF sample;
+			//   pending == 0: enqueue the K candidate bounce rays into
+			//       the PT tail and re-enter through MK_PT_BOUNCE;
+			//   pending >= 3: already armed this bounce - plain sample.
+			uint ptPending = 0u;
+			__global RestirPTResult *ptResult = NULL;
+			if (taskConfig->pathTracer.restirPT.enabled &&
+					(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
+				const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+				__global RestirGICandidate *ptCand =
+						(__global RestirGICandidate *)(restirReservoirs +
+						taskConfig->pathTracer.restirPT.ptCandDataOffset +
+						gid * taskConfig->pathTracer.restirPT.ptCandStride);
+				ptResult = (__global RestirPTResult *)(ptCand + ptK);
+				ptPending = ptResult->pending;
+				if ((ptPending == 0u) && sampleResult->firstPathVertex &&
+						!BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
+					__global Ray *ptRays = &rays[
+							taskConfig->pathTracer.restirPT.ptCandRayBase +
+							gid * (2u * ptK + 3u)];
+					// Same decorrelation as the GI draw below.
+					const uint ptSeed = (sampleResult->pixelX * 73856093u) ^
+							(sampleResult->pixelY * 19349663u) ^
+							(GuidingPass(taskConfig, gid, samplesBuff) *
+							83492791u) ^ seedValue.s1;
+					if (RestirGI_EnqueueBounce(bsdf, ptRays, ptCand,
+							ptK, ptSeed, ray->time
+							MATERIALS_PARAM)) {
+						taskState->state = MK_PT_BOUNCE;
+						task->seed = seedValue;
+						return;
+					}
+				}
+				if (ptPending == 1u) {
+					sampledDir = MAKE_FLOAT3(ptResult->dirX,
+							ptResult->dirY, ptResult->dirZ);
+					bsdfSample = MAKE_FLOAT3(ptResult->bsdfR,
+							ptResult->bsdfG, ptResult->bsdfB);
+					bsdfPdfW = ptResult->pdfW;
+					bsdfEvent = (BSDFEvent)ptResult->event;
+					cosSampledDir = fabs(dot(
+							VLOAD3F(&bsdf->hitPoint.shadeN.x), sampledDir));
+					// Fresh winner consumed: arm the landing capture
+					// (MK_RT_NEXT_VERTEX) + path-end commit
+					// (MK_SPLAT_SAMPLE).
+					ptResult->pending = 3u;
+#if defined(SLG_SPECTRAL)
+					sampleResult->spectralHeroAlive =
+							bsdf->hitPoint.spectralHeroAlive;
+#endif
+				} else if (ptPending == 2u)
+					// Fallback decision consumed; the armed/landed
+					// states (3/4) must survive to the commit.
+					ptResult->pending = 0u;
+			}
 			// ReSTIR GI (G1 GPU): first-bounce reservoir resampling at
 			// the depth-0 non-delta vertex. The resolve hands the winner
 			// back through the task's RestirGIResult record:
@@ -1666,7 +1997,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			__global const float *guideLeaf = (guidingEnable != 0u) ?
 					GuideTree_LeafAt(guideNodes, guideLeaves,
 						VLOAD3F(&bsdf->hitPoint.p.x)) : NULL;
-			if (giPending != 1u) {
+			if ((giPending != 1u) && (ptPending != 1u)) {
 			const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 			// Mirrors CPU GuidableBsdf(): volume scattering vertices are
 			// always guidable (phase lobes sample blind w.r.t. the
@@ -1923,7 +2254,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					}
 				}
 			}
-			} // giPending != 1u
+			} // giPending != 1u && ptPending != 1u
 
 			// Path guiding (P1-3 M2b-2): incident-value training record
 			// (strided per-task slot, no atomics). Exact record matching
@@ -2201,6 +2532,32 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 			SAMPLER_PARAM
 			FILM_PARAM);
 	taskStats[gid].sampleCount += 1;
+
+	// ReSTIR PT (PT-2): path-end commit - publish the measured suffix
+	// L_suf = (radEnd - radX2) / thrX2 to the pixel's reservoir.
+	// pending == 4 = armed pick landed; pending == 3 = the armed winner
+	// was killed before landing (RR/depth) - dropped uncommitted,
+	// matching the CPU's ptArmed && ptCaptured gate.
+	if (taskConfig->pathTracer.restirPT.enabled &&
+			(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
+		const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+		__global RestirPTResult *ptResult = (__global RestirPTResult *)
+				(((__global RestirGICandidate *)(restirReservoirs +
+				taskConfig->pathTracer.restirPT.ptCandDataOffset +
+				gid * taskConfig->pathTracer.restirPT.ptCandStride)) +
+				ptK);
+		if (ptResult->pending == 4u)
+			RestirPT_Commit(
+					(__global RestirPTReservoir *)(restirReservoirs +
+						taskConfig->pathTracer.restirPT.ptReservoirOffset) +
+						sampleResult->pixelY * filmWidth +
+						sampleResult->pixelX,
+					ptResult,
+					VLOAD3F(&sampleResult->
+						radiancePerPixelNormalized[0].c[0]),
+					GuidingPass(taskConfig, gid, samplesBuff));
+		ptResult->pending = 0u;
+	}
 
 	// Save the state
 	taskState->state = MK_NEXT_SAMPLE;

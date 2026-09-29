@@ -644,11 +644,12 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	{
 		const auto &restirCfg = threadTaskConfig.pathTracer.restir;
 		const auto &giCfg = threadTaskConfig.pathTracer.restirGI;
+		const auto &ptCfg = threadTaskConfig.pathTracer.restirPT;
 		const bool diReuse = restirCfg.enabled &&
 				(restirCfg.temporalEnable || restirCfg.spatialEnable);
 		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
 		threadTaskConfig.pathTracer.restir.reservoirCount =
-				(diReuse || giCfg.enabled) ?
+				(diReuse || giCfg.enabled || ptCfg.enabled) ?
 				(subRegion[3] + 1) * renderEngine->GetFilm().GetWidth() : 0;
 	}
 
@@ -863,6 +864,97 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 			gi.giReservoirOffset = reservoirCount + diCandSlots;
 			gi.giCandDataOffset = gi.giReservoirOffset;
 			gi.giCandStride = 0;
+		}
+	}
+
+	// ReSTIR PT (PT-2 GPU): per-pixel suffix reservoirs + per-task
+	// candidate/result records appended after the GI region of
+	// restirReservoirsBuff; the PT ray tail (2K+3 slots per task: K
+	// bounce + K NEE + temporal vis + 2 spatial vis) follows the GI
+	// tail in rays[]/rayHits[]. Mutually exclusive with GI, so the
+	// GI-occupied regions still reserve their slots (layout stability).
+	{
+		namespace podt = slg::ocl::pathoclbase;
+		auto &pt = threadTaskConfig.pathTracer.restirPT;
+		auto &gi = threadTaskConfig.pathTracer.restirGI;
+		auto &restir = threadTaskConfig.pathTracer.restir;
+		const u_int reservoirCount = restir.reservoirCount;
+		const size_t diCandBytes = (restir.visCandCount > 0u) ?
+				(size_t)taskCount * (restir.visCandCount +
+				RESTIR_PIXEL_MERGES_MAX) * sizeof(podt::RestirVisCandidate) : 0;
+		const u_int diCandSlots = (u_int)((diCandBytes +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+		const u_int giReservoirSlots = (u_int)(((size_t)reservoirCount *
+				sizeof(podt::RestirGIReservoir) +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+		const size_t giCandBytes = (gi.giCandCount > 0u) ?
+				(size_t)taskCount * gi.giCandStride *
+				sizeof(podt::RestirReservoir) : 0;
+		const u_int giCandSlots = (u_int)((giCandBytes +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+		// The GI tail always reserves its slot range so the PT base
+		// stays put regardless of which ReSTIR flavour is enabled.
+		const u_int giTailSlots = taskCount * (2u * gi.giCandCount +
+				((gi.giCandCount > 0u) ? 1u : 0u));
+		const u_int ptReservoirSlots = (u_int)(((size_t)reservoirCount *
+				sizeof(podt::RestirPTReservoir) +
+				sizeof(podt::RestirReservoir) - 1) /
+				sizeof(podt::RestirReservoir));
+
+		if (pt.enabled) {
+			pt.reservoirCount = reservoirCount;
+			pt.ptCandCount = Min(4u, pt.candidateCount);
+
+			// Low-resource guard, same pattern as the GI tail.
+			const u_int bytesPerCand =
+					(u_int)(3u * (sizeof(Ray) + sizeof(RayHit)) +
+					sizeof(podt::RestirGICandidate));
+			const size_t ptByteBudget = (size_t)256 * 1024 * 1024;
+			const u_int maxKByMem = (bytesPerCand > 0 && taskCount > 0) ?
+					(u_int)Max<long long>(0ll, (long long)Min<size_t>(
+					4u, (ptByteBudget - (size_t)taskCount *
+					sizeof(podt::RestirPTResult)) /
+					((size_t)taskCount * bytesPerCand))) : 0u;
+			if (pt.ptCandCount > maxKByMem) {
+				SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex <<
+						"] ReSTIR PT candidates clamped from " <<
+						pt.ptCandCount << " to " << maxKByMem <<
+						" (taskCount=" << taskCount << ", budget=" <<
+						ptByteBudget / 1024 / 1024 << "MB)");
+				pt.ptCandCount = maxKByMem;
+			}
+			if (pt.ptCandCount == 0u)
+				pt.enabled = false;
+		}
+		if (pt.enabled) {
+			pt.ptCandRayBase = rayTailBase + taskCount *
+					((restir.visCandCount > 0u) ?
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u) +
+					giTailSlots;
+			pt.ptReservoirOffset = reservoirCount + diCandSlots +
+					giReservoirSlots + giCandSlots;
+			pt.ptCandDataOffset = pt.ptReservoirOffset + ptReservoirSlots;
+			// Per-task record block: K RestirGICandidate + 1
+			// RestirPTResult, rounded up to whole reservoir slots
+			pt.ptCandStride = (u_int)(((size_t)pt.ptCandCount *
+					sizeof(podt::RestirGICandidate) +
+					sizeof(podt::RestirPTResult) +
+					sizeof(podt::RestirReservoir) - 1) /
+					sizeof(podt::RestirReservoir));
+		} else {
+			pt.reservoirCount = 0;
+			pt.ptCandCount = 0;
+			pt.ptCandRayBase = rayTailBase + taskCount *
+					((restir.visCandCount > 0u) ?
+					(restir.visCandCount + RESTIR_PIXEL_MERGES_MAX) : 0u) +
+					giTailSlots;
+			pt.ptReservoirOffset = reservoirCount + diCandSlots +
+					giReservoirSlots + giCandSlots;
+			pt.ptCandDataOffset = pt.ptReservoirOffset;
+			pt.ptCandStride = 0;
 		}
 	}
 
@@ -1293,6 +1385,8 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// shadow rays; ReSTIR GI (G1) appends taskCount * (2*giCandCount + 1)
 	// bounce + NEE + temporal-merge visibility rays behind them
 	// (giCandRayBase matches this tail start in InitGPUTaskBuffer()).
+	// ReSTIR PT (PT-2) appends taskCount * (2*ptCandCount + 3) bounce +
+	// NEE + temporal/spatial merge visibility rays after the GI tail.
 	// GPU light tracing adds lightTaskCount camera-visibility ray slots
 	// between the per-task rays and the ReSTIR tails (lightVisRayBase).
 	const u_int raySlotCount = taskCount +
@@ -1303,7 +1397,10 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 			RESTIR_PIXEL_MERGES_MAX) : 0u) +
 			2u * threadTaskConfig.pathTracer.restirGI.giCandCount +
 			((threadTaskConfig.pathTracer.restirGI.giCandCount > 0u) ?
-			1u : 0u));
+			1u : 0u) +
+			2u * threadTaskConfig.pathTracer.restirPT.ptCandCount +
+			((threadTaskConfig.pathTracer.restirPT.ptCandCount > 0u) ?
+			3u : 0u));
 	intersectionDevice.AllocBufferRW(&raysBuff, nullptr, sizeof(Ray) * raySlotCount, "Ray");
 	intersectionDevice.AllocBufferRW(&hitsBuff, nullptr, sizeof(RayHit) * raySlotCount, "RayHit");
 
@@ -1499,8 +1596,14 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 				sizeof(slg::ocl::pathoclbase::RestirReservoir));
 		// giReservoirOffset == reservoirCount + DI candidate slots, so
 		// the GI total is the end of the buffer whenever GI is enabled.
-		const u_int allocCount = (gi.reservoirCount > 0u) ?
+		u_int allocCount = (gi.reservoirCount > 0u) ?
 				giTotalSlots : totalCount;
+		// ReSTIR PT (PT-2): the PT region sits after the GI region, so
+		// its end is the buffer end whenever PT is enabled.
+		const auto &pt = threadTaskConfig.pathTracer.restirPT;
+		if (pt.reservoirCount > 0u)
+			allocCount = pt.ptCandDataOffset +
+					taskCount * pt.ptCandStride;
 		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(allocCount);
 		intersectionDevice.AllocBufferRW(&restirReservoirsBuff, zeroReservoirs.data(),
 				sizeof(slg::ocl::pathoclbase::RestirReservoir) * allocCount, "RestirReservoirs");

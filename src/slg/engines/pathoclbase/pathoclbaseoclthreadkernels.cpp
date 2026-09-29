@@ -375,6 +375,8 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"},
 		{&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"},
 		{&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"},
+		{&advancePathsKernel_MK_PT_BOUNCE, nullptr, true, "AdvancePaths_MK_PT_BOUNCE"},
+		{&advancePathsKernel_MK_PT_RESOLVE, nullptr, true, "AdvancePaths_MK_PT_RESOLVE"},
 		{&advancePathsKernel_MK_DL_ILLUMINATE, nullptr, true, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{&advancePathsKernel_MK_DL_SAMPLE_BSDF, nullptr, true, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
 		{&advancePathsKernel_MK_MNEE_NEXT_VERTEX, nullptr, true, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
@@ -718,6 +720,8 @@ constexpr u_int MK_RT_GI_RESOLVE = 14;
 constexpr u_int MK_LIGHT_INIT = 15;
 constexpr u_int MK_LIGHT_VERTEX = 16;
 constexpr u_int MK_VC_CONNECT = 17;
+constexpr u_int MK_PT_BOUNCE = 18;
+constexpr u_int MK_PT_RESOLVE = 19;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
@@ -747,6 +751,10 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_GI_BOUNCE, filmIndex, MK_RT_GI_BOUNCE);
 	if (advancePathsKernel_MK_RT_GI_RESOLVE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_GI_RESOLVE, filmIndex, MK_RT_GI_RESOLVE);
+	if (advancePathsKernel_MK_PT_BOUNCE)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_PT_BOUNCE, filmIndex, MK_PT_BOUNCE);
+	if (advancePathsKernel_MK_PT_RESOLVE)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_PT_RESOLVE, filmIndex, MK_PT_RESOLVE);
 	if (advancePathsKernel_MK_DL_ILLUMINATE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_ILLUMINATE, filmIndex, MK_DL_ILLUMINATE);
 	if (advancePathsKernel_MK_DL_SAMPLE_BSDF)
@@ -919,6 +927,17 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	if (advancePathsKernel_MK_RT_GI_RESOLVE && giEnabled)
 		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_RT_GI_RESOLVE,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// ReSTIR PT (PT-2): same two-stage tail resolution as GI (mutually
+	// exclusive - the host parse gives PT precedence). Reachability
+	// gate: tasks only enter MK_PT_BOUNCE when PT candidates exist.
+	const bool ptEnabled = threadTaskConfig.pathTracer.restirPT.enabled &&
+			threadTaskConfig.pathTracer.restirPT.ptCandCount > 0;
+	if (advancePathsKernel_MK_PT_BOUNCE && ptEnabled)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_PT_BOUNCE,
+				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (advancePathsKernel_MK_PT_RESOLVE && ptEnabled)
+		intersectionDevice.EnqueueKernel(advancePathsKernel_MK_PT_RESOLVE,
 				HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	// Vertex connection (M6): connects the just-resolved eye vertex to
 	// the paired light subpath's stored vertices. Runs after the
@@ -1138,6 +1157,8 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_MNEE_NEXT_VERTEX, MK_MNEE_NEXT_VERTEX},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_BOUNCE, MK_RT_GI_BOUNCE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_RT_GI_RESOLVE, MK_RT_GI_RESOLVE},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_PT_BOUNCE, MK_PT_BOUNCE},
+		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_PT_RESOLVE, MK_PT_RESOLVE},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_VC_CONNECT, MK_VC_CONNECT},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, MK_GENERATE_NEXT_VERTEX_RAY},
 		{&PathOCLBaseOCLRenderThread::advancePathsKernel_MK_SPLAT_SAMPLE, MK_SPLAT_SAMPLE},

@@ -93,7 +93,18 @@ typedef enum {
 	// connect shadow ray inline through Scene_Intersect - the rays[]
 	// slot is free because the next bounce ray has not been generated
 	// yet. Weighted by the SmallVCM MIS terms (misVm/misVc = 0 -> BPT).
-	MK_VC_CONNECT = 17
+	MK_VC_CONNECT = 17,
+	// ReSTIR PT (PT-2 GPU): same two-stage tail resolution as the GI
+	// states above, plus the suffix-ledger lifecycle. MK_PT_BOUNCE
+	// resolves the K candidate bounce hits and queues the NEE +
+	// merge-visibility rays; MK_PT_RESOLVE runs the RIS + merges. A
+	// fresh winner hands (dir, fcos*W, risPdfW, event) to
+	// MK_GENERATE_NEXT_VERTEX_RAY through the RestirPTResult record and
+	// arms the pending suffix measurement (pending 3 -> landed 4 at
+	// MK_RT_NEXT_VERTEX -> committed at MK_SPLAT_SAMPLE). A stored-suffix
+	// winner contributes thr*fcos*W*L_suf directly and ends the path.
+	MK_PT_BOUNCE = 18,
+	MK_PT_RESOLVE = 19
 } PathState;
 
 // VC light vertex cache record: slot (t, k) of lightVertices[] holds
@@ -470,6 +481,76 @@ typedef struct {
 	// 0xFFFFFFFF = no ray queued.
 	unsigned int vSeq;
 } RestirGIResult;
+
+// ReSTIR PT (PT-2 GPU): per-pixel suffix reservoir, appended to
+// restirReservoirs[] after the GI region (taskConfig.pathTracer.
+// restirPT.ptReservoirOffset). Mirrors the CPU RestirPT::Reservoir:
+// the payload is the MEASURED suffix radiance lsuf delivered from x2
+// onward (not a proxy), so a merge winner's payoff is exact and the
+// consuming path ends at x1 instead of retracing the suffix.
+typedef struct {
+	float x1X, x1Y, x1Z;		// prefix vertex (shift source)
+	float x1nX, x1nY, x1nZ;		// x1 geometry normal (same-surface gate)
+	float x2X, x2Y, x2Z;		// reconnection vertex (isMiss == 0)
+	float x2nX, x2nY, x2nZ;		// x2 geometry normal (Jacobian cos)
+	float dirX, dirY, dirZ;		// x1 -> x2 (or the miss direction)
+	float lsufR, lsufG, lsufB;	// MEASURED suffix radiance at x2
+	float wSum;
+	float target;				// winner's pi_hat (measured base)
+	unsigned int m;
+	unsigned int isMiss;
+	// Same seqlock publication protocol as RestirGIReservoir.pass.
+	unsigned int pass;
+} RestirPTReservoir;
+
+// ReSTIR PT (PT-2 GPU): resolve -> MK_GENERATE_NEXT_VERTEX_RAY
+// handoff + the armed-pick ledger a fresh winner carries to its
+// MK_SPLAT_SAMPLE commit. Candidates reuse RestirGICandidate (the
+// record layout is identical).
+// pending: 0 = no PT decision, 1 = consume this record in MK_GENERATE,
+//   2 = no usable winner -> normal BSDF sample, 3 = fresh winner armed
+//   (consume done; awaiting the landing capture at MK_RT_NEXT_VERTEX),
+//   4 = landed (awaiting the path-end commit in MK_SPLAT_SAMPLE).
+//   A stored-suffix winner never leaves this record: MK_PT_RESOLVE
+//   adds the contribution, republishes the reservoir and ends the
+//   path without touching pending.
+typedef struct {
+	float dirX, dirY, dirZ;
+	float bsdfR, bsdfG, bsdfB;	// fcos * W continuation factor
+	float pdfW;					// risPdfW: RIS marginal selection density
+	unsigned int event;
+	unsigned int pending;
+	unsigned int needsTrace;	// dense-dispatch barrier (GI parity)
+	unsigned int vSeq;			// temporal merge-visibility seqlock tag
+	// Spatial merge-visibility tags (tail slots 2K+1/2K+2): unlike GI,
+	// PT pays a merge win as real contribution, so occluded transfers
+	// must be rejected - a V-free consume leaks light through walls.
+	unsigned int vSeqS[RESTIR_PIXEL_MERGES_MAX];
+	// Stored-suffix win: MK_PT_RESOLVE pays thr * bsdf * lsuf directly
+	// and republishes the reservoir; the path ends at MK_SPLAT_SAMPLE.
+	unsigned int consumed;
+	float lsufR, lsufG, lsufB;
+	// Pending pick record (fresh winner only): the store-side fields
+	// Commit() needs once the suffix is measured. x1/x1n are the
+	// resample vertex; storeWSum/storeM are the PRE-spatial totals
+	// (post-spatial values would feed back into the same entries -
+	// the merge-explosion pathology).
+	float x1X, x1Y, x1Z;
+	float x1nX, x1nY, x1nZ;
+	float fcosR, fcosG, fcosB;	// pre-W f*|cos| of the winning edge
+	float storeWSum, storeEps;
+	unsigned int storeM;
+	// Landing capture (MK_RT_NEXT_VERTEX fills these for pending == 3):
+	// the walked landing - not the candidate-trace vertex - is the
+	// reconnection vertex (pass-through continuations can differ).
+	float pX2X, pX2Y, pX2Z;		// actual landing position
+	float pX2nX, pX2nY, pX2nZ;	// landing geometry normal
+	unsigned int pMiss;			// 1 = the armed ray missed (env suffix)
+	float thrR, thrG, thrB;		// throughput at landing (x2)
+	float radR, radG, radB;		// accumulated radiance at landing
+								// (BEFORE x2's own contributions, so
+								// L_suf = (radEnd - radX2) / thrX2)
+} RestirPTResult;
 
 // MNEE seed cache (E4): fixed-size hash grid of converged single-vertex
 // manifold solutions. 16384 entries * 32B = 512KB.
