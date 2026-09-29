@@ -1164,10 +1164,13 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// Wavefront per-state task queues (E3): pathocl.wavefront =
 	// auto|on|off, LUXRAYS_WAVEFRONT_QUEUES env overrides. The decision
 	// is compile+buffer-time so it must precede InitGPUTaskBuffer() and
-	// InitKernels(). AUTO enables on GPU-class devices: measured
-	// +24% (prism-conservatory) to +153% (cornell 720p) on Metal with
-	// the device-side queue prefix (M3a); the worst observed dense-win
-	// is ~10% on uniform-state scenes.
+	// InitKernels(). AUTO currently resolves to OFF: the current tree
+	// measures wavefront slower than dense on cornell (-16%),
+	// classroom-hdr (-24%) and pg-indirect (-21%) at 1280x720/64K-262K
+	// tasks on Metal M5 Pro (dev-tools/wf_auto_bench.py). The earlier
+	// +153% figure was a branch-era measurement and does not
+	// reproduce on main - re-enable only when a scene-aware heuristic
+	// shows it wins where it is enabled.
 	//--------------------------------------------------------------------------
 	{
 		const string wavefrontMode = renderEngine->renderConfig.GetConfig().Get(
@@ -1175,17 +1178,8 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 		const char *env = getenv("LUXRAYS_WAVEFRONT_QUEUES");
 		if (env)
 			wavefrontQueues = (atoi(env) != 0);
-		else if (wavefrontMode == "on")
-			wavefrontQueues = true;
-		else if (wavefrontMode == "off")
-			wavefrontQueues = false;
-		else {
-			const DeviceType dt = intersectionDevice.GetDeviceDesc().GetType();
-			wavefrontQueues = (dt == DEVICE_TYPE_OPENCL_GPU) ||
-					(dt == DEVICE_TYPE_METAL_GPU) ||
-					(dt == DEVICE_TYPE_CUDA_GPU) ||
-					(dt == DEVICE_TYPE_VULKAN_GPU);
-		}
+		else
+			wavefrontQueues = (wavefrontMode == "on");
 		if (wavefrontQueues)
 			SLG_LOG("[PathOCLBaseRenderThread] Wavefront task queues "
 					"enabled (mode=" << wavefrontMode << ")");
