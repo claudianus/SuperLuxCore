@@ -293,11 +293,17 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 					"kernel time: " << (timeKernelEnd - timeKernelStart) * 1000.0 << "ms "
 					"iterations: " << iterations << " #"<< taskCount << ")");*/
 
-		// Check if I have to adjust the number of kernel enqueued
-		if (timeKernelEnd - timeKernelStart > targetTime)
-			iterations = Max<u_int>(iterations - 1, 1);
+		// Check if I have to adjust the number of kernel enqueued.
+		// Converge proportionally instead of +/-1 per batch: the linear
+		// ramp took ~120 batches (tens of seconds) to reach the deep
+		// queueing this batching exists for, leaving a queue-drain
+		// bubble per batch through the entire ramp - exactly when a
+		// user is watching the viewport converge.
+		const double batchTime = timeKernelEnd - timeKernelStart;
+		if (batchTime > targetTime)
+			iterations = Max<u_int>((u_int)(iterations * targetTime / batchTime), 1);
 		else
-			iterations = Min<u_int>(iterations + 1, 128);
+			iterations = Min<u_int>(iterations * 2, 128);
 
 		// Check halt conditions
 		if (engine->GetFilm().GetConvergence() == 1.f)
