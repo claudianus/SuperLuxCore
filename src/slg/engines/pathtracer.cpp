@@ -1520,6 +1520,11 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 									sampleResult.pixelY, sampler.GetPass(),
 									ptPending, bsdf.hitPoint.p,
 									bsdf.hitPoint.geometryN, Spectrum());
+							// ReSTIR PG feed: train the guide field on
+							// the accepted measured-suffix direction.
+							if (pathGuidingCache)
+								pathGuidingCache->Record(bsdf.hitPoint.p,
+										ptPending.dir, ptPending.lsuf.Y());
 							break;
 						}
 						sampledDir = ptPending.dir;
@@ -1933,6 +1938,10 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					Max(dRad.c[c], 0.f) / ptThrAtX2.c[c] : 0.f;
 		restirPT->Commit(sampleResult.pixelX, sampleResult.pixelY,
 				sampler.GetPass(), ptPending, ptX1, ptX1n, lsuf);
+		// ReSTIR PG feed: train the guide field on the landed pick's
+		// accepted direction with its measured suffix flux.
+		if (pathGuidingCache)
+			pathGuidingCache->Record(ptX1, ptPending.dir, lsuf.Y());
 	}
 
 	sampleResult.rayCount += static_cast<float>(device.GetTotalRaysCount() - deviceRayCount);

@@ -1475,6 +1475,19 @@ __kernel void AdvancePaths_MK_PT_RESOLVE(
 			VADD3F(sampleResult->indirectSpecularReflect.c, contrib);
 		sampleResult->firstPathVertexEvent = (BSDFEvent)ptResult->event;
 		ptResult->pending = 0u;
+		// ReSTIR PG feed: the consumed winner is an accepted
+		// (measured-suffix) direction - train the guide field on it.
+		if (guidingEnable != 0u) {
+			const float flux = Spectrum_Y(MAKE_FLOAT3(ptResult->lsufR,
+					ptResult->lsufG, ptResult->lsufB));
+			if (flux > 0.f)
+				Guide_EmitRec(gid, VLOAD3F(&bsdf->hitPoint.p.x),
+						VLOAD3F(&ptResult->dirX), flux,
+						guideRec0, guideRec1, guideRec2, guideRec3,
+						guideRec4, guideRec5, guideRec6, guideRec7,
+						guideRec8, guideRec9, guideRec10, guideRec11,
+						guideRec12, guideRec13, guideRec14, guideRec15);
+		}
 		taskState->state = MK_SPLAT_SAMPLE;
 	} else {
 		// Fresh winner (pending = 1, consumed by MK_GENERATE) or
@@ -2546,8 +2559,8 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 				taskConfig->pathTracer.restirPT.ptCandDataOffset +
 				gid * taskConfig->pathTracer.restirPT.ptCandStride)) +
 				ptK);
-		if (ptResult->pending == 4u)
-			RestirPT_Commit(
+		if (ptResult->pending == 4u) {
+			const float3 lsuf = RestirPT_Commit(
 					(__global RestirPTReservoir *)(restirReservoirs +
 						taskConfig->pathTracer.restirPT.ptReservoirOffset) +
 						sampleResult->pixelY * filmWidth +
@@ -2556,6 +2569,24 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 					VLOAD3F(&sampleResult->
 						radiancePerPixelNormalized[0].c[0]),
 					GuidingPass(taskConfig, gid, samplesBuff));
+			// ReSTIR PG feed: landed pick, measured suffix - emit the
+			// accepted direction as a guiding training record.
+			if (guidingEnable != 0u) {
+				const float flux = Spectrum_Y(lsuf);
+				if (flux > 0.f)
+					Guide_EmitRec(gid,
+							MAKE_FLOAT3(ptResult->x1X, ptResult->x1Y,
+									ptResult->x1Z),
+							MAKE_FLOAT3(ptResult->dirX, ptResult->dirY,
+									ptResult->dirZ),
+							flux,
+							guideRec0, guideRec1, guideRec2, guideRec3,
+							guideRec4, guideRec5, guideRec6, guideRec7,
+							guideRec8, guideRec9, guideRec10, guideRec11,
+							guideRec12, guideRec13, guideRec14,
+							guideRec15);
+			}
+		}
 		ptResult->pending = 0u;
 	}
 

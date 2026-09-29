@@ -2747,7 +2747,7 @@ OPENCL_FORCE_NOT_INLINE bool RestirPT_Resolve(
 // Phase 4 (MK_SPLAT_SAMPLE): commit the measured suffix of an armed,
 // landed pick. L_suf = max(0, (radEnd - radX2) / thrX2) guarded per
 // channel (CPU parity: restirpt.cpp's caller-side divide).
-OPENCL_FORCE_INLINE void RestirPT_Commit(
+OPENCL_FORCE_INLINE float3 RestirPT_Commit(
 		__global RestirPTReservoir *stored,
 		__global const RestirPTResult *result,
 		const float3 radEnd, const uint pass) {
@@ -2785,6 +2785,7 @@ OPENCL_FORCE_INLINE void RestirPT_Commit(
 	stored->m = result->storeM;
 	stored->isMiss = result->pMiss;
 	stored->pass = pass;
+	return lsuf;
 }
 
 //------------------------------------------------------------------------------
@@ -3310,6 +3311,28 @@ OPENCL_FORCE_INLINE __global float4 *Guide_RecBuf(uint t,
 		case 14u: return r14;
 		default: return r15;
 	}
+}
+
+// ReSTIR PG: append one accepted-direction record (p, wi, flux) to the
+// per-task training slot - same layout the bounce sampler writes. Only
+// reservoir winners call this, so each record is a target-proportional
+// sample (Zeng et al. SA2025: accepted ReSTIR paths fit with plain EM).
+OPENCL_FORCE_INLINE void Guide_EmitRec(const uint gid, const float3 p,
+		const float3 d, const float flux,
+		__global float4 *r0, __global float4 *r1,
+		__global float4 *r2, __global float4 *r3,
+		__global float4 *r4, __global float4 *r5,
+		__global float4 *r6, __global float4 *r7,
+		__global float4 *r8, __global float4 *r9,
+		__global float4 *r10, __global float4 *r11,
+		__global float4 *r12, __global float4 *r13,
+		__global float4 *r14, __global float4 *r15) {
+	__global float4 *rec = Guide_RecBuf(gid,
+			r0, r1, r2, r3, r4, r5, r6, r7,
+			r8, r9, r10, r11, r12, r13, r14, r15) +
+			2u * ((gid >> 5) & 127u);
+	rec[0] = MAKE_FLOAT4(p.x, p.y, p.z, flux);
+	rec[1] = MAKE_FLOAT4(d.x, d.y, d.z, 1.f);
 }
 
 OPENCL_FORCE_INLINE uint GuidingPass(__constant const GPUTaskConfiguration* restrict taskConfig,
