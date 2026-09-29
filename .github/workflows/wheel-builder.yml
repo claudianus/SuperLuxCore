@@ -438,3 +438,67 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: ${{ github.workspace }}/dist/*
+
+  # Rolling "wheels-latest" prerelease: the SuperBlendLuxCore bundle workflows
+  # fetch the cp313 wheels from here (public release, no secrets needed).
+  # Only for direct Release builds of this repo's main branch: reusable-workflow
+  # callers (wheel-releaser.yml passes `repository`) and Debug builds are skipped.
+  publish-latest:
+    name: Publish rolling wheels-latest release
+    needs: [build-wheels]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      inputs.repository == '' &&
+      (github.event.inputs.build-type || 'Release') == 'Release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: wheels-latest
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # cp313 = Blender 5.x bundled Python. One wheel per OS runner.
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: cibw-wheels-*-13
+          path: ${{ github.workspace }}/wheelhouse
+          merge-multiple: true
+
+      - name: Check wheel set
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l wheelhouse
+          for plat in win_amd64 macosx_11_0_x86_64 macosx_14_0_arm64 manylinux_2_28_x86_64; do
+            n=$(ls wheelhouse/*-cp313-cp313-*"${plat}"*.whl 2>/dev/null | wc -l)
+            if [ "$n" -ne 1 ]; then
+              echo "::error::expected exactly 1 cp313 wheel for ${plat}, found ${n}"
+              exit 1
+            fi
+          done
+
+      - name: Move wheels-latest tag and refresh release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f wheels-latest "$GITHUB_SHA"
+          git push -f origin refs/tags/wheels-latest
+
+          notes="Rolling cp313 wheels built from ${GITHUB_SHA} (${GITHUB_REF_NAME}). Consumed by SuperBlendLuxCore bundle workflows; not a versioned release."
+          if gh release view wheels-latest >/dev/null 2>&1; then
+            gh release edit wheels-latest --prerelease --notes "$notes"
+          else
+            gh release create wheels-latest --prerelease --title "wheels-latest (rolling)" --notes "$notes"
+          fi
+
+          # Drop stale assets (e.g. a previous version's file names) first.
+          gh release view wheels-latest --json assets --jq '.assets[].name' |
+            while read -r asset; do
+              gh release delete-asset wheels-latest "$asset" --yes
+            done
+          gh release upload wheels-latest wheelhouse/*.whl --clobber
