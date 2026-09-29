@@ -47,13 +47,13 @@ public:
 		return static_cast<MaterialConstRef>(mats.GetObj(name));
 	}
 	auto& GetMaterial(const u_int index) const {
-		return dynamic_cast<MaterialConstRef>(mats.GetObj(index));
+		return static_cast<MaterialConstRef>(mats.GetObj(index));
 	}
 	auto& GetMaterial(const std::string &name) {
 		return static_cast<MaterialRef>(mats.GetObj(name));
 	}
 	auto& GetMaterial(const u_int index) {
-		return dynamic_cast<MaterialRef>(mats.GetObj(index));
+		return static_cast<MaterialRef>(mats.GetObj(index));
 	}
 
 	// Indices

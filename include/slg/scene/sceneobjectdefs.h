@@ -45,16 +45,16 @@ public:
 	void DefineIntersectableLights(LightSourceDefinitions &lightDefs, SceneObjectConstRef obj) const;
 
 	SceneObjectConstRef GetSceneObject(const std::string &name) const {
-		return dynamic_cast<SceneObjectConstRef>(objs.GetObj(name));
+		return static_cast<SceneObjectConstRef>(objs.GetObj(name));
 	}
 	SceneObjectRef GetSceneObject(const std::string &name) {
-		return dynamic_cast<SceneObjectRef>(objs.GetObj(name));
+		return static_cast<SceneObjectRef>(objs.GetObj(name));
 	}
 	SceneObjectConstRef GetSceneObject(const u_int index) const {
-		return dynamic_cast<SceneObjectConstRef>(objs.GetObj(index));
+		return static_cast<SceneObjectConstRef>(objs.GetObj(index));
 	}
 	SceneObjectRef GetSceneObject(const u_int index) {
-		return dynamic_cast<SceneObjectRef>(objs.GetObj(index));
+		return static_cast<SceneObjectRef>(objs.GetObj(index));
 	}
 	u_int GetSceneObjectIndex(const std::string &name) const {
 		return objs.GetIndex(name);

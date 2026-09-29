@@ -398,13 +398,7 @@ BBox ExtTriangleMesh::GetBBox() const {
 }
 
 const ExtTriangleMesh *ExtTriangleMesh::FromMesh(const Mesh *mesh) {
-	if (const ExtInstanceTriangleMesh *imesh =
-			dynamic_cast<const ExtInstanceTriangleMesh *>(mesh))
-		return &imesh->GetExtTriangleMesh();
-	if (const ExtMotionTriangleMesh *mmesh =
-			dynamic_cast<const ExtMotionTriangleMesh *>(mesh))
-		return &mmesh->GetExtTriangleMesh();
-	return dynamic_cast<const ExtTriangleMesh *>(mesh);
+	return mesh->GetAsExtTriangleMesh();
 }
 
 NormalBuffer ExtTriangleMesh::ComputeNormals() {

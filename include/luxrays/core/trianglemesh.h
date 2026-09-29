@@ -48,6 +48,8 @@ typedef enum {
 	TYPE_EXT_TRIANGLE, TYPE_EXT_TRIANGLE_INSTANCE, TYPE_EXT_TRIANGLE_MOTION
 } MeshType;
 
+class ExtTriangleMesh;
+
 
 class Mesh {
 public:
@@ -63,6 +65,11 @@ public:
 	Mesh& operator=(Mesh&&) = default;
 
 	virtual MeshType GetType() const = 0;
+
+	// RTTI-free downcast helper (Mesh is a virtual base, so dynamic_cast
+	// is the only legal cast): resolves instance/motion wrappers to the
+	// ExtTriangleMesh they wrap; nullptr for plain TriangleMesh.
+	virtual const ExtTriangleMesh *GetAsExtTriangleMesh() const { return nullptr; }
 
 	virtual BBox GetBBox() const = 0;
 	virtual void GetLocal2World(const float time, luxrays::Transform &local2World) const = 0;

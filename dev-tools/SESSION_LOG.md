@@ -150,3 +150,22 @@ accumulating in place (helpers now take `SpectrumGroup &`), plus
 prism-conservatory PATHCPU: 0.256 -> 0.31 Ms/s (+21%; ~72% cumulative
 vs 0.18 Ms/s baseline). e90/e91/e54 PASS. Doc:
 `doc/engineering/hot-loop-allocations.md`.
+
+## RTTI round 3: per-hit defs-container casts eliminated
+
+`sample` re-profile showed residual `__dynamic_cast` (~1.6%) rooted at
+`HitPoint_t::Init` -> `GetSceneObject(meshIndex)`: every defs accessor
+(`SceneObjectDefinitions`, `MaterialDefinitions` index overloads,
+`TextureDefinitions`) downcast the `NamedObject` base per call.
+
+- All defs Get*(name|index) accessors now `static_cast` — the private
+  `NamedObjectVector` is only populated through typed `Define*(UPtr&&)`
+  entry points, so the element type is invariant.
+- `ExtTriangleMesh::FromMesh` replaced its 3-cast chain with a new
+  `Mesh::GetAsExtTriangleMesh()` virtual (Mesh is a *virtual* base —
+  static downcast is impossible; a virtual getter is the cheapest
+  legal dispatch). Overrides: ExtTriangleMesh->this, instance/motion
+  -> wrapped base mesh.
+
+Post-change profile: dynamic_cast family = **0** hits.
+e9 vertex-motion parity (MBVH/BVH/EMBREE): all PASS.

@@ -45,14 +45,14 @@ public:
     std::tuple<TextureRef&, TextureUPtr> DefineTexture(TextureUPtr&& t);
 
 	TextureConstRef GetTexture(const std::string &name) const {
-		return dynamic_cast<TextureConstRef>(texs.GetObj(name));
+		return static_cast<TextureConstRef>(texs.GetObj(name));
 	}
 	TextureRef GetTexture(const std::string &name) {
-		return dynamic_cast<TextureRef>(texs.GetObj(name));
+		return static_cast<TextureRef>(texs.GetObj(name));
 	}
 
 	TextureConstRef GetTexture(const u_int index) const {
-		return dynamic_cast<TextureConstRef>(texs.GetObj(index));
+		return static_cast<TextureConstRef>(texs.GetObj(index));
 	}
 	u_int GetTextureIndex(const std::string &name) const {
 		return texs.GetIndex(name);

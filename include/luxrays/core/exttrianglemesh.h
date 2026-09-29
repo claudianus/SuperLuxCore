@@ -553,6 +553,7 @@ public:
 	NormalBuffer ComputeNormals();
 
 	virtual MeshType GetType() const { return TYPE_EXT_TRIANGLE; }
+	virtual const ExtTriangleMesh *GetAsExtTriangleMesh() const { return this; }
 
 	virtual bool HasNormals() const { return bool(normals); }
 
@@ -903,6 +904,7 @@ public:
 	virtual void Delete() {	}
 
 	virtual MeshType GetType() const { return TYPE_EXT_TRIANGLE_INSTANCE; }
+	virtual const ExtTriangleMesh *GetAsExtTriangleMesh() const { return &GetExtTriangleMesh(); }
 	
 	virtual float GetBevelRadius() const { return static_cast<const ExtTriangleMesh&>(*mesh).GetBevelRadius(); }
 
@@ -1019,6 +1021,7 @@ public:
 	virtual void Delete() {	}
 
 	virtual MeshType GetType() const { return TYPE_EXT_TRIANGLE_MOTION; }
+	virtual const ExtTriangleMesh *GetAsExtTriangleMesh() const { return &GetExtTriangleMesh(); }
 
 	virtual float GetBevelRadius() const { return static_cast<const ExtTriangleMesh&>(*mesh).GetBevelRadius(); }
 
