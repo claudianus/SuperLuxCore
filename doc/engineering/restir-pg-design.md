@@ -107,9 +107,12 @@ Landed (ef17fe5b9, e83863506):
   scalar pointer params — the address-space rewrite only fires on
   definitions.
 
-Early measurement (pg-indirect, pg-glossy, 64spp, PATHOCL): neutral
-(rmse ratio ~1.00) — the field is warmup-bound at short renders and
-diffuse-dominated scenes gate themselves out via PeakGate. Open:
-longer-run benefit on concentrated-transport scenes; GI-side emit
-(winner dirs from GI resolves also feed the field); depth>=1
-reservoir records.
+Measurement (PATHOCL, RMSE ratio pt+pg/pt): pg-indirect 1.030 and
+pg-glossy 1.002–1.006 at 64–256spp — neutral, the diffuse-dominated
+leaves gate themselves out via PeakGate as designed. On
+focused-caustic-ring (concentrated directional transport) the sign
+flips: 0.991 at 256spp — the loop engages where the paper predicts.
+Verified live via LUX_PG_DEBUG: records drain and the tree swaps
+(`leaves=9 kept=20466 warm=1` at ~4s). Open: GI-side emit (winner
+dirs from GI resolves also feed the field); depth>=1 reservoir
+records; longer renders on caustic-heavy scenes.
