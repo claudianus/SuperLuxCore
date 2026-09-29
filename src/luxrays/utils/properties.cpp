@@ -182,25 +182,38 @@ PropertyValue::~PropertyValue() noexcept(false) {
 }
 
 // Helper
+// For numeric to float conversions we can not use boost::lexical_cast: it
+// requires an exact roundtrip and throws on perfectly valid values like
+// 0.03 (infinite binary expansion). Plain narrowing is the intended
+// semantic for property values coming from the API (e.g. Python floats
+// are always stored as double).
+template<typename T, typename S>
+inline T lcast(const S &v) {
+	if constexpr (std::is_same_v<T, float> && std::is_arithmetic_v<S>)
+		return static_cast<float>(v);
+	else
+		return boost::lexical_cast<T>(v);
+}
+
 template<typename T>
 static auto ret(
 	const PropertyValue::VariantType& data, const PropertyValue::DataType& dataType
 ) {
 	switch (dataType) {
 		case luxrays::PropertyValue::DataType::BOOL_VAL:
-			return boost::lexical_cast<T>(std::get<bool>(data));
+			return lcast<T>(std::get<bool>(data));
 		case luxrays::PropertyValue::DataType::INT_VAL:
-			return boost::lexical_cast<T>(std::get<int>(data));
+			return lcast<T>(std::get<int>(data));
 		case luxrays::PropertyValue::DataType::UINT_VAL:
-			return boost::lexical_cast<T>(std::get<unsigned int>(data));
+			return lcast<T>(std::get<unsigned int>(data));
 		case luxrays::PropertyValue::DataType::FLOAT_VAL:
-			return boost::lexical_cast<T>(std::get<float>(data));
+			return lcast<T>(std::get<float>(data));
 		case luxrays::PropertyValue::DataType::DOUBLE_VAL:
-			return boost::lexical_cast<T>(std::get<double>(data));
+			return lcast<T>(std::get<double>(data));
 		case luxrays::PropertyValue::DataType::LONGLONG_VAL:
-			return boost::lexical_cast<T>(std::get<long long>(data));
+			return lcast<T>(std::get<long long>(data));
 		case luxrays::PropertyValue::DataType::ULONGLONG_VAL:
-			return boost::lexical_cast<T>(std::get<unsigned long long>(data));
+			return lcast<T>(std::get<unsigned long long>(data));
 		case luxrays::PropertyValue::DataType::STRING_VAL:
 			return FromString<T>(std::get<std::string>(data));
 		case luxrays::PropertyValue::DataType::BLOB_VAL:
