@@ -21,7 +21,7 @@ if (NOT TARGET doc)
       CONFIG_FILE ${DOC_BUILD_DIR}/Doxyfile
     )
     # Config/Release is not relevant for doc (thus ../doc/html)
-    install(DIRECTORY ${DOC_BUILD_DIR}/html/ DESTINATION ../doc/html COMPONENT doc)
+    install(DIRECTORY ${DOC_BUILD_DIR}/html/ DESTINATION ../doc/html COMPONENT doc OPTIONAL)
   else()
     message(AUTHOR_WARNING "Doxygen not found: documentation generation will not be available")
   endif(DOXYGEN_FOUND)

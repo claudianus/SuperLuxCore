@@ -81,8 +81,15 @@ add_library(luxcore_static STATIC ${LUXCORE_SRC} "${generated_header_dir}/cfg.h"
 # luxrays/slg-core (see src/luxrays/CMakeLists.txt note and
 # doc/engineering/kernel-compile-performance.md). Per-target PCH rather
 # than REUSE_FROM: the two targets compile with different flags.
-target_precompile_headers(luxcore PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
+# MSVC: skip PCH on the SHARED target. /Yc embeds a '__@@_PchSym_@00@...'
+# integrity symbol in cmake_pch.cxx.obj, and __create_def truncates it at
+# the '@' (def-file ordinal syntax), producing a bogus '__' export that
+# fails linking luxcore.dll (LNK2001/LNK1120). The static lib is safe —
+# its objects never enter a .def file — so it keeps the PCH.
+if(NOT MSVC)
+  target_precompile_headers(luxcore PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
+endif()
 target_precompile_headers(luxcore_static PRIVATE
   ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
 
