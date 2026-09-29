@@ -565,7 +565,48 @@ void FilmImplSession::ApplyOIDN(const u_int index) {
 	// Films without radiance channels early-return inside
 	// ExecuteImagePipeline(), leaving the channel untouched.
 	film.ExecuteImagePipeline(index);
+
+	// Denoiser-residual adaptive feedback (E1'): snapshot the pre-denoise
+	// image so the post-denoise diff can mark, in the NOISE channel, the
+	// pixels the denoiser still had to move. The adaptive sampler's
+	// re-pick then keeps investing exactly where denoising could not
+	// hide the noise (structured caustic/volume tails), while regions
+	// OIDN already cleans converge at the statistical rate.
+	slg::GenericFrameBuffer<3, 0, float> *ipChannel =
+		(index < film.channel_IMAGEPIPELINEs.size()) ?
+		film.channel_IMAGEPIPELINEs[index].get() : nullptr;
+	const bool residualFeedback = film.HasChannel(slg::Film::NOISE) && ipChannel;
+	std::vector<float> preDenoise;
+	if (residualFeedback) {
+		const u_int count = film.GetWidth() * film.GetHeight() * 3;
+		preDenoise.assign(ipChannel->GetPixels(), ipChannel->GetPixels() + count);
+	}
+
 	oidn.Apply(film, index);
+
+	if (residualFeedback) {
+		// Normalize the residual against the adaptive-error target when
+		// configured (so noise == 1.0 means "still at target error after
+		// denoise"), else fall back to a 5% display-space change.
+		const float target = film.GetAdaptiveError() ?
+				Max(film.GetAdaptiveError()->GetErrorTarget(), 1e-4f) : 0.05f;
+		const u_int count = film.GetWidth() * film.GetHeight();
+		const float *pre = preDenoise.data();
+		const float *post = ipChannel->GetPixels();
+		float *noise = film.channel_NOISE->GetPixels();
+		for (u_int i = 0; i < count; ++i) {
+			const float la = 0.2126f * pre[i * 3] + 0.7152f * pre[i * 3 + 1] +
+					0.0722f * pre[i * 3 + 2];
+			const float lb = 0.2126f * post[i * 3] + 0.7152f * post[i * 3 + 1] +
+					0.0722f * post[i * 3 + 2];
+			const float resid = Min(fabsf(lb - la) / (la + 0.01f) / target, 1.f);
+			// Max-combine like the sampler does: residual can only raise
+			// importance, never starve a pixel the statistical map still
+			// flags. An unseen (inf) entry adopts the residual - the
+			// denoise pass is itself information.
+			noise[i] = isfinite(noise[i]) ? Max(noise[i], resid) : resid;
+		}
+	}
 
 	API_END();
 }

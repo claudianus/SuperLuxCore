@@ -67,6 +67,7 @@ public:
 	u_int todoPixelsCount;
 
 	FilmConstRef GetFilm() const { return *film; }
+	float GetErrorTarget() const { return errorTarget; }
 	// The film back pointer is not serialized: Film::load rebinds it
 	// after deserialization (version 1 archives carried a full nested
 	// film copy which was consumed and dropped).

@@ -82,6 +82,30 @@ target plus warmup/step. Exported as `film.adaptiveerror.*` above.
   monotonically (39.7% → 5.5% over 240 s on cornell).
 - NOISE channel finite, spatially varying.
 
+## Denoiser residual feedback (E1')
+
+`Film::ApplyOIDN(index)` (the viewport/periodic-denoise path) now feeds
+the denoiser's own residual back into the NOISE map: it snapshots the
+image-pipeline output, runs OIDN, and writes
+`min(|ΔL| / (L + 0.01) / target, 1)` per pixel into `channel_NOISE`,
+max-combined with the existing estimate. `target` is
+`film.adaptiveerror.target` when the test is configured, else 0.05
+(5% display-space change).
+
+Semantics: a pixel where the denoiser still had to move a lot is one
+denoising could not fix — keep sampling it. Max-combine means the
+residual can only *raise* importance, never starve a pixel the
+statistical estimator still flags, so the feedback is strictly
+conservative. The map propagates to the GPU sampler through the normal
+`channel_NOISE` upload in `ThreadFilm::RecvFilm`, so no new device
+plumbing is needed. Offline renders that never call `ApplyOIDN` are
+unaffected; viewports with periodic OIDN get residual-aware sampling
+for free whenever the NOISE channel exists.
+
+Regression: `dev-tools/e98_oidn_residual_feedback.py` (PATHCPU +
+PATHOCL) — phase A checks the residual populates an all-inf NOISE map,
+phase B checks the max-merge lifts denoiser-affected pixels.
+
 ## Limitations
 
 - Relative-error normalization divides by pixel luminance; genuinely
