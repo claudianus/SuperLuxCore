@@ -91,5 +91,25 @@ resample). The reservoir candidates then come from
 
 ## Status
 
-Design only — implementation is the next PT track after the GPU
-reservoir lands and bakes.
+Landed (ef17fe5b9, e83863506):
+
+- **Feed**: reservoir winners emit training records — consumed picks
+  at `MK_PT_RESOLVE` (GPU) / the consumed `Commit` call site (CPU),
+  landed armed picks at `MK_SPLAT_SAMPLE` commit / the deferred
+  `Commit` call site. All emit with measured-suffix flux only.
+- **Proposal**: `RestirGI_EnqueueBounce` (shared PT/GI path) draws
+  each candidate from the `(1-wG)*BSDF + wG*guide` one-sample mixture;
+  `rec->pdfW` stores the mixture density so RIS weights stay exact.
+  CPU `ResampleSuffix` mirrors via new `guideCache`/`guideStrength`
+  args. wG = `guidingStrength * MixWeight(count, peak)`, gated on the
+  leaf being warm (nComp>0, count>=256) — cold leaves stay pure BSDF.
+- `cl2msl` note: forward declarations need explicit `__private` on
+  scalar pointer params — the address-space rewrite only fires on
+  definitions.
+
+Early measurement (pg-indirect, pg-glossy, 64spp, PATHOCL): neutral
+(rmse ratio ~1.00) — the field is warmup-bound at short renders and
+diffuse-dominated scenes gate themselves out via PeakGate. Open:
+longer-run benefit on concentrated-transport scenes; GI-side emit
+(winner dirs from GI resolves also feed the field); depth>=1
+reservoir records.
