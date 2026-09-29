@@ -109,6 +109,10 @@ film.outputs.0.index = 0
     deadline = time.monotonic() + RENDER_TIMEOUT_S
     while time.monotonic() < deadline:
         time.sleep(0.5)
+        # UpdateStats pumps Film::RunTests - halt conditions (haltspp,
+        # converged) are only evaluated there, so a bare HasDone() poll
+        # would never observe them and the session would render forever.
+        ses.UpdateStats()
         stats = ses.GetStats()
         try:
             spp = stats.Get("stats.engine.renderengine.samplepersec").GetFloat()
