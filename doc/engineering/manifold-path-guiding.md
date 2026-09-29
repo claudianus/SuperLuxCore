@@ -98,3 +98,51 @@ Phase C (dim-reduced solver):
 - Measured (seedcache.scn, 192x144, 2-seed avg): PATHCPU cache on/off
   mean ratio 1.1415, caustic region 1.0583; PATHOCL 1.1406 / 1.0583 —
   near-identical CPU/GPU, finite everywhere (e17 ALL PASS).
+
+## Phase C findings — solver instrumentation & failure-evidence (e52)
+
+Env-gated diagnostics (`pathtracer_mnee.cpp`, zero cost when off):
+- `LUX_MNEE_SEED_STATS=1` dumps at session end (via `PathTracer` dtor ->
+  `MneeDumpSessionStats`, since Blender never dlcloses the module):
+  solves, fails, iters/solve, failure classification
+  (residual/singular/no-step/exhausted), capped count, seed
+  lookups/hits.
+- `LUX_MNEE_POISON=0` A/B-disables the failure-evidence policy.
+
+Measured on the e52 glass-sphere scene (off-axis point light, 64spp,
+PATHCPU): ~3.7M solves, ~47% fail — dominated by `no-step` (~1.1M,
+silhouette/mesh-miss line-search exhaustion) and ~0.6M chain-solver
+fails. These are *structural* misses (impossible manifold connections),
+not basin-selection problems:
+
+- 4-quadrant tangent reseeding: +rescue ~1.4pp fails at ~20-40 extra
+  iters per failed solve — net loss, **reverted**.
+- Dimension-reduced plane walk (Granizo-Hidalgo'24 style 1D solve on
+  the x0/endpoint/caster-centre plane): 1.07M attempts -> ~4.3k rescues
+  (0.4%). The scalar walk converges the in-plane component fast but
+  stalls ~3e-3 short of the 3e-4 tolerance — it locates the basin but
+  cannot finish the last mile; the 2D polish handoff rarely closed it.
+  Plane re-refinement rounds did not help. **Removed**: kept the
+  finding here instead of the code.
+- Mirror-style off-axis seed for refraction (dropping the
+  `etaVertex == 1` gate): +3.4pp fails and ~1 extra seed trace per
+  cold glass solve — the line seed is genuinely informative for
+  refraction. **Reverted**.
+
+What worked — failure-evidence ("poisoned") seed entries:
+`MneeSeedEntry.failCount` records per-cell solve failures
+(namespaced like seeds). Cells with >= 2 failures run a capped probe
+(`MNEE_FAIL_PROBE_ITERS = 8` counter units — `iteration` counts outer
+steps AND rejected proposals, so the cap bounds ray casts directly).
+Measured: 47.8% fails (baseline-matched) at 23.6M iters vs 27.5M
+poison-off (-14% solver work). A positive-seed rescue keeps the full
+budget; any converged solve clears the counter (self-correcting).
+Iteration cap is a termination heuristic on a verified estimate —
+bounded cost, no estimator authority.
+
+Non-findings worth remembering: a "residual halved by iter N" stall
+abort never fires usefully (accepted line-search steps strictly
+decrease the residual, so non-improvement already exits via no-step);
+seed snapshots must be re-read at rescue time (concurrent stores land
+between the pre-solve lookup and the failure - a stale snapshot
+measurably cut the rescue rate).

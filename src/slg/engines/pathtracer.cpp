@@ -191,7 +191,13 @@ static u_int GuidingHash(u_int x) {
 	return x;
 }
 
+// Defined in pathtracer_mnee.cpp: dumps env-gated MNEE diagnostics at
+// session end (Blender never dlcloses the module, so static destructors
+// would not run).
+void MneeDumpSessionStats();
+
 PathTracer::~PathTracer() {
+	MneeDumpSessionStats();
 	delete pixelFilterDistribution;
 }
 

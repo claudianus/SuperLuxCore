@@ -42,6 +42,13 @@
 // half-vector constraint on re-projected surface vertices, so a stale,
 // colliding or torn entry costs iterations but never biases the
 // estimator.
+//
+// Entries also carry failure evidence (failCount): the solve outcome is
+// near-deterministic per (cell, endpoint, occluder), so cells that
+// repeatedly failed get a capped probe budget instead of a full solve.
+// This bounds the cost of impossible manifold connections (silhouette
+// cells, wrong-mode roots) without removing them - a capped probe that
+// makes progress still converges inside its budget.
 
 #include <atomic>
 
@@ -63,6 +70,14 @@ struct MneeSeedEntry {
 	// luminance of the solve that produced the entry. Colliding
 	// stores keep the historically brighter basin.
 	std::atomic<float> fluxWeight{0.f};
+	// Failure evidence ("poisoned" slot): solves are deterministic in
+	// (x0-cell, endpoint, occluder), so a failed solve almost always
+	// fails again for the same key. Entries with valid == 0 and
+	// failCount > 0 carry no seed vertex - they only tell the caller
+	// this cell is a repeated Newton failure so it can run a cheap
+	// capped probe instead of a full solve. A later converged solve
+	// overwrites the slot and resets the counter (self-correcting).
+	std::atomic<u_int> failCount{0};
 };
 
 // Deferred store record: a plain POD so photon-tracing threads (and any
@@ -116,7 +131,35 @@ inline void MneeSeedStore(MneeSeedEntry *cache,
 	e.meshIndex.store(meshIndex, std::memory_order_relaxed);
 	e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
 	e.fluxWeight.store(fluxWeight, std::memory_order_relaxed);
+	e.failCount.store(0u, std::memory_order_relaxed);
 	e.valid.store(1u, std::memory_order_relaxed);
+}
+
+// Record a failed solve against this cell. Free slots are claimed as
+// poison (namespaced fields set, valid stays 0); slots holding a seed
+// for a different context are left alone; a seed for the same context
+// accumulates evidence that the cached basin keeps failing.
+inline void MneeSeedRecordFail(MneeSeedEntry *cache,
+		const u_int key, const u_int lightIndex, const u_int meshIndex,
+		const bool mirrorMode) {
+	MneeSeedEntry &e = cache[key];
+	const bool match = (e.lightIndex.load(std::memory_order_relaxed) ==
+			lightIndex) &&
+			(e.meshIndex.load(std::memory_order_relaxed) == meshIndex) &&
+			(e.mirrorMode.load(std::memory_order_relaxed) ==
+				(mirrorMode ? 1u : 0u));
+	if (e.valid.load(std::memory_order_relaxed)) {
+		if (match && (e.failCount.load(std::memory_order_relaxed) < 255u))
+			e.failCount.fetch_add(1u, std::memory_order_relaxed);
+		return;
+	}
+	if (!match) {
+		e.lightIndex.store(lightIndex, std::memory_order_relaxed);
+		e.meshIndex.store(meshIndex, std::memory_order_relaxed);
+		e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
+		e.failCount.store(1u, std::memory_order_relaxed);
+	} else if (e.failCount.load(std::memory_order_relaxed) < 255u)
+		e.failCount.fetch_add(1u, std::memory_order_relaxed);
 }
 
 inline void MneeSeedStore(MneeSeedEntry *cache, const MneeSeedRecord &r) {

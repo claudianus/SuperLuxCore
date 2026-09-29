@@ -487,6 +487,12 @@ static bool MneeRejXEnabled() {
 
 #define LMNEE_CAMERA_SEED_ID 0xFFFFFFFEu
 
+// Iteration budget for solves in cells with repeated failure evidence
+// (poisoned seed entries). `iteration` counts outer Newton steps AND
+// rejected line-search proposals, so the cap directly bounds ray casts.
+// Converging solves average ~5-7 units; 8 trims only the stalled tail.
+#define MNEE_FAIL_PROBE_ITERS 8u
+
 // Lookup hit-rate diagnostics (LUX_MNEE_SEED_STATS=1 prints at exit):
 // the only consumer is eye/light-side seed reuse, so the counters stay
 // env-gated off the hot path.
@@ -495,6 +501,9 @@ static const bool g_seedStatsOn = getenv("LUX_MNEE_SEED_STATS") != nullptr;
 // stats isolate photon-injected seeds (MPG-lite Phase B validation).
 static const bool g_selfSeedOn = !getenv("LUX_MNEE_SELFSEED") ||
 		(getenv("LUX_MNEE_SELFSEED")[0] != '0');
+// LUX_MNEE_POISON=0 disables failure-evidence entries (A/B measurement).
+static const bool g_poisonOn = !getenv("LUX_MNEE_POISON") ||
+		(getenv("LUX_MNEE_POISON")[0] != '0');
 static struct MneeSeedStats {
 	~MneeSeedStats() {
 		if (tries.load() > 0)
@@ -506,20 +515,108 @@ static struct MneeSeedStats {
 	std::atomic<unsigned long long> tries{0}, hits{0};
 } g_mneeSeedStats;
 
+// Solve-cost diagnostics under the same LUX_MNEE_SEED_STATS gate: Newton
+// iterations and failures per solve — the baseline for the
+// dimension-reduced solver comparison (Phase C).
+static struct MneeSolveStats {
+	~MneeSolveStats() {
+		if (solves.load() > 0)
+			fprintf(stderr, "[MNEE solve] solves=%llu fails=%llu (%.1f%%) "
+					"iters=%llu (%.1f/solve) fail-by: residual=%llu "
+					"singular=%llu no-step=%llu exhausted=%llu "
+					"capped=%llu\n",
+					(unsigned long long)solves.load(),
+					(unsigned long long)fails.load(),
+					100.0 * fails.load() / solves.load(),
+					(unsigned long long)iters.load(),
+					double(iters.load()) / solves.load(),
+					(unsigned long long)failResidual.load(),
+					(unsigned long long)failSingular.load(),
+					(unsigned long long)failNoStep.load(),
+					(unsigned long long)failExhausted.load(),
+					(unsigned long long)capped.load());
+	}
+	std::atomic<unsigned long long> solves{0}, fails{0}, iters{0};
+	// Failure classification (single-vertex solver): which stage gave up.
+	std::atomic<unsigned long long> failResidual{0}, failSingular{0},
+			failNoStep{0}, failExhausted{0};
+	// Solves run under the failure-evidence budget cap.
+	std::atomic<unsigned long long> capped{0};
+} g_mneeSolveStats;
+
+// Counts one solve on scope exit; set .ok on the success path.
+struct MneeSolveAccount {
+	u_int &it;
+	bool ok = false;
+	~MneeSolveAccount() {
+		if (!g_seedStatsOn)
+			return;
+		g_mneeSolveStats.solves.fetch_add(1, std::memory_order_relaxed);
+		g_mneeSolveStats.iters.fetch_add(it, std::memory_order_relaxed);
+		if (!ok)
+			g_mneeSolveStats.fails.fetch_add(1, std::memory_order_relaxed);
+	}
+};
+
+// Per-session dump: static destructors run at dlclose which Blender never
+// reaches, so PathTracer's destructor calls this at render end instead.
+void MneeDumpSessionStats() {
+	if (!g_seedStatsOn)
+		return;
+	const unsigned long long s = g_mneeSolveStats.solves.exchange(0,
+			std::memory_order_relaxed);
+	const unsigned long long f = g_mneeSolveStats.fails.exchange(0,
+			std::memory_order_relaxed);
+	const unsigned long long it = g_mneeSolveStats.iters.exchange(0,
+			std::memory_order_relaxed);
+	if (s > 0)
+		fprintf(stderr, "[MNEE solve] solves=%llu fails=%llu (%.1f%%) "
+				"iters=%llu (%.1f/solve) fail-by: residual=%llu "
+				"singular=%llu no-step=%llu exhausted=%llu "
+				"capped=%llu\n",
+				s, f, 100.0 * f / s, it, double(it) / s,
+				(unsigned long long)g_mneeSolveStats.failResidual.exchange(0,
+						std::memory_order_relaxed),
+				(unsigned long long)g_mneeSolveStats.failSingular.exchange(0,
+						std::memory_order_relaxed),
+				(unsigned long long)g_mneeSolveStats.failNoStep.exchange(0,
+						std::memory_order_relaxed),
+				(unsigned long long)g_mneeSolveStats.failExhausted.exchange(0,
+						std::memory_order_relaxed),
+				(unsigned long long)g_mneeSolveStats.capped.exchange(0,
+						std::memory_order_relaxed));
+	const unsigned long long t = g_mneeSeedStats.tries.exchange(0,
+			std::memory_order_relaxed);
+	const unsigned long long h = g_mneeSeedStats.hits.exchange(0,
+			std::memory_order_relaxed);
+	if (t > 0)
+		fprintf(stderr, "[MNEE seeds] lookups=%llu hits=%llu (%.1f%%)\n",
+				t, h, 100.0 * h / t);
+}
+
 // Returns true and fills *v when a usable seed was found (the flat tangent
 // frame fallback like the GPU Mnee_SeedCacheLookup; the first proposal
 // re-projects onto the real surface anyway).
 static bool MneeSeedLookup(const MneeSeedEntry *cache,
 		const u_int key, const u_int lightIndex, const u_int meshIndex,
-		const bool mirrorMode, const float eta, MneeVertex *v) {
+		const bool mirrorMode, const float eta, MneeVertex *v,
+		u_int *failEvidence = nullptr) {
 	if (g_seedStatsOn)
 		g_mneeSeedStats.tries.fetch_add(1, std::memory_order_relaxed);
+	if (failEvidence)
+		*failEvidence = 0u;
 	const MneeSeedEntry &e = cache[key];
-	if (!e.valid.load(std::memory_order_relaxed) ||
-			(e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
+	if ((e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
 			(e.meshIndex.load(std::memory_order_relaxed) != meshIndex) ||
 			(e.mirrorMode.load(std::memory_order_relaxed) !=
 				(mirrorMode ? 1u : 0u)))
+		return false;
+
+	// Poisoned entries carry no vertex: they mark cells whose solves
+	// repeatedly failed so the caller can run a capped probe instead.
+	if (failEvidence)
+		*failEvidence = e.failCount.load(std::memory_order_relaxed);
+	if (!e.valid.load(std::memory_order_relaxed))
 		return false;
 
 	const Point p(e.vx.load(std::memory_order_relaxed),
@@ -623,20 +720,27 @@ static bool MneeSolveSingleVertex(
 	u_int dbgMeshMiss = 0, dbgResFail = 0, dbgEsc = 0;
 
 	u_int iteration = 0;
+	MneeSolveAccount solveAccount{ iteration };
+	u_int failStage = 3;  // exhausted unless a break says otherwise
+
 	while (iteration < maxIterations) {
 		// Constraint residual and analytic Jacobian of the current vertex
 		if (!MneeResidual(x0p, ep, *vtx, residual)) {
+			failStage = 0;
 			break;
 		}
+		const float resNorm =
+				sqrtf(residual.x * residual.x + residual.y * residual.y);
 		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx, &jac);
 
-		if (sqrtf(residual.x * residual.x + residual.y * residual.y) < 3e-4f) {
+		if (resNorm < 3e-4f) {
 			solved = true;
 			break;
 		}
 
 		const float det = MneeDet(jac);
 		if (fabs(det) < 1e-9f) {
+			failStage = 1;
 			break;
 		}
 		const MneeMat2 invJac = MneeInverse(jac, det);
@@ -658,7 +762,6 @@ static bool MneeSolveSingleVertex(
 		// backtracking, extended with a residual decrease check; the
 		// half-vector residual is strongly nonlinear for coarse seeds, so
 		// this keeps the iteration inside the Newton basin).
-		const float resNorm = sqrtf(residual.x * residual.x + residual.y * residual.y);
 		bool stepAccepted = false;
 		while (beta > 1e-2f) {
 			const Point pProp = vtx->p - beta * (vtx->dpdu * dX.x + vtx->dpdv * dX.y);
@@ -712,8 +815,10 @@ static bool MneeSolveSingleVertex(
 			beta *= .5f;
 			++iteration;
 		}
-		if (!stepAccepted)
+		if (!stepAccepted) {
+			failStage = 2;
 			break;
+		}
 		++iteration;
 	}
 
@@ -724,6 +829,15 @@ static bool MneeSolveSingleVertex(
 				iteration, sqrtf(residual.x * residual.x + residual.y * residual.y),
 				dbgMeshMiss, dbgResFail, dbgEsc);
 		fflush(stdout);
+	}
+	solveAccount.ok = solved;
+	if (g_seedStatsOn && !solved) {
+		static std::atomic<unsigned long long> *stageCtr[4] = {
+				&g_mneeSolveStats.failResidual,
+				&g_mneeSolveStats.failSingular,
+				&g_mneeSolveStats.failNoStep,
+				&g_mneeSolveStats.failExhausted };
+		stageCtr[failStage]->fetch_add(1, std::memory_order_relaxed);
 	}
 	return solved;
 }
@@ -827,10 +941,6 @@ bool PathTracer::MNEEDirectSampling(
 	} else
 		{ return false; }
 
-	// Count as an attempt (past the material gate)
-	static int attemptCheck = 0;
-	++attemptCheck;
-
 	//------------------------------------------------------------------------------
 	// Newton solve (Zeltner newton_solver, n_offset = 0, step_scale = 1)
 	//------------------------------------------------------------------------------
@@ -856,33 +966,52 @@ bool PathTracer::MNEEDirectSampling(
 			1u : 0u);
 	float seedCellSize = 0.f;
 	u_int seedKey = 0;
+	u_int failEvidence = 0;
 	if (mneeSeedCacheEnable && mneeSeeds) {
 		seedCellSize = Max(scene.GetDataSet().GetBSphere().rad /
 				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
 		seedKey = MneeSeedKey(seedLightIndex, seedMesh,
 				shadowBsdf.hitPoint.p, seedCellSize);
-		if ((etaVertex == 1.f) &&
-				MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
-				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx))
+		// One entry read serves both policies: a mirror solve takes the
+		// seed vertex immediately (skips its seed trace), a glass solve
+		// keeps the free cold line seed and only consumes the seed as a
+		// failure rescue - but both use the failCount evidence below.
+		if (MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
+				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx,
+				&failEvidence) && (etaVertex == 1.f))
 			seedPtr = &seedVtx;
 	}
+	// Failure-evidence budget cap: solve outcome is near-deterministic
+	// per (cell, endpoint, occluder), so a cell with >= 2 recorded
+	// failures runs a capped probe - still real Newton on the real
+	// surface, so a converging variant inside the cell still solves,
+	// but repeated impossible connections stop burning the full budget.
+	const u_int solveBudget = (g_poisonOn && (failEvidence >= 2u)) ?
+			Min(mneeMaxIterations, MNEE_FAIL_PROBE_ITERS) : mneeMaxIterations;
+	if (g_seedStatsOn && failEvidence >= 2u)
+		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
 	MneeVertex vtx;
 	BSDF finalBsdf = shadowBsdf;
 	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
-			shadowRayHit, shadowBsdf, volInfo, etaVertex, mneeMaxIterations,
+			shadowRayHit, shadowBsdf, volInfo, etaVertex, solveBudget,
 			seedPtr, &vtx, &finalBsdf);
 	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
 			mneeSeedCacheEnable && mneeSeeds &&
 			MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
 				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx)) {
-		// Failure rescue: retry once from the cached vertex. Deterministic
-		// in (x0, light, cache state) - the estimator stays unbiased.
+		// Failure rescue: re-read the entry at failure time - concurrent
+		// solves keep landing fresh seeds, and a stale pre-solve snapshot
+		// measurably lowered the rescue rate. Deterministic in
+		// (x0, light, cache state): the estimator stays unbiased.
 		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 				shadowRayHit, shadowBsdf, volInfo, etaVertex,
 				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
 	}
 	if (!solveOk) {
+		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
+			MneeSeedRecordFail(mneeSeeds.get(), seedKey, seedLightIndex,
+					seedMesh, mirrorMat != nullptr);
 		MNEE_REJX("newton");
 		return false;
 	}
@@ -1684,6 +1813,7 @@ static bool MneeSolveChain(
 	float maxResidual = 0.f;
 	float beta = 1.f;
 	u_int iteration = 0;
+	MneeSolveAccount solveAccount{ iteration };
 	*failWhy = "iterations";
 
 	// Per-iteration trace (LUX_MNEE_ITER): shows whether the Newton stalls at
@@ -1708,8 +1838,10 @@ static bool MneeSolveChain(
 						residual[k].x, residual[k].y);
 			printf("\n");
 		}
-		if (maxResidual < 1e-5f)
+		if (maxResidual < 1e-5f) {
+			solveAccount.ok = true;
 			return true;
+		}
 
 		MneeVec2 dx[MNEE_MS_MAX_VERTICES];
 		if (!MneeTridiagonalSolve(blocks, n, residual, dx)) {
@@ -2223,33 +2355,45 @@ bool PathTracer::LMNEEConnectToEye(
 			shadowBsdf.hitPoint.geometryN) > 0.f ? 1u : 0u);
 	float seedCellSize = 0.f;
 	u_int seedKey = 0;
+	u_int failEvidence = 0;
 	if (mneeSeedCacheEnable && mneeSeeds) {
 		seedCellSize = Max(scene.GetDataSet().GetBSphere().rad /
 				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
 		seedKey = MneeSeedKey(LMNEE_CAMERA_SEED_ID, seedMesh,
 				shadowBsdf.hitPoint.p, seedCellSize);
-		if ((etaVertex == 1.f) &&
-				MneeSeedLookup(mneeSeeds.get(), seedKey, LMNEE_CAMERA_SEED_ID,
-				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx))
+		if (MneeSeedLookup(mneeSeeds.get(), seedKey,
+				LMNEE_CAMERA_SEED_ID, seedMesh, mirrorMat != nullptr,
+				etaVertex, &seedVtx, &failEvidence) &&
+				(etaVertex == 1.f))
 			seedPtr = &seedVtx;
 	}
+	const u_int solveBudget = (g_poisonOn && (failEvidence >= 2u)) ?
+			Min(mneeMaxIterations, MNEE_FAIL_PROBE_ITERS) : mneeMaxIterations;
+	if (g_seedStatsOn && failEvidence >= 2u)
+		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
 	MneeVertex vtx;
 	BSDF finalBsdf;
 	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
-			shadowRayHit, shadowBsdf, volInfo, etaVertex, mneeMaxIterations,
+			shadowRayHit, shadowBsdf, volInfo, etaVertex, solveBudget,
 			seedPtr, &vtx, &finalBsdf);
 	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
 			mneeSeedCacheEnable && mneeSeeds &&
 			MneeSeedLookup(mneeSeeds.get(), seedKey, LMNEE_CAMERA_SEED_ID,
 				seedMesh, mirrorMat != nullptr, etaVertex, &seedVtx)) {
-		// Failure rescue: retry once from the cached vertex.
+		// Failure rescue: retry once from the cached vertex (fresh read,
+		// same reason as the eye side).
 		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 				shadowRayHit, shadowBsdf, volInfo, etaVertex,
 				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
 	}
-	if (!solveOk)
-		{ LMNEE_REJ(seedPtr ? "newton-s" : "newton"); return false; }
+	if (!solveOk) {
+		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
+			MneeSeedRecordFail(mneeSeeds.get(), seedKey,
+					LMNEE_CAMERA_SEED_ID, seedMesh, mirrorMat != nullptr);
+		LMNEE_REJ(seedPtr ? "newton-s" : "newton");
+		return false;
+	}
 
 	//--------------------------------------------------------------------------
 	// Post-solve validity check (same as the eye side): the half-vector
