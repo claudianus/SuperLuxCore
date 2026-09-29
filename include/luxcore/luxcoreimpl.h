@@ -721,6 +721,10 @@ private:
 	FilmImplUPtr film;
 	luxrays::PropertiesUPtr stats;
 
+	// Rate limiter for the halt-condition pump inside HasDone() - see
+	// RenderSessionImpl::HasDone().
+	mutable double hasDonePumpTime = 0.0;
+
 	void InitFilm();
 
 };

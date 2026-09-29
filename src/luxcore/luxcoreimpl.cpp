@@ -2302,6 +2302,22 @@ void RenderSessionImpl::SetRuntimeResolutionReduction(const unsigned int reducti
 bool RenderSessionImpl::HasDone() const {
 	API_BEGIN_NOARGS();
 
+	// Halt conditions (batch.haltspp/halttime, noise threshold) are only
+	// evaluated inside UpdateFilm()->Film::RunTests(), which callers are
+	// expected to pump via UpdateStats(). A client polling HasDone()
+	// alone would render forever - this already produced zombie GPU
+	// sessions burning the device for hours. Pump it here, rate-limited
+	// to 4Hz, only while the engine is running: merging the thread films
+	// is what refreshes the sample counters RunTests() reads.
+	if (renderSession->renderEngine->IsStarted() &&
+			!renderSession->renderEngine->HasDone()) {
+		const double now = WallClockTime();
+		if (now - hasDonePumpTime > 0.25) {
+			hasDonePumpTime = now;
+			renderSession->renderEngine->UpdateFilm();
+		}
+	}
+
 	const bool result = renderSession->renderEngine->HasDone();
 
 	API_RETURN("{}", result);
