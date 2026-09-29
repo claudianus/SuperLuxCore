@@ -74,6 +74,11 @@ void Init() {
 					std::cerr << "Cuda error: undefined\n"; break;
 			}
 
+			// The flags default to true, so a failed cuInit must clear
+			// them explicitly or Context() will call cuDeviceGetCount on
+			// an uninitialized driver (CUDA_ERROR_NOT_INITIALIZED crash).
+			isCudaAvilable = false;
+			isOptixAvilable = false;
 
 		} else {
 			isCudaAvilable = true;
@@ -82,6 +87,11 @@ void Init() {
 			if (optixInit() == OPTIX_SUCCESS)
 				isOptixAvilable = true;
 		}
+	} else {
+		// Same as above: cuewInit failing (missing nvcuda/nvrtc) must not
+		// leave the default-true flags set.
+		isCudaAvilable = false;
+		isOptixAvilable = false;
 	}
 #endif
 }
