@@ -189,7 +189,7 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 					// photons keep depositing for GPU queries and
 					// non-homogeneous media, where beams do not apply.
 					if (pgic.params.caustic.volumeBeams && flightVolume &&
-							dynamic_observer_cast<const HomogeneousVolume>(flightVolume) &&
+							(flightVolume->GetType() == HOMOGENEOUS_VOL) &&
 							beamFlux.IsValid() &&
 							pathInfo.IsSpecularPath() && pathInfo.firstVertexSeen &&
 							!causticDone) {

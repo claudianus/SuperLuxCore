@@ -44,7 +44,7 @@ public:
 		volumeEmissionTex(emission),
 		volumeLightID(0),
 		priority(0)
-	{ }
+	{ isVolume = true; }
 	virtual ~Volume() { }
 
 	void SetVolumeLightID(const u_int id) { volumeLightID = id; }

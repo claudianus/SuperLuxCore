@@ -63,8 +63,7 @@ public:
 // (i.e. plain RGB behaviour), so preprocessing/baking paths are unaffected.
 namespace Spectral {
 
-void SetEnabled(const bool enabled);
-bool IsEnabled();
+// (SetEnabled/IsEnabled are defined inline below, next to Current().)
 
 // RGB->SPD upsampling model for leaf RGB triplets (texture constants,
 // imagemap pixels, light colors). UPSAMPLING_SMITS is the classic
@@ -94,9 +93,26 @@ u_int JH2019TableRes();
 const float *JH2019TableScale();
 const float *JH2019TableCoeffs();
 
-void SetPathWavelengths(const PathWavelengths &sw);
-void ClearPathWavelengths();
-const PathWavelengths *Current();
+// State lives in header-inline storage so the hot read path (Current(),
+// called once per spectral-aware texture/light/volume evaluation) can
+// inline the TLS flag test instead of paying an out-of-line call plus a
+// _tlv_get_addr pair on every bounce.
+namespace detail {
+inline bool g_spectralEnabled = false;
+inline thread_local PathWavelengths g_sw;
+inline thread_local bool g_hasSW = false;
+}
+
+inline void SetEnabled(const bool enabled) { detail::g_spectralEnabled = enabled; }
+inline bool IsEnabled() { return detail::g_spectralEnabled; }
+inline void SetPathWavelengths(const PathWavelengths &sw) {
+	detail::g_sw = sw;
+	detail::g_hasSW = true;
+}
+inline void ClearPathWavelengths() { detail::g_hasSW = false; }
+inline const PathWavelengths *Current() {
+	return (detail::g_spectralEnabled && detail::g_hasSW) ? &detail::g_sw : nullptr;
+}
 
 // RAII guard suspending spectral evaluation for the current scope. Used by
 // textures that perform RGB-space math on their children (HSV, normal map,

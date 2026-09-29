@@ -28,10 +28,7 @@
 using namespace luxrays;
 
 namespace {
-	bool g_enabled = false;
 	Spectral::UpsamplingModel g_upsampling = Spectral::UPSAMPLING_SMITS;
-	thread_local PathWavelengths g_sw;
-	thread_local bool g_hasSW = false;
 
 	// Linear-interpolated sample of a raw SPD table, same math as SPD::Sample
 	inline float SampleTable(const float *data, const u_int n,
@@ -256,8 +253,7 @@ namespace {
 	}
 }
 
-void Spectral::SetEnabled(const bool enabled) { g_enabled = enabled; }
-bool Spectral::IsEnabled() { return g_enabled; }
+
 
 void Spectral::SetUpsamplingModel(const UpsamplingModel model) {
 	g_upsampling = model;
@@ -268,22 +264,13 @@ u_int Spectral::JH2019TableRes() { return jh2019::res; }
 const float *Spectral::JH2019TableScale() { return jh2019::scale; }
 const float *Spectral::JH2019TableCoeffs() { return jh2019::coeffs; }
 
-void Spectral::SetPathWavelengths(const PathWavelengths &sw) {
-	g_sw = sw;
-	g_hasSW = true;
-}
-void Spectral::ClearPathWavelengths() { g_hasSW = false; }
-const PathWavelengths *Spectral::Current() {
-	return (g_enabled && g_hasSW) ? &g_sw : nullptr;
-}
-
 float Spectral::CollapseToHero() {
-	if (!(g_enabled && g_hasSW))
+	if (!(detail::g_spectralEnabled && detail::g_hasSW))
 		return 1.f;
-	const u_int heroMask = 1u << g_sw.hero;
-	if (g_sw.aliveMask == heroMask)
+	const u_int heroMask = 1u << detail::g_sw.hero;
+	if (detail::g_sw.aliveMask == heroMask)
 		return 1.f; // already collapsed
-	g_sw.aliveMask = heroMask;
+	detail::g_sw.aliveMask = heroMask;
 	// Uniform pick of the hero bin out of SPECTRAL_BINS: the surviving
 	// estimate carries the whole path's spectral weight.
 	return (float)SPECTRAL_BINS;

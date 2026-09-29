@@ -954,8 +954,9 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			const float scatterU = rng.floatValue();
 			Spectrum emis;
 			float t;
-			const HomogeneousVolume *homoVol = (!equiangularLightPoints.empty()) ?
-					dynamic_cast<const HomogeneousVolume *>(&*rayVolume) : nullptr;
+			const HomogeneousVolume *homoVol = (!equiangularLightPoints.empty() &&
+					(rayVolume->GetType() == HOMOGENEOUS_VOL)) ?
+					static_cast<const HomogeneousVolume *>(&*rayVolume) : nullptr;
 			if (homoVol && homoVol->IsEquiangularEnabled()) {
 				// Equiangular + transmittance MIS distance sampling
 				// (Kulla & Fajardo, EGSR 2012) with contribution-aware

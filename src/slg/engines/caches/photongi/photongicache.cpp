@@ -1017,7 +1017,7 @@ SpectrumGroup PhotonGICache::ConnectWithCausticPaths(const BSDF &bsdf) const {
 	// a beam, so the two estimates stay disjoint. All other vertices
 	// (surfaces, heterogeneous/clear volumes) use the point-photon kernel.
 	if (bsdf.IsVolume() && params.caustic.volumeBeams && causticBeamsIndex &&
-			dynamic_observer_cast<const HomogeneousVolume>(bsdf.GetMaterial())) {
+			(bsdf.GetMaterial()->GetType() == HOMOGENEOUS_VOL)) {
 		result = ConnectCausticBeams(bsdf);
 	} else if (causticPhotonsBVH) {
 		result = causticPhotonsBVH->ConnectAllNearEntries(bsdf);

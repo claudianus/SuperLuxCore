@@ -117,8 +117,10 @@ public:
 	bool IsShadowCatcherOnlyInfiniteLights() const { return material->IsShadowCatcherOnlyInfiniteLights(); }
 	bool IsCameraInvisible() const;
 	bool IsVolume() const {
-		auto ptr = dynamic_observer_cast<const Volume>(material);
-		return bool(ptr);
+		// Cached discriminator (Material::isVolume, set by Volume's
+		// ctor): a dynamic_cast here cost several percent of total CPU
+		// on media-heavy scenes - RTTI string walks on every bounce.
+		return material && material->IsVolume();
 	}
 	bool IsPhotonGIEnabled() const { return material->IsPhotonGIEnabled(); }
 	bool IsHoldout() const { return material->IsHoldout(); }

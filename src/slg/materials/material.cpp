@@ -49,7 +49,7 @@ Material::Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 		glossiness(0.f),
 		isVisibleIndirectDiffuse(true), isVisibleIndirectGlossy(true), isVisibleIndirectSpecular(true),
 		isShadowCatcher(false), isShadowCatcherOnlyInfiniteLights(false), isPhotonGIEnabled(true),
-		isHoldout(false) {
+		isHoldout(false), isVolume(false) {
 	SetEmittedTheta(90.f);
 	UpdateEmittedFactor();
 	UpdateAvgPassThroughTransparency();

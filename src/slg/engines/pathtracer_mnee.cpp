@@ -793,7 +793,7 @@ bool PathTracer::MNEEDirectSampling(
 	// hero bin at assembly (Spectral::KeepHeroBins).
 	bool dispersiveConnect = false;
 	if (seedMatType == MIRROR) {
-		mirrorMat = dynamic_observer_cast<const MirrorMaterial>(shadowBsdf.GetMaterial());
+		mirrorMat = static_cast<const MirrorMaterial *>(shadowBsdf.GetMaterial().get());
 		if (!mirrorMat)
 			{ return false; }
 
@@ -818,7 +818,7 @@ bool PathTracer::MNEEDirectSampling(
 		if (etaVertex != 1.f)
 			return false;
 	} else if (seedMatType == GLASS) {
-		glassMat = dynamic_observer_cast<const GlassMaterial>(shadowBsdf.GetMaterial());
+		glassMat = static_cast<const GlassMaterial *>(shadowBsdf.GetMaterial().get());
 		if (!glassMat)
 			{ return false; }
 
@@ -1507,14 +1507,14 @@ static bool MneeChainVertexInit(MneeChainVertex &cv, const BSDF &bsdf) {
 	cv.dispersive = false;
 
 	if (type == MIRROR) {
-		cv.mirrorMat = dynamic_observer_cast<const MirrorMaterial>(bsdf.GetMaterial());
+		cv.mirrorMat = static_cast<const MirrorMaterial *>(bsdf.GetMaterial().get());
 		if (!cv.mirrorMat)
 			return false;
 		cv.etaVertex = 1.f;
 		cv.specFactor = cv.mirrorMat->GetKr()->GetSpectrumValue(bsdf.hitPoint).Clamp(0.f, 1.f);
 		cv.specEvent |= REFLECT;
 	} else if (type == GLASS) {
-		cv.glassMat = dynamic_observer_cast<const GlassMaterial>(bsdf.GetMaterial());
+		cv.glassMat = static_cast<const GlassMaterial *>(bsdf.GetMaterial().get());
 		if (!cv.glassMat)
 			return false;
 
@@ -2180,8 +2180,8 @@ bool PathTracer::LMNEEConnectToEye(
 	float etaVertex = 1.f;
 	bool dispersiveConnect = false;
 	if (seedMatType == MIRROR) {
-		mirrorMat = dynamic_observer_cast<const MirrorMaterial>(
-				shadowBsdf.GetMaterial());
+		mirrorMat = static_cast<const MirrorMaterial *>(
+				shadowBsdf.GetMaterial().get());
 		if (!mirrorMat)
 			{ LMNEE_REJ("mirror-mat"); return false; }
 
@@ -2195,8 +2195,8 @@ bool PathTracer::LMNEEConnectToEye(
 		if (etaVertex != 1.f)
 			{ LMNEE_REJ("mirror-side"); return false; }
 	} else if (seedMatType == GLASS) {
-		glassMat = dynamic_observer_cast<const GlassMaterial>(
-				shadowBsdf.GetMaterial());
+		glassMat = static_cast<const GlassMaterial *>(
+				shadowBsdf.GetMaterial().get());
 		if (!glassMat)
 			{ LMNEE_REJ("glass-mat"); return false; }
 

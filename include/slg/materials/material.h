@@ -110,6 +110,11 @@ public:
 	virtual bool IsPhotonGIEnabled() const { return isPhotonGIEnabled; }
 	virtual float GetGlossiness() const { return glossiness; }
 
+	// Cached type discriminator for the per-vertex volume test. Volumes
+	// are materials here (Volume : Material) and BSDF::IsVolume() runs on
+	// every path event; a plain flag avoids a dynamic_cast in hot loops.
+	bool IsVolume() const { return isVolume; }
+
 	void SetDirectLightSamplingType(const MaterialEmissionDLSType type) { directLightSamplingType = type; }
 	MaterialEmissionDLSType GetDirectLightSamplingType() const { return directLightSamplingType; }
 
@@ -293,7 +298,7 @@ protected:
 
 	bool isVisibleIndirectDiffuse, isVisibleIndirectGlossy, isVisibleIndirectSpecular,
 		usePrimitiveArea, isShadowCatcher, isShadowCatcherOnlyInfiniteLights, isPhotonGIEnabled,
-		isHoldout;
+		isHoldout, isVolume;
 
 	mutable float cryptoID = 0.f;
 };
