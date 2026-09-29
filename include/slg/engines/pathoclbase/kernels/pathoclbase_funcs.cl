@@ -3008,7 +3008,7 @@ OPENCL_FORCE_INLINE float Guide_MixWeight(float count, float peak) {
 // field) - that folds into the same cold-leaf fallback the CPU takes.
 OPENCL_FORCE_INLINE bool GuideTree_Sample(__global const float *leaf,
 		float3 n, float uBin, float uDir0, float uDir1,
-		float3 *sampledDir, float *pdfW, const bool isotropic) {
+		__private float3 *sampledDir, __private float *pdfW, const bool isotropic) {
 	const float floorW = isotropic ? GUIDE_FLOOR_W_VOLUME : GUIDE_FLOOR_W_SURFACE;
 	const uint nComp = leaf ? (uint)leaf[22] : 0u;
 	const float count = leaf ? leaf[20] : 0.f;

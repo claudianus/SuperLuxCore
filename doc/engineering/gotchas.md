@@ -319,6 +319,15 @@
   `CL_BUILD_PROGRAM_FAILURE` under OpenCL. Drop `__private` from
   pointer params unless the contract genuinely requires private
   (generic accepts private AND generic args; the reverse is rejected).
+- **The decl/def mirror of that rule breaks NVIDIA OpenCL.** When a
+  forward declaration *does* qualify pointer params but the definition
+  leaves them unqualified, callers pick the declared signature while the
+  definition's unqualified params become `__generic` → NVIDIA's
+  OpenCL 3.0 front-end reports `conflicting types for '…'`
+  (`GuideTree_Sample` in `pathoclbase_funcs.cl`, 2026-09). Either the
+  declaration keeps `__private` and the definition matches it, or drop
+  `__private` from BOTH so callers pass generic pointers; never split
+  the qualifiers across decl and def.
 - **First-run kernel compile on NVIDIA is minutes, not a hang.** The
   ~100k-line PathOCL kernel takes ~17min under NVIDIA's OpenCL
   compiler and ~15min under NVRTC (sm_120, --use_fast_math). Results
