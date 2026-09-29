@@ -24,6 +24,8 @@
 // units (imported FIRST, before any LuxCore header can pull dispatch
 // etc. in C++ mode and poison __OBJC__ for everything after).
 
+#include <atomic>
+
 #include "luxrays/core/hardwaredevice.h"
 #include "luxrays/core/intersectiondevice.h"
 #include "luxrays/usings.h"
@@ -70,6 +72,8 @@ protected:
 //------------------------------------------------------------------------------
 // MetalDeviceKernel
 //------------------------------------------------------------------------------
+
+class MetalDeviceBuffer;
 
 class MetalDeviceKernel : public HardwareDeviceKernel {
 public:
@@ -127,6 +131,22 @@ public:
 		std::vector<int> argScalarIndex;
 	};
 	Marshalling marsh;
+
+	// Dispatch marshal cache: kernel args are quasi-static between
+	// dispatches (re-set only on init / the denoiser warm-up flip), so
+	// EnqueueKernel skips the per-arg walk + memcpys when nothing
+	// changed. SetKernelArg*/SetKernelArgBuffer flip argsDirty
+	// (atomic: arg setters run under the engine mutex, the dispatch
+	// path under inFlightMutex).
+	std::atomic<bool> argsDirty{true};
+	std::vector<uint8_t> marshalScalar, marshalPtr;
+	// Per ptrSlots entry: resolved buffer for direct slots,
+	// nullptr = unbound (bind nil).
+	std::vector<const MetalDeviceBuffer *> marshalDirect;
+	// Table-slot buffers needing useResource residency calls.
+	std::vector<const MetalDeviceBuffer *> marshalTable;
+	// Union of both for the pendingBuffers hazard scan.
+	std::vector<const MetalDeviceBuffer *> marshalUsed;
 };
 
 //------------------------------------------------------------------------------

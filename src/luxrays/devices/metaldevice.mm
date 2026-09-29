@@ -696,6 +696,7 @@ void MetalDevice::SetKernelArg(HardwareDeviceKernelRPtr kernel,
 		}
 		metalDeviceKernel.buffs[index] = nullptr;
 		metalDeviceKernel.roles[index] = MetalDeviceKernel::ArgRole::POINTER;
+		metalDeviceKernel.argsDirty.store(true, std::memory_order_release);
 		return;
 	}
 
@@ -705,6 +706,7 @@ void MetalDevice::SetKernelArg(HardwareDeviceKernelRPtr kernel,
 	}
 	metalDeviceKernel.buffs[index] = nullptr;
 	metalDeviceKernel.roles[index] = MetalDeviceKernel::ArgRole::SCALAR;
+	metalDeviceKernel.argsDirty.store(true, std::memory_order_release);
 
 	if (arg) {
 		// Copy the argument bytes (CUDA-style deferred marshalling)
@@ -745,6 +747,7 @@ void MetalDevice::SetKernelArgBuffer(HardwareDeviceKernelRPtr kernel,
 	// shift every later pointer argument - wild GPU addressing.
 	metalDeviceKernel.buffs[index] = buff;
 	metalDeviceKernel.roles[index] = MetalDeviceKernel::ArgRole::POINTER;
+	metalDeviceKernel.argsDirty.store(true, std::memory_order_release);
 }
 
 void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
@@ -794,15 +797,23 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// memory - constant-space tables dereference to 0 on Apple GPUs).
 	id<MTLDevice> dev = (__bridge id<MTLDevice>)device;
 
-	// Per-dispatch scratch: thousands of EnqueueKernel calls per render
-	// batch would otherwise heap-allocate these four buffers every call.
-	// thread_local keeps this safe on the session-thread flush paths;
-	// inFlightMutex already serializes the loop body.
-	thread_local std::vector<uint8_t> scalarBundle, ptrBundle;
-	thread_local std::vector<bool> directBound;
-	thread_local std::vector<const MetalDeviceBuffer *> usedBuffers;
+	// Dispatch marshal cache (see header): kernel args are quasi-static
+	// between dispatches, so the full arg walk + byte copies only re-run
+	// when SetKernelArg* flipped argsDirty. Every dispatch still binds
+	// from the cached bundles (encoders are per-call).
+	const bool argsDirty = metalDeviceKernel.argsDirty.exchange(false,
+			std::memory_order_acquire);
+	if (argsDirty) {
+	std::vector<uint8_t> &scalarBundle = metalDeviceKernel.marshalScalar;
+	std::vector<uint8_t> &ptrBundle = metalDeviceKernel.marshalPtr;
+	std::vector<const MetalDeviceBuffer *> &directBound = metalDeviceKernel.marshalDirect;
+	std::vector<const MetalDeviceBuffer *> &tableBuffers = metalDeviceKernel.marshalTable;
+	std::vector<const MetalDeviceBuffer *> &usedBuffers = metalDeviceKernel.marshalUsed;
 	scalarBundle.assign(m.scalarBundleSize, 0);
 	ptrBundle.assign(m.ptrBundleSize, 0);
+	directBound.assign(m.ptrSlots.size(), nullptr);
+	tableBuffers.clear();
+	usedBuffers.clear();
 
 	// Map engine arg index -> (role, value)
 	// Walk the ORIGINAL-signature argument order (argIsPointer /
@@ -815,10 +826,6 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	const bool useArgOrder = !m.argIsPointer.empty();
 	size_t scalarIdx = 0, ptrIdx = 0;
 	size_t argOrderPos = 0;
-	directBound.assign(m.ptrNames.size(), false);   // per m.ptrSlots index
-	// Buffers this dispatch reads: EnqueueWriteBuffer() must not overwrite
-	// any of them while the command buffer is still in flight.
-	usedBuffers.clear();
 	for (u_int i = 0; i < metalDeviceKernel.args.size(); ++i) {
 		bool isPointer;
 		if (useArgOrder && argOrderPos < m.argIsPointer.size()) {
@@ -858,22 +865,20 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 					usedBuffers.push_back(metalBuff);
 					id<MTLBuffer> mtlBuff = (__bridge id<MTLBuffer>)metalBuff->metalBuff;
 					if (slot >= 0) {
-						[e setBuffer:mtlBuff offset:0 atIndex:(NSUInteger)slot];
 						if (thisPtr < directBound.size())
-							directBound[thisPtr] = true;
+							directBound[thisPtr] = metalBuff;
 					} else {
-						// Table entry: record the gpu address. Buffers
-						// reached through gpuAddress (not setBuffer) are
-						// NOT automatically resident for the dispatch -
-						// without useResource the driver may leave their
-						// pages unmapped and reads silently return zeros
-						// (observed: curveCps/curveSegIndices read as 0 ->
-						// zero curve tangent -> NaN BSDF frame). Read|Write
+						// Table entry: record the gpu address + the
+						// buffer for the per-dispatch useResource pass.
+						// Buffers reached through gpuAddress are NOT
+						// automatically resident - without useResource
+						// the driver may leave their pages unmapped and
+						// reads silently return zeros (observed:
+						// curveCps/curveSegIndices read as 0 -> zero
+						// curve tangent -> NaN BSDF frame). Read|Write
 						// because table members include film/task-queue
-						// outputs; the extra usage only widens hazard
-						// tracking, residency is the required part.
-						[e useResource:mtlBuff
-								usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+						// outputs; residency is the required part.
+						tableBuffers.push_back(metalBuff);
 						const size_t toff = m.ptrTableOffsets[thisPtr];
 						if (toff + 8 <= ptrBundle.size()) {
 							const uint64_t addr = mtlBuff.gpuAddress;
@@ -922,33 +927,39 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 			++scalarIdx;
 		}
 	}
+	}   // argsDirty
 
-	// Bind buffer(0) scalar bundle. The bundle ALWAYS exists when the
-	// kernel has scalars - bind it even if some members were never set
-	// (the unset ones stay zeroed, mirroring OpenCL's zeroed args).
-	if (m.hasScalarBundle && m.scalarBundleSize > 0) {
-		if (scalarBundle.size() < m.scalarBundleSize)
-			scalarBundle.resize(m.scalarBundleSize, 0);
-		[e setBytes:scalarBundle.data()
-			length:scalarBundle.size() atIndex:0];
-	}
+	// Per-dispatch binds from the marshal cache (encoders are per-call,
+	// so setBytes/setBuffer/useResource must run every time).
+	// buffer(0) scalar bundle: bound even if some members were never
+	// set (unset ones stay zeroed, mirroring OpenCL's zeroed args).
+	if (m.hasScalarBundle && m.scalarBundleSize > 0)
+		[e setBytes:metalDeviceKernel.marshalScalar.data()
+			length:metalDeviceKernel.marshalScalar.size() atIndex:0];
 
-	// Bind buffer(1) pointer table (device space; zeroed gpuAddresses
-	// for buffers the engine never set - matching OpenCL NULL args).
-	if (m.hasPtrBundle && m.ptrBundleSize > 0) {
-		if (ptrBundle.size() < m.ptrBundleSize)
-			ptrBundle.resize(m.ptrBundleSize, 0);
-		[e setBytes:ptrBundle.data()
-			length:ptrBundle.size() atIndex:1];
-	}
+	// buffer(1) pointer table (device space; zeroed gpuAddresses for
+	// buffers the engine never set - matching OpenCL NULL args).
+	if (m.hasPtrBundle && m.ptrBundleSize > 0)
+		[e setBytes:metalDeviceKernel.marshalPtr.data()
+			length:metalDeviceKernel.marshalPtr.size() atIndex:1];
 
-	// Direct slots the engine never set must still be bound: an
-	// unbound required buffer aborts the command buffer at commit.
-	// A null Metal buffer is the OpenCL NULL cl_mem equivalent.
+	// Direct slots: cached buffer, or nil for slots the engine never
+	// set (an unbound required buffer aborts the CB at commit - the
+	// OpenCL NULL cl_mem equivalent).
 	for (size_t d = 0; d < m.ptrSlots.size(); ++d) {
-		if (m.ptrSlots[d] >= 0 && !directBound[d])
-			[e setBuffer:nil offset:0 atIndex:(NSUInteger)m.ptrSlots[d]];
+		if (m.ptrSlots[d] >= 0) {
+			const MetalDeviceBuffer *mb =
+					(d < metalDeviceKernel.marshalDirect.size()) ?
+					metalDeviceKernel.marshalDirect[d] : nullptr;
+			[e setBuffer:(mb ? (__bridge id<MTLBuffer>)mb->metalBuff : nil)
+				offset:0 atIndex:(NSUInteger)m.ptrSlots[d]];
+		}
 	}
+	// Table-slot buffers need explicit residency every dispatch (see
+	// the marshalTable comment in the arg walk).
+	for (const MetalDeviceBuffer *mb : metalDeviceKernel.marshalTable)
+		[e useResource:(__bridge id<MTLBuffer>)mb->metalBuff
+			usage:MTLResourceUsageRead | MTLResourceUsageWrite];
 
 	const size_t groupSize = max<size_t>(workGroupSize.sizes[0], 1);
 	const size_t global = globalSize.sizes[0];
@@ -964,7 +975,8 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// Register this dispatch's buffers with the pending batch so the
 	// EnqueueWriteBuffer conflict scan sees uncommitted work too.
 	pendingBuffers.insert(pendingBuffers.end(),
-			usedBuffers.begin(), usedBuffers.end());
+			metalDeviceKernel.marshalUsed.begin(),
+			metalDeviceKernel.marshalUsed.end());
 	if (++pendingEncoderCount >= 64)   // bound CB memory / latency
 		CommitPendingLocked();
 
