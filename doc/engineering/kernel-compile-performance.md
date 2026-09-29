@@ -603,7 +603,20 @@ Measured on a 16-core Windows box, GeForce RTX 5060 (8GB, driver
 | path | NVRTC compile | load | total first-run | notes |
 |---|---|---|---|---|
 | PTX (`compute_120`) | ~minutes | driver PTX→SASS JIT ~20min inside `cuModuleLoadDataEx` | ~24min | warm runs hit `%APPDATA%\NVIDIA\ComputeCache` (driver-managed) → ~172ms program compile |
-| CUBIN (`sm_120`, `--split-compile=4`) | 485s (~12GB peak, embedded ptxas) | `cuModuleLoadData` ≈ instant | ~8min | 64.6MB cubin on disk; no driver JIT at all |
+| CUBIN (`sm_120`, `--split-compile=4`) | 485s probe (~12GB peak, embedded ptxas); 1319s end-to-end | `cuModuleLoadData` ≈ instant | ~22min e2e | 64.6MB cubin on disk; no driver JIT at all |
+
+End-to-end measured (luxcoreconsole, Cornell `PATHOCL` scene):
+
+- CUBIN cold: kernels 1319s total → `*_sm_120.cubin` (64.6MB),
+  render 9.7M samples/sec, 100% convergence.
+- CUBIN warm (disk cache hit): program cached in **0.6s**, render
+  9.7M samples/sec.
+- PTX forced (`LUX_CUDA_SASS=0`): disk-PTX hit + driver JIT 1401s
+  inside `cuModuleLoadDataEx`, render 11.1M samples/sec, 100%
+  convergence.
+- Post-merge re-check (kernel +~1700 lines from origin): CUBIN
+  1917s → 76.0MB cubin, render ~11M samples/sec — NVRTC handles the
+  grown program without changes.
 
 - `--split-compile=0` (default) makes embedded ptxas OOM-*abort the
   process* on this kernel — no fallback possible, the call never
