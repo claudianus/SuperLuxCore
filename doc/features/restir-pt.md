@@ -56,9 +56,10 @@ merge-explosion tripwires.
 
 | Scene | spp | RMSE off | RMSE PT | ratio |
 |---|---|---|---|---|
-| pg-indirect | 32 | 0.0435 | 0.0369 | **0.85 (PT wins)** |
-| pg-glossy | 32 | 0.0349 | 0.0272 | **0.78 (PT wins)** |
-| cornell | 48 | 0.0223 | 0.0516 | 2.31 (diffuse-flat — no win) |
+| pg-indirect (CPU) | 32 | 0.0435 | 0.0369 | **0.85 (PT wins)** |
+| pg-glossy (CPU) | 32 | 0.0349 | 0.0272 | **0.78 (PT wins)** |
+| pg-indirect (GPU, PT-2) | 128 | 0.0236 | 0.0224 | **0.95 (PT wins)** |
+| cornell (CPU) | 48 | 0.0223 | 0.0516 | 2.31 (diffuse-flat — no win) |
 
 Mean parity sits at −16..−21% at 32 spp on the pg scenes (off is
 −5..−7%): the bounded-bias symptom — rare high-radiance suffixes
