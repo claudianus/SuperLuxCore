@@ -134,6 +134,13 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 	// cache swap landed inside Update()'s barrier (per-thread refresh
 	// of taskConfig + query buffers; thread 0 is not the only device)
 	u_int lastPGICPass = 0;
+	// Denoiser kernel-arg state pushed to the GPU last: warmUpDone,
+	// sampleScale and radianceChannelScales all mutate together exactly
+	// once - at the warm-up transition (filmdenoiser.cpp). Re-setting
+	// ~15 kernels x the full arg list every batch just to catch that
+	// one flip is wasted host work; refresh only on the flip. Init
+	// matches the warmUpDone=false state SetKernelArgs() pushed.
+	int lastDenoiserWarmUp = 0;
 
 	while (!stop_token.stop_requested()) {
 		//if (threadIndex == 0)
@@ -233,10 +240,16 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 		const double timeKernelStart = WallClockTime();
 
-		// This is required for updating film denoiser parameter
+		// This is required for updating film denoiser parameter - but
+		// only when the warm-up state actually flipped (see
+		// lastDenoiserWarmUp above).
 		if (threadFilms[0]->GetFilm().GetDenoiser().IsEnabled()) {
-			std::unique_lock<std::mutex> lock(engine->setKernelArgsMutex);
-			SetAllAdvancePathsKernelArgs(0);
+			const int wu = threadFilms[0]->GetFilm().GetDenoiser().IsWarmUpDone() ? 1 : 0;
+			if (wu != lastDenoiserWarmUp) {
+				std::unique_lock<std::mutex> lock(engine->setKernelArgsMutex);
+				SetAllAdvancePathsKernelArgs(0);
+				lastDenoiserWarmUp = wu;
+			}
 		}
 
 		// Ray slots: taskCount per-task rays + lightTaskCount light
