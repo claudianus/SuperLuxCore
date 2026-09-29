@@ -1062,6 +1062,16 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	static const bool wavefrontDebug = getenv("LUXRAYS_WAVEFRONT_DEBUG") != nullptr;
 	static u_int dbgIter = 0;
 	if (wavefrontDebug && dbgIter++ < 8) {
+		// wavefrontQueueTotals above is an intentionally racing peek
+		// (launch sizing must not pay a queue drain per iteration).
+		// The queue/state readbacks below are post-FinishQueue fresh,
+		// so re-read the totals with a blocking read or the check
+		// compares a fresh queue against stale totals - which flags
+		// phantom badState hits whenever a sample-pass boundary moved
+		// the queue layout between the peek and the flush.
+		intersectionDevice.EnqueueReadBuffer(taskQueueTotalsBuff,
+				CL_TRUE, sizeof(u_int) * wavefrontQueueTotals.size(),
+				wavefrontQueueTotals.data());
 		if (wavefrontFlatQueues) {
 			// Flat mode: QueuePrefix already published the cursors as
 			// totals and re-zeroed the bases - segment ends no longer
