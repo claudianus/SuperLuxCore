@@ -1880,6 +1880,19 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			cosSampledDir = -1.f;
 			bsdfEvent = pathInfo->lastBSDFEvent;
 		} else {
+			// guideLeaf is the flattened leaf record at the vertex
+			// position; NULL when guiding is off or the field is empty.
+			// Hoisted above the ReSTIR enqueue blocks: reservoir
+			// candidates draw from the leaf mixture (ReSTIR PG).
+			__global const float *guideLeaf = (guidingEnable != 0u) ?
+					GuideTree_LeafAt(guideNodes, guideLeaves,
+						VLOAD3F(&bsdf->hitPoint.p.x)) : NULL;
+			// PG candidate mix weight: the leaf gates itself (warmup +
+			// nComp), so this is 0 on cold leaves - pure BSDF draws.
+			const float resWG = (guideLeaf && ((uint)guideLeaf[22] > 0u) &&
+					(guideLeaf[20] >= GUIDE_WARMUP_RECORDS)) ?
+					taskConfig->pathTracer.guidingStrength *
+					Guide_MixWeight(guideLeaf[20], guideLeaf[21]) : 0.f;
 			// ReSTIR PT (PT-2 GPU): measured-suffix resampling at the
 			// depth-0 non-delta vertex - same hook slot as GI (mutually
 			// exclusive: path.restir.pt.enable overrides gi on the host
@@ -1917,7 +1930,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 							(GuidingPass(taskConfig, gid, samplesBuff) *
 							83492791u) ^ seedValue.s1;
 					if (RestirGI_EnqueueBounce(bsdf, ptRays, ptCand,
-							ptK, ptSeed, ray->time
+							ptK, ptSeed, ray->time, guideLeaf, resWG
 							MATERIALS_PARAM)) {
 						taskState->state = MK_PT_BOUNCE;
 						task->seed = seedValue;
@@ -1979,7 +1992,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 							(GuidingPass(taskConfig, gid, samplesBuff) *
 							83492791u) ^ seedValue.s1;
 					if (RestirGI_EnqueueBounce(bsdf, giRays, giCand,
-							giK, giSeed, ray->time
+							giK, giSeed, ray->time, guideLeaf, resWG
 							MATERIALS_PARAM)) {
 						taskState->state = MK_RT_GI_BOUNCE;
 						task->seed = seedValue;
@@ -2005,11 +2018,6 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			// one-sample MIS, mirroring PathTracer::RenderEyePath() on
 			// the CPU (see src/slg/engines/pathtracer.cpp). Training
 			// records below (M2b-2).
-			// guideLeaf is the flattened leaf record at the vertex
-			// position; NULL when guiding is off or the field is empty.
-			__global const float *guideLeaf = (guidingEnable != 0u) ?
-					GuideTree_LeafAt(guideNodes, guideLeaves,
-						VLOAD3F(&bsdf->hitPoint.p.x)) : NULL;
 			if ((giPending != 1u) && (ptPending != 1u)) {
 			const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 			// Mirrors CPU GuidableBsdf(): volume scattering vertices are

@@ -56,6 +56,7 @@ namespace slg {
 
 class Scene;
 class BSDF;
+class PathGuidingCache;
 class PathVolumeInfo;
 
 class RestirPT {
@@ -135,6 +136,7 @@ public:
 			const u_int pixelX, const u_int pixelY, const u_int pass,
 			const u_int candidateCount, const bool temporalEnable,
 			const bool spatialEnable,
+			const PathGuidingCache *guideCache, const float guideStrength,
 			Pick *pick);
 
 	// Publish the measured suffix for a non-consumed pick. lsuf is the

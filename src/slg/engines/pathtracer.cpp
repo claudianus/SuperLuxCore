@@ -1503,6 +1503,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 							sampleResult.pixelX, sampleResult.pixelY,
 							sampler.GetPass(), restirPTCandidates,
 							restirPTTemporalEnable, restirPTSpatialEnable,
+							pathGuidingCache, guidingStrength,
 							&ptPending)) {
 						if (ptPending.consumed) {
 							const Spectrum contrib = pathThroughput *

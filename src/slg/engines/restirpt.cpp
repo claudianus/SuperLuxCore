@@ -31,6 +31,7 @@
 #include <atomic>
 
 #include "slg/engines/restirpt.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/lights/light.h"
@@ -135,6 +136,7 @@ bool RestirPT::ResampleSuffix(
 		const u_int pixelX, const u_int pixelY, const u_int pass,
 		const u_int candidateCount, const bool temporalEnable,
 		const bool spatialEnable,
+		const PathGuidingCache *guideCache, const float guideStrength,
 		Pick *pick) {
 	const u_int baseSeed = (pixelX * 73856093u) ^
 			(pixelY * 19349663u) ^ (pass * 83492791u);
@@ -159,18 +161,52 @@ bool RestirPT::ResampleSuffix(
 	// Identical to GI - including the M bookkeeping (culled candidates
 	// count as proposal draws).
 	//----------------------------------------------------------------------
+	// ReSTIR PG (Zeng et al. SA2025): candidates draw from the fitted
+	// guide-vs-BSDF mixture when the leaf is trained - the reservoir's
+	// own accepted directions feed back as the proposal. The mixture
+	// density goes into pdfs[] so the RIS weight stays exact.
+	const bool isVol = bsdf.IsVolume();
+	float wG = 0.f;
+	if (guideCache && guideCache->CanGuide(x1))
+		wG = guideStrength * PathGuidingCache::MixWeight(
+				guideCache->ReadCount(x1), guideCache->ReadPeak(x1));
 	for (u_int i = 0; i < K; ++i) {
 		const u_int seed = baseSeed ^ (i * 0x9E3779B9u);
 		++mTotal;
 
-		float pdfW, cosDir;
-		const Spectrum bsdfSample = bsdf.Sample(&dirs[i],
-				PTRandom(seed, 0x01u), PTRandom(seed, 0x02u),
-				&pdfW, &cosDir, &events[i]);
-		if (bsdfSample.Black() || !(pdfW > 0.f))
+		float pdfW = 0.f, cosDir = 0.f;
+		if (PTRandom(seed, 0x05u) < wG) {
+			// Guide-side draw: sample the leaf mixture, evaluate the
+			// BSDF there (single-cos, like Guide_RisCandidate on GPU).
+			float gPdf, bPdf;
+			if (guideCache->Sample(x1, bsdf.hitPoint.shadeN,
+					PTRandom(seed, 0x06u), PTRandom(seed, 0x01u),
+					PTRandom(seed, 0x02u), &dirs[i], &gPdf, isVol) &&
+					(gPdf > 0.f)) {
+				fcos[i] = bsdf.Evaluate(dirs[i], &events[i], &bPdf);
+				// Single-cos convention (Disney Evaluate double-counts
+				// the cosine) - same fix as the bounce-side RIS mix.
+				if (bsdf.GetMaterialType() == DISNEY) {
+					const float cl = fabsf(
+							bsdf.GetFrame().ToLocal(dirs[i]).z);
+					fcos[i] = (cl > 1e-3f) ? fcos[i] / cl : Spectrum();
+				}
+				pdfW = (1.f - wG) * bPdf + wG * gPdf;
+			}
+		} else {
+			const Spectrum bsdfSample = bsdf.Sample(&dirs[i],
+					PTRandom(seed, 0x01u), PTRandom(seed, 0x02u),
+					&pdfW, &cosDir, &events[i]);
+			if (!bsdfSample.Black() && (pdfW > 0.f)) {
+				fcos[i] = bsdfSample * pdfW;
+				if (wG > 0.f)
+					pdfW += wG * (guideCache->Pdf(x1,
+							bsdf.hitPoint.shadeN, dirs[i], isVol) - pdfW);
+			}
+		}
+		if (fcos[i].Black() || !(pdfW > 0.f))
 			continue;
 		pdfs[i] = pdfW;
-		fcos[i] = bsdfSample * pdfW;
 
 		Ray ray(bsdf.GetRayOrigin(dirs[i]), dirs[i]);
 		PathVolumeInfo rayVolInfo = volInfo;

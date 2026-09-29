@@ -1486,25 +1486,68 @@ OPENCL_FORCE_INLINE float RestirGI_Hash(const uint seed, const uint stream) {
 // Phase 1 (in MK_GENERATE_NEXT_VERTEX_RAY): draw K BSDF proposals and
 // queue their bounce rays. The candidate records carry everything the
 // resolve needs that is not recoverable from the trace results.
+// Forward decls: the guide functions live further down this file but
+// the candidate draw consults them for the ReSTIR PG proposal mix.
+// (__private so cl2msl maps the scalar pointers to 'thread' - its
+// signature rewrite only fires on definitions.)
+OPENCL_FORCE_INLINE bool GuideTree_Sample(__global const float *leaf,
+		float3 n, float uBin, float uDir0, float uDir1,
+		__private float3 *sampledDir, __private float *pdfW,
+		const bool isotropic);
+OPENCL_FORCE_INLINE float GuideTree_Pdf(__global const float *leaf,
+		float3 n, float3 dir, const bool isotropic);
 OPENCL_FORCE_NOT_INLINE bool RestirGI_EnqueueBounce(
 		__global BSDF *bsdf,
 		__global Ray *candRays,
 		__global RestirGICandidate *candData,
-		const uint K, const uint baseSeed, const float time
+		const uint K, const uint baseSeed, const float time,
+		__global const float *guideLeaf, const float wG
 		MATERIALS_PARAM_DECL) {
+	const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 	bool anyValid = false;
 	for (uint i = 0; i < K; ++i) {
 		__global RestirGICandidate *rec = &candData[i];
 		const uint seed = baseSeed ^ (i * 0x9E3779B9u);
 
 		float3 dir;
-		float pdfW, cosDir;
-		BSDFEvent event;
-		const float3 bsdfSample = BSDF_Sample(bsdf,
-				RestirGI_Hash(seed, 0x01u), RestirGI_Hash(seed, 0x02u),
-				&dir, &pdfW, &cosDir, &event
-				MATERIALS_PARAM);
-		if (Spectrum_IsBlack(bsdfSample) || !(pdfW > 0.f)) {
+		float pdfW = 0.f, cosDir = 0.f;
+		BSDFEvent event = DIFFUSE;
+		float3 fcos = BLACK;
+		// ReSTIR PG (Zeng et al. SA2025): with probability wG the
+		// candidate draws from the fitted leaf mixture (fed by the
+		// reservoir's own accepted directions) instead of the BSDF.
+		// pdfW stores the one-sample mixture density on both sides,
+		// so the RIS weight stays exact for any wG in [0,1).
+		if (RestirGI_Hash(seed, 0x05u) < wG) {
+			float gPdf, bPdf;
+			if (GuideTree_Sample(guideLeaf, shadeN,
+					RestirGI_Hash(seed, 0x06u),
+					RestirGI_Hash(seed, 0x01u), RestirGI_Hash(seed, 0x02u),
+					&dir, &gPdf, bsdf->isVolume) && (gPdf > 0.f)) {
+				fcos = BSDF_Evaluate(bsdf, dir, &event, &bPdf
+						MATERIALS_PARAM);
+				// Single-cos convention (Disney Evaluate double-
+				// counts the cosine) - same fix as Guide_RisCandidate.
+				if (mats[bsdf->materialIndex].type == DISNEY) {
+					const float cl = fabs(Frame_ToLocal(&bsdf->frame,
+							dir).z);
+					fcos = (cl > 1e-3f) ? fcos / cl : BLACK;
+				}
+				pdfW = (1.f - wG) * bPdf + wG * gPdf;
+			}
+		} else {
+			const float3 bsdfSample = BSDF_Sample(bsdf,
+					RestirGI_Hash(seed, 0x01u), RestirGI_Hash(seed, 0x02u),
+					&dir, &pdfW, &cosDir, &event
+					MATERIALS_PARAM);
+			if (!Spectrum_IsBlack(bsdfSample) && (pdfW > 0.f)) {
+				fcos = bsdfSample * pdfW;
+				if (wG > 0.f)
+					pdfW += wG * (GuideTree_Pdf(guideLeaf, shadeN, dir,
+							bsdf->isVolume) - pdfW);
+			}
+		}
+		if (Spectrum_IsBlack(fcos) || !(pdfW > 0.f)) {
 			// Culled proposal: counts toward M (it is a proposal draw)
 			// but can never win.
 			rec->pdfW = 0.f;
@@ -1517,7 +1560,7 @@ OPENCL_FORCE_NOT_INLINE bool RestirGI_EnqueueBounce(
 		}
 
 		VSTORE3F(dir, &rec->dirX);
-		VSTORE3F(bsdfSample * pdfW, &rec->fcosR);
+		VSTORE3F(fcos, &rec->fcosR);
 		rec->pdfW = pdfW;
 		rec->event = (uint)event;
 		rec->miss = 0u;
