@@ -2599,6 +2599,9 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		const ConnectToEyeCallBackType &ConnectToEyeCallBack,
 		const SspTail *sspTail) const {
 	sampleResults.clear();
+	// One result per light-path vertex at most: pre-reserve so the
+	// resize(size + 1) growth in AddLightSampleResult never reallocates
+	sampleResults.reserve(maxPathDepth.depth + 2);
 
 	// Spectral transport: draw the path wavelengths (the extra boot
 	// dimension allocated by ParseOptions) for the light path

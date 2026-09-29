@@ -32,6 +32,7 @@
 #include "slg/engines/caches/photongi/tracephotonsthread.h"
 #include "slg/utils/pathinfo.h"
 #include "slg/scene/scene.h"
+#include "slg/lights/lightsourcedefs.h"
 #include "slg/materials/materialdefs.h"
 #include "slg/volumes/homogenous.h"
 
@@ -959,9 +960,7 @@ void PhotonGICache::BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
 	}
 }
 
-SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
-	SpectrumGroup result;
-
+void PhotonGICache::ConnectCausticBeams(const BSDF &bsdf, SpectrumGroup &result) const {
 	const Point &x = bsdf.hitPoint.p;
 	const float r = params.caustic.lookUpRadius;
 	const float r2 = params.caustic.lookUpRadius2;
@@ -1005,22 +1004,22 @@ SpectrumGroup PhotonGICache::ConnectCausticBeams(const BSDF &bsdf) const {
 	result /= causticPhotonTracedCount * (4.f / 3.f * M_PI * r2 * r);
 
 	assert (result.IsValid());
-	return result;
 }
 
 SpectrumGroup PhotonGICache::ConnectWithCausticPaths(const BSDF &bsdf) const {
 	assert (IsPhotonGIEnabled(bsdf));
 
-	SpectrumGroup result;
+	// Pre-size to the light group count so in-loop Add() never reallocates
+	SpectrumGroup result(scene->GetLightSources().GetSize());
 	// Volume vertices in homogeneous media are answered by the beam
 	// estimator: every caustic point deposit in such a medium also produced
 	// a beam, so the two estimates stay disjoint. All other vertices
 	// (surfaces, heterogeneous/clear volumes) use the point-photon kernel.
 	if (bsdf.IsVolume() && params.caustic.volumeBeams && causticBeamsIndex &&
 			(bsdf.GetMaterial()->GetType() == HOMOGENEOUS_VOL)) {
-		result = ConnectCausticBeams(bsdf);
+		ConnectCausticBeams(bsdf, result);
 	} else if (causticPhotonsBVH) {
-		result = causticPhotonsBVH->ConnectAllNearEntries(bsdf);
+		causticPhotonsBVH->ConnectAllNearEntries(bsdf, result);
 	}
 
 	assert (result.IsValid());

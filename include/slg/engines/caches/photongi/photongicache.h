@@ -399,7 +399,7 @@ private:
 			std::unique_ptr<PGICBeamIndex> &dst, const float radius);
 	void UpdateWorker();
 	void ApplyPendingUpdate() noexcept;
-	luxrays::SpectrumGroup ConnectCausticBeams(const BSDF &bsdf) const;
+	void ConnectCausticBeams(const BSDF &bsdf, luxrays::SpectrumGroup &result) const;
 	void FilterVisibilityParticlesRadiance(const std::vector<luxrays::SpectrumGroup> &radianceValues,
 			std::vector<luxrays::SpectrumGroup> &filteredRadianceValues) const;
 	void CreateRadiancePhotons();

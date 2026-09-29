@@ -132,3 +132,21 @@ External review of the SSP GPU port found one blocker plus hardening:
 Verified: e93_ssp_tail 6/6 (GPU parity 0.99994, tail replay active),
 e52 adaptive-noise 5/5, WaitForDone haltspp=8 returns 0.41s on a bare
 caller, Release build clean.
+
+## Hot-loop allocation round (post-RTTI)
+
+Second profile pass on `prism-conservatory` PATHCPU: allocator hits
+concentrated in `PGICPhotonBvh::ConnectAllNearEntries` (102),
+`PhotonGICache::ConnectWithCausticPaths` (69), `RenderLightSample` (42),
+`RenderEyePath` (30), `DirectHitInfiniteLight` (34).
+
+Root cause: `SpectrumGroup::Add` auto-grows an internal
+`std::vector<Spectrum>` — every photon/beam connect allocated. Fixed by
+pre-sizing the result to the light count once per query and
+accumulating in place (helpers now take `SpectrumGroup &`), plus
+`sampleResults.reserve(maxPathDepth.depth + 2)` in
+`RenderLightSample`.
+
+prism-conservatory PATHCPU: 0.256 -> 0.31 Ms/s (+21%; ~72% cumulative
+vs 0.18 Ms/s baseline). e90/e91/e54 PASS. Doc:
+`doc/engineering/hot-loop-allocations.md`.

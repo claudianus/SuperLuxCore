@@ -44,7 +44,8 @@ PGICPhotonBvh::PGICPhotonBvh(const SpillableArray<Photon> *entries, const u_int 
 PGICPhotonBvh::~PGICPhotonBvh() {
 }
 
-SpectrumGroup PGICPhotonBvh::ConnectCacheEntry(const Photon &photon, const BSDF &bsdf) const {
+void PGICPhotonBvh::ConnectCacheEntry(const Photon &photon, const BSDF &bsdf,
+		SpectrumGroup &result) const {
 	BSDFEvent event;
 	float directPdfW;
 	Spectrum bsdfEval = bsdf.Evaluate(-photon.d, &event, &directPdfW, nullptr);
@@ -56,19 +57,14 @@ SpectrumGroup PGICPhotonBvh::ConnectCacheEntry(const Photon &photon, const BSDF 
 	else
 		bsdfEval = (directPdfW > 0.f) ? bsdfEval / directPdfW : Spectrum();
 
-	SpectrumGroup result;
 	result.Add(photon.lightID, photon.alpha * bsdfEval);
-
-	return result;
 }
 
-SpectrumGroup PGICPhotonBvh::ConnectAllNearEntries(const BSDF &bsdf) const {
+void PGICPhotonBvh::ConnectAllNearEntries(const BSDF &bsdf, SpectrumGroup &result) const {
 	const Point &p = bsdf.hitPoint.p;
 	// Flip the normal if required
 	const Normal n = (bsdf.hitPoint.intoObject ? 1.f: -1.f) * bsdf.hitPoint.geometryN;
 	const bool isVolume = bsdf.IsVolume();
-
-	SpectrumGroup result;
 
 	u_int currentNode = 0; // Root Node
 	const u_int stopNode = IndexBVHNodeData_GetSkipIndex(arrayNodes[0].nodeData); // Non-existent
@@ -88,7 +84,7 @@ SpectrumGroup PGICPhotonBvh::ConnectAllNearEntries(const BSDF &bsdf) const {
 						(Dot(n, entry.landingSurfaceNormal) > entryNormalCosAngle)))) {
 				// I have found a valid entry
 
-				result += ConnectCacheEntry(entry, bsdf);
+				ConnectCacheEntry(entry, bsdf, result);
 			}
 
 			++currentNode;
@@ -110,8 +106,6 @@ SpectrumGroup PGICPhotonBvh::ConnectAllNearEntries(const BSDF &bsdf) const {
 		result /= photonTracedCount * (4.f / 3.f * M_PI * entryRadius2 * entryRadius);
 	else
 		result /= photonTracedCount * (M_PI * entryRadius2);
-
-	return result;
 }
 
 //------------------------------------------------------------------------------
