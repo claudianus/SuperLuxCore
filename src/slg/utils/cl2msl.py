@@ -256,39 +256,40 @@ def _fn_spans(text: str):
     """Yield (name, header_start, body_open, body_close) for every
     'inline ... NAME(' / 'kernel void NAME(' function definition."""
     spans = []
+    scan = _scan_safe(text)
     pat = re.compile(
         r"^(?:__attribute__\(\(noinline\)\)\s+)?(?:inline\s+)?[A-Za-z_][A-Za-z0-9_:<> \*&]*?\s\**([A-Za-z_][A-Za-z0-9_]*)\s*\(",
         re.M,
     )
-    for m in pat.finditer(text):
+    for m in pat.finditer(scan):
         # signature close
         d = 0
         i = m.end() - 1
-        while i < len(text):
-            if text[i] == "(":
+        while i < len(scan):
+            if scan[i] == "(":
                 d += 1
-            elif text[i] == ")":
+            elif scan[i] == ")":
                 d -= 1
                 if d == 0:
                     break
             i += 1
-        if i >= len(text):
+        if i >= len(scan):
             continue
-        b_open = text.find("{", i)
-        if b_open == -1 or text[i:b_open].count(";"):
+        b_open = scan.find("{", i)
+        if b_open == -1 or scan[i:b_open].count(";"):
             continue  # prototype, not a definition
         # match braces
         d = 0
         j = b_open
-        while j < len(text):
-            if text[j] == "{":
+        while j < len(scan):
+            if scan[j] == "{":
                 d += 1
-            elif text[j] == "}":
+            elif scan[j] == "}":
                 d -= 1
                 if d == 0:
                     break
             j += 1
-        if j >= len(text):
+        if j >= len(scan):
             continue
         spans.append((m.group(1), m.start(), b_open, j))
     return spans
@@ -301,6 +302,42 @@ def _code_only(body: str) -> str:
     cannot truncate real code."""
     body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
     return re.sub(r"^[ \t]*//[^\n]*$", "", body, flags=re.M)
+
+
+def _scan_safe(text: str) -> str:
+    """Comment-blanked copy for span SCANNING: same length, same newlines,
+    every comment character replaced by a space. Paren/brace walkers that
+    run over the raw text see comment '('/')'/'{'/'}' and lose track - a
+    single unbalanced '(' inside a // comment made rule_scalar_ptr_params
+    swallow ~5000 lines and skip the thread-pointer rewrite in all
+    swallowed function signatures (silent Metal 'pointer type must have
+    explicit address space qualifier' cascade far downstream)."""
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            out[i] = out[i + 1] = " "
+            i += 2
+            while i < n - 1 and not (text[i] == "*" and text[i + 1] == "/"):
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i < n - 1:
+                out[i] = out[i + 1] = " "
+                i += 2
+        else:
+            i += 1
+    return "".join(out)
 
 
 def propagate_gid(text: str) -> str:
@@ -511,12 +548,13 @@ def rule_scalar_ptr_params(body: str) -> str:
     # find all signature starts: lines with 'name(' preceded by a
     # definition-ish prefix
     out = body
+    scan = _scan_safe(out)
     # iterate over candidate openings
     pat = re.compile(r"^([^;\n()]*\b[A-Za-z_][A-Za-z0-9_]*\s*)\(", re.M)
     pos = 0
     pieces = []
     while pos < len(out):
-        m = pat.search(out, pos)
+        m = pat.search(scan, pos)
         if not m:
             pieces.append(out[pos:])
             break
@@ -524,20 +562,20 @@ def rule_scalar_ptr_params(body: str) -> str:
         # walk to matching ')'
         depth = 0
         k = start
-        while k < len(out):
-            if out[k] == "(":
+        while k < len(scan):
+            if scan[k] == "(":
                 depth += 1
-            elif out[k] == ")":
+            elif scan[k] == ")":
                 depth -= 1
                 if depth == 0:
                     break
             k += 1
-        if k >= len(out):
+        if k >= len(scan):
             pieces.append(out[pos:])
             break
         # only treat as signature if the closing paren is followed by
         # whitespace/{ on the same-ish position (a definition, not a call)
-        after = out[k + 1 : k + 4].lstrip()
+        after = scan[k + 1 : k + 4].lstrip()
         if after.startswith("{") or after.startswith("\n"):
             span = out[start + 1 : k]
             span2 = re.sub(
@@ -627,41 +665,42 @@ def _rewrite_kernel_bodies_only(text: str) -> str:
     shortcut path, which does not walk kernel bodies itself."""
     out = []
     pos = 0
+    scan = _scan_safe(text)
     pat = re.compile(r"^kernel void\s+\w+\s*\(", re.M)
     while pos < len(text):
-        m = pat.search(text, pos)
+        m = pat.search(scan, pos)
         if not m:
             out.append(text[pos:])
             break
         s = m.end() - 1
         depth = 0
         k = s
-        while k < len(text):
-            if text[k] == "(":
+        while k < len(scan):
+            if scan[k] == "(":
                 depth += 1
-            elif text[k] == ")":
+            elif scan[k] == ")":
                 depth -= 1
                 if depth == 0:
                     break
             k += 1
-        if k >= len(text):
+        if k >= len(scan):
             out.append(text[pos:])
             break
-        b_open = text.find("{", k + 1)
+        b_open = scan.find("{", k + 1)
         if b_open == -1:
             out.append(text[pos:])
             break
         d = 0
         j = b_open
-        while j < len(text):
-            if text[j] == "{":
+        while j < len(scan):
+            if scan[j] == "{":
                 d += 1
-            elif text[j] == "}":
+            elif scan[j] == "}":
                 d -= 1
                 if d == 0:
                     break
             j += 1
-        if j >= len(text):
+        if j >= len(scan):
             out.append(text[pos:])
             break
         out.append(text[pos : b_open + 1])
