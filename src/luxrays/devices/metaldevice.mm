@@ -1062,10 +1062,32 @@ void MetalDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,
 		throw std::runtime_error("MetalDevice::EnqueueReadBuffer() size exceeds buffer capacity");
 
 	// Shared storage: the host pointer IS the buffer contents, but the
-	// kernels that produced it may still be executing. OpenCL's async
-	// read defers the copy through the in-order queue; with a plain
-	// host-side memcpy we must drain the queue FIRST or we copy zeros.
-	FinishQueue();
+	// kernels that produced it may still be executing. Wait only on the
+	// LATEST in-flight command buffer referencing this buffer: command
+	// buffers on one queue complete in commit order, so that wait
+	// transitively covers every earlier conflicting dispatch while
+	// unrelated work keeps overlapping the host copy. Completed entries
+	// are pruned in the same pass so inFlightWork can not grow
+	// unboundedly when reads replace FinishQueue() drains.
+	MTLCommandBufferHandle blocker = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(inFlightMutex);
+		CommitPendingLocked();
+		for (auto it = inFlightWork.begin(); it != inFlightWork.end(); ) {
+			id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)it->cb;
+			if (cb.status == MTLCommandBufferStatusCompleted) {
+				[cb release];
+				it = inFlightWork.erase(it);
+				continue;
+			}
+			auto &bufs = it->buffers;
+			if (std::find(bufs.begin(), bufs.end(), metalBuff) != bufs.end())
+				blocker = it->cb;
+			++it;
+		}
+	}
+	if (blocker)
+		[(__bridge id<MTLCommandBuffer>)blocker waitUntilCompleted];
 	memcpy(ptr, [(__bridge id<MTLBuffer>)metalBuff->metalBuff contents], size);
 }
 
