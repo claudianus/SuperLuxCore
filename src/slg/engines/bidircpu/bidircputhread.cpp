@@ -23,6 +23,7 @@
 #include <cassert>
 #include <boost/format.hpp>
 
+#include "luxrays/core/color/spectral.h"
 #include "luxrays/core/device.h"
 #include "luxrays/core/intersectiondevice.h"
 #include "luxrays/usings.h"
@@ -82,9 +83,11 @@ void BiDirCPURenderThread::AOVWarmUp(
 	// Request the samples
 	const u_int sampleBootSize = 5;
 	const u_int sampleStepSize = 3;
-	const u_int sampleSize = 
+	const u_int spectralDim =
 		sampleBootSize + // To generate eye ray
 		engine->maxEyePathDepth * sampleStepSize; // For each path vertex
+	const u_int sampleSize =
+		spectralDim + (engine->pathTracer.spectralEnable ? 1 : 0);
 	sampler.RequestSamples(ONLY_AOV_SAMPLE, sampleSize);
 
 	// Initialize SampleResult 
@@ -122,6 +125,11 @@ void BiDirCPURenderThread::AOVWarmUp(
 		sampleResult.albedo = Spectrum(); // Just in case albedoToDo is never true
 		sampleResult.shadingNormal = Normal();
 
+		PathWavelengths sw;
+		if (engine->pathTracer.spectralEnable)
+			sw.Sample(sampler.GetSample(spectralDim));
+		const Spectral::ScopeWavelengths wlScope(sw);
+
 		Spectrum pathThroughput(1.f);
 		u_int depth = 0;
 		BSDFEvent lastBSDFEvent = SPECULAR;
@@ -140,6 +148,8 @@ void BiDirCPURenderThread::AOVWarmUp(
 			depthInfo.diffuseDepth = 0;
 			depthInfo.glossyDepth = 0;
 			depthInfo.specularDepth = 0;
+			depthInfo.regularization = engine->pathTracer.regularizationSigma;
+			depthInfo.regularizationMinDepth = engine->pathTracer.regularizationMinDepth;
 			const bool hit = scene.Intersect(IntersectionDevicePtr(&device),
 					EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
 					&volInfo, sampler.GetSample(sampleOffset),
@@ -192,6 +202,9 @@ void BiDirCPURenderThread::AOVWarmUp(
 
 			eyeRay.Update(bsdf.GetRayOrigin(sampledDir), sampledDir);
 		}
+
+		if (wlScope.Active())
+			PathTracer::ProjectSampleResultToRGB(sampleResult, sw);
 
 		sampler.NextSample(sampleResults);
 
@@ -704,6 +717,10 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 			depthInfo.diffuseDepth = 0;
 			depthInfo.glossyDepth = 0;
 			depthInfo.specularDepth = 0;
+			// PSR: options are parsed into pathTracer; seed them so
+			// HitPoint::SetRayContext regularizes far-depth vertices.
+			depthInfo.regularization = engine->pathTracer.regularizationSigma;
+			depthInfo.regularizationMinDepth = engine->pathTracer.regularizationMinDepth;
 			const bool hit = scene.Intersect(
 					luxrays::make_observer(device),
 					LIGHT_RAY | INDIRECT_RAY,
@@ -891,10 +908,14 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 		engine->samplerSharedData,
 		Properties()
 	);
-	const u_int sampleSize =
+	// The wavelength draw gets one dedicated dimension appended after all
+	// boot/step dimensions so existing offsets stay stable.
+	const u_int spectralDim =
 		sampleBootSize + // To generate the initial light vertex and trace eye ray
 		engine->maxLightPathDepth * sampleLightStepSize + // For each light vertex
 		engine->maxEyePathDepth * sampleEyeStepSize; // For each eye vertex
+	const u_int sampleSize =
+		spectralDim + (engine->pathTracer.spectralEnable ? 1 : 0);
 	sampler->SetThreadIndex(threadIndex);
 	sampler->RequestSamples(PIXEL_NORMALIZED_AND_SCREEN_NORMALIZED, sampleSize);
 
@@ -922,6 +943,17 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 
 		sampleResults.clear();
 		lightPathVertices.clear();
+
+		// Hero-wavelength spectral transport: one shared wavelength set
+		// per sample covers the light subpath AND the eye subpath (a
+		// connect is only a valid path sample when both ends evaluate
+		// the same wavelengths). A dispersive bounce on either subpath
+		// collapses the shared live-mask, so the whole path keeps only
+		// the hero bin — matching single-wavelength path semantics.
+		PathWavelengths sw;
+		if (engine->pathTracer.spectralEnable)
+			sw.Sample(sampler->GetSample(spectralDim));
+		const Spectral::ScopeWavelengths wlScope(sw);
 
 		const float timeSample = sampler->GetSample(12);
 		const float time = scene.GetCamera().GenerateRayTime(timeSample);
@@ -996,6 +1028,10 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 				depthInfo.diffuseDepth = 0;
 				depthInfo.glossyDepth = 0;
 				depthInfo.specularDepth = 0;
+				// PSR: options are parsed into pathTracer; seed them so
+				// HitPoint::SetRayContext regularizes far-depth vertices.
+				depthInfo.regularization = engine->pathTracer.regularizationSigma;
+				depthInfo.regularizationMinDepth = engine->pathTracer.regularizationMinDepth;
 				const bool hit = scene.Intersect(
 						luxrays::make_observer(device),
 						EYE_RAY | (eyeSampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
@@ -1152,6 +1188,12 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 		}
 		
 		assert (SampleResult::IsAllValid(sampleResults));
+
+		// Project spectral bins back to film RGB before clamping (same
+		// order as PathTracer::RenderEyeSample)
+		if (wlScope.Active())
+			for (auto &sr : sampleResults)
+				PathTracer::ProjectSampleResultToRGB(sr, sw);
 
 		// Variance clamping
 		if (varianceClamping.hasClamping()) {

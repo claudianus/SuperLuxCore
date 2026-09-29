@@ -23,6 +23,7 @@
 #include <memory>
 #include <mutex>
 
+#include "luxrays/core/color/spectral.h"
 #include "slg/slg.h"
 #include "slg/engines/cpurenderengine.h"
 #include "slg/samplers/sampler.h"
@@ -196,6 +197,13 @@ public:
 	static luxrays::PropertiesUPtr ToProperties(const luxrays::Properties &cfg);
 	static luxrays::PropertiesUPtr GetDefaultProps();
 
+	// Project all spectral color fields of a SampleResult (wavelength
+	// bins) back to film RGB under the CIE matching functions; data
+	// fields (positions, normals, IDs, alpha, masks) are untouched.
+	// Shared by the CPU path engines and BIDIRCPU.
+	static void ProjectSampleResultToRGB(SampleResult &sr,
+			const luxrays::PathWavelengths &sw);
+
 	// LPE: accumulate r into the lpeRadiance slots of every expression
 	// whose NFA accepts the terminal symbol sym (see slg/utils/lpe.h).
 	// The (vSym, sym) overload is for next-event connections: the
@@ -247,7 +255,7 @@ public:
 
 	// Hero-wavelength spectral transport (P2-1): when enabled, each path
 	// draws 3 stratified wavelengths and Spectrum channels carry spectral
-	// bins instead of RGB primaries. CPU path engines only.
+	// bins instead of RGB primaries. CPU path engines + BIDIRCPU.
 	bool spectralEnable;
 	// RGB->SPD upsampling model (path.spectral.upsampling): false = Smits
 	// basis (default, zero regression), true = Jakob-Hanika 2019 sigmoid

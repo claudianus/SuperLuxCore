@@ -1,7 +1,7 @@
 # Spectral Rendering — hero-wavelength spectral transport
 
-Status: implemented (CPU + GPU). True per-wavelength sampling instead of a
-fixed RGB triple, enabling physically-correct dispersion.
+Status: implemented (CPU path engines + BIDIRCPU + GPU). True per-wavelength
+sampling instead of a fixed RGB triple, enabling physically-correct dispersion.
 
 ## What and why
 
@@ -29,6 +29,7 @@ path (hero + 2 rotated).
 | `A2: GPU hero-wavelength spectral transport` | Same transport on OpenCL/Metal PATHOCL engines. |
 | `spectral GPU hardening` | NaN/OOB guards (added after a WindowServer watchdog panic). |
 | `export spectral flag for RTPATHCPU` | Blender UI exposes the spectral option. |
+| `BIDIRCPU spectral transport` | One shared `PathWavelengths` per sample covers both the light subpath and the eye subpath (a connect is only valid on matching wavelengths); a dispersive bounce on either side collapses the shared live-mask. `PathTracer::ProjectSampleResultToRGB` is hoisted for reuse. |
 
 - Spectral tables (CIE, Planck SPD, Smits RGB->SPD) are shared between CPU and
   the `.cl` kernel source (duplicated constant tables — the codebase has no
@@ -101,3 +102,7 @@ precedence when both are set); any other value is rejected with an error.
   `dev-tools/jh2019_unit_check.cpp` (white→1, [0,1] bound, flat
   achromatics, round-trip vs Smits) and renders the Cornell scene on
   CPU + OpenCL + Metal in both modes.
+- `dev-tools/e101_bidir_spectral_test.py` — BIDIRCPU spectral:
+  renders finite, engages (differs from RGB), and matches PATHCPU
+  spectral within the estimator-family band (BDPT connects recover
+  extra energy; ~1.05-1.07 measured on cornell-spectral-area).

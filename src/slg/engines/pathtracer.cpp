@@ -1970,7 +1970,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 // Project every spectral color field of a SampleResult (wavelength bins)
 // back to film RGB under the CIE matching functions. Data fields (positions,
 // normals, IDs, alpha, masks) are left untouched.
-static void ProjectSampleResultToRGB(SampleResult &sr, const PathWavelengths &sw) {
+void PathTracer::ProjectSampleResultToRGB(SampleResult &sr, const PathWavelengths &sw) {
 	for (u_int i = 0; i < sr.radiance.Size(); ++i)
 		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], sw);
 	sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, sw);

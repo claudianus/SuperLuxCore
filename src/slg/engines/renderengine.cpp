@@ -305,9 +305,10 @@ RenderEngineUPtr RenderEngine::FromProperties(RenderConfigRef rcfg) {
 		const RenderEngineType engineType = String2RenderEngineType(type);
 		if ((engineType != PATHCPU) && (engineType != TILEPATHCPU) &&
 				(engineType != RTPATHCPU) && (engineType != LIGHTCPU) &&
+				(engineType != BIDIRCPU) &&
 				(engineType != PATHOCL) && (engineType != TILEPATHOCL) &&
 				(engineType != RTPATHOCL))
-			throw runtime_error("path.spectral.enable is supported only by PATHCPU, TILEPATHCPU, RTPATHCPU, LIGHTCPU, PATHOCL, TILEPATHOCL and RTPATHOCL engines: " + type);
+			throw runtime_error("path.spectral.enable is supported only by PATHCPU, TILEPATHCPU, RTPATHCPU, LIGHTCPU, BIDIRCPU, PATHOCL, TILEPATHOCL and RTPATHOCL engines: " + type);
 
 		// PhotonGI caches store RGB photon radiance: under spectral
 		// transport the cache values are (silently) multiplied by
