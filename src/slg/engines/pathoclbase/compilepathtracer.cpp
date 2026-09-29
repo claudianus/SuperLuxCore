@@ -45,6 +45,10 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.varianceClampScope = pathTracer->varianceClampScope;
 	compiledPathTracer.varianceClampSigma = pathTracer->varianceClampSigma;
 
+	// PSR: seeded into each path's PathDepthInfo by the init kernels
+	compiledPathTracer.regularizationSigma = pathTracer->regularizationSigma;
+	compiledPathTracer.regularizationMinDepth = pathTracer->regularizationMinDepth;
+
 	compiledPathTracer.hybridBackForward.enabled = pathTracer->hybridBackForwardEnable;
 	compiledPathTracer.hybridBackForward.glossinessThreshold = pathTracer->hybridBackForwardGlossinessThreshold;
 	compiledPathTracer.hybridBackForward.adaptiveCaustic = pathTracer->hybridBackForwardAdaptiveCaustic;

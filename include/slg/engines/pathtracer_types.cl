@@ -35,6 +35,12 @@ typedef struct {
 	unsigned int varianceClampScope;
 	float varianceClampSigma;
 
+	// Path-space regularization (PSR, path.regularization.*): seeded
+	// into PathDepthInfo at path init, gated into HitPoint.regularization
+	// per vertex; microfacet materials read it via BSDF_RegularizeAlpha.
+	float regularizationSigma;
+	unsigned int regularizationMinDepth;
+
 	int forceBlackBackground;
 
 	// ReSTIR DI direct light resampling: RIS reservoir over the light

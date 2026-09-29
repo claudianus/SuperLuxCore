@@ -34,6 +34,8 @@ PathDepthInfo::PathDepthInfo() {
 	specularDepth = 0;
 	transmitDepth = 0;
 	transparentDepth = 0;
+	regularization = 0.f;
+	regularizationMinDepth = 0;
 }
 
 void PathDepthInfo::IncDepths(const BSDFEvent event) {

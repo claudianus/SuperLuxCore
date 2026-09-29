@@ -114,5 +114,9 @@ void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
 	rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0;
 	rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0;
 	rayLength = length;
+	// PSR: the engine seeds PathDepthInfo::regularization at path init;
+	// gate it per vertex so first-bounce shading stays exact
+	regularization = (depthInfo && (depthInfo->depth >= depthInfo->regularizationMinDepth)) ?
+			depthInfo->regularization : 0.f;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -30,6 +30,7 @@ OPENCL_FORCE_INLINE void HitPoint_InitRayContext(__global HitPoint *hitPoint) {
 	hitPoint->rayTransmissionDepth = 0u;
 	hitPoint->rayTransparentDepth = 0u;
 	hitPoint->rayLength = 0.f;
+	hitPoint->regularization = 0.f;
 }
 
 // Used when hitting a surface

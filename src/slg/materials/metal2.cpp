@@ -143,10 +143,10 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
 	// GGX path: perceptual roughnesses map to squared GGX alphas
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	const Vector wh(Normalize(localLightDir + localEyeDir));
 	const float cosWH = Dot(localLightDir, wh);
@@ -211,9 +211,10 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	Vector wh;
 	float d, specPdf;
@@ -289,9 +290,10 @@ void Metal2Material::Pdf(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	const Vector wh(Normalize(localLightDir + localEyeDir));
 

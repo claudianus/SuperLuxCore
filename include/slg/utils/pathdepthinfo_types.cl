@@ -25,5 +25,11 @@ typedef struct {
 	// while stepping through pass-through materials). Exposed to shading
 	// through the "rayinfo" texture.
 	unsigned int transmitDepth, transparentDepth;
+
+	// Path-space regularization (PSR, path.regularization.*): the
+	// engine seeds sigma/minDepth at path init; HitPoint_SetRayContext
+	// gates them into HitPoint.regularization per vertex. 0 = off.
+	float regularization;
+	unsigned int regularizationMinDepth;
 } PathDepthInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

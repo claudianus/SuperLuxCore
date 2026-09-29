@@ -118,6 +118,10 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	EyePathInfo_Init(pathInfo);
+	// PSR: seed the per-path regularization state (HitPoint_SetRayContext
+	// gates it into each vertex by depth)
+	pathInfo->depth.regularization = taskConfig->pathTracer.regularizationSigma;
+	pathInfo->depth.regularizationMinDepth = taskConfig->pathTracer.regularizationMinDepth;
 
 	// LPE: seed each expression's NFA with its camera-stepped start set
 	// (EyePathInfo::InitLPE)

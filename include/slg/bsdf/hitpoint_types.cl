@@ -100,5 +100,10 @@ typedef struct {
 	unsigned int rayTransparentDepth;
 	// The length of the incoming ray segment
 	float rayLength;
+
+	// Path-space regularization: effective microfacet-alpha inflation
+	// for this vertex (0 = disabled), gated into place by
+	// HitPoint_SetRayContext from PathDepthInfo.regularization.
+	float regularization;
 } HitPoint;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

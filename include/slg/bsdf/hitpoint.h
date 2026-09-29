@@ -102,6 +102,12 @@ typedef struct HitPoint_t {
 	// The length of the incoming ray segment
 	float rayLength;
 
+	// Path-space regularization: effective microfacet-alpha inflation
+	// for this vertex (0 = disabled). Gated from
+	// PathDepthInfo::regularization by SetRayContext; rough-lobe
+	// materials read it through RegularizeAlpha().
+	float regularization;
+
 	// Used when hitting a surface
 	//
 	// Note: very important, this method assume localToWorld file has been _already_

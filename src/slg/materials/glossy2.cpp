@@ -18,6 +18,7 @@
 
 #include "slg/textures/fresnel/fresneltexture.h"
 #include "slg/materials/glossy2.h"
+#include "slg/materials/microfacet.h"
 
 using namespace std;
 using namespace luxrays;
@@ -80,10 +81,11 @@ Spectrum Glossy2Material::Evaluate(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
 	// GGX path: perceptual roughnesses map to squared GGX alphas directly
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	if (directPdfW) {
 		if ((!doublesided) && (localFixedDir.z < 0.f)) {
@@ -180,9 +182,10 @@ Spectrum Glossy2Material::Sample(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	// Coating is used only on the front face
 	const float wCoating = SchlickBSDF_CoatingWeight(ks, localFixedDir);
@@ -269,9 +272,10 @@ void Glossy2Material::Pdf(const HitPoint &hitPoint,
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
-	const float alphaT = Max(u2, 1e-4f);
-	const float alphaB = Max(v2, 1e-4f);
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = RegularizeAlpha(hitPoint, u * v);
+	const float alphaT = RegularizeAlpha(hitPoint, Max(u2, 1e-4f));
+	const float alphaB = RegularizeAlpha(hitPoint, Max(v2, 1e-4f));
 
 	if (directPdfW) {
 		if ((!doublesided) && (localFixedDir.z < 0.f)) {

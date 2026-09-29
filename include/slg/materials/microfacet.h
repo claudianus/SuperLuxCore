@@ -36,6 +36,16 @@
 
 namespace slg {
 
+// Path-space regularization (PSR, Kaplanyan & Dachsbacher 2013 /
+// Weier et al. 2021 OPSR; path.regularization.*): inflate a microfacet
+// alpha by the vertex's regularization carried on the hit point.
+// Sample/Evaluate/Pdf must all see the same inflated alpha; delta
+// lobes and un-gated vertices (regularization == 0) pass through.
+inline float RegularizeAlpha(const HitPoint &hitPoint, const float alpha) {
+	const float reg = hitPoint.regularization;
+	return (reg > 0.f) ? sqrtf(alpha * alpha + reg * reg) : alpha;
+}
+
 // Anisotropic GGX (Trowbridge-Reitz) NDF. alphaX/alphaY are the squared
 // perceptual roughnesses along the local X (tangent) and Y axes.
 inline float GgxD(const luxrays::Vector &wh, const float alphaX, const float alphaY) {

@@ -113,10 +113,11 @@ OPENCL_FORCE_INLINE void Metal2Material_Evaluate(__global const Material* restri
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = Microfacet_RegularizeAlpha(hitPoint, u * v);
 	const bool useGgx = material->metal2.useGgx;
-	const float alphaT = fmax(u2, 1e-4f);
-	const float alphaB = fmax(v2, 1e-4f);
+	const float alphaT = Microfacet_RegularizeAlpha(hitPoint, fmax(u2, 1e-4f));
+	const float alphaB = Microfacet_RegularizeAlpha(hitPoint, fmax(v2, 1e-4f));
 
 	const float3 wh = normalize(lightDir + eyeDir);
 	const float cosWH = dot(lightDir, wh);
@@ -178,10 +179,11 @@ OPENCL_FORCE_INLINE void Metal2Material_Sample(__global const Material* restrict
 	const float u2 = u * u;
 	const float v2 = v * v;
 	const float anisotropy = (u2 < v2) ? (1.f - u2 / v2) : u2 > 0.f ? (v2 / u2 - 1.f) : 0.f;
-	const float roughness = u * v;
+	// PSR: inflate the lobe widths for regularized secondary vertices
+	const float roughness = Microfacet_RegularizeAlpha(hitPoint, u * v);
 	const bool useGgx = material->metal2.useGgx;
-	const float alphaT = fmax(u2, 1e-4f);
-	const float alphaB = fmax(v2, 1e-4f);
+	const float alphaT = Microfacet_RegularizeAlpha(hitPoint, fmax(u2, 1e-4f));
+	const float alphaB = Microfacet_RegularizeAlpha(hitPoint, fmax(v2, 1e-4f));
 
 	float3 wh;
 	float d = 0.f, specPdf = 0.f;

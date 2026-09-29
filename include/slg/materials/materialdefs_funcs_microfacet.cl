@@ -29,6 +29,14 @@
 //   - Zeltner SGGX-LTC fuzz/sheen: Zeltner 2022 (MaterialX pbrlib impl.)
 //------------------------------------------------------------------------------
 
+// PSR twin of microfacet.h::RegularizeAlpha: inflate a microfacet
+// alpha by the vertex's hitPoint->regularization (0 = pass-through).
+OPENCL_FORCE_INLINE float Microfacet_RegularizeAlpha(__global const HitPoint *hitPoint,
+		const float alpha) {
+	const float reg = hitPoint->regularization;
+	return (reg > 0.f) ? sqrt(alpha * alpha + reg * reg) : alpha;
+}
+
 // Anisotropic GGX NDF.
 OPENCL_FORCE_INLINE float Microfacet_GgxD(const float3 wh,
 		const float alphaX, const float alphaY) {

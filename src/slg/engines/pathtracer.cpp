@@ -113,7 +113,7 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		restirGITemporalEnable(true), restirGISpatialEnable(true),
 		restirPT(nullptr), restirPTEnable(false), restirPTCandidates(4),
 		restirPTTemporalEnable(true), restirPTSpatialEnable(true),
-		sspEnable(false) {
+		sspEnable(false), regularizationSigma(0.f), regularizationMinDepth(1) {
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -2012,6 +2012,10 @@ void PathTracer::RenderEyeSample(
 
 	EyePathInfo pathInfo;
 	pathInfo.InitLPE(film.GetLPEAutomata(), film.GetLPECount());
+	// PSR: seed the per-path regularization state; HitPoint::SetRayContext
+	// gates it into each vertex's hitPoint.regularization by depth
+	pathInfo.depth.regularization = regularizationSigma;
+	pathInfo.depth.regularizationMinDepth = regularizationMinDepth;
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
 
@@ -2637,6 +2641,10 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		assert (!lightPathFlux.IsNaN() && !lightPathFlux.IsInf());
 
 		LightPathInfo pathInfo;
+		// PSR: light-side vertices regularize identically so blurred-lobe
+		// connections (vertex connect / hybrid splats) stay consistent
+		pathInfo.depth.regularization = regularizationSigma;
+		pathInfo.depth.regularizationMinDepth = regularizationMinDepth;
 
 		// Caustic focus cache: position of the first delta-specular
 		// vertex of this path (credited into the emitting light's
@@ -2913,6 +2921,13 @@ void PathTracer::ParseOptions(
 				(((scope == "all") || (scope == "ALL")) ? VarianceClamping::CLAMP_ALL : VarianceClamping::CLAMP_INDIRECT);
 	}
 	varianceClampSigma = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.variance.sigma")).Get<float>());
+
+	// PSR (path.regularization.*): sigma is the microfacet-alpha blur
+	// radius applied at vertices with rayDepth >= mindepth; both sides
+	// of the path (eye + light) carry the same values so blurred-lobe
+	// connections stay mutually consistent.
+	regularizationSigma = Max(0.f, cfg.Get(defaultProps.Get("path.regularization.sigma")).Get<float>());
+	regularizationMinDepth = (u_int)Max(0, cfg.Get(defaultProps.Get("path.regularization.mindepth")).Get<int>());
 
 	forceBlackBackground = cfg.Get(defaultProps.Get("path.forceblackbackground.enable")).Get<bool>();
 	
@@ -3327,6 +3342,10 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.clamping.variance.adaptive")(true) <<
 			Property("path.clamping.variance.scope")("indirect") <<
 			Property("path.clamping.variance.sigma")(6.f) <<
+			// PSR (Kaplanyan'13 / Weier'21 OPSR): microfacet-alpha blur
+			// for secondary vertices; 0 sigma = off
+			Property("path.regularization.sigma")(0.f) <<
+			Property("path.regularization.mindepth")(1) <<
 			Property("path.forceblackbackground.enable")(false) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);

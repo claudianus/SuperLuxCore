@@ -50,6 +50,12 @@ public:
 	// updated by Scene::Intersect() while stepping through pass-through
 	// materials (Cycles LightPath "Transparent Depth").
 	u_int transparentDepth;
+
+	// Path-space regularization (PSR, path.regularization.*): the
+	// engine seeds sigma/minDepth at path init; HitPoint::SetRayContext
+	// gates them into HitPoint::regularization per vertex. 0 = off.
+	float regularization;
+	u_int regularizationMinDepth;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const PathDepthInfo &pdi) {

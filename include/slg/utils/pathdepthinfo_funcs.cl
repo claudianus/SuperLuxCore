@@ -29,6 +29,8 @@ OPENCL_FORCE_INLINE void PathDepthInfo_Init(__global PathDepthInfo *depthInfo) {
 	depthInfo->specularDepth = 0;
 	depthInfo->transmitDepth = 0;
 	depthInfo->transparentDepth = 0;
+	depthInfo->regularization = 0.f;
+	depthInfo->regularizationMinDepth = 0;
 }
 
 OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthInfo, const BSDFEvent event) {

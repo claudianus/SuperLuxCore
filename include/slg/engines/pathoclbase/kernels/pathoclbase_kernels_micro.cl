@@ -2930,6 +2930,10 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 			SAMPLER_PARAM);
 
 	LightPathInfo_Init(lpi);
+	// PSR: light-side vertices regularize identically (vertex connect /
+	// splat consistency with the eye side)
+	lpi->depth.regularization = taskConfig->pathTracer.regularizationSigma;
+	lpi->depth.regularizationMinDepth = taskConfig->pathTracer.regularizationMinDepth;
 
 	// A light sample was drawn; count it even if the emission fails
 	// (mirrors PathTracerThreadState::lightSampleCount accounting)

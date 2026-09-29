@@ -224,6 +224,13 @@ public:
 	int varianceClampScope;
 	float varianceClampSigma;
 
+	// Path-space regularization (path.regularization.*, PSR/OPSR):
+	// biased-but-consistent microfacet-alpha inflation for vertices at
+	// depth >= regularizationMinDepth, carried to shading through
+	// PathDepthInfo -> HitPoint.regularization. 0 disables.
+	float regularizationSigma;
+	u_int regularizationMinDepth;
+
 	// Hybrid backward/forward path tracing settings
 	float hybridBackForwardPartition, hybridBackForwardGlossinessThreshold;
 	// Adaptive caustic partition: widened chain membership (any

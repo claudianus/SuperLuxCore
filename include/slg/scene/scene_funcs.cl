@@ -32,6 +32,11 @@ OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 	hitPoint->rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0u;
 	hitPoint->rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0u;
 	hitPoint->rayLength = length;
+	// PSR: seed at path init (PathDepthInfo.regularization), gated per
+	// vertex so first-bounce shading stays exact
+	hitPoint->regularization = (depthInfo &&
+			(depthInfo->depth >= depthInfo->regularizationMinDepth)) ?
+			depthInfo->regularization : 0.f;
 }
 
 OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(

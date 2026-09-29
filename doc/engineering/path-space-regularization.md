@@ -39,13 +39,51 @@ blur only non-first, non-delta vertices.
   the shared microfacet library (`microfacet.h` /
   `materialdefs_funcs_microfacet.cl`) — most glossy/glass materials
   already route alpha through it.
-- Delta (perfect mirror/flat glass) lobes: blur does nothing — they
-  keep their δ measure. Regularization must not touch them
-  (mathematically pointless, and it breaks MNEE endpoint semantics).
+- Delta (perfect mirror/flat glass) lobes: v1 keeps them exact.
+  Note the correction vs an earlier draft: PSR does blur δ lobes in
+  Kaplanyan — convolving a δ BSDF into a narrow finite kernel is
+  precisely how SDS paths acquire finite measure. v1 does not perform
+  the delta→glossy substitution (it would change event types and
+  MNEE endpoint semantics); that is the follow-up that unlocks
+  pure-delta caustics under the eye path.
 - Sample/Evaluate must use the SAME inflated alpha or the estimator
   gets double-counted bias — this is the main correctness constraint.
 - MIS with NEE: light connections evaluate f_r with the blurred alpha
   too — consistent, still biased w.r.t. the true model (intended).
+
+## Implementation status (v1 landed, opt-in)
+
+- `path.regularization.sigma` (default 0 = off),
+  `path.regularization.mindepth` (default 1: the camera-visible
+  bounce stays exact).
+- Plumbing: `PathDepthInfo.regularization{,MinDepth}` is seeded at
+  path init (CPU `PathTracer`, GPU `GenerateEyePath`/light-task init
+  from `taskConfig->pathTracer`), `HitPoint_SetRayContext` gates it
+  into `HitPoint.regularization` per vertex — zero signature changes,
+  covers eye and light paths on PATHCPU/PATHOCL (wavefront + dense).
+- Materials route alpha through `RegularizeAlpha()` (microfacet.h) /
+  `Microfacet_RegularizeAlpha` (materialdefs_funcs_microfacet.cl):
+  `alpha' = sqrt(alpha² + σ²)` — quadratic accumulation in slope
+  space matches NDF convolution better than a linear add. Covered:
+  glossy2, roughglass, metal2 (both GGX and Schlick paths; CPU + CL).
+- Sample/Evaluate/Pdf share the inflated alpha per BSDF instance →
+  consistent biased estimator.
+- Regression: `dev-tools/e99_psr_regularization.py` (roughglass plate
+  scene, σ=0 vs σ=0.06, PATHCPU + PATHOCL; asserts finite output, a
+  measurable sigma effect, and a σ=0 anchor band).
+
+## Measured (caustic-roughglass.scn, 384²)
+
+- σ=0.15: visible caustic/shadow region energy recovery on both
+  engines (floor mean +8% CPU, brightened S-D-L paths); σ=0 output
+  bit-comparable to pre-change.
+- RMSE vs unbiased 2048spp reference is NOT the acceptance gate: the
+  blur is biased by design and rebalances error (more coverage, less
+  peak noise). At moderate σ (0.02-0.06, alpha units) the effect is
+  subtle; at 0.15 the material visibly softens.
+- Follow-up worth measuring: Kaplanyan's halflife decay
+  (`path.regularization.halflife`, σ→0 over samples → consistent in
+  the limit) and delta→glossy substitution for pure-SDS chains.
 
 ## Design v1 (biased-but-consistent, Corona-style)
 
