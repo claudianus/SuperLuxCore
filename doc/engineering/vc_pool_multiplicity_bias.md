@@ -84,3 +84,17 @@ winner's-curse term of the adaptive replay reservoir.
 mean-luminance ratio on `cornell-area-caustic.scn`, PASS band
 0.97-1.03. Reproduces the bug deterministically if the normalization
 regresses.
+
+## Companion finding: spectral vs RGB color difference
+
+The residual *color* difference between the path engines and BIDIRCPU
+on this scene is the color model, not a bug: `path.spectral.enable`
+(adapter default ON) is unsupported by BIDIRCPU, so bidir always
+renders RGB while the path engines render spectral. The scene's walls
+are near-saturated primaries (`0 0.8 0.0086` green) and the Smits
+RGB→SPD decomposition (`src/luxrays/core/color/spds/rgbrefl.cpp`) maps
+that to `0.0086*cyan + 0.791*green` — a narrow-band spectrum with ~0
+red-band reflectance, so the green wall's R channel is literally 0.0
+under spectral while the same wall reads `[.153,.511,.150]` in RGB
+(bidir: `[.158,.522,.154]`). Saturated-albedo scenes maximize this
+divergence; disable spectral for apples-to-apples engine comparison.
