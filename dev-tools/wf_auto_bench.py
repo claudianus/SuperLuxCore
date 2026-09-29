@@ -25,6 +25,7 @@ SECS = float(sys.argv[1]) if len(sys.argv) > 1 else 25.0
 TASKS = int(sys.argv[2]) if len(sys.argv) > 2 else 262144
 ALL = {
     "classroom-hdr": "scenes/classroom/classroom-hdr.scn",
+    "kitchen": "scenes/kitchen/kitchen.scn",
     "cornell": "scenes/cornell/cornell.scn",
     "pg-indirect": "scenes/cornell/pg-indirect.scn",
     "focused-ring": "scenes/caustics/focused-caustic-ring.scn",
