@@ -794,8 +794,15 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// memory - constant-space tables dereference to 0 on Apple GPUs).
 	id<MTLDevice> dev = (__bridge id<MTLDevice>)device;
 
-	std::vector<uint8_t> scalarBundle(m.scalarBundleSize, 0);
-	std::vector<uint8_t> ptrBundle(m.ptrBundleSize, 0);
+	// Per-dispatch scratch: thousands of EnqueueKernel calls per render
+	// batch would otherwise heap-allocate these four buffers every call.
+	// thread_local keeps this safe on the session-thread flush paths;
+	// inFlightMutex already serializes the loop body.
+	thread_local std::vector<uint8_t> scalarBundle, ptrBundle;
+	thread_local std::vector<bool> directBound;
+	thread_local std::vector<const MetalDeviceBuffer *> usedBuffers;
+	scalarBundle.assign(m.scalarBundleSize, 0);
+	ptrBundle.assign(m.ptrBundleSize, 0);
 
 	// Map engine arg index -> (role, value)
 	// Walk the ORIGINAL-signature argument order (argIsPointer /
@@ -808,12 +815,10 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	const bool useArgOrder = !m.argIsPointer.empty();
 	size_t scalarIdx = 0, ptrIdx = 0;
 	size_t argOrderPos = 0;
-	std::vector<bool> directBound;   // per m.ptrSlots index
-	if (!m.ptrNames.empty())
-		directBound.resize(m.ptrNames.size(), false);
+	directBound.assign(m.ptrNames.size(), false);   // per m.ptrSlots index
 	// Buffers this dispatch reads: EnqueueWriteBuffer() must not overwrite
 	// any of them while the command buffer is still in flight.
-	std::vector<const MetalDeviceBuffer *> usedBuffers;
+	usedBuffers.clear();
 	for (u_int i = 0; i < metalDeviceKernel.args.size(); ++i) {
 		bool isPointer;
 		if (useArgOrder && argOrderPos < m.argIsPointer.size()) {
