@@ -1004,6 +1004,26 @@ void MetalDevice::FlushPending() {
 	CommitPendingLocked();
 }
 
+void MetalDevice::EncodePendingCompute(
+		const std::function<void(void *)> &encode,
+		const std::vector<const MetalDeviceBuffer *> &usedBuffers) {
+	// Same batching protocol as EnqueueKernel(): append a compute
+	// encoder to pendingCB so an external dispatch stays inside the
+	// shared command buffer instead of forcing a commit boundary.
+	std::lock_guard<std::mutex> lock(inFlightMutex);
+	@autoreleasepool {
+		if (!pendingCB)
+			pendingCB = [[(__bridge id<MTLCommandQueue>)queue commandBuffer] retain];
+		id<MTLComputeCommandEncoder> e =
+				[(__bridge id<MTLCommandBuffer>)pendingCB computeCommandEncoder];
+		encode((__bridge void *)e);
+		[e endEncoding];
+		pendingBuffers.insert(usedBuffers.begin(), usedBuffers.end());
+		if (++pendingEncoderCount >= 64)
+			CommitPendingLocked();
+	}
+}
+
 void MetalDevice::CommitAndTrackInFlight(MTLCommandBufferHandle commandBuffer,
 		const std::vector<const MetalDeviceBuffer *> &buffers) {
 	id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)commandBuffer;

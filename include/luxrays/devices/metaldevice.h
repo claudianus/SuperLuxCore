@@ -25,6 +25,7 @@
 // etc. in C++ mode and poison __OBJC__ for everything after).
 
 #include <atomic>
+#include <functional>
 #include <unordered_set>
 
 #include "luxrays/core/hardwaredevice.h"
@@ -278,6 +279,15 @@ public:
 	MTLCommandQueueHandle GetMTLCommandQueue() const { return queue; }
 	void CommitAndTrackInFlight(MTLCommandBufferHandle commandBuffer,
 			const std::vector<const MetalDeviceBuffer *> &buffers);
+	// Encode one compute pass into the shared pendingCB instead of a
+	// dedicated command buffer: an RT trace no longer forces a commit
+	// boundary through the batched compute work (CommitAndTrackInFlight
+	// flushes pendingCB first, so every trace split the batch). The
+	// callback receives a fresh MTLComputeCommandEncoder as void* (this
+	// header stays ObjC-free; callers live in .mm files). usedBuffers
+	// join the batch's conflict set exactly like EnqueueKernel.
+	void EncodePendingCompute(const std::function<void(void *)> &encode,
+			const std::vector<const MetalDeviceBuffer *> &usedBuffers);
 
 	friend class Context;
 

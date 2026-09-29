@@ -1175,35 +1175,45 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 
 		id<MTLBuffer> rays = (__bridge id<MTLBuffer>)mRayBuff->GetMetalBuffer();
 		id<MTLBuffer> hits = (__bridge id<MTLBuffer>)mHitBuff->GetMetalBuffer();
+		id<MTLComputePipelineState> selPso = instanceASIsMotion ? psoMotion : pso;
+		const bool hasPrimAS = !primitiveAS.empty();
+		const u_int rc = rayCount;
+		const size_t wgSize = workGroupSize;
 
-		id<MTLCommandBuffer> cb = [queue commandBuffer];
-		id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-		// The timed intersect() overload only exists on the motion-tagged
-		// kernel: pick the pipeline matching how the instance AS was built.
-		[enc setComputePipelineState:instanceASIsMotion ? psoMotion : pso];
-		[enc setBuffer:rays offset:0 atIndex:0];
-		[enc setBuffer:hits offset:0 atIndex:1];
-		u_int rc = rayCount;
-		[enc setBytes:&rc length:sizeof(rc) atIndex:2];
-		[enc setAccelerationStructure:instanceAS atBufferIndex:3];
-		// setAccelerationStructure only covers the top-level instance AS:
-		// the primitive structures it references are reached transitively
-		// during traversal, so each must be made resident explicitly.
-		// Without this the driver can page a primitive AS out under memory
-		// pressure and every instance referencing it silently misses
-		// (non-deterministic energy loss on many-instance scenes).
-		if (!primitiveAS.empty())
-			[enc useResources:(const id<MTLResource> *)primitiveAS.data()
-					count:(NSUInteger)primitiveAS.size()
-					usage:MTLResourceUsageRead];
+		// Encode into the shared pending command buffer: a dedicated CB
+		// committed through CommitAndTrackInFlight flushes pendingCB
+		// first, so every trace split the batched compute work. Encoding
+		// inline keeps in-order semantics (encoders serialize in encode
+		// order) while removing a commit + buffer split per trace.
+		mdev.EncodePendingCompute(
+				[&](void *encPtr) {
+			id<MTLComputeCommandEncoder> enc =
+					(__bridge id<MTLComputeCommandEncoder>)encPtr;
+			// The timed intersect() overload only exists on the
+			// motion-tagged kernel: pick the pipeline matching how the
+			// instance AS was built.
+			[enc setComputePipelineState:selPso];
+			[enc setBuffer:rays offset:0 atIndex:0];
+			[enc setBuffer:hits offset:0 atIndex:1];
+			u_int rc2 = rc;
+			[enc setBytes:&rc2 length:sizeof(rc2) atIndex:2];
+			[enc setAccelerationStructure:instanceAS atBufferIndex:3];
+			// setAccelerationStructure only covers the top-level instance
+			// AS: the primitive structures it references are reached
+			// transitively during traversal, so each must be made
+			// resident explicitly. Without this the driver can page a
+			// primitive AS out under memory pressure and every instance
+			// referencing it silently misses (non-deterministic energy
+			// loss on many-instance scenes).
+			if (hasPrimAS)
+				[enc useResources:(const id<MTLResource> *)primitiveAS.data()
+						count:(NSUInteger)primitiveAS.size()
+						usage:MTLResourceUsageRead];
 
-		const MTLSize grid = MTLSizeMake(rayCount, 1, 1);
-		const MTLSize tg = MTLSizeMake(workGroupSize, 1, 1);
-		[enc dispatchThreads:grid threadsPerThreadgroup:tg];
-		[enc endEncoding];
-
-		mdev.CommitAndTrackInFlight((__bridge MTLCommandBufferHandle)cb,
-				{mRayBuff, mHitBuff});
+			const MTLSize grid = MTLSizeMake(rc, 1, 1);
+			const MTLSize tg = MTLSizeMake(wgSize, 1, 1);
+			[enc dispatchThreads:grid threadsPerThreadgroup:tg];
+		}, {mRayBuff, mHitBuff});
 	}
 }
 
