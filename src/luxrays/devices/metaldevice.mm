@@ -1003,6 +1003,12 @@ void MetalDevice::CommitAndTrackInFlight(MTLCommandBufferHandle commandBuffer,
 	[cb commit];
 }
 
+void *MetalDeviceBuffer::GetHostVisiblePointer() const {
+	// All Metal buffers are allocated StorageModeShared (unified
+	// memory), so contents is always a valid host mapping.
+	return metalBuff ? [(__bridge id<MTLBuffer>)metalBuff contents] : nullptr;
+}
+
 void MetalDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,
 		const bool blocking, const size_t size, void *ptr) {
 	assert(buff);

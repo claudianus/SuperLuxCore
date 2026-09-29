@@ -134,8 +134,15 @@ public:
 	virtual ~HardwareDeviceBuffer() { }
 
 	virtual bool IsNull() const = 0;
-	
+
 	virtual size_t GetSize() const = 0;
+
+	// Shared-storage devices (Metal on unified memory) can expose a
+	// host pointer valid for direct peeking while the GPU still has
+	// the buffer in flight - reads race the device, so callers must
+	// tolerate stale/torn values. Returns nullptr when the buffer is
+	// not host-mappable (OpenCL/CUDA device copies).
+	virtual void *GetHostVisiblePointer() const { return nullptr; }
 
 protected:
 	HardwareDeviceBuffer() { }

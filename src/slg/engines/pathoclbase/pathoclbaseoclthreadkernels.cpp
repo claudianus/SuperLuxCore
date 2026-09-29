@@ -985,9 +985,24 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	intersectionDevice.EnqueueKernel(advancePathsKernel_QueuePrefix,
 			HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
 
-	intersectionDevice.EnqueueReadBuffer(taskQueueTotalsBuff,
-			CL_TRUE, sizeof(u_int) * wavefrontQueueTotals.size(),
-			wavefrontQueueTotals.data());
+	// Peek the totals through the shared-storage mapping when the
+	// device exposes one: on Metal EnqueueReadBuffer drains the whole
+	// command queue (FinishQueue) to service a host memcpy, which
+	// serialized every wavefront iteration and defeated batching. A
+	// racing read is safe here - WAVEFRONT_GUARD bounds lanes against
+	// the device-side totals, so stale or undersized launch sizes only
+	// defer tail work to the next BuildQueues pass. The taskCount
+	// clamp keeps a torn counter from inflating a launch range past
+	// the queue capacity.
+	if (void *totalsHost = taskQueueTotalsBuff->GetHostVisiblePointer()) {
+		memcpy(wavefrontQueueTotals.data(), totalsHost,
+				sizeof(u_int) * wavefrontQueueTotals.size());
+		for (u_int &t : wavefrontQueueTotals)
+			t = std::min(t, taskCount);
+	} else
+		intersectionDevice.EnqueueReadBuffer(taskQueueTotalsBuff,
+				CL_TRUE, sizeof(u_int) * wavefrontQueueTotals.size(),
+				wavefrontQueueTotals.data());
 
 	// Refill the queues: tasks land in lambda-contiguous segments of
 	// their state's flat queue region (AdvancePaths_BuildQueues).

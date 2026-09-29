@@ -182,6 +182,8 @@ public:
 		return size;
 	}
 
+	void *GetHostVisiblePointer() const override;
+
 	MTLBufferHandle GetMetalBuffer() const { return metalBuff; }
 
 	friend class MetalDevice;
