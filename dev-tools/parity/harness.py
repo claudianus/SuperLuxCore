@@ -11,7 +11,11 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+import os
+# SUPERLUXCORE_PARITY_RELEASE=1 forces the Release binding (Debug can
+# be stale relative to the build under test)
+_build = "Release" if os.environ.get("SUPERLUXCORE_PARITY_RELEASE") else "Debug"
+sys.path.insert(0, str(REPO / f"out/build/src/pysuperluxcore/{_build}"))
 sys.path.insert(0, str(REPO / "dev-tools"))
 import pysuperluxcore
 

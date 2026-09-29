@@ -134,6 +134,15 @@ deterministic single-task sweep:
   `(gid + j * stride) % lightTaskCount` — `j = 0` reproduces the M6
   pairing, so `pool = 1, connects = 0` is bit-identical to the
   deterministic walk.
+- **Subpath normalization**: each cached light subpath is an
+  independent sample of the full connect-strategy sum, so pool
+  contributions are *averaged over subpaths*, not summed — every pool
+  candidate's weight carries `1/poolTasks`, and candidates sharing the
+  replayed vertex's light depth divide by `poolTasks + 1` (the replay
+  record is one extra draw of that depth bucket). Before this fix the
+  raw sum inflated every connect strategy by ~pool× (measured +28%
+  mean radiance at pool=4 on a diffuse-dominant production interior,
+  scaling ~linearly to +74% at pool=16).
 - A score pass runs before the connect pass: each candidate's score is
   `|throughput| / dist^2` (transport-flavoured importance), summed per
   pool into `GPUTaskState::vcScoreSum`.
@@ -217,6 +226,12 @@ This is the vertex-granularity analogue of ReSTIR-BDPT's path reuse
   a distinct full-path strategy sample weighted by its own MIS terms,
   and the replay's inclusion is *deterministic* (the candidate set is
   fixed before evaluation — the reservoir never weights the estimate).
+- Known residual bias: the reservoir promotes the historically
+  best-scoring vertex, so the replayed record's contribution
+  distribution is argmax-skewed upward (winner's curse). The bucket
+  normalization removes the multiplicity term; the adaptive selection
+  bias remains — measured ≈+1-2% mean luminance on diffuse interiors.
+  `path.vertexconnection.reuse = 0` disables it for strict work.
 - The reservoir only picks **which** stale vertex gets a seat: after a
   connect ray resolves, a pool candidate whose landed luminance beats
   the stored score promotes its record. `staging` inside the record

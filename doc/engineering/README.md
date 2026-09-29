@@ -34,3 +34,4 @@ docs live in `doc/features/` (see its README for the index).
 | [cl2msl-scanner.md](cl2msl-scanner.md) | cl2msl translator span-scanner invariants: comment-paren trap, offline repro recipe, ReSTIR tail-ray coverage |
 | [restir-pg-design.md](restir-pg-design.md) | ReSTIR PG (Zeng et al. SA2025) design — reservoir winners feed the GuideTree vMF fit, no new infrastructure |
 | [path-space-regularization.md](path-space-regularization.md) | PSR/OPSR design (Kaplanyan'13, Weier'21) — BSDF α-inflation via BSDF.regularization, depth-gated, shared microfacet helper |
+| [vc_pool_multiplicity_bias.md](vc_pool_multiplicity_bias.md) | VC pool connect-sum bias (thebox4 +28%): subpath-average normalization fix, replay winner's-curse residual |

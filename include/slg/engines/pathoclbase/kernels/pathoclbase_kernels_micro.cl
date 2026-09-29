@@ -4164,6 +4164,17 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 	const float3 eyeShadeN = VLOAD3F(&eyeBsdf->hitPoint.shadeN.x);
 	const float3 eyeThroughput = VLOAD3F(taskState->throughput.c);
 
+	// Multi-subpath normalization: the pool holds vcPoolTasks INDEPENDENT
+	// light subpaths, so candidates at the same light depth are multiple
+	// draws of the SAME connect strategy. Their contributions must average
+	// (divide by the subpath count), not sum - otherwise every strategy is
+	// inflated by the pool size. Subpath averaging is exact even when some
+	// subpaths are shorter than slotsPerTask (missing slots are draws that
+	// contribute 0, still counted in vcPoolTasks). The replay record is one
+	// additional draw of its own depth bucket: candidates sharing the
+	// replayed vertex's light depth divide by vcPoolTasks + 1.
+	const uint vcReplayDepth = vcHasReplay ? vcReplay[gid].vertex.depth : 0u;
+
 	//----------------------------------------------------------------------
 	// Resolve the connect shadow ray queued by the previous pass
 	//----------------------------------------------------------------------
@@ -4516,8 +4527,11 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 					lv->bsdf.hitPoint.exteriorVolumeIndex;
 
 			// 1/vcQ: Horvitz-Thompson correction for the probabilistic
-			// inclusion (identity in the deterministic full walk)
-			const float3 pending = (misWeight * geometryTerm / vcQ) *
+			// inclusion (identity in the deterministic full walk).
+			// 1/vcDiv: subpath-average over the pool (see above).
+			const uint vcDiv = vcPoolTasks +
+					((vcHasReplay && (lv->depth == vcReplayDepth)) ? 1u : 0u);
+			const float3 pending = (misWeight * geometryTerm / (vcQ * vcDiv)) *
 					eyeBsdfEval * lightBsdfEval *
 					MAKE_FLOAT3(lv->throughputR, lv->throughputG,
 							lv->throughputB);
