@@ -1863,7 +1863,8 @@ static bool MneeSolveChain(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
 		const float time, const Point &x0p, const MneeEndpoint &endpoint,
 		MneeChainVertex *chain, const u_int n, const u_int maxIterations,
-		const char **failWhy) {
+		const char **failWhy,
+		MneeJacobianBlock *blocksOut = nullptr) {
 	MneeJacobianBlock blocks[MNEE_MS_MAX_VERTICES];
 	MneeVec2 residual[MNEE_MS_MAX_VERTICES];
 	float maxResidual = 0.f;
@@ -1897,6 +1898,12 @@ static bool MneeSolveChain(
 		}
 		if (maxResidual < 1e-5f) {
 			solveAccount.ok = true;
+			// The Jacobian the caller's post-solve geometric term needs
+			// is already in `blocks` at the converged chain - return it
+			// so the caller skips a redundant MneeChainJacobian.
+			if (blocksOut)
+				for (u_int i = 0; i < n; ++i)
+					blocksOut[i] = blocks[i];
 			return true;
 		}
 
@@ -2052,9 +2059,10 @@ bool PathTracer::MNEEMultiDirectSampling(
 	if (g_seedStatsOn && chainEvidence >= 2u)
 		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
+	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
 	const char *failWhy = "iterations";
 	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
-			chainBudget, &failWhy)) {
+			chainBudget, &failWhy, geoBlocks)) {
 		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
 			MneeSeedRecordFail(mneeSeeds.get(), chainKey, chainLightIndex,
 					chainMesh, false);
@@ -2161,12 +2169,8 @@ bool PathTracer::MNEEMultiDirectSampling(
 	// (A = the block tridiagonal constraint Jacobian; only the last constraint
 	// involves the light). For N = 1 this is the single vertex term.
 	//--------------------------------------------------------------------------
-	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
-	MneeVec2 geoResidual[MNEE_MS_MAX_VERTICES];
-	float geoMax = 0.f;
-	if (!MneeChainJacobian(device, scene, time, x0p, ep, chain, n,
-			geoBlocks, geoResidual, geoMax))
-		return rej("geo-jacobian");
+	// geoBlocks arrived from MneeSolveChain's converged iteration - the
+	// same Jacobian evaluated at the solved chain (no second pass).
 
 	MneeMat2 dxFirst;
 	if (!MneeTridiagonalSolveMatrixRhs(geoBlocks, n, dxFirst))
@@ -2255,9 +2259,9 @@ bool PathTracer::MNEEMultiDirectSampling(
 					fabsf(Dot(dbgWi, chain[i].v.gn)),
 					fabsf(Dot(dbgWo, chain[i].v.gn)));
 		}
-		printf(" | y=%.9g %.9g %.9g residual=%.3e spec=%.9g G=%.9g in=%.9g "
+		printf(" | y=%.9g %.9g %.9g residual=0 spec=%.9g G=%.9g in=%.9g "
 				"truth=%.9g\n", ep.pos.x, ep.pos.y, ep.pos.z,
-				geoMax, specProduct.Filter(), geometricTerm,
+				specProduct.Filter(), geometricTerm,
 				incomingRadiance.Filter(), dbgTruth);
 		fflush(stdout);
 	}
@@ -2721,9 +2725,10 @@ static bool LMneeChainSolveAndEval(
 	//--------------------------------------------------------------------------
 	// Newton solve on the whole chain
 	//--------------------------------------------------------------------------
+	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
 	const char *failWhy = "iterations";
 	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
-			maxIterations, &failWhy))
+			maxIterations, &failWhy, geoBlocks))
 		{ LMNEE_REJ("ms-newton"); return false; }
 
 	//--------------------------------------------------------------------------
@@ -2778,12 +2783,8 @@ static bool LMneeChainSolveAndEval(
 	// Chain geometric term: dw0_dx1 * |det(dx_1 / dy)| with the lens point as
 	// the moving endpoint (same construction as the eye side)
 	//--------------------------------------------------------------------------
-	MneeJacobianBlock geoBlocks[MNEE_MS_MAX_VERTICES];
-	MneeVec2 geoResidual[MNEE_MS_MAX_VERTICES];
-	float geoMax = 0.f;
-	if (!MneeChainJacobian(device, scene, time, x0p, ep, chain, n,
-			geoBlocks, geoResidual, geoMax))
-		{ LMNEE_REJ("ms-geojac"); return false; }
+	// geoBlocks arrived from MneeSolveChain's converged iteration - the
+	// same Jacobian evaluated at the solved chain (no second pass).
 
 	MneeMat2 dxFirst;
 	if (!MneeTridiagonalSolveMatrixRhs(geoBlocks, n, dxFirst))

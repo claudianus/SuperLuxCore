@@ -1223,3 +1223,18 @@ Saves one full Jacobian eval per successful connect (the heaviest
 path of MNEE).
 
 cornell + strands parity PASS.
+
+## MNEE chain: reuse converged Jacobian for the post-solve geometric term (2026-10-01)
+
+Same pattern as the single-vertex solver, one level up: after
+MneeSolveChain converged, both the eye-side MNEEMultiConnectToEye and
+the light-side LMneeChainSolveAndEval re-ran MneeChainJacobian at the
+solved chain to build geoBlocks for the dx_1/dy geometric term.
+
+The Newton loop had already produced that Jacobian on the iteration
+where maxResidual fell below 1e-5f. MneeSolveChain now writes its
+converged blocks into an optional blocksOut; both callsites pass a
+local geoBlocks and skip the re-eval (and the per-block reprojection
+cost of MneeChainJacobian).
+
+cornell + strands parity PASS.
