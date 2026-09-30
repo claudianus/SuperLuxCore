@@ -886,3 +886,19 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - 8/4/2GB card caps unchanged (256/128/64K): AUTO users on low-VRAM
   hardware were already capped lower than the new default.
 - Parity cornell + strands PASS.
+
+## tilepathocl: light-task tail disabled on small/previewed tiles (2026-10-01)
+
+- Symptom: `RTPATHOCL 320x180 + path.lighttracing.auto` printed
+  "task count leaves no light-task tail ... disabling light tracing,
+  hybrid and vertex connection" even though the intended split would
+  leave a usable tail.
+- Cause: `taskCount = tilePx / resolutionReduction^2` came out
+  3600, `RoundUp(8192)` -> 8192, `taskCount > 8192` failed ->
+  `lightTaskCount = 0` -> LT/hybrid/VC demote.
+- Fix: bump `taskCount` floor to 16384 when LT/hybrid/VC is wanted
+  (two workgroups: one eye tail + one light tail minimum). Cost:
+  +8192 task slots (a few MB) when the tile is small - absorbed
+  by GPU budget.
+- Verified: 320x180 luxball now shows `path.lighttracing.auto`
+  engaging without the demote warning.

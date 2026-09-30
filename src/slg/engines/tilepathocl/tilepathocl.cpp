@@ -75,6 +75,13 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 	} else
 		taskCount = tileRepository->tileWidth * tileRepository->tileHeight * aaSamples * aaSamples;
 
+	// Light tracing needs a tail: taskCount must be > 8192 to carve one.
+	// Bump the floor before the RoundUp below so a small tile (or heavy
+	// previewResolutionReduction) doesn't silently disable LT+hybrid+VC.
+	if (pathTracer.lightTracingEnable || pathTracer.hybridBackForwardEnable ||
+			pathTracer.vertexConnectEnable)
+		taskCount = Max(taskCount, 16384u);
+
 	// I don't know yet the workgroup size of each device so I can not
 	// round up task count to be a multiple of workgroups size of all devices
 	// used. Rounding to 8192 is a simple trick based on the assumption that
