@@ -1136,3 +1136,17 @@ defaultUV.
   textures) and a canonical CoordinateSystem frame; dndu/dndv zeroed.
 
 cornell + strands parity PASS.
+
+## Spectral::ProjectToRGB - fold XYZ→RGB into per-bin coefficients (2026-10-01)
+
+Every light-splat path ran PrepareRGBProjection once + ProjectToRGB
+on ~14 spectral fields, each call doing bins→XYZ dot + 3x3 XYZ→RGB
+matmul + 3 divides.
+
+The matrix and white normalization are linear over wavelength - hoisted
+into per-bin `cr/cg/cb` coefficients in PrepareRGBProjection. Per-field
+cost drops to one masked 3-FMA dot per channel (9 FMAs + no division).
+Statistically-identical (same linear operator; ULP-level associativity
+change, well inside the 0.2% parity tolerance).
+
+cornell + strands parity PASS.

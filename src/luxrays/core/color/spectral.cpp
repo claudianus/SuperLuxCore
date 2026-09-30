@@ -323,50 +323,55 @@ void Spectral::PrepareRGBProjection(const PathWavelengths &sw, RGBProjector &p) 
 	// Accumulate the sampled white point over the full drawn wavelength
 	// set so a post-collapse single bin keeps its chromaticity.
 	float nX = 0.f, nY = 0.f, nZ = 0.f;
+	float cx[SPECTRAL_BINS], cy[SPECTRAL_BINS], cz[SPECTRAL_BINS];
 	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
 		const float lambda = sw.w[i];
-		p.cx[i] = SpectrumWavelengths::spd_ciex.Sample(lambda);
-		p.cy[i] = SpectrumWavelengths::spd_ciey.Sample(lambda);
-		p.cz[i] = SpectrumWavelengths::spd_ciez.Sample(lambda);
-		nX += p.cx[i];
-		nY += p.cy[i];
-		nZ += p.cz[i];
+		cx[i] = SpectrumWavelengths::spd_ciex.Sample(lambda);
+		cy[i] = SpectrumWavelengths::spd_ciey.Sample(lambda);
+		cz[i] = SpectrumWavelengths::spd_ciez.Sample(lambda);
+		nX += cx[i];
+		nY += cy[i];
+		nZ += cz[i];
 	}
 	p.aliveMask = sw.aliveMask;
 	p.valid = (nY > 0.f);
 	if (!p.valid) {
-		p.whiteR = p.whiteG = p.whiteB = 0.f;
+		for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+			p.cr[i] = p.cg[i] = p.cb[i] = 0.f;
+		}
 		return;
 	}
 	const RGBColor whiteRGB =
 			ColorSystem::DefaultColorSystem.ToRGB(XYZColor(nX, nY, nZ));
-	p.whiteR = whiteRGB.c[0];
-	p.whiteG = whiteRGB.c[1];
-	p.whiteB = whiteRGB.c[2];
+	const float invR = (whiteRGB.c[0] != 0.f) ? (1.f / whiteRGB.c[0]) : 0.f;
+	const float invG = (whiteRGB.c[1] != 0.f) ? (1.f / whiteRGB.c[1]) : 0.f;
+	const float invB = (whiteRGB.c[2] != 0.f) ? (1.f / whiteRGB.c[2]) : 0.f;
+
+	// Fold the XYZ→RGB matrix + white normalization into per-bin
+	// coefficients: ProjectToRGB becomes r = Σ bins·cr, g = Σ bins·cg,
+	// b = Σ bins·cb (alive-masked).
+	const float (&m)[3][3] = ColorSystem::DefaultColorSystem.XYZToRGB;
+	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+		p.cr[i] = (m[0][0] * cx[i] + m[0][1] * cy[i] + m[0][2] * cz[i]) * invR;
+		p.cg[i] = (m[1][0] * cx[i] + m[1][1] * cy[i] + m[1][2] * cz[i]) * invG;
+		p.cb[i] = (m[2][0] * cx[i] + m[2][1] * cy[i] + m[2][2] * cz[i]) * invB;
+	}
 }
 
 Spectrum Spectral::ProjectToRGB(const Spectrum &bins, const RGBProjector &p) {
 	if (!p.valid || bins.Black())
 		return Spectrum(0.f);
 
-	// Accumulate XYZ under the CIE matching functions at the live bins
-	float X = 0.f, Y = 0.f, Z = 0.f;
+	float r = 0.f, g = 0.f, b = 0.f;
 	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
 		if (!(p.aliveMask & (1U << i)))
 			continue;
-		X += bins.c[i] * p.cx[i];
-		Y += bins.c[i] * p.cy[i];
-		Z += bins.c[i] * p.cz[i];
+		r += bins.c[i] * p.cr[i];
+		g += bins.c[i] * p.cg[i];
+		b += bins.c[i] * p.cb[i];
 	}
 
-	// Normalize by the sampled white point so a flat spectrum reproduces its
-	// value exactly (achromatic-invariant projection)
-	const RGBColor rgb = ColorSystem::DefaultColorSystem.ToRGB(XYZColor(X, Y, Z));
-
-	return Spectrum(
-			(p.whiteR != 0.f) ? rgb.c[0] / p.whiteR : 0.f,
-			(p.whiteG != 0.f) ? rgb.c[1] / p.whiteG : 0.f,
-			(p.whiteB != 0.f) ? rgb.c[2] / p.whiteB : 0.f);
+	return Spectrum(r, g, b);
 }
 
 Spectrum Spectral::ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw) {

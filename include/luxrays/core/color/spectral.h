@@ -193,8 +193,10 @@ Spectrum ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw);
 // ~15 spectral fields share one evaluation instead of re-sampling the
 // CIE SPDs and re-normalizing per field (bit-identical results).
 struct RGBProjector {
-	float cx[SPECTRAL_BINS], cy[SPECTRAL_BINS], cz[SPECTRAL_BINS];
-	float whiteR, whiteG, whiteB;
+	// Per-bin RGB contribution: r_i = XYZToRGB · c_i (CIE at bin i,
+	// normalized by the drawn-white). Projection is then a per-field
+	// 3-dot instead of 3-dot + 3x3 matmul + 3 divides.
+	float cr[SPECTRAL_BINS], cg[SPECTRAL_BINS], cb[SPECTRAL_BINS];
 	u_int aliveMask;
 	bool valid;
 };
