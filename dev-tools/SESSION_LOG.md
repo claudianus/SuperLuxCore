@@ -850,3 +850,17 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - Speed: 4.93M vs 4.80M samples/s - within measurement noise on the
   busy host.
 - Parity: cornell + strands PASS.
+
+## Zero-config render audit (2026-10-01)
+
+- luxball, no engine/sampler/denoiser props set: PATHOCL + SOBOL +
+  auto-LT + auto-MNEE + PSR all select themselves, 24 passes render
+  in ~6s, EXR means (0.28/0.30/0.37) physically sensible.
+- pysuperluxcore API quirk noted: `Properties::Get(key)` throws on
+  absent key (no default-return overload for strings); Film::Save()
+  takes no args (uses film.outputs paths).
+- Task-state histogram on prism PATHOCL: zero MK_DONE accumulation,
+  all lanes cycling - dense launch is GPU-compute-bound (taskCount
+  sweep confirmed ±12% noise floor at 64K-512K on M5 Pro), not
+  stall-bound; the residual dispatch overhead is not recoverable
+  without fusing advance+trace into a single kernel launch.
