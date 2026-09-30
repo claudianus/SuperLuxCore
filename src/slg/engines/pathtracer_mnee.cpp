@@ -251,84 +251,6 @@ static bool MneeReproject(
 	return true;
 }
 
-static bool MneeConstraintWithJacobian(
-		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
-		const float time,
-		const Point &x0p, const MneeEndpoint &ep,
-		const MneeVertex &vtx,
-		MneeVec2 &C, MneeMat2 &jac, const float etaOverride = 0.f) {
-	if (!MneeResidual(x0p, ep, vtx, C, etaOverride))
-		return false;
-
-	const float eps = Max(1e-5f, 1e-4f * Distance(x0p, vtx.p));
-	const float C0[2] = { C.x, C.y };
-	for (int k = 0; k < 2; ++k) {
-		// Perturb along the (orthonormal) tangent, re-project onto the same
-		// surface so the normal rotation (curvature) is included
-		const Point pPert = vtx.p + ((k == 0) ? eps * vtx.dpdu : eps * vtx.dpdv);
-		BSDF pertBsdf;
-		if (!MneeReproject(device, scene, time, pPert, vtx.gn, .5f * eps, pertBsdf))
-			return false;
-
-		MneeVertex vPert;
-		MneeInitVertex(vPert, pertBsdf, vtx.eta);
-
-		MneeVec2 CP;
-		if (!MneeResidual(x0p, ep, vPert, CP, etaOverride))
-			return false;
-
-		if (k == 0) {
-			jac.a11 = (CP.x - C0[0]) / eps;
-			jac.a21 = (CP.y - C0[1]) / eps;
-		} else {
-			jac.a12 = (CP.x - C0[0]) / eps;
-			jac.a22 = (CP.y - C0[1]) / eps;
-		}
-	}
-
-	return true;
-}
-
-static MneeMat2 MneeLightJacobian(const Point &x0p, const Point &lightPos,
-		const MneeVertex &vtx, const float eps, const float etaOverride = 0.f) {
-	// Fake light vertex frame: orthonormal s/t built on the light->x1
-	// direction (Zeltner emitter_interaction_to_vertex, point emitter branch)
-	Vector dLight = vtx.p - lightPos;
-	const float r = dLight.Length();
-	if (r < 1e-3f)
-		return MneeMat2{ 0.f, 0.f, 0.f, 0.f };
-
-	Vector s2, t2;
-	MneeCoordinateSystem(dLight, s2, t2);
-
-	const Vector wi = Normalize(x0p - vtx.p);
-	float eta = (etaOverride > 0.f) ? etaOverride : vtx.eta;
-	if (Dot(wi, vtx.gn) < 0.f)
-		eta = 1.f / eta;
-
-	Vector h = wi + eta * Normalize(lightPos - vtx.p);
-	if (eta != 1.f)
-		h = -h;
-	h *= 1.f / h.Length();
-
-	const float C0[2] = { Dot(vtx.s, h), Dot(vtx.t, h) };
-	float CP[2][2];
-	for (int k = 0; k < 2; ++k) {
-		const Point lightPosP = lightPos + ((k == 0) ? eps * s2 : eps * t2);
-		const Vector woP = Normalize(lightPosP - vtx.p);
-		Vector hP = wi + eta * woP;
-		if (eta != 1.f)
-			hP = -hP;
-		hP *= 1.f / hP.Length();
-		CP[k][0] = Dot(vtx.s, hP);
-		CP[k][1] = Dot(vtx.t, hP);
-	}
-
-	return MneeMat2{
-		(CP[0][0] - C0[0]) / eps, (CP[1][0] - C0[0]) / eps,
-		(CP[0][1] - C0[1]) / eps, (CP[1][1] - C0[1]) / eps
-	};
-}
 
 // Analytic constraint Jacobians and geometric term (Zeltner
 // geometric_term structure, evaluated with the physical vertex eta; flat and
@@ -1539,7 +1461,7 @@ static bool MneeChainResiduals(const Point &x0p, const MneeEndpoint &ep,
 // changes the constraints at i-1, i and i+1 only, so the result is exactly
 // block tridiagonal. The perturbed vertex is re-projected onto its surface, so
 // the normal rotation (curvature) is included, exactly like the single vertex
-// solver's MneeConstraintWithJacobian.
+// solver's fused residual+Jacobian pass.
 static bool MneeChainJacobian(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
 		const float time, const Point &x0p, const MneeEndpoint &ep,
@@ -1695,7 +1617,8 @@ static bool MneeTridiagonalSolveMatrixRhs(const MneeJacobianBlock *blocks,
 
 // dC_last/dy: how the last vertex's constraint reacts to perturbing the light
 // endpoint, the emitter_interaction_to_vertex analog (same construction as
-// MneeLightJacobian). For a point emitter the endpoint moves along a tangent
+// MneeGeometricTermWithJacobians's dC/dx2). For a point
+// emitter the endpoint moves along a tangent
 // frame; for a directional endpoint the direction itself is perturbed (the
 // position->direction 1/r conversion does not apply, same as the single
 // vertex solver's j2 block).
