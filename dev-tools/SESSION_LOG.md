@@ -676,3 +676,11 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   (0.3% band, inside spp noise). GPU kernel compiles through cl2msl,
   no NaN. Dispersive transmit (cauchyb=0.08) exercises the
   Spectral_DispersiveIOR + CollapseToHero branches.
+
+## PMJ02 pixel-pass batching — 2026-10-01 (cont.)
+
+- PMJ02Sampler::InitNewSample: same run-batched pixel-pass claims as
+  Sobol (inherits SobolSamplerSharedData::GetNewPixelPassBatch).
+  PASS_BATCH=4, adaptive gate once per run, filmless path batches the
+  single shared slot.
+- Sanity: cornell @32spp SOBOL 0.3767 / METROPOLIS 0.3766, no NaN.

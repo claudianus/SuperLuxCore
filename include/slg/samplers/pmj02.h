@@ -170,6 +170,11 @@ private:
 
 	std::shared_ptr<u_int> bucketIndex;
 	u_int pixelOffset, passOffset, pass;
+	// Pixel-pass run batching, same contract as SobolSampler:
+	// GetNewPixelPassBatch claims PASS_BATCH consecutive passes per
+	// pixel; the adaptive gate evaluates once per run.
+	static const u_int PASS_BATCH = 4;
+	u_int pixelPassRunLeft, pixelPassRunIdx;
 	u_int pixelX, pixelY;
 	luxrays::TauswortheRandomGenerator rngGenerator;
 

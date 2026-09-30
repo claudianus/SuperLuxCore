@@ -65,7 +65,9 @@ PMJ02Sampler::PMJ02Sampler(
 		tileSize(tileSz),
 		superSampling(superSmpl),
 		overlapping(overlap),
-		bucketIndex(std::make_shared<u_int>(0))
+		bucketIndex(std::make_shared<u_int>(0)),
+		pixelPassRunLeft(0u),
+		pixelPassRunIdx(0u)
 {
 	// Seed the per-pair generation (distinct deterministic seed per pair so
 	// pairs stay independent; renderengine.seed flows in through rnd).
@@ -159,9 +161,15 @@ void PMJ02Sampler::InitNewSample() {
 			px = filmSubRegion[0] + subRegionPixelX;
 			py = filmSubRegion[2] + subRegionPixelY;
 
+			const u_int pixelIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+			// Run-batched pixel passes (see sobol.cpp): an active run
+			// pins the candidate - skip the adaptive gate entirely.
+			const bool runHit = (pixelPassRunLeft > 0u) &&
+					(pixelPassRunIdx == pixelIdx);
+
 			// Check if the current pixel is over or under the convergence threshold
 			auto& film = sharedData->GetEngineFilm();
-			if ((adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
+			if (!runHit && (adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
 				// Pixels are sampled in accordance with how far from convergence they are
 				const float noise = *(GetFilm().channel_NOISE->GetPixel(px, py));
 
@@ -195,12 +203,28 @@ void PMJ02Sampler::InitNewSample() {
 				}
 			}
 
-			pass = sharedData->GetNewPixelPass(subRegionPixelX + subRegionPixelY * subRegionWidth);
+			if (runHit) {
+				++pass;
+				--pixelPassRunLeft;
+			} else {
+				pixelPassRunLeft = PASS_BATCH - 1u;
+				pixelPassRunIdx = pixelIdx;
+				pass = sharedData->GetNewPixelPassBatch(pixelIdx, PASS_BATCH);
+			}
 		} else {
 			px = 0;
 			py = 0;
 
-			pass = sharedData->GetNewPixelPass();
+			// Single shared counter for filmless samples - every
+			// thread RMWs the same slot.
+			if ((pixelPassRunLeft == 0u) || (pixelPassRunIdx != 0u)) {
+				pixelPassRunLeft = PASS_BATCH - 1u;
+				pixelPassRunIdx = 0u;
+				pass = sharedData->GetNewPixelPassBatch(0u, PASS_BATCH);
+			} else {
+				++pass;
+				--pixelPassRunLeft;
+			}
 		}
 
 		pixelX = px;
