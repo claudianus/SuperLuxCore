@@ -48,7 +48,30 @@ HomogeneousVolume::HomogeneousVolume(
 	sssAlbedoTex(sssAlbedo),
 	sssMfpTex(sssMfp),
 	sssProfile(sssProfile)
-{}
+{
+	// Constant-texture fast path for Scatter()/ScatterEquiangular(): in
+	// non-spectral renders the sigma/emission textures of a homogeneous
+	// volume are almost always ConstFloat3, so evaluating them at each
+	// volume event is pure overhead (virtual dispatch + a fully built
+	// HitPoint). Under spectral rendering the value depends on the path
+	// wavelengths, so the cache is gated at use sites on !Spectral::Current().
+	HitPoint hp;
+	hp.Init();
+	const bool sigmaAConst = (sigmaA.get().GetType() == CONST_FLOAT3) ||
+			(sigmaA.get().GetType() == CONST_FLOAT);
+	const bool sigmaSConst = (sigmaS.get().GetType() == CONST_FLOAT3) ||
+			(sigmaS.get().GetType() == CONST_FLOAT);
+	const bool emissionConst = !volumeEmissionTex ||
+			(volumeEmissionTex->GetType() == CONST_FLOAT3) ||
+			(volumeEmissionTex->GetType() == CONST_FLOAT);
+	constSigmaParams = !sssAlbedoTex && sigmaAConst && sigmaSConst && emissionConst;
+	if (constSigmaParams) {
+		constSigmaA = sigmaA.get().EvalSpectrumValue(hp).Clamp();
+		constSigmaS = sigmaS.get().EvalSpectrumValue(hp).Clamp();
+		constEmission = volumeEmissionTex ?
+				volumeEmissionTex->EvalSpectrumValue(hp).Clamp() : Spectrum(0.f);
+	}
+}
 
 // SSS albedo parametrization: maps the diffuse surface albedo A to the
 // physical single-scatter albedo alpha of the medium. Closed-form
@@ -204,17 +227,25 @@ float HomogeneousVolume::Scatter(const Ray &ray, const float u,
 	// Check if I have to support multi-scattering
 	const bool scatterAllowed = (!scatteredStart || multiScattering);
 
-	// Point where to evaluate the volume
-	HitPoint hitPoint;
-	hitPoint.Init();
-	hitPoint.fixedDir = ray.d;
-	hitPoint.p = ray.o;
-	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
-	hitPoint.passThroughEvent = u;
+	Spectrum sigmaA, sigmaS, emission;
+	if (constSigmaParams && !Spectral::Current()) {
+		// Constant params fast path: no HitPoint / virtual texture evals.
+		sigmaA = constSigmaA;
+		sigmaS = constSigmaS;
+		emission = constEmission;
+	} else {
+		// Point where to evaluate the volume
+		HitPoint hitPoint;
+		hitPoint.Init();
+		hitPoint.fixedDir = ray.d;
+		hitPoint.p = ray.o;
+		hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
+		hitPoint.passThroughEvent = u;
 
-	const Spectrum sigmaA = SigmaA(hitPoint);
-	const Spectrum sigmaS = SigmaS(hitPoint);
-	const Spectrum emission = Emission(hitPoint);
+		sigmaA = SigmaA(hitPoint);
+		sigmaS = SigmaS(hitPoint);
+		emission = Emission(hitPoint);
+	}
 
 	Spectrum segmentTransmittance, segmentEmission;
 	const float scatterDistance = HomogeneousVolume::Scatter(u, scatterAllowed,
@@ -236,17 +267,24 @@ float HomogeneousVolume::ScatterEquiangular(const Ray &ray, const float u,
 	const float segmentLength = ray.maxt - ray.mint;
 	const bool scatterAllowed = (!scatteredStart || multiScattering);
 
-	// Point where to evaluate the volume
-	HitPoint hitPoint;
-	hitPoint.Init();
-	hitPoint.fixedDir = ray.d;
-	hitPoint.p = ray.o;
-	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
-	hitPoint.passThroughEvent = u;
+	Spectrum sigmaA, sigmaS, emission;
+	if (constSigmaParams && !Spectral::Current()) {
+		sigmaA = constSigmaA;
+		sigmaS = constSigmaS;
+		emission = constEmission;
+	} else {
+		// Point where to evaluate the volume
+		HitPoint hitPoint;
+		hitPoint.Init();
+		hitPoint.fixedDir = ray.d;
+		hitPoint.p = ray.o;
+		hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
+		hitPoint.passThroughEvent = u;
 
-	const Spectrum sigmaA = SigmaA(hitPoint);
-	const Spectrum sigmaS = SigmaS(hitPoint);
-	const Spectrum emission = Emission(hitPoint);
+		sigmaA = SigmaA(hitPoint);
+		sigmaS = SigmaS(hitPoint);
+		emission = Emission(hitPoint);
+	}
 	const float sigmaSValue = sigmaS.Filter();
 	const Spectrum sigmaT = sigmaA + sigmaS;
 
@@ -379,15 +417,20 @@ float HomogeneousVolume::ScatterEquiangular(const Ray &ray, const float u,
 Spectrum HomogeneousVolume::TransmittanceEstimate(const Ray &ray, const float u) const {
 	const float segmentLength = ray.maxt - ray.mint;
 
-	// Point where to evaluate the volume
-	HitPoint hitPoint;
-	hitPoint.Init();
-	hitPoint.fixedDir = ray.d;
-	hitPoint.p = ray.o;
-	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
-	hitPoint.passThroughEvent = u;
+	Spectrum sigmaT;
+	if (constSigmaParams && !Spectral::Current())
+		sigmaT = constSigmaA + constSigmaS;
+	else {
+		// Point where to evaluate the volume
+		HitPoint hitPoint;
+		hitPoint.Init();
+		hitPoint.fixedDir = ray.d;
+		hitPoint.p = ray.o;
+		hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
+		hitPoint.passThroughEvent = u;
 
-	const Spectrum sigmaT = SigmaT(hitPoint);
+		sigmaT = SigmaT(hitPoint);
+	}
 	if (sigmaT.Black() || (segmentLength <= 0.f))
 		return Spectrum(1.f);
 

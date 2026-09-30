@@ -110,6 +110,13 @@ private:
 	luxrays::Spectrum SSSCoeffs(const HitPoint &hitPoint,
 			luxrays::Spectrum &alpha) const;
 
+	// When sigmaA/sigmaS/emission are all constant textures (and the SSS
+	// parametrization is off), Scatter()/ScatterEquiangular() can skip the
+	// per-event HitPoint + virtual texture evaluation in non-spectral
+	// renders. The cached spectra are clamped like SigmaA()/SigmaS() do.
+	bool constSigmaParams;
+	luxrays::Spectrum constSigmaA, constSigmaS, constEmission;
+
 	std::reference_wrapper<const Texture> sigmaA, sigmaS;
 	SchlickScatter schlickScatter;
 	const bool multiScattering;
