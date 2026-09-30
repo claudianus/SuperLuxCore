@@ -65,6 +65,11 @@ public:
 	virtual const luxrays::Transform &GetRasterToCamera(const u_int index = 0) const = 0;
 	virtual const luxrays::Transform &GetCameraToWorld(const u_int index = 0) const = 0;
 	virtual const luxrays::Transform &GetScreenToWorld(const u_int index = 0) const = 0;
+	// Cached inverse getters: returning the precomputed transform avoids
+	// a 4x4 Inverse() on every ProjectPointToFilm/GetSamplePosition call.
+	virtual const luxrays::Transform &GetWorldToCamera(const u_int index = 0) const = 0;
+	virtual const luxrays::Transform &GetCameraToRaster(const u_int index = 0) const = 0;
+	virtual const luxrays::Transform &GetWorldToRaster(const u_int index = 0) const = 0;
 
 	// Mostly used by GUIs
 	virtual void Translate(const luxrays::Vector &t) = 0;

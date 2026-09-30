@@ -42,6 +42,15 @@ public:
 	virtual const luxrays::Transform &GetScreenToWorld(const u_int index = 0) const {
 		return camTrans.screenToWorld;
 	}
+	virtual const luxrays::Transform &GetWorldToCamera(const u_int index = 0) const {
+		return camTrans.worldToCamera;
+	}
+	virtual const luxrays::Transform &GetCameraToRaster(const u_int index = 0) const {
+		return camTrans.cameraToRaster;
+	}
+	virtual const luxrays::Transform &GetWorldToRaster(const u_int index = 0) const {
+		return camTrans.worldToRaster;
+	}
 	// Mostly used by GUIs
 	
 	virtual void Translate(const luxrays::Vector &t) {
@@ -123,10 +132,11 @@ protected:
 		luxrays::Transform screenToCamera, screenToWorld;
 		luxrays::Transform rasterToScreen, rasterToWorld;
 		luxrays::Transform rasterToCamera;
-		// Cached inverses - GetSamplePosition and friends otherwise
-		// recompute them per call (per ConnectToEye for light tracing).
+		// Cached inverses - GetSamplePosition / ProjectPointToFilm and
+		// friends otherwise recompute them per call (per ConnectToEye).
 		luxrays::Transform worldToCamera;
 		luxrays::Transform worldToRaster;
+		luxrays::Transform cameraToRaster;
 	} CameraTransforms;
 	
 	virtual void InitCameraTransforms(CameraTransforms *trans) = 0;

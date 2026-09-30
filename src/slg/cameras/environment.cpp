@@ -177,6 +177,7 @@ void EnvironmentCamera::InitCameraTransforms(CameraTransforms *trans) {
 	trans->rasterToWorld = trans->screenToWorld * trans->rasterToScreen;
 	trans->worldToCamera = Inverse(trans->cameraToWorld);
 	trans->worldToRaster = Inverse(trans->rasterToWorld);
+	trans->cameraToRaster = Inverse(trans->rasterToCamera);
 }
 
 void EnvironmentCamera::InitPixelArea() {

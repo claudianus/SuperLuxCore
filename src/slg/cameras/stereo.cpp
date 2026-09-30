@@ -60,6 +60,33 @@ const Transform &StereoCamera::GetScreenToWorld(const u_int index) const {
 		throw runtime_error("Unknown index in GetScreenToWorld(): " + ToString(index));
 }
 
+const Transform &StereoCamera::GetWorldToCamera(const u_int index) const {
+	if (index == 0)
+		return leftEye->GetWorldToCamera();
+	else if (index == 1)
+		return rightEye->GetWorldToCamera();
+	else
+		throw runtime_error("Unknown index in GetWorldToCamera(): " + ToString(index));
+}
+
+const Transform &StereoCamera::GetCameraToRaster(const u_int index) const {
+	if (index == 0)
+		return leftEye->GetCameraToRaster();
+	else if (index == 1)
+		return rightEye->GetCameraToRaster();
+	else
+		throw runtime_error("Unknown index in GetCameraToRaster(): " + ToString(index));
+}
+
+const Transform &StereoCamera::GetWorldToRaster(const u_int index) const {
+	if (index == 0)
+		return leftEye->GetWorldToRaster();
+	else if (index == 1)
+		return rightEye->GetWorldToRaster();
+	else
+		throw runtime_error("Unknown index in GetWorldToRaster(): " + ToString(index));
+}
+
 void StereoCamera::Update(const u_int width, const u_int height,
 		const u_int *subRegion) {
 	/*if (filmSubRegion)

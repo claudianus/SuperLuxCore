@@ -45,6 +45,15 @@ public:
 	virtual const luxrays::Transform &GetScreenToWorld(const u_int index = 0) const {
 		return camTrans.screenToWorld;
 	}
+	virtual const luxrays::Transform &GetWorldToCamera(const u_int index = 0) const {
+		return camTrans.worldToCamera;
+	}
+	virtual const luxrays::Transform &GetCameraToRaster(const u_int index = 0) const {
+		return camTrans.cameraToRaster;
+	}
+	virtual const luxrays::Transform &GetWorldToRaster(const u_int index = 0) const {
+		return camTrans.worldToRaster;
+	}
 
 	// Mostly used by GUIs
 	virtual void Translate(const luxrays::Vector &t) {
@@ -123,6 +132,7 @@ protected:
 		luxrays::Transform rasterToCamera;
 		luxrays::Transform worldToCamera;
 		luxrays::Transform worldToRaster;
+		luxrays::Transform cameraToRaster;
 	} CameraTransforms;
 
 	float screenWindow[4];

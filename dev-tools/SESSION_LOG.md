@@ -1075,3 +1075,18 @@ vertex) and every shadow-camera query. Same for `OrthographicCamera`
 `InitCameraTransforms` (called by `Update` on camera motion).
 Correctness: identical matrix math, just hoisted. cornell + strands
 parity PASS.
+
+## Camera: cache inverse transforms, eliminate per-call Inverse() (2026-10-01)
+
+`ProjectPointToFilm` did two 4x4 Inverse() per call (world->camera +
+camera->raster). `PerspectiveCamera::GetSamplePosition` did another
+Inverse(rasterToWorld) per ConnectToEye. Same on ortho/env.
+
+Added `worldToCamera` + `worldToRaster` + `cameraToRaster` to
+`CameraTransforms` (projective + environment; populated once per
+InitCameraTransforms). New virtual getters `GetWorldToCamera` /
+`GetCameraToRaster` / `GetWorldToRaster` on `Camera`; `StereoCamera`
+forwards to the active eye. `ProjectPointToFilm` uses the cached
+transforms now. Same math, hoisted.
+
+cornell + strands parity PASS.

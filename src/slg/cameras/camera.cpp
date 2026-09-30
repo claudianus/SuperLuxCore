@@ -71,12 +71,12 @@ bool Camera::ProjectPointToFilm(const luxrays::Point &p, const float time,
 		pr *= motionSystem->SampleInverse(time);
 
 	// World -> camera space; reject points behind a perspective camera
-	pr = Inverse(GetCameraToWorld()) * pr;
+	pr = GetWorldToCamera() * pr;
 	if (((type == PERSPECTIVE) || (type == STEREO)) && (pr.z <= clipHither))
 		return false;
 
 	// Camera -> raster space (the projective divide is part of Transform)
-	pr = Inverse(GetRasterToCamera()) * pr;
+	pr = GetCameraToRaster() * pr;
 	*filmX = pr.x;
 	*filmY = filmHeight - 1.f - pr.y;
 
