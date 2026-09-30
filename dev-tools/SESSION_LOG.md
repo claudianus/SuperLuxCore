@@ -1,3 +1,33 @@
+## Session — zero-config PSR auto-seed + intersect dedup (72b42a4b7, 7178ad2e0)
+
+**path.regularization.auto (default on)**: caustic-capable signature
+(the same scan that promotes light tracing + MNEE) now also seeds
+sigma=0.03 + halflife=64spp when the artist pinned neither property.
+The Kaplanyan decay halves the blur every 64spp and snaps to 0 below
+1e-5, so first frames resolve SDS energy and the render converges
+unbiased - the "turn it on and caustics show up" Corona-style
+behaviour without a pre-cache. Verified: focused-caustic-ring seeds
+sigma=0.03, cornell (fully diffuse) stays unset, explicit
+`path.regularization.sigma=0` and `path.regularization.auto=0` both
+win. BLC pairs it with a `psr_auto` checkbox next to Filter Glossy
+Sigma (commit in SuperBlendLuxCore).
+
+**Scene::Intersect dedup (7178ad2e0)**: `GetSceneObject(meshIndex)`
+ran twice per intersecting hit (bevel probe + IsCameraInvisible).
+Hoisted to one fetch per path segment via a loop-scope pointer.
+Parity 4/4 clean, zero semantic change.
+
+**Path-guiding A/B (pg_ab.py, opt-in stays)**: 20s x2 reps,
+640x480 PATHCPU - cornell +4.6% sps, pg-indirect +0.8%, pg-gallery
+rep1 collapsed 0.374x (noise-dominated; relative-stddev proxy cannot
+separate convergence benefit). Auto-promotion needs an RMSE-vs-ref
+gate, not sps; stays opt-in.
+
+**Pending measurement**: `psr_ab.py` renders a 4096spp unbiased
+(lt+mnee, PSR off) reference for focused-caustic-ring, then A/Bs
+auto-stack vs auto-no-psr vs psr-only RMSE at equal wall time.
+
+
 
 ## Session — stall-free PhotonGI updates (C7) + progressive GPU merge (C2)
 

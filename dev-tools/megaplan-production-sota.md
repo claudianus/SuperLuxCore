@@ -40,7 +40,7 @@
 | MNEE 자동 | `path.mnee.auto`(기본 on) + 동일 시그니처 | eye-side 커스틱 솔버 — connect당 자체 게이트라 미적용 씬에서 거의 무비용; GPU LMNEE는 LT 태스크에 편승 | 중 | ✅ `72369ed5f` (luxball/bigmonkey 6케이스 + stress 씬 24spp 커스틱 + GPU finite + 패리티 4/4) |
 | GPU zero-tail 폴백 | `taskCount<=8192` 시 `lightTaskCount==0` | 억제만 걸리고 보상 패스 없는 잠복 블랙아웃 — PATHOCL은 네이티브로 라이트 패스 위임(hbf 강등), TILEPATHOCL은 네이티브/PGIC 보상 시 lt 유지, 무보상 시 lt/hbf/vc 해제 | 중 | ✅ (e17 T-1 회귀 추가, 패리티 4/4, demote 시 mean 0.0626 finite) |
 | VC/VM | `path.vertexconnection.enable` | VCM 본질 biased — 문서화 후 제한적 기본 | 중 | — 일관성 게이트 먼저 |
-| PSR | `path.regularization.sigma` + `.halflife` | v1+감쇠 랜딩 (`eadcf8319`); 델타→로브 치환은 후속 | 중 | ◐ halflife 기본값 승격 측정 (bias-수렴 트레이드오프 게이트) |
+| PSR | `path.regularization.auto`(기본 on) + `.sigma`/`.halflife` | v1+감쇠 (`eadcf8319`) → 씬 시그니처 자동 시드 sigma=0.03/hl=64 (`72b42a4b7`); 커스틱 가능 씬만 시드, diffuse 제외·명시값 우선 검증; 델타→로브 치환은 후속 | 중 | ✅ auto 시드 랜딩 (focused-ring RMSE 측정 후 halflife 기본값 재평가) |
 | ARC | 적응 클램핑 | e42 통과 | 저 | ◐ 기본값 재검토 |
 | OIDN 잔차 피드백 | NOISE 채널 피드백 (e98) | 디노이저 잔차→샘플링 | 저 | ◐ |
 | 볼륨 residual 트래킹 | 볼륨 설정 자동 | e34 패리티 | 저 | ✅ 볼륨 경로 기본 적용 영역 |
