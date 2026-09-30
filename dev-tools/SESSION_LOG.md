@@ -873,3 +873,16 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   identical by construction (same segment either way).
 - prism PATHCPU 6.76 -> 6.82 Ms/s (borderline noise, keeps the win).
 - Parity PASS.
+
+## opencl.task.count AUTO: 512K -> 128K (2026-10-01)
+
+- luxball PATHOCL 256x256: 64K vs 512K identical means (reldiff
+  7.8e-4 - MC noise), 5.11M -> 5.59M samples/s. The 512K pool was
+  memory only, not throughput.
+- AUTO now caps at 128K (still >1 task/px at 720p; RT viewport keeps
+  its per-pixel formula). On luxball: GPUTaskMnee 954 -> 238MB,
+  SampleResult 288 -> 72MB, GPUTaskState 299 -> 75MB - ~1.5GB
+  device-side RAM saved per session with MNEE on.
+- 8/4/2GB card caps unchanged (256/128/64K): AUTO users on low-VRAM
+  hardware were already capped lower than the new default.
+- Parity cornell + strands PASS.

@@ -235,7 +235,11 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 		// In this case, I will tune task count for RTPATHOCL
 		taskCount = GetFilm().GetWidth() * GetFilm().GetHeight() / intersectionDevices.size();
 	} else {
-		const u_int defaultTaskCount = 512ull * 1024ull;
+		// Measured on M5 Pro (cornell + luxball PATHOCL): throughput is
+		// flat from 64K to 512K, so the 512K default only cost GPU memory
+		// (~3-4GB of taskState/tasksMnee/SampleResult). 128K keeps >1
+		// task per pixel at 720p and stays a power of two.
+		const u_int defaultTaskCount = 128ull * 1024ull;
 
 		// Compute the cap to the number of tasks
 		u_int taskCap = defaultTaskCount;
