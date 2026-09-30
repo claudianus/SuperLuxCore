@@ -1196,8 +1196,31 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 				conflicting = pendingBuffers.count(metalBuff) != 0;
 		}
 
-		if (conflicting)
-			FinishQueue();
+		if (conflicting) {
+			// Wait only on command buffers that actually reference this
+			// buffer - FinishQueue() would drain unrelated work too and
+			// serialize the stream. CBs on one queue complete in commit
+			// order, so waiting on the LAST conflicting cb transitively
+			// covers every earlier conflicting dispatch (and pendingCB
+			// too once committed).
+			std::vector<MTLCommandBufferHandle> waiting;
+			{
+				std::lock_guard<std::mutex> lock(inFlightMutex);
+				CommitPendingLocked();
+				for (auto it = inFlightWork.begin(); it != inFlightWork.end(); ) {
+					bool uses = false;
+					for (const MetalDeviceBuffer *b : it->buffers) {
+						if (b == metalBuff) { uses = true; break; }
+					}
+					if (uses) { waiting.push_back(it->cb); it = inFlightWork.erase(it); }
+					else ++it;
+				}
+			}
+			for (auto cb : waiting) {
+				[(__bridge id<MTLCommandBuffer>)cb waitUntilCompleted];
+				[(__bridge id<MTLCommandBuffer>)cb release];
+			}
+		}
 	}
 
 	memcpy([(__bridge id<MTLBuffer>)metalBuff->metalBuff contents], ptr, size);

@@ -902,3 +902,13 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   by GPU budget.
 - Verified: 320x180 luxball now shows `path.lighttracing.auto`
   engaging without the demote warning.
+
+## Metal EnqueueWriteBuffer: scope the conflict wait (2026-10-01)
+
+- `EnqueueWriteBuffer` on a buffer conflict called `FinishQueue()`,
+  which drains every committed CB - serializing unrelated in-flight
+  work for one buffer's write.
+- Now waits only on command buffers whose `buffers` set contains the
+  target (transitively covered by in-order queue). Unrelated kernels
+  keep overlapping the host memcpy.
+- Parity cornell + strands PASS.
