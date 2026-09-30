@@ -28,7 +28,39 @@ Sorted by profiled share of render-thread time.
 | 5 | `DataSet::GetAccelerator` per ray segment | ~0.3% | landed | `e25c8ffc6` |
 | 6 | LightBVH `NodeImportance` trig chain | ~0.1% | landed | `e25c8ffc6` |
 
-Rejected / reverted:
+## CPU render-thread profile (2026-09-30 r2, PATHCPU, portal-interior 640x360)
+
+Portal-interior (sealed-indirect worst case) re-profile after the first
+backlog drained. Shares are top-of-stack on render threads.
+
+| # | Hotspot | Share | Status | Commit |
+|---|---------|-------|--------|--------|
+| 1 | Embree tri+instance traversal | ~20% | natural cost | — |
+| 2 | `SobolSampler::InitNewSample` geometry+adaptive | ~11% | **landed** (film cache + magic udivs, -43% leaf) | `537a48c6d` |
+| 3 | `SobolSequence::GetSample` ctz-walk | ~8% | residual | — |
+| 4 | `MetropolisSampler::GetSample/NextSample` | ~8% | residual (MLT mutation loop amortized) | — |
+| 5 | `sincosf` latlong/disk/cone sampling | ~6% | no redundant calls identified; approx breaks parity | — |
+| 6 | HitPoint attr chain (`Init`+`GetDifferentials`+interpolate+Buffer[] stubs) | ~9% | open | — |
+| 7 | PathVolumeInfo bookkeeping | ~3% | open (has-volumes fast gate) | — |
+
+### r2 #2 Sobol InitNewSample film cache (`537a48c6d`)
+
+- Path: `SobolSampler::InitNewSample` per eye sample — adaptive
+  convergence test (NOISE channel + second moments) + bucket/pixel
+  arithmetic.
+- Observation: per sample paid 2 `std::set::count` channel lookups,
+  ~8 runtime `udiv`s (tileSize² mod/div, tiletWidthCount mod/div,
+  overlapping div), dead `GetEngineFilm()` ref.
+- Change: `UpdateFilmCache()` snapshots subregion-derived geometry,
+  magic divisors and channel flags once per subregion change (channels
+  frozen post-`Film::Init`; only subregion can still move via dyn-res).
+  `floor(2^32/d)+1` mulhi division is exact for every u32 dividend —
+  pixel visit order and RNG draws bit-identical.
+- Validation: Release build; `parity-regression` 4/4 on final binary;
+  portal-interior smoke render clean.
+- Result: leaf 42.7k → 24.5k (-43%), sampler group ~104k → ~73.7k
+  (-29%) at identical 25s `sample` window.
+
 
 - GPU crawl-bail for the wavefront MNEE state machine — corrupts state
   when bailing mid-phase; rule: early exits only at valid phase

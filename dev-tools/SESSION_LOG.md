@@ -448,3 +448,27 @@ e102: +3 TILEPATHOCL zero-tail rows (tile.size=32, aa=1 -> taskCount
 8192; lt / hbf / natives=2 variants; TILEPATHSAMPLER required -
 CheckSamplersForTile rejects Sobol on tile engines).
 Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
+
+## Sobol InitNewSample film-cache round (landed 537a48c6d)
+
+- Re-profiled on a different workload per megaplan protocol:
+  portal-interior (sealed-indirect worst case), PATHCPU 640x360,
+  `sample` 30s. Top-of-stack: SobolSampler::InitNewSample ~11% of
+  render-thread samples — per sample it paid 2 std::set channel
+  lookups, ~8 runtime udivs and a dead GetEngineFilm() ref.
+- UpdateFilmCache() now snapshots subregion geometry, magic divisors
+  (floor(2^32/d)+1 mulhi — exact for all u32 dividends) and channel
+  flags once per subregion change; channels are frozen post-Film::Init
+  (AddChannel/RemoveChannel throw on initialized films), only the
+  subregion can still move (dyn-res). Bit-identical pixel order and
+  RNG consumption; moments-validity checked live.
+- Result (same-scene 25s sample): InitNewSample leaf 42.7k -> 24.5k
+  (-43%); sampler group ~104k -> ~73.7k (-29%).
+- Gates: Release build; parity-regression 4/4 on the final binary;
+  portal-interior smoke render clean.
+- New tool: dev-tools/profile_render.py (single-scene renderer for
+  `sample` attribution).
+- Next-ranked: HitPoint attr chain ~9% (GetDifferentials +
+  InterpolateTri* + Buffer[] PLT stubs), PathVolumeInfo bookkeeping
+  ~3% (has-volumes fast gate candidate), Metropolis
+  GetSample/NextSample ~8% residual.
