@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/lights/strategies/lightstrategyregistry.h"
+#include "slg/lights/strategies/lightbvh.h"
 #include "slg/scene/scene.h"
 #include "slg/bsdf/bsdf.h"
 
@@ -30,7 +31,7 @@ using namespace slg;
 
 LightStrategyType LightStrategy::GetType(const luxrays::Properties &cfg) {
 	const string type = cfg.Get(
-		Property("lightstrategy.type")(LightStrategyLogPower::GetObjectTag())
+		Property("lightstrategy.type")(LightStrategyLightBVH::GetObjectTag())
 	).Get<string>();
 
 	return String2LightStrategyType(type);
@@ -42,7 +43,7 @@ LightStrategyType LightStrategy::GetType(const luxrays::Properties &cfg) {
 
 PropertiesUPtr LightStrategy::ToProperties(const Properties &cfg) {
 	const string type = cfg.Get(
-		Property("lightstrategy.type")(LightStrategyLogPower::GetObjectTag())
+		Property("lightstrategy.type")(LightStrategyLightBVH::GetObjectTag())
 	).Get<string>();
 
 	LightStrategyRegistry::ToProperties func;
@@ -57,7 +58,7 @@ PropertiesUPtr LightStrategy::ToProperties(const Properties &cfg) {
 
 LightStrategyUPtr LightStrategy::FromProperties(const Properties &cfg) {
 	const string type = cfg.Get(
-		Property("lightstrategy.type")(LightStrategyLogPower::GetObjectTag())
+		Property("lightstrategy.type")(LightStrategyLightBVH::GetObjectTag())
 	).Get<string>();
 
 	LightStrategyRegistry::FromProperties func;
