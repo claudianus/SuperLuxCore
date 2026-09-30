@@ -515,6 +515,24 @@ static struct MneeSeedStats {
 	std::atomic<unsigned long long> tries{0}, hits{0};
 } g_mneeSeedStats;
 
+// Rejection-reason histogram for the multi-specular (chain) paths - the
+// reasons are short string literals already passed to rej()/LMNEE_REJ.
+struct MneeRejWhy {
+	const char *name;
+	std::atomic<unsigned long long> n{0};
+};
+static MneeRejWhy g_mneeRejWhyEye[] = {
+	{"chain<2"}, {"iterations"}, {"jacobian"}, {"tridiagonal"},
+	{"no-step"}, {"mirror-side"}, {"dielectric-same-side"}, {"tir"},
+	{"spec-black"}, {"light-black"}, {"occluded"}, {"geo-jacobian"},
+	{"geo-tridiagonal"}, {"r01sq"}, {"geo-term"}, {"bsdf0-black"},
+	{"other"}
+};
+static MneeRejWhy g_mneeRejWhyLight[] = {
+	{"ms-newton"}, {"ms-mirror-side"}, {"ms-sameside"}, {"ms-tir"},
+	{"ms-spec"}, {"ms-geojac"}, {"ms-chain<2"}, {"other"}
+};
+
 // Solve-cost diagnostics under the same LUX_MNEE_SEED_STATS gate: Newton
 // iterations and failures per solve — the baseline for the
 // dimension-reduced solver comparison (Phase C).
@@ -535,6 +553,23 @@ static struct MneeSolveStats {
 					(unsigned long long)failNoStep.load(),
 					(unsigned long long)failExhausted.load(),
 					(unsigned long long)capped.load());
+		if (solves.load() > 0) {
+			fprintf(stderr, "[MNEE chain] fail-by:");
+			for (auto &w : g_mneeRejWhyEye) {
+				const auto v = w.n.load();
+				if (v)
+					fprintf(stderr, " %s=%llu", w.name,
+							(unsigned long long)v);
+			}
+			fprintf(stderr, " | lmnee:");
+			for (auto &w : g_mneeRejWhyLight) {
+				const auto v = w.n.load();
+				if (v)
+					fprintf(stderr, " %s=%llu", w.name,
+							(unsigned long long)v);
+			}
+			fprintf(stderr, "\n");
+		}
 	}
 	std::atomic<unsigned long long> solves{0}, fails{0}, iters{0};
 	// Failure classification (single-vertex solver): which stage gave up.
@@ -543,6 +578,22 @@ static struct MneeSolveStats {
 	// Solves run under the failure-evidence budget cap.
 	std::atomic<unsigned long long> capped{0};
 } g_mneeSolveStats;
+
+static void MneeRejCount(MneeRejWhy *tbl, const u_int n, const char *why) {
+	if (!g_seedStatsOn)
+		return;
+	for (u_int i = 0; i + 1 < n; ++i)
+		if (!strcmp(tbl[i].name, why)) {
+			tbl[i].n.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+	tbl[n - 1].n.fetch_add(1, std::memory_order_relaxed);  // "other"
+}
+#define MNEE_REJ_COUNT_EYE(why) MneeRejCount(g_mneeRejWhyEye, \
+		sizeof(g_mneeRejWhyEye) / sizeof(g_mneeRejWhyEye[0]), why)
+#define MNEE_REJ_COUNT_LIGHT(why) MneeRejCount(g_mneeRejWhyLight, \
+		sizeof(g_mneeRejWhyLight) / sizeof(g_mneeRejWhyLight[0]), why)
+
 
 // Counts one solve on scope exit; set .ok on the success path.
 struct MneeSolveAccount {
@@ -585,6 +636,21 @@ void MneeDumpSessionStats() {
 						std::memory_order_relaxed),
 				(unsigned long long)g_mneeSolveStats.capped.exchange(0,
 						std::memory_order_relaxed));
+	if (s > 0) {
+		fprintf(stderr, "[MNEE chain] fail-by:");
+		for (auto &w : g_mneeRejWhyEye) {
+			const auto v = w.n.exchange(0, std::memory_order_relaxed);
+			if (v)
+				fprintf(stderr, " %s=%llu", w.name, (unsigned long long)v);
+		}
+		fprintf(stderr, " | lmnee:");
+		for (auto &w : g_mneeRejWhyLight) {
+			const auto v = w.n.exchange(0, std::memory_order_relaxed);
+			if (v)
+				fprintf(stderr, " %s=%llu", w.name, (unsigned long long)v);
+		}
+		fprintf(stderr, "\n");
+	}
 	const unsigned long long t = g_mneeSeedStats.tries.exchange(0,
 			std::memory_order_relaxed);
 	const unsigned long long h = g_mneeSeedStats.hits.exchange(0,
@@ -1940,6 +2006,7 @@ bool PathTracer::MNEEMultiDirectSampling(
 		if (rejDebug)
 			printf("MNEE_MS_REJ %s film=%.4g %.4g\n", why, sampleResult->filmX,
 					sampleResult->filmY);
+		MNEE_REJ_COUNT_EYE(why);
 		return false;
 	};
 
@@ -1957,10 +2024,39 @@ bool PathTracer::MNEEMultiDirectSampling(
 	// Newton solve on the whole chain (block tridiagonal step, line search with
 	// re-projection onto the shapes).
 	//--------------------------------------------------------------------------
+	// Failure evidence for chains shares the seed table under a
+	// length-salted mesh index (n << 24), so a chain's poison never
+	// collides with single-vertex seeds for the same blocker cell.
+	// Chain iterations cost n reprojects each, so bounding doomed
+	// chains matters more than bounding single-vertex solves.
+	u_int chainEvidence = 0;
+	u_int chainKey = 0;
+	const u_int chainLightIndex = (u_int)(uintptr_t)&light;
+	const u_int chainMesh = (shadowRayHit.meshIndex * 2u +
+			(Dot(Normalize(shadowRay.d), shadowBsdf.hitPoint.geometryN) > 0.f ?
+			1u : 0u)) ^ (n << 24);
+	if (mneeSeedCacheEnable && mneeSeeds) {
+		const float cellSize = Max(scene.GetDataSet().GetBSphere().rad /
+				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
+		chainKey = MneeSeedKey(chainLightIndex, chainMesh,
+				shadowBsdf.hitPoint.p, cellSize);
+		MneeVertex unusedVtx;
+		MneeSeedLookup(mneeSeeds.get(), chainKey, chainLightIndex,
+				chainMesh, false, 1.f, &unusedVtx, &chainEvidence);
+	}
+	const u_int chainBudget = (g_poisonOn && (chainEvidence >= 2u)) ?
+			Min(mneeMaxIterations, MNEE_FAIL_PROBE_ITERS) : mneeMaxIterations;
+	if (g_seedStatsOn && chainEvidence >= 2u)
+		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
+
 	const char *failWhy = "iterations";
 	if (!MneeSolveChain(device, scene, time, x0p, ep, chain, n,
-			mneeMaxIterations, &failWhy))
+			chainBudget, &failWhy)) {
+		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
+			MneeSeedRecordFail(mneeSeeds.get(), chainKey, chainLightIndex,
+					chainMesh, false);
 		return rej(failWhy);
+	}
 
 	//--------------------------------------------------------------------------
 	// Post-solve validity: each vertex must have solved the mode its material
@@ -2236,6 +2332,7 @@ static bool LMneeRejEnabled() {
 	return enabled;
 }
 #define LMNEE_REJ(why) do { \
+		MNEE_REJ_COUNT_LIGHT(why); \
 		if (LMneeRejEnabled()) { \
 			printf("LMNEE_REJ %s x0=%.9g %.9g %.9g\n", why, \
 					x0p.x, x0p.y, x0p.z); \
@@ -2558,14 +2655,43 @@ bool PathTracer::LMNEEMultiConnectToEye(
 					shadowBsdf.hitPoint.p.z);
 			fflush(stdout);
 		}
+		MNEE_REJ_COUNT_LIGHT("ms-chain<2");
 		return false;
 	}
+
+	// Failure evidence (same scheme as the eye side): chain iterations
+	// cost n reprojects each, so bounding doomed chains pays more. The
+	// mesh identity uses the hitPoint mesh pointer (no RayHit in this
+	// signature) - large values never collide with meshIndex*2+side
+	// encodings used by the single-vertex keys.
+	u_int chainEvidence = 0;
+	u_int chainKey = 0;
+	const u_int chainMesh = ((u_int)(uintptr_t)shadowBsdf.hitPoint.mesh.get() +
+			(Dot(Normalize(shadowBsdf.hitPoint.p - x0p),
+			shadowBsdf.hitPoint.geometryN) > 0.f ? 1u : 0u)) ^ (n << 24);
+	if (mneeSeedCacheEnable && mneeSeeds) {
+		const float cellSize = Max(scene.GetDataSet().GetBSphere().rad /
+				MNEE_SEED_CELL_FRAC_CPU, 1e-4f);
+		chainKey = MneeSeedKey(LMNEE_CAMERA_SEED_ID, chainMesh,
+				shadowBsdf.hitPoint.p, cellSize);
+		MneeVertex unusedVtx;
+		MneeSeedLookup(mneeSeeds.get(), chainKey, LMNEE_CAMERA_SEED_ID,
+				chainMesh, false, 1.f, &unusedVtx, &chainEvidence);
+	}
+	const u_int chainBudget = (g_poisonOn && (chainEvidence >= 2u)) ?
+			Min(mneeMaxIterations, MNEE_FAIL_PROBE_ITERS) : mneeMaxIterations;
+	if (g_seedStatsOn && chainEvidence >= 2u)
+		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
 	Spectrum radiance;
 	float filmX, filmY;
 	if (!LMneeChainSolveAndEval(device, scene, time, x0p, ep, chain, n,
-			mneeMaxIterations, volInfo, bsdf, flux, radiance, filmX, filmY))
+			chainBudget, volInfo, bsdf, flux, radiance, filmX, filmY)) {
+		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
+			MneeSeedRecordFail(mneeSeeds.get(), chainKey,
+					LMNEE_CAMERA_SEED_ID, chainMesh, false);
 		return false;
+	}
 
 	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "chain", &x0p);
 	LightFocusCredit(scene, light.lightSceneIndex, x0p);
