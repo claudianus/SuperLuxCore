@@ -400,3 +400,12 @@ e99 T4: sigma=0.06+hl4 at 32spp lands ~5-8x closer to the sigma=0
 anchor than the static image on PATHCPU and PATHOCL.
 BLC: "Filter Glossy Half-life" exposed (visible when sigma>0).
 Deployed via sync_dev_install.
+
+Correction (`d0b2722f0`): the first cut of the zero-tail fallback
+wrongly counted `photongi.caustic.enabled` as a compensating pass.
+Under hbf the PGIC caustic cache is only consulted at depth != 0
+(pathtracer.cpp IsCausticEnabled gate) so the depth-0 pool - the
+dominant term - still needs a light pass. PATHOCL now demotes to
+native-thread hbf whenever native>0 and disables lt/hbf/vc otherwise;
+TILEPATHOCL keeps lt only when native>0. Verified taskCount=8192/4096
+finite (mean ~0.042) and 65536 normal path intact.
