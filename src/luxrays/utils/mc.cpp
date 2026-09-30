@@ -106,7 +106,7 @@ void ConcentricSampleDisk(const float u1, const float u2, float *dx, float *dy) 
 	// Map uniform random numbers to [-1,1]^2
 	const float sx = 2.f * u1 - 1.f;
 	const float sy = 2.f * u2 - 1.f;
-	// Map square to $(r,\theta)$
+	// Map square to $(r,	heta)$
 	// Handle degeneracy at the origin
 	if (sx == 0.f && sy == 0.f) {
 		*dx = 0.f;
@@ -415,8 +415,20 @@ u_int Distribution1D::SampleDiscrete(float u, float *pdf, float *du) const {
 		*pdf = func[count - 1] * invCount;
 		return count - 1;
 	}
-	const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
-	const u_int offset = ptr - &cdf[0] - 1;
+	// Same hinted walk as SampleContinuous: u * count is within a
+	// segment or two on roughly-uniform CDFs (pixel filters, light
+	// tables); fall back to upper_bound past the cap.
+	u_int offset = (u_int)(u * (float)count);
+	offset = Min(offset, count - 1);
+	u_int walked = 0;
+	while (u < cdf[offset] && walked++ < 8)
+		--offset;
+	while ((u >= cdf[offset + 1]) && (offset < count - 1) && walked++ < 16)
+		++offset;
+	if ((u < cdf[offset]) || (u >= cdf[offset + 1])) {
+		const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
+		offset = u_int(ptr - &cdf[0] - 1);
+	}
 	assert ((offset >= 0) && (offset < count));
 
 	// Compute offset along CDF segment
@@ -447,12 +459,12 @@ BOOST_CLASS_EXPORT_IMPLEMENT(luxrays::Distribution2D)
 
 Distribution2D::Distribution2D(std::span<float> data,  u_int nu, u_int nv) {
 	pConditionalV.reserve(nv);
-	// Compute conditional sampling distribution for $\tilde{v}$
+	// Compute conditional sampling distribution for $	ilde{v}$
 	for (u_int v = 0; v < nv; ++v)
 		pConditionalV.push_back(
 			std::make_unique<Distribution1D>(data.subspan(v * nu, nu))
 		);
-	// Compute marginal sampling distribution $p[\tilde{v}]$
+	// Compute marginal sampling distribution $p[	ilde{v}]$
 	std::vector<float> marginalFunc;
 	marginalFunc.reserve(nv);
 	for (u_int v = 0; v < nv; ++v)

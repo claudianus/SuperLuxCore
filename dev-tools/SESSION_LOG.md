@@ -864,3 +864,12 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   sweep confirmed ±12% noise floor at 64K-512K on M5 Pro), not
   stall-bound; the residual dispatch overhead is not recoverable
   without fusing advance+trace into a single kernel launch.
+
+## Distribution1D::SampleDiscrete - hinted CDF walk (2026-10-01)
+
+- SampleContinuous already had the u*count + bounded linear-walk
+  fast path (8 down / 16 up) + upper_bound fallback; SampleDiscrete
+  still ran upper_bound on every call. Same hint applies - result
+  identical by construction (same segment either way).
+- prism PATHCPU 6.76 -> 6.82 Ms/s (borderline noise, keeps the win).
+- Parity PASS.
