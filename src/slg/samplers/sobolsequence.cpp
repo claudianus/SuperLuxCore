@@ -31,7 +31,7 @@ using namespace slg;
 // SobolSequence
 //------------------------------------------------------------------------------
 
-SobolSequence::SobolSequence() : directions(NULL) {
+SobolSequence::SobolSequence() : directions(NULL), directionsReversed(NULL) {
 	rngPass = 0;
 	rng0 = 0.f;
 	rng1 = 0.f;
@@ -40,25 +40,40 @@ SobolSequence::SobolSequence() : directions(NULL) {
 	blueNoiseSeed = 0;
 	owenShuffleSeed = 0;
 	pixelShift = -1.f;
+	shuffledPassValid = false;
+	shuffledPass = 0;
+	shuffledPassKey = 0;
 }
 
 SobolSequence::~SobolSequence() {
 	delete[] directions;
+	delete[] directionsReversed;
 }
 
 void SobolSequence::RequestSamples(const u_int size) {
 	directions = new u_int[size * SOBOL_BITS];
 	GenerateDirectionVectors(directions, size);
+
+	// Reversed-bit copy for the Owen path (XOR-linearity of bit reversal,
+	// see the member comment)
+	directionsReversed = new u_int[size * SOBOL_BITS];
+	for (u_int d = 0; d < size * SOBOL_BITS; ++d)
+		directionsReversed[d] = ReverseBits(directions[d]);
 }
 
-u_int SobolSequence::SobolDimension(const u_int index, const u_int dimension) const {
+u_int SobolSequence::SobolDimension(const u_int index, const u_int dimension,
+		const u_int *table) const {
+	// Clear-lowest-set-bit walk: touches only the set bits of the index
+	// (popcount iterations) instead of every bit position up to the
+	// highest set one. Identical XOR factorization, bit-identical result.
 	const u_int offset = dimension * SOBOL_BITS;
 	u_int result = 0;
 	u_int i = index;
 
-	for (u_int j = 0; i; i >>= 1, j++) {
-		if (i & 1)
-			result ^= directions[offset + j];
+	while (i) {
+		const u_int j = __builtin_ctz(i);
+		result ^= table[offset + j];
+		i &= i - 1;
 	}
 
 	return result;
@@ -108,9 +123,22 @@ float SobolSequence::GetSample(const u_int pass, const u_int index) {
 		// nested-uniform scramble (decorrelating sample order across
 		// pixels), then each dimension is scrambled with a per-pixel,
 		// per-dimension seed. No Cranley-Patterson rotation is needed.
+		//
+		// The shuffle depends only on (pass, owenShuffleSeed): within a
+		// sample both are constant, so memoize it across the dimension
+		// calls (invalidated when the per-pixel seed changes).
+		if (!shuffledPassValid || (shuffledPassKey != pass)) {
+			shuffledPass = NestedUniformScramble(pass, owenShuffleSeed);
+			shuffledPassKey = pass;
+			shuffledPassValid = true;
+		}
+		const u_int i = shuffledPass;
 		const u_int dimSeed = BlueNoiseHash(blueNoiseSeed ^ (index * 0x9e3779b9u + 0x85ebca6bu));
-		const u_int i = NestedUniformScramble(pass, owenShuffleSeed);
-		iResult = NestedUniformScramble(SobolDimension(i, index), dimSeed);
+		// NestedUniformScramble(SobolDimension(i, index), dimSeed) with
+		// the leading ReverseBits folded into the reversed direction
+		// table (bit-identical, one ReverseBits per dimension saved)
+		iResult = ReverseBits(ReversedBitOwen(SobolDimension(i, index,
+				directionsReversed), dimSeed));
 		// Blue-noise Cranley-Patterson offset: the scalar rank offset is
 		// staggered per dimension by an irrational stride so dims stay
 		// decorrelated while the spatial ordering is preserved
@@ -122,11 +150,11 @@ float SobolSequence::GetSample(const u_int pass, const u_int index) {
 		// own stratified prefix of the sequence across passes while
 		// neighboring pixels are decorrelated by the per-pixel seed.
 		const u_int dimSeed = BlueNoiseHash(blueNoiseSeed ^ (index * 0x9e3779b9u + 0x85ebca6bu));
-		iResult = SobolDimension(pass, index) ^ dimSeed;
+		iResult = SobolDimension(pass, index, directions) ^ dimSeed;
 		shift = BlueNoiseHash(dimSeed ^ 0xc2b2ae35u) * (1.f / 4294967296.f);
 	} else {
 		// I scramble pass too in order avoid correlations visible with LIGHTCPU and BIDIRCPU
-		iResult = SobolDimension(pass + rngPass, index);
+		iResult = SobolDimension(pass + rngPass, index, directions);
 
 		// Cranley-Patterson rotation to reduce visible regular patterns
 		shift = (index & 1) ? rng0 : rng1;

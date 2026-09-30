@@ -92,9 +92,14 @@ MetropolisSampler::~MetropolisSampler() {
 static float Mutate(const float x, const float randomValue) {
 	static const float s1 = 1.f / 512.f;
 	static const float s2 = 1.f / 16.f;
+	// s1/s2 is a power-of-two quotient (32.f) and the second term is a
+	// constant: hoist both out of the hot per-dimension mutation path
+	// (bit-identical - same operands, same rounding, computed once)
+	static const float s1OverS2 = s1 / s2;
+	static const float s1Term = s1 / (s1 / s2 + 1.f);
 
-	const float dx = s1 / (s1 / s2 + fabsf(2.f * randomValue - 1.f)) -
-			s1 / (s1 / s2 + 1.f);
+	const float dx = s1 / (s1OverS2 + fabsf(2.f * randomValue - 1.f)) -
+			s1Term;
 
 	float mutatedX = x;
 	if (randomValue < .5f) {
@@ -141,9 +146,15 @@ static float Mutate(const float x, const float randomValue) {
 // Mutate a value max. by a range value
 float MutateScaled(const float x, const float range, const float randomValue) {
 	static const float s1 = 32.f;
-	
-	const float dx = range / (s1 / (1.f + s1) + (s1 * s1) / (1.f + s1) *
-		fabs(2.f * randomValue - 1.f)) - range / s1;
+	// The kernel's two denominator constants are compile-time constants
+	// and s1 is a power of two (range/s1 == range*(1/s1), exact): hoist
+	// them so the hot path keeps a single division (bit-identical)
+	static const float aTerm = s1 / (1.f + s1);
+	static const float bTerm = (s1 * s1) / (1.f + s1);
+	static const float invS1 = 1.f / s1;
+
+	const float dx = range / (aTerm + bTerm *
+		fabsf(2.f * randomValue - 1.f)) - range * invS1;
 
 	float mutatedX = x;
 	if (randomValue < .5f) {

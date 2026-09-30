@@ -51,7 +51,6 @@ public:
 		blueNoiseEnable = true;
 	}
 	void DisableBlueNoise() { blueNoiseEnable = false; }
-
 	// Hash-based Owen-scrambled Sobol (Burley 2020, JCGT): the seed is
 	// constant per pixel (across passes); each dimension is scrambled with
 	// a nested-uniform hash permutation and the sequence index is shuffled
@@ -65,8 +64,13 @@ public:
 		// The index-shuffle seed is a per-pixel constant — hoisted out of
 		// GetSample so the hot path does one hash instead of two
 		owenShuffleSeed = BlueNoiseHash(seed ^ 0x70efbc49u);
+		// The memoized pass shuffle was computed for the previous pixel
+		shuffledPassValid = false;
 	}
-	void DisableOwen() { owenEnable = false; }
+	void DisableOwen() {
+		owenEnable = false;
+		shuffledPassValid = false;
+	}
 
 	// murmur3 32-bit finalizer (must match the GPU kernel version)
 	static u_int BlueNoiseHash(u_int x);
@@ -81,7 +85,8 @@ public:
 	// sampling / Heitz et al. 2019 screen-space blue noise).
 	static void GenerateScrambleTile(u_int *tile, const u_int size);
 private:
-	u_int SobolDimension(const u_int index, const u_int dimension) const;
+	u_int SobolDimension(const u_int index, const u_int dimension,
+			const u_int *table) const;
 	// Hash-based Owen scrambling helpers (must match the GPU kernel
 	// versions in sampler_sobol_funcs.cl)
 	static u_int ReverseBits(u_int x);
@@ -89,11 +94,24 @@ private:
 	static u_int NestedUniformScramble(const u_int i, const u_int seed);
 
 	u_int *directions;
+	// Bit-reversed copy of directions: ReverseBits is XOR-linear over the
+	// Sobol matrix, so ReverseBits(SobolDimension(i, dirs)) ==
+	// SobolDimension(i, dirsReversed) exactly - the Owen path needs the
+	// reversed value and this skips one ReverseBits per dimension sample.
+	u_int *directionsReversed;
 	bool blueNoiseEnable;
 	bool owenEnable;
 	u_int blueNoiseSeed;
 	u_int owenShuffleSeed;
 	float pixelShift;
+	// One-entry memo for NestedUniformScramble(pass, owenShuffleSeed):
+	// within a sample (one pixel, one pass) both arguments are constant,
+	// but GetSample runs once per dimension - the shuffle is identical
+	// every time and only the first dimension has to compute it.
+	// Invalidated by SetOwenSeed/DisableOwen (per-pixel seed change).
+	bool shuffledPassValid;
+	u_int shuffledPass;
+	u_int shuffledPassKey;
 };
 
 }
