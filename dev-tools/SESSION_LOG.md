@@ -1337,3 +1337,29 @@ cornell+strands CPU/GPU parity PASS.
 Remaining leaf hotspots are structural: InitNewSample adaptive re-pick
 loop (algorithmic), embree BVH traversal (intrinsic), MetropolisSampler::
 GetSample replay math (MLT-inherent).
+
+## Round closeout + structural candidates (2026-10-01)
+
+Profile deltas on prism-conservatory 640x360:
+- AddSampleCount 19k->12.6k (33%) - pendingTotal now actually batched
+- Metropolis::NextSample 3.5k->2.2k (37%) - accept copy bounded by used
+- _xzm_free 2.1k->1.6k (26%) - light-path vector keep-sized kills churn
+- ProjectToRGB hoist - PrepareRGBProjection once per path, was per splat
+
+Audited, already optimal (no action):
+- LightBVH::NodeImportance - dot-space trig, no asin/acos
+- GetAccelerator - cachedEmbreeAccel pinned pointer, no map lookup
+- SobolSampler::GetNewBucket - amortized bucketSize*superSampling
+- SobolSampler::UpdateFilmCache - 6-load + 4-compare early out
+- RandomGenerator::floatValue - 2048-uint buffered taus113
+
+Structural candidates for next round (multi-hour each):
+1. Per-thread splat accumulation buffers + merge at Film::Update -
+   collapses the per-pixel AtomicAdd RMW chain entirely.
+   High risk: changes convergence accounting + memory ordering.
+2. SampleResult size reduction (~480B) - lpeRadiance array + 14
+   Spectrum fields are ~150B; pool+compact saves every vertex's
+   copy cost. Serialization-version bump required.
+3. Metropolis GetSample replay loop - vectorize the stamp-delta
+   walk (SIMD across the 4 Sobol dims); needs a path-length
+   histogram first to confirm the distribution favors it.
