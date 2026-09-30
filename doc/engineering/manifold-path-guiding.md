@@ -92,6 +92,12 @@ Phase C (dim-reduced solver):
 - Photon-seeded walks need the endpoint PDF of the sampled seed —
   PMS's small-cone perturbation is what makes the pdf computable;
   reuse without perturbation is biased-only.
+- Seed `meshIndex` side-bit convention: eye-side keys use
+  `Dot(connectDir, geometryN) > 0`. A photon record must match it from
+  the opposite traversal direction — refraction flips the sign
+  (`Dot < 0`), reflection keeps it (`Dot > 0`). Getting this wrong
+  produces keys the eye side never queries (dead slots, no bias —
+  caught and fixed in review for mirror records).
 - GPU parity: `mneeSeeds` is a shared CPU/GPU table — the `.cl`
   `MneeSeedEntry` is the ABI mirror for the C++ struct; any field
   change must update both sides (Phase A did, 44B).

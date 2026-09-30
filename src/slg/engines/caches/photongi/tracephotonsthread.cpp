@@ -337,16 +337,21 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 					// unbroken specular chain: it becomes the seed the next
 					// caustic deposit injects. The side bit mirrors the
 					// eye-side convention (Dot(connectDir, geometryN) > 0):
-					// the eye connection ray traverses the interface opposite
-					// to the photon, so the photon-side sign is flipped.
+					// a refracted photon traverses the interface opposite to
+					// the eye connection ray, so its sign flips; a reflected
+					// photon arrives from the same hemisphere as the eye ray,
+					// so mirror seeds keep the eye-side sign.
 					if ((bsdfEvent & SPECULAR) && pathInfo.IsSpecularPath()) {
+						const bool mirror =
+								(bsdf.GetMaterial()->GetType() == MIRROR);
+						const bool frontHit = Dot(nextEventRay.d,
+								bsdf.hitPoint.geometryN) > 0.f;
 						specSeed.p = bsdf.hitPoint.p;
 						specSeed.n = bsdf.hitPoint.geometryN;
 						specSeed.lightIndex = (u_int)(uintptr_t)light.get();
 						specSeed.meshIndex = nextEventRayHit.meshIndex * 2u +
-								(Dot(nextEventRay.d, bsdf.hitPoint.geometryN) < 0.f ? 1u : 0u);
-						specSeed.mirrorMode =
-								(bsdf.GetMaterial()->GetType() == MIRROR) ? 1u : 0u;
+								(mirror == frontHit ? 1u : 0u);
+						specSeed.mirrorMode = mirror ? 1u : 0u;
 						specSeed.key = MneeSeedKey(specSeed.lightIndex,
 								specSeed.meshIndex, specSeed.p,
 								Max(scene.GetDataSet().GetBSphere().rad /

@@ -300,8 +300,12 @@ void PhotonGICache::MergeMneeSeeds() {
 		return;
 	for (const MneeSeedRecord &r : mneeSeedRecords)
 		MneeSeedStore(mneeSeedCache, r);
-	SLG_LOG("PhotonGI injected " << mneeSeedRecords.size() <<
-			" caustic-photon MNEE seed(s)");
+	// First merge only: periodic caustic updates re-run this every pass.
+	if (!mneeSeedLogged) {
+		mneeSeedLogged = true;
+		SLG_LOG("PhotonGI injects caustic-photon MNEE seeds "
+				"(first batch: " << mneeSeedRecords.size() << ")");
+	}
 	mneeSeedRecords.clear();
 }
 

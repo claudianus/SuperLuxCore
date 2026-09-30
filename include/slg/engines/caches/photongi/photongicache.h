@@ -505,6 +505,7 @@ private:
 	// PathTracer seed table (non-owning pointer, wired by the engine).
 	std::vector<MneeSeedRecord> mneeSeedRecords;
 	MneeSeedEntry *mneeSeedCache = nullptr;
+	bool mneeSeedLogged = false;
 };
 
 }
