@@ -1363,3 +1363,24 @@ Structural candidates for next round (multi-hour each):
 3. Metropolis GetSample replay loop - vectorize the stamp-delta
    walk (SIMD across the 4 Sobol dims); needs a path-length
    histogram first to confirm the distribution favors it.
+
+## Re-profile under lighter load (2026-10-01)
+
+Load 4.60/8.83/13.27, cleaner than the earlier 46+ round:
+- SobolSampler::InitNewSample 24.1k - algorithmic (adaptive re-pick
+  + bucket walk + Sobol hash)
+- embree BVHN 21.5k - intrinsic
+- MetropolisSampler::GetSample 20.8k - stamp replay loop (MLT core)
+- AddSampleCount 14.5k - now the 3 per-thread field stores +
+  pendingTotal batch check; the fetch_add is amortized
+- Distribution1D::SampleContinuous 6.2k - CDF binary search, inherent
+- AtomicAddSampleResultColor 4.5k - per-channel atomic RMW chain,
+  needs per-thread buffers to kill
+
+Audited (no wins found): BSDF::Init hit/shadow gating, EmbreeAccel::
+Intersect field-copy, MetropolisSharedData atomics (correctly
+cooldown-gated), GetNewBucket, UpdateFilmCache, taus113 buffer,
+scene::Intersect pinned accel.
+
+CPU micro floor confirmed. Structural next: per-thread splat
+accumulation + merge, or SampleResult size cut.
