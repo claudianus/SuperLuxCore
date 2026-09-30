@@ -1167,3 +1167,23 @@ SPDs, XYZ→RGB matmul and white-point divide.
   rejects unqualified pointers.
 
 cornell + strands parity PASS.
+
+## SampleResult: full-field Init/Reset (2026-10-01) - correctness fix
+
+`SampleResult::Init` only zeroed radiance + a handful of scalars;
+`ResetEyeSampleResults` covered only `sampleResults[0]` and still left
+alpha/depth/position/normals/materialID/objectID/uv/rayCount/isCaustic/
+isHoldout/directShadowMask/indirectShadowMask/useFilmSplat unset. Every
+`AddLightSampleResult` splat (light-path connect, MNEE, SSP tail) wrote
+stale heap values into the film, AOVs and the denoiser.
+
+- `SampleResult::Init` now defaults all splat fields (alpha=0,
+  depth=inf, position=inf, normals=0, ids=0, uv=inf, shadow masks=1,
+  isHoldout/isCaustic=false, all spectra=0, lpeRadiance=0).
+- New `SampleResult::Reset()` - Init with stored channels + radiance
+  size. `ResetEyeSampleResults` calls it (idempotent, single call).
+- `useFilmSplat` intentionally not in Init (set once by
+  InitEyeSampleResults; light-path SRs use default true).
+
+cornell + strands parity PASS. This also fixes latent garbage in
+RADIANCE_PER_SCREEN_NORMALIZED light splats on multi-connection paths.

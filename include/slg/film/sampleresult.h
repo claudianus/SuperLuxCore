@@ -48,6 +48,9 @@ public:
 	~SampleResult() { }
 
 	void Init(const Film::FilmChannels *channels, const u_int radianceGroupCount);
+	// Re-run Init with the stored channel set - the idempotent reset used
+	// between samples so every splat field returns to its default.
+	void Reset() { Init(channels, radiance.Size()); }
 
 	bool HasChannel(const Film::FilmChannelType type) const { return channels->count(type) > 0; }
 

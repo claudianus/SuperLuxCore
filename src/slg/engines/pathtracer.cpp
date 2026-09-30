@@ -223,34 +223,10 @@ void PathTracer::InitEyeSampleResults(FilmConstRef film, vector<SampleResult> &s
 
 void PathTracer::ResetEyeSampleResults(vector<SampleResult> &sampleResults) {
 	SampleResult &sampleResult = sampleResults[0];
-
-	// Set to 0.0 all result colors
-	sampleResult.emission = Spectrum();
-	for (u_int i = 0; i < sampleResult.radiance.Size(); ++i)
-		sampleResult.radiance[i] = Spectrum();
-	sampleResult.directDiffuseReflect = Spectrum();
-	sampleResult.directDiffuseTransmit = Spectrum();
-	sampleResult.directGlossyReflect = Spectrum();
-	sampleResult.directGlossyTransmit = Spectrum();
-	sampleResult.indirectDiffuseReflect = Spectrum();
-	sampleResult.indirectDiffuseTransmit = Spectrum();
-	sampleResult.indirectGlossyReflect = Spectrum();
-	sampleResult.indirectGlossyTransmit = Spectrum();
-	sampleResult.indirectSpecularReflect = Spectrum();
-	sampleResult.indirectSpecularTransmit = Spectrum();
-	sampleResult.directShadowMask = 1.f;
-	sampleResult.indirectShadowMask = 1.f;
-	sampleResult.irradiance = Spectrum();
-	sampleResult.albedo = Spectrum();
-	sampleResult.isHoldout = false;
-	sampleResult.motionVector[0] = 0.f;
-	sampleResult.motionVector[1] = 0.f;
-	sampleResult.motionVector[2] = 0.f;
-	sampleResult.motionVector[3] = 0.f;
-	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
-		sampleResult.lpeRadiance[i] = Spectrum();
-
-	sampleResult.rayCount = 0.f;
+	// Idempotent full reset - Init covers every splat field, not just
+	// the color AOVs, so [0] and AddLightSampleResult's [i>0] always
+	// agree on defaults.
+	sampleResult.Reset();
 }
 
 //------------------------------------------------------------------------------

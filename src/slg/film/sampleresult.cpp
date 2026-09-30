@@ -37,13 +37,49 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	else
 		radiance.Resize(0);
 
+	// Every field the film splat reads must be deterministic - a reused
+	// SampleResult (AddLightSampleResult resizes sampleResults) otherwise
+	// carries stale pixels/normals/alpha into the frame buffer and the
+	// denoiser.
+	pixelX = pixelY = 0;
+	filmX = filmY = 0.f;
+	for (u_int i = 0; i < radiance.Size(); ++i)
+		radiance[i] = Spectrum();
+
+	alpha = 0.f;
+	depth = numeric_limits<float>::infinity();
+	position = Point(numeric_limits<float>::infinity(),
+			numeric_limits<float>::infinity(),
+			numeric_limits<float>::infinity());
+	geometryNormal = Normal();
+	shadingNormal = Normal();
+	materialID = 0;
+	objectID = 0;
+	cryptoObjectID = 0.f;
+	cryptoMaterialID = 0.f;
+	directDiffuseReflect = Spectrum();
+	directDiffuseTransmit = Spectrum();
+	directGlossyReflect = Spectrum();
+	directGlossyTransmit = Spectrum();
+	emission = Spectrum();
+	indirectDiffuseReflect = Spectrum();
+	indirectDiffuseTransmit = Spectrum();
+	indirectGlossyReflect = Spectrum();
+	indirectGlossyTransmit = Spectrum();
+	indirectSpecularReflect = Spectrum();
+	indirectSpecularTransmit = Spectrum();
+	directShadowMask = 1.f;
+	indirectShadowMask = 1.f;
+	uv = UV(numeric_limits<float>::infinity(),
+			numeric_limits<float>::infinity());
+	rayCount = 0.f;
+	irradiance = Spectrum();
+	irradiancePathThroughput = Spectrum();
+	albedo = Spectrum();
 	motionVector[0] = 0.f;
 	motionVector[1] = 0.f;
 	motionVector[2] = 0.f;
 	motionVector[3] = 0.f;
-
-	cryptoObjectID = 0.f;
-	cryptoMaterialID = 0.f;
 
 	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
 		lpeRadiance[i] = Spectrum();
@@ -53,6 +89,9 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	// lastPathVertex can not be really initialized here without knowing
 	// the max. path depth.
 	lastPathVertex = false;
+
+	isHoldout = false;
+	isCaustic = false;
 }
 
 Spectrum SampleResult::GetSpectrum(const vector<RadianceChannelScale> &radianceChannelScales) const {
