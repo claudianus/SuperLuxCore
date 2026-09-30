@@ -377,3 +377,26 @@ Docs: `doc/features/gpu_lighttracing.md` auto-enable/zero-tail
 section; `doc/features/mnee.md` `path.mnee.auto` property.
 Also: parity-regression.sh now prefers Release over Debug (Debug
 silently won twice, masking fresh binaries).
+
+## Session cont. — PSR halflife decay (`eadcf8319`)
+
+`path.regularization.halflife` (>0): Kaplanyan's decaying-schedule
+scheme — sigma_eff = sigma*2^(-spp/halflife), spp from
+`Film::GetTotalEyeSampleCount()/pixelCount` (eye-only counter; light
+splats must not inflate it). Each path is seeded with the sigma in
+effect at its birth — consistent mixture of a shrinking blur field,
+unbiased in the limit.
+
+CPU: `EffectiveRegularizationSigma(spp)` seeds both eye and light
+paths. GPU: per-batch host recompute + taskConfig re-upload (same
+site/pattern as the VCM merge-radius rewrite — PATHOCL
+dense+wavefront, TILEPATHOCL/RTPATHOCL).
+
+Also fixed in passing: `path.lighttracing.only` now implies
+`enable=1` independent of the caustic signature (explicit debug-mode
+request was silently ignored on diffuse scenes).
+
+e99 T4: sigma=0.06+hl4 at 32spp lands ~5-8x closer to the sigma=0
+anchor than the static image on PATHCPU and PATHOCL.
+BLC: "Filter Glossy Half-life" exposed (visible when sigma>0).
+Deployed via sync_dev_install.
