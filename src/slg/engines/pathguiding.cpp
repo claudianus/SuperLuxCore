@@ -1027,9 +1027,8 @@ float PathGuidingCache::ReadPeak(const Point &p) const {
 	return leaf ? leaf->peak : 0.f;
 }
 
-float PathGuidingCache::IncidentEstimate(const Point &p,
-		const Vector &dir, const float floorFrac) const {
-	const ReadLeaf *leaf = ReadLeafAt(p);
+float PathGuidingCache::LeafIncidentEstimate(const ReadLeaf *leaf,
+		const Vector &dir, const float floorFrac) {
 	if (!leaf || leaf->nComp == 0 || leaf->total <= 0.f)
 		return 0.f;
 	// Raw fitted mixture (the EM uniform component stays a sphere
@@ -1049,12 +1048,17 @@ float PathGuidingCache::IncidentEstimate(const Point &p,
 	return leaf->total * mix;
 }
 
-bool PathGuidingCache::Sample(const Point &p, const Normal &n,
+float PathGuidingCache::IncidentEstimate(const Point &p,
+		const Vector &dir, const float floorFrac) const {
+	return LeafIncidentEstimate(ReadLeafAt(p), dir, floorFrac);
+}
+
+bool PathGuidingCache::SampleLeaf(const ReadLeaf *leaf, const u_int warmup,
+		const Normal &n,
 		float uBin, float uDir0, float uDir1,
-		Vector *sampledDir, float *pdfW, const bool isotropic) const {
+		Vector *sampledDir, float *pdfW, const bool isotropic) {
 	const float floorW = isotropic ? FLOOR_W_VOLUME : FLOOR_W_SURFACE;
 	const Vector nn(n.x, n.y, n.z);
-	const ReadLeaf *leaf = ReadLeafAt(p);
 	if (!leaf || leaf->nComp == 0 || leaf->count < warmup) {
 		// Cold leaf: pure-floor fallback (same density reported by Pdf).
 		if (isotropic) {
@@ -1131,11 +1135,17 @@ bool PathGuidingCache::Sample(const Point &p, const Normal &n,
 	return true;
 }
 
-float PathGuidingCache::Pdf(const Point &p, const Normal &n,
-		const Vector &dir, const bool isotropic) const {
+bool PathGuidingCache::Sample(const Point &p, const Normal &n,
+		float uBin, float uDir0, float uDir1,
+		Vector *sampledDir, float *pdfW, const bool isotropic) const {
+	return SampleLeaf(ReadLeafAt(p), warmup, n, uBin, uDir0, uDir1,
+			sampledDir, pdfW, isotropic);
+}
+
+float PathGuidingCache::LeafPdf(const ReadLeaf *leaf, const u_int warmup,
+		const Normal &n, const Vector &dir, const bool isotropic) {
 	const float floorW = isotropic ? FLOOR_W_VOLUME : FLOOR_W_SURFACE;
 	const Vector nn(n.x, n.y, n.z);
-	const ReadLeaf *leaf = ReadLeafAt(p);
 	const float d = Dot(dir, nn);
 	const float floorPdf = isotropic ? .25f * INV_PI :
 			((d > 0.f) ? d * INV_PI : 0.f);
@@ -1162,6 +1172,11 @@ float PathGuidingCache::Pdf(const Point &p, const Normal &n,
 				dir.z * leaf->mu[k][2],
 				d, isotropic);
 	return effFloorW * floorPdf + (1.f - effFloorW) * mix;
+}
+
+float PathGuidingCache::Pdf(const Point &p, const Normal &n,
+		const Vector &dir, const bool isotropic) const {
+	return LeafPdf(ReadLeafAt(p), warmup, n, dir, isotropic);
 }
 
 //------------------------------------------------------------------------------

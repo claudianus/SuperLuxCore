@@ -264,10 +264,14 @@ void PathTracer::ResetEyeSampleResults(vector<SampleResult> &sampleResults) {
 // interreflection keeps its bounce budget. Falls back to the full
 // share while the field is untrained (early exploration stays useful).
 float PathTracer::PortalShareAt(const Point &p) const {
-	if (!portalAdapt || !(guidingEnable && pathGuidingCache &&
-			pathGuidingCache->CanGuide(p)))
+	if (!portalAdapt || !(guidingEnable && pathGuidingCache))
 		return portalShare;
-	const float tot = Max(pathGuidingCache->ReadTotal(p), 1e-9f);
+	const PathGuidingCache::ReadLeaf *leaf =
+			pathGuidingCache->ReadLeafAt(p);
+	if (!PathGuidingCache::CanGuideLeaf(leaf,
+			pathGuidingCache->Warmup()))
+		return portalShare;
+	const float tot = Max(leaf->total, 1e-9f);
 	float fSum = 0.f;
 	for (u_int i = 0; i < portals.size(); ++i) {
 		const PortalRect &pr = portals[i];
@@ -276,7 +280,7 @@ float PathTracer::PortalShareAt(const Point &p) const {
 		const Vector dn = dc / sqrtf(d2);
 		// rect solid angle ~ projected area / r^2
 		const float omega = fabsf(Dot(dn, pr.n)) / (pr.invArea * d2);
-		fSum += omega * pathGuidingCache->IncidentEstimate(p, dn);
+		fSum += omega * PathGuidingCache::LeafIncidentEstimate(leaf, dn, 0.f);
 	}
 	return Clamp(fSum / tot, 0.f, portalShare);
 }
@@ -403,12 +407,15 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 								// RISMIXPDF diagnostic: the bounce-side MIS
 								// density is the winner's mixture pdf - the
 								// same function on the DL side.
+								const PathGuidingCache::ReadLeaf *dlLeaf =
+										pathGuidingCache->ReadLeafAt(bsdf.hitPoint.p);
 								const float wDl = guidingStrength *
 										PathGuidingCache::MixWeight(
-										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
-										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
+										PathGuidingCache::LeafCount(dlLeaf),
+										PathGuidingCache::LeafPeak(dlLeaf));
 								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl *
-										pathGuidingCache->Pdf(bsdf.hitPoint.p,
+										PathGuidingCache::LeafPdf(dlLeaf,
+											pathGuidingCache->Warmup(),
 											bsdf.hitPoint.shadeN, shadowRay.d,
 											bsdf.IsVolume());
 							} else if (risZhat > 0.f && !kRisNoDl) {
@@ -431,23 +438,33 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 									const char *e = getenv("LUX_PG_CAPT");
 									return e ? (float)atof(e) : 0.f;
 								}();
+								const PathGuidingCache::ReadLeaf *dlLeaf =
+										pathGuidingCache->ReadLeafAt(bsdf.hitPoint.p);
 								float lhat = kFlatT ? 1.f :
-										pathGuidingCache->IncidentEstimate(
-											bsdf.hitPoint.p, shadowRay.d);
+										PathGuidingCache::LeafIncidentEstimate(
+											dlLeaf, shadowRay.d, 0.f);
 								if (kCapT > 0.f && lhat > kCapT)
 									lhat = kCapT;
 								bouncePdfW = tEval * lhat / risZhat;
 							} else if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
 								GuidableBsdf(bsdf, guidingGlossiness, guidingDiffuse) &&
-									((int)pathInfo.depth.depth >= guidingMinDepth) &&
-									pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
-								const float wDl = guidingStrength *
-										PathGuidingCache::MixWeight(
-										pathGuidingCache->ReadCount(bsdf.hitPoint.p),
-										pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
-								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * pathGuidingCache->Pdf(
-										bsdf.hitPoint.p, bsdf.hitPoint.shadeN, shadowRay.d,
-										bsdf.IsVolume());
+									((int)pathInfo.depth.depth >= guidingMinDepth)) {
+								// One descent per vertex: reuse the leaf for
+								// CanGuide + MixWeight + Pdf.
+								const PathGuidingCache::ReadLeaf *pgLeaf =
+										pathGuidingCache->ReadLeafAt(bsdf.hitPoint.p);
+								if (PathGuidingCache::CanGuideLeaf(pgLeaf,
+										pathGuidingCache->Warmup())) {
+									const float wDl = guidingStrength *
+											PathGuidingCache::MixWeight(
+											PathGuidingCache::LeafCount(pgLeaf),
+											PathGuidingCache::LeafPeak(pgLeaf));
+									bouncePdfW = (1.f - wDl) * bsdfPdfW +
+											wDl * PathGuidingCache::LeafPdf(pgLeaf,
+											pathGuidingCache->Warmup(),
+											bsdf.hitPoint.shadeN, shadowRay.d,
+											bsdf.IsVolume());
+								}
 							}
 
 							// Portal bounce technique (M5): the
@@ -1252,16 +1269,21 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			float uD0 = 0.f, uD1 = 0.f;
 			bool sideBsdf = false;   // winner came from the BSDF side
 		} ris;
+		// RIS guiding: single descent per bounce; all K candidates share
+		// the resolved leaf.
+		const PathGuidingCache::ReadLeaf *risLeaf = nullptr;
 		if (guidingRisK >= 1 && guidingEnable && pathGuidingCache &&
 				!bsdf.IsDelta() && GuidableBsdf(bsdf, guidingGlossiness,
 					guidingDiffuse, true) &&
 				!sampleResult.firstPathVertex &&
-				((int)pathInfo.depth.depth >= Max(1, guidingMinDepth)) &&
-				pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
+				((int)pathInfo.depth.depth >= Max(1, guidingMinDepth)))
+			risLeaf = pathGuidingCache->ReadLeafAt(bsdf.hitPoint.p);
+		if (risLeaf && PathGuidingCache::CanGuideLeaf(risLeaf,
+				pathGuidingCache->Warmup())) {
 			const int K = Min(guidingRisK, 8);
 			const float wG = guidingStrength * PathGuidingCache::MixWeight(
-					pathGuidingCache->ReadCount(bsdf.hitPoint.p),
-					pathGuidingCache->ReadPeak(bsdf.hitPoint.p));
+					PathGuidingCache::LeafCount(risLeaf),
+					PathGuidingCache::LeafPeak(risLeaf));
 			const u_int salt = (sampleOffset * 2971215073u) ^
 					(sampleResult.pixelX * 73856093u) ^
 					(sampleResult.pixelY * 19349663u) ^
@@ -1294,7 +1316,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					// (incl. floor) then evaluate the BSDF there.
 					const float uBin = GuidingHash(cs ^ 0x27d4eb2fu) *
 							(1.f / 4294967296.f);
-					if (!pathGuidingCache->Sample(bsdf.hitPoint.p,
+					if (!PathGuidingCache::SampleLeaf(risLeaf,
+							pathGuidingCache->Warmup(),
 							bsdf.hitPoint.shadeN, uBin, uD0, uD1,
 							&d, &gPdf, isVol) || !(gPdf > 0.f))
 						return 0.f;
@@ -1320,7 +1343,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					sideBsdf = true;
 					if (eval.Black() || !(bPdf > 0.f))
 						return 0.f;
-					gPdf = pathGuidingCache->Pdf(bsdf.hitPoint.p,
+					gPdf = PathGuidingCache::LeafPdf(risLeaf,
+							pathGuidingCache->Warmup(),
 							bsdf.hitPoint.shadeN, d, isVol);
 				}
 				const float pMix = (1.f - wG) * bPdf + wG * gPdf;
@@ -1337,7 +1361,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					return e ? (float)atof(e) : 0.f;
 				}();
 				float lhat = kFlatT ? 1.f :
-						pathGuidingCache->IncidentEstimate(bsdf.hitPoint.p, d);
+						PathGuidingCache::LeafIncidentEstimate(risLeaf, d, 0.f);
 				if (kCapT > 0.f && lhat > kCapT)
 					lhat = kCapT;
 				const float t = eval.Filter() * lhat;
@@ -1598,10 +1622,16 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				// Evaluate's event superset (which would consume specular
 				// depth on every guided bounce and terminate paths early).
 				bool guided = false;
-				const bool tryGuide = pathGuidingCache && !bsdf.IsDelta() &&
-						GuidableBsdf(bsdf, guidingGlossiness, guidingDiffuse) &&
-						((int)pathInfo.depth.depth >= guidingMinDepth) &&
-						pathGuidingCache->CanGuide(bsdf.hitPoint.p);
+				// Single descent per bounce: tryGuide gates, MixWeight,
+				// and the Sample/Pdf calls below all reuse this leaf.
+				const PathGuidingCache::ReadLeaf *bounceLeaf =
+						(pathGuidingCache && !bsdf.IsDelta() &&
+							GuidableBsdf(bsdf, guidingGlossiness, guidingDiffuse) &&
+							((int)pathInfo.depth.depth >= guidingMinDepth)) ?
+						pathGuidingCache->ReadLeafAt(bsdf.hitPoint.p) : nullptr;
+				const bool tryGuide = bounceLeaf &&
+						PathGuidingCache::CanGuideLeaf(bounceLeaf,
+								pathGuidingCache->Warmup());
 
 				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
 				// M2c adaptive mixture: selection probability from the
@@ -1610,8 +1640,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				// is exact. path.guiding.strength scales the guide side.
 				const float wGuide = (guidingEnable && tryGuide) ?
 						guidingStrength * PathGuidingCache::MixWeight(
-							pathGuidingCache->ReadCount(bsdf.hitPoint.p),
-							pathGuidingCache->ReadPeak(bsdf.hitPoint.p)) : .5f;
+							PathGuidingCache::LeafCount(bounceLeaf),
+							PathGuidingCache::LeafPeak(bounceLeaf)) : .5f;
 				// Diagnostic: LUX_PG_NOBOUNCE keeps the DL-side mixture
 				// pdf but never takes the guide side at the bounce -
 				// isolates regression caused by the DL MIS weight vs
@@ -1678,7 +1708,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 								(sampler.GetPass() * 83492791u) ^
 								(sampleOffset * 2971215073u)) *
 								(1.f / 4294967296.f);
-						if (pathGuidingCache->Sample(bsdf.hitPoint.p,
+						if (PathGuidingCache::SampleLeaf(bounceLeaf,
+								pathGuidingCache->Warmup(),
 								bsdf.hitPoint.shadeN,
 								uBin,
 								uSelRescaled,
@@ -1816,7 +1847,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					float restPdfW = pBsdfPdfW;
 					if (guidingEnable && tryGuide && !kNoBounce)
 						restPdfW = (1.f - wGuide) * pBsdfPdfW +
-								wGuide * pathGuidingCache->Pdf(bsdf.hitPoint.p,
+								wGuide * PathGuidingCache::LeafPdf(bounceLeaf,
+										pathGuidingCache->Warmup(),
 										bsdf.hitPoint.shadeN, sampledDir,
 										bsdf.IsVolume());
 					const float mixPdfW = wPortal *
@@ -1865,8 +1897,9 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						// full BSDF weight (bias).
 						float mixPdfW = bsdfPdfW;
 						if (guidingEnable && tryGuide && !kNoBounce) {
-							const float guidePdfW = pathGuidingCache->Pdf(
-									bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir,
+							const float guidePdfW = PathGuidingCache::LeafPdf(bounceLeaf,
+									pathGuidingCache->Warmup(),
+									bsdf.hitPoint.shadeN, sampledDir,
 									bsdf.IsVolume());
 							// The mixture denominator must use the actual
 							// selection probabilities (wGuide), not a fixed

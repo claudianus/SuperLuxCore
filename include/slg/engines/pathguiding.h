@@ -107,6 +107,21 @@ public:
 	// Cache-level knobs (P5, path.guiding.*): a zero/unset field resolves
 	// to the class default with the matching LUX_PG_* env var as a debug
 	// fallback. Property wins over env when the engine passes a value.
+	// Opaque handle: per-call-site leaf reuse (all the Leaf* overloads
+	// below treat it as such; definition lives in the private section).
+	struct ReadLeaf {
+		float total = 0.f;   // round flux sum
+		float count = 0.f;   // visitation count (all arrivals); for a
+		                     // borrowed fit, a damped synthetic value
+		                     // (hierarchical fallback, see BuildReadTree)
+		float nz = 0.f;      // signal-bearing record count (fit support)
+		float peak = 0.f;    // informativeness: 4pi*E[p^2]-1 (0 = uniform)
+		u_int nComp = 0;     // 0 = cold leaf (no usable model)
+		float w[VMF_K];
+		float mu[VMF_K][3];
+		float kappa[VMF_K];
+	};
+
 	struct Settings {
 		u_int warmupRecords = 0;  // path.guiding.warmup
 		u_int swapRecords = 0;    // path.guiding.swaprecords
@@ -138,7 +153,11 @@ public:
 	void ForceSwap() const;
 
 	// Is there enough training data to guide at p?
+	// Is there enough training data to guide at p?
 	bool CanGuide(const luxrays::Point &p) const;
+	static bool CanGuideLeaf(const ReadLeaf *leaf, u_int warmup) {
+		return leaf && leaf->nComp > 0 && leaf->count >= warmup;
+	}
 	// Read-side leaf flux total at p (frozen within a round)
 	float ReadTotal(const luxrays::Point &p) const;
 	// Read-side leaf visitation count at p: the statistical-confidence
@@ -148,8 +167,14 @@ public:
 	// than the GPU's - a parity bug, since any w in (0,1) is valid but
 	// the two sides must pick the same one.
 	float ReadCount(const luxrays::Point &p) const;
+	static float LeafCount(const ReadLeaf *leaf) {
+		return leaf ? leaf->count : 0.f;
+	}
 	// Read-side leaf informativeness at p (0 for uniform fields).
 	float ReadPeak(const luxrays::Point &p) const;
+	static float LeafPeak(const ReadLeaf *leaf) {
+		return leaf ? leaf->peak : 0.f;
+	}
 	// Incident-radiance field estimate at (p, dir): leaf.total times the
 	// raw fitted vMF mixture density (kappa~0 reads as the EM uniform
 	// 1/4pi, NOT the cosine-lobe convention LobePdf uses on surfaces -
@@ -160,6 +185,8 @@ public:
 	// positive support it guarantees wherever the true field is nonzero.
 	float IncidentEstimate(const luxrays::Point &p,
 			const luxrays::Vector &dir, const float floorFrac = 0.f) const;
+	static float LeafIncidentEstimate(const ReadLeaf *leaf,
+			const luxrays::Vector &dir, const float floorFrac);
 	// Informativeness gate: a leaf whose fitted mixture is no more
 	// concentrated than the cosine fallback gains nothing from guiding -
 	// the extra proposal noise only hurts. A cosine lobe scores
@@ -199,11 +226,19 @@ public:
 			float uBin, float uDir0, float uDir1,
 			luxrays::Vector *sampledDir, float *pdfW,
 			bool isotropic = false) const;
+	static bool SampleLeaf(const ReadLeaf *leaf, u_int warmup,
+			const luxrays::Normal &n,
+			float uBin, float uDir0, float uDir1,
+			luxrays::Vector *sampledDir, float *pdfW,
+			bool isotropic = false);
 
 	// Guide pdf (per solid angle) of dir at (p, n), the exact same
 	// compound distribution Sample() draws from.
 	float Pdf(const luxrays::Point &p, const luxrays::Normal &n,
 			const luxrays::Vector &dir, bool isotropic = false) const;
+	static float LeafPdf(const ReadLeaf *leaf, u_int warmup,
+			const luxrays::Normal &n, const luxrays::Vector &dir,
+			bool isotropic = false);
 
 	// Persistent cache: dump/load the frozen read side (tree + leaf
 	// mixtures). Used to train on CPU once and sample on GPU.
@@ -219,7 +254,10 @@ public:
 	// vMF mixture itself, replacing the coarse-grid snapshot.
 	//
 	// nodes: 4 u_int per node, re-emitted in DFS order so the root is
-	//   always index 0. Inner node: {child0, child1, axis, splitBits}
+	// Pre-resolve the leaf at p once per path vertex; feed the pointer
+	// to the Leaf* overloads and skip the per-call tree descent.
+	const ReadLeaf *ReadLeafAt(const luxrays::Point &p) const;
+	u_int Warmup() const { return warmup; }
 	//   (splitBits = as_uint(split)). Leaf node: {~0u, ~0u, leafIndex, 0}.
 	// leaves: 24 floats per leaf -
 	//   [0..3]      component weights w[k]
@@ -331,18 +369,6 @@ private:
 		u_int root = 0;
 	};
 
-	struct ReadLeaf {
-		float total = 0.f;   // round flux sum
-		float count = 0.f;   // visitation count (all arrivals); for a
-		                     // borrowed fit, a damped synthetic value
-		                     // (hierarchical fallback, see BuildReadTree)
-		float nz = 0.f;      // signal-bearing record count (fit support)
-		float peak = 0.f;    // informativeness: 4pi*E[p^2]-1 (0 = uniform)
-		u_int nComp = 0;     // 0 = cold leaf (no usable model)
-		float w[VMF_K];
-		float mu[VMF_K][3];
-		float kappa[VMF_K];
-	};
 
 	struct ReadTree {
 		std::vector<TreeNode> nodes;
@@ -356,8 +382,6 @@ private:
 	// Descend a frozen tree to the leaf index for p (root must exist).
 	static u_int Descend(const std::vector<TreeNode> &nodes,
 			u_int root, const luxrays::Point &p);
-	// Read-side leaf at p, or nullptr when the tree is empty.
-	const ReadLeaf *ReadLeafAt(const luxrays::Point &p) const;
 
 	// Round swap: build the fitted read tree + a refined write tree from
 	// the completed write stats, publish both, retire the old pair.

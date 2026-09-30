@@ -1033,3 +1033,16 @@ No new wins landed. Moving to startup-time wins next.
   total samples; the per-thread vector still feeds the 3 channel
   splits for stats reporting.
 - Parity cornell + strands PASS; luxball PATHOCL clean.
+
+## PathGuiding: single tree descent per bounce (2026-10-01)
+
+Each bounce issued 3-5 ReadLeafAt calls (CanGuide + ReadCount + ReadPeak +
+Pdf + IncidentEstimate + Sample) - every one walked the SD-tree. Public
+Leaf* overloads (CanGuideLeaf / LeafCount / LeafPeak / LeafPdf /
+LeafIncidentEstimate / SampleLeaf / ReadLeafAt / Warmup) let callers hoist
+the leaf once per vertex. Refactored the three hot sites in pathtracer.cpp:
+DirectLightSampling (DL-MIS pdf eval), RenderEyeSample RIS candidate loop
+(K<=8 candidates share one descent), and the guide-side bounce branch.
+Correctness: Leaf* evaluators are bit-identical to the path-based
+wrappers (same CompWeights + LobePdf math on the same leaf). cornell +
+strands parity PASS.
