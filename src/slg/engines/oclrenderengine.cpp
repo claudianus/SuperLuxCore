@@ -144,6 +144,27 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 			++cudaDeviceCount;
 		}
 	}
+
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	// On Apple every OpenCL GPU is the same hardware as a Metal GPU
+	// exposed through the deprecated OpenCL->Metal translation layer:
+	// selecting both spawns a redundant OCL render thread that crashes
+	// on >31-buffer-arg kernels (gldExecuteKernel null-deref inside
+	// prepareForEnqueue, seen on the strands gauntlet). When a Metal
+	// GPU was selected, drop the OpenCL GPU duplicates (the same rule
+	// the CUDA-only filter above applies on NVIDIA systems). Kept
+	// opt-out via an explicit opencl.devices.select string.
+	if (!haveSelectionString) {
+		bool hasMetalDevice = false;
+		for (auto &d : selectedDeviceDescs)
+			if (d.get().GetType() & DEVICE_TYPE_METAL_ALL) { hasMetalDevice = true; break; }
+		if (hasMetalDevice)
+			DeviceDescription::Filter(
+					static_cast<DeviceType>(DEVICE_TYPE_METAL_ALL | DEVICE_TYPE_CUDA_ALL |
+					DEVICE_TYPE_NATIVE | DEVICE_TYPE_OPENCL_CPU | DEVICE_TYPE_VULKAN_ALL),
+					selectedDeviceDescs);
+	}
+#endif
 	
 #if !defined(LUXRAYS_DISABLE_CUDA)
 	if (!haveSelectionString && hasCUDADevice) {

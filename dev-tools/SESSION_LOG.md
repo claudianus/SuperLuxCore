@@ -732,3 +732,26 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   opt-in (auto promotion still gated on a consistent multi-scene win).
 - e50 zero-config defaults + e51 auto-caustic routing ok in Blender 5.2.
 - cpu-gpu-parity.sh cornell 0.0009 reldiff PASS on the final binary.
+
+## Apple OpenCL-GPU duplicate selection fix — 2026-10-01 (cont.)
+
+- cpu-gpu-parity.sh exposed a real segfault on `strands` (hair.scn):
+  `Segmentation fault: 11` on the GPU render thread. lldb backtrace
+  showed `clEnqueueNDRangeKernel -> gldExecuteKernel ->
+  AGX::ComputeContext::prepareForEnqueue` null-deref on the
+  opencl_runtime queue - Apple's deprecated OpenCL->Metal shim
+  crashing on a kernel enqueue.
+- Root cause: `opencl.gpu.use=1` selected BOTH `Apple M5 Pro
+  OpenCLIntersect` (deprecated shim) and `Apple M5 Pro MetalIntersect`
+  (same hardware, two render threads). The OCL-path thread hit the
+  known translator buffer-arg-limit crash at first dispatch.
+- Fix (oclrenderengine.cpp): on __APPLE__, after device selection, if
+  a METAL_GPU was chosen, filter selectedDeviceDescs down to
+  METAL|CUDA|NATIVE|OCL_CPU|VULKAN - drops the duplicate OpenCL GPU.
+  No OpenCL-only GPU can exist on Apple; explicit
+  `opencl.devices.select` still overrides. Mirrors the existing
+  CUDA-only filter semantics.
+- Verify: `Starting 1 OpenCL render threads` (was 2); strands
+  renders 100% spp; full cpu-gpu-parity.sh now 6/6 PASS in 28s
+  (cornell 0.0010, caustic_many 0.0004, mirror_maze 0.0673,
+  vol_caustic 0.1745, spectral 0.0052, strands 0.0008).
