@@ -69,20 +69,21 @@ def build_scene():
     return scene
 
 
-def build_session(engine, sigma):
+def build_session(engine, sigma, halflife=0.0):
     cfg = pysuperluxcore.Properties().SetFromString(f"""
         renderengine.type = {engine}
         sampler.type = SOBOL
         film.width = 96
         film.height = 96
         path.regularization.sigma = {sigma}
+        path.regularization.halflife = {halflife}
         film.imagepipelines.0.type = TONEMAP_LINEAR
         film.imagepipelines.0.scale = 1
         film.outputs.0.type = RGB_IMAGEPIPELINE
         film.outputs.0.index = 0
-        film.outputs.0.filename = e99-{engine}-{sigma}.png
+        film.outputs.0.filename = e99-{engine}-{sigma}-hl{halflife}.png
         film.outputs.1.type = RGB
-        film.outputs.1.filename = e99-{engine}-{sigma}.hdr
+        film.outputs.1.filename = e99-{engine}-{sigma}-hl{halflife}.hdr
         batch.haltspp = 32
         batch.halttime = 0
         batch.haltthreshold = -1
@@ -97,8 +98,8 @@ def build_session(engine, sigma):
         pysuperluxcore.RenderConfig(cfg, build_scene()))
 
 
-def render_mean(engine, sigma):
-    session = build_session(engine, sigma)
+def render_mean(engine, sigma, halflife=0.0):
+    session = build_session(engine, sigma, halflife)
     try:
         session.Start()
         film = session.GetFilm()
@@ -134,6 +135,18 @@ def run(engine):
     # Regression anchor on the untouched default path
     assert 0.01 < off < 1.0, \
         f"{engine}: sigma=0 mean out of expected band ({off})"
+
+    # T4 halflife decay: sigma=0.06 with halflife=4spp decays to
+    # sigma*2^-8 ~ 2e-4 by the end of a 32spp render, so the output
+    # must sit much closer to sigma=0 than to the static-blur image
+    hl = render_mean(engine, 0.06, halflife=4.0)
+    dist_hl = abs(hl - off)
+    dist_on = abs(on - off)
+    print(f"[{engine}] sigma=0.06+hl4 mean={hl:.5f}  "
+          f"dist-to-off={dist_hl:.5f} vs static {dist_on:.5f}")
+    assert dist_hl < max(dist_on * 0.5, 0.002), \
+        f"{engine}: halflife did not decay toward sigma=0 " \
+        f"(|hl-off|={dist_hl}, |on-off|={dist_on})"
     print(f"[{engine}] PASS")
     return True
 

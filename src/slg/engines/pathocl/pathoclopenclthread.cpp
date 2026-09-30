@@ -238,6 +238,24 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 		//------------------------------------------------------------------
 
+		// PSR halflife decay (path.regularization.halflife): kernels seed
+		// each path's sigma from taskConfig at init, so the host recomputes
+		// the effective sigma from global spp once per batch and re-uploads
+		// - paths keep the sigma they were born with (Kaplanyan's scheme:
+		// a decaying schedule, not a mid-path mutation)
+		if (engine->pathTracer.regularizationHalflife > 0.f) {
+			const double spp = engine->GetFilm().GetTotalEyeSampleCount() /
+					engine->GetFilm().GetPixelCount();
+			const float s = engine->pathTracer.EffectiveRegularizationSigma(spp);
+			if (s != threadTaskConfig.pathTracer.regularizationSigma) {
+				threadTaskConfig.pathTracer.regularizationSigma = s;
+				intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+						CL_TRUE,
+						sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+						&threadTaskConfig);
+			}
+		}
+
 		const double timeKernelStart = WallClockTime();
 
 		// This is required for updating film denoiser parameter - but

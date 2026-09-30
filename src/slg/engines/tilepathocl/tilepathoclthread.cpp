@@ -310,6 +310,23 @@ void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                         SLG_LOG("[TilePathOCLRenderThread::" << threadIndex << "] Increased the number of rendered tiles to: " << tileWorks.size());
                 }
 
+                // PSR halflife decay (path.regularization.halflife): recompute
+                // the effective sigma once per batch and re-upload taskConfig;
+                // already-seeded paths keep their sigma (Kaplanyan decaying
+                // schedule, not mid-path mutation)
+                if (engine->pathTracer.regularizationHalflife > 0.f) {
+                        const double rspp = engine->GetFilm().GetTotalEyeSampleCount() /
+                                engine->GetFilm().GetPixelCount();
+                        const float s = engine->pathTracer.EffectiveRegularizationSigma(rspp);
+                        if (s != threadTaskConfig.pathTracer.regularizationSigma) {
+                                threadTaskConfig.pathTracer.regularizationSigma = s;
+                                intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+                                        CL_TRUE,
+                                        sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+                                        &threadTaskConfig);
+                        }
+                }
+
                 if (stop_token.stop_requested())
                         break;
                 if (engine->photonGICache) {

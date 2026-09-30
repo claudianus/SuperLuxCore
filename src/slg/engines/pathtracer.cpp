@@ -113,7 +113,8 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		restirGITemporalEnable(true), restirGISpatialEnable(true),
 		restirPT(nullptr), restirPTEnable(false), restirPTCandidates(4),
 		restirPTTemporalEnable(true), restirPTSpatialEnable(true),
-		sspEnable(false), regularizationSigma(0.f), regularizationMinDepth(1) {
+		sspEnable(false), regularizationSigma(0.f), regularizationMinDepth(1),
+		regularizationHalflife(0.f) {
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -2024,7 +2025,8 @@ void PathTracer::RenderEyeSample(
 	pathInfo.InitLPE(film.GetLPEAutomata(), film.GetLPECount());
 	// PSR: seed the per-path regularization state; HitPoint::SetRayContext
 	// gates it into each vertex's hitPoint.regularization by depth
-	pathInfo.depth.regularization = regularizationSigma;
+	pathInfo.depth.regularization = EffectiveRegularizationSigma(
+			film.GetTotalEyeSampleCount() / film.GetPixelCount());
 	pathInfo.depth.regularizationMinDepth = regularizationMinDepth;
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
@@ -2656,7 +2658,8 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		LightPathInfo pathInfo;
 		// PSR: light-side vertices regularize identically so blurred-lobe
 		// connections (vertex connect / hybrid splats) stay consistent
-		pathInfo.depth.regularization = regularizationSigma;
+		pathInfo.depth.regularization = EffectiveRegularizationSigma(
+				film.GetTotalEyeSampleCount() / film.GetPixelCount());
 		pathInfo.depth.regularizationMinDepth = regularizationMinDepth;
 
 		// Caustic focus cache: position of the first delta-specular
@@ -2941,6 +2944,7 @@ void PathTracer::ParseOptions(
 	// connections stay mutually consistent.
 	regularizationSigma = Max(0.f, cfg.Get(defaultProps.Get("path.regularization.sigma")).Get<float>());
 	regularizationMinDepth = (u_int)Max(0, cfg.Get(defaultProps.Get("path.regularization.mindepth")).Get<int>());
+	regularizationHalflife = Max(0.f, cfg.Get(defaultProps.Get("path.regularization.halflife")).Get<float>());
 
 	forceBlackBackground = cfg.Get(defaultProps.Get("path.forceblackbackground.enable")).Get<bool>();
 	
@@ -3371,6 +3375,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			// for secondary vertices; 0 sigma = off
 			Property("path.regularization.sigma")(0.f) <<
 			Property("path.regularization.mindepth")(1) <<
+			Property("path.regularization.halflife")(0.f) <<
 			Property("path.forceblackbackground.enable")(false) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);

@@ -81,9 +81,13 @@ blur only non-first, non-delta vertices.
   blur is biased by design and rebalances error (more coverage, less
   peak noise). At moderate σ (0.02-0.06, alpha units) the effect is
   subtle; at 0.15 the material visibly softens.
-- Follow-up worth measuring: Kaplanyan's halflife decay
-  (`path.regularization.halflife`, σ→0 over samples → consistent in
-  the limit) and delta→glossy substitution for pure-SDS chains.
+- `path.regularization.halflife` landed (v2): σ_eff =
+  σ·2^(−spp/halflife), spp = `Film::GetTotalEyeSampleCount()/pixelCount`
+  (eye-only counter — light splats must not inflate it). CPU seeds per
+  path from `EffectiveRegularizationSigma`; GPU re-uploads taskConfig
+  once per batch when the decayed value changes (same site as the VCM
+  merge-radius rewrite). σ_eff snaps to 0 below 1e-5. Still open:
+  delta→glossy substitution for pure-SDS chains.
 
 ## Design v1 (biased-but-consistent, Corona-style)
 

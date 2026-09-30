@@ -21,9 +21,10 @@ trade-off Cycles documents for Filter Glossy.
 |---|---|---|
 | `path.regularization.sigma` | `0` | Alpha-space blur radius applied at gated vertices. `0` disables (output bit-identical to before). |
 | `path.regularization.mindepth` | `1` | Blur applies to vertices with `rayDepth >= mindepth`; `1` keeps the camera-visible bounce exact. |
+| `path.regularization.halflife` | `0` | Kaplanyan decay: sigma halves every `halflife` accumulated eye samples-per-pixel, so the blur vanishes asymptotically and the estimator is consistent in the limit. `0` = static blur. Each path keeps the sigma it was born with (a decaying schedule across paths, not a mid-path mutation). |
 
-Blender: *Filter Glossy Sigma / Min Depth* under the path settings in
-the sampling panel.
+Blender: *Filter Glossy Sigma / Min Depth / Half-life* under the path
+settings in the sampling panel.
 
 ## Coverage (v1)
 

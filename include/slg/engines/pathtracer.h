@@ -239,6 +239,22 @@ public:
 	// PathDepthInfo -> HitPoint.regularization. 0 disables.
 	float regularizationSigma;
 	u_int regularizationMinDepth;
+	// Kaplanyan halflife decay (path.regularization.halflife): >0 makes
+	// sigma halve every <value> samples-per-pixel, so the blur vanishes
+	// asymptotically and the estimator converges unbiased in the limit.
+	// 0 = static sigma (plain biased PSR).
+	float regularizationHalflife;
+	// sigma at a given accumulated samples-per-pixel; below ~1e-5 the
+	// blur is indistinguishable from exact, so snap to 0
+	float EffectiveRegularizationSigma(const double spp) const {
+		if (regularizationSigma <= 0.f)
+			return 0.f;
+		if (regularizationHalflife <= 0.f)
+			return regularizationSigma;
+		const float s = regularizationSigma *
+				exp2f(-(float)(spp / regularizationHalflife));
+		return (s > 1e-5f) ? s : 0.f;
+	}
 
 	// Hybrid backward/forward path tracing settings
 	float hybridBackForwardPartition, hybridBackForwardGlossinessThreshold;
