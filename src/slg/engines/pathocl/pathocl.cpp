@@ -336,40 +336,34 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 				// while some light pass exists to deposit what it
 				// removes. GPU light tracing pins native threads
 				// eye-only (partition forced to 1.0 below), so they can
-				// NOT compensate while lt stays enabled - the only
-				// compensating paths are the PhotonGI caustic cache or a
-				// demotion to native-thread hybrid (which turns the CPU
-				// Metropolis light pass + splatter back on).
-				const bool pgicCaustic = cfg.Get(
-						Property("path.photongi.caustic.enabled")(
-						false)).Get<bool>();
-				if (pgicCaustic) {
-					SLG_LOG("WARNING: light tasks wanted but the task "
-							"fraction leaves no light tasks; the "
-							"PhotonGI caustic cache compensates");
+				// NOT compensate while lt stays enabled. The PhotonGI
+				// caustic cache cannot compensate either: with hbf on it
+				// is only consulted at depth != 0 (pathtracer.cpp
+				// IsCausticEnabled gate), so the depth-0 pool still
+				// relies on a light pass. The safe fallbacks are a
+				// demotion to native-thread hybrid (CPU Metropolis light
+				// pass + splatter) or no suppression at all.
+				if (nativeRenderThreadCount > 0) {
+					SLG_LOG("WARNING: light tasks wanted but the "
+							"task count leaves no light-task tail; "
+							"handing the light pass to the native "
+							"threads (GPU light tracing disabled)");
+					cfg.Set(Property("path.lighttracing.enable")(false));
+					cfg.Set(Property("path.hybridbackforward.enable")(true));
 				} else {
-					if (nativeRenderThreadCount > 0) {
-						SLG_LOG("WARNING: light tasks wanted but the "
-								"task count leaves no light-task tail; "
-								"handing the light pass to the native "
-								"threads (GPU light tracing disabled)");
-						cfg.Set(Property("path.lighttracing.enable")(false));
-						cfg.Set(Property("path.hybridbackforward.enable")(true));
-					} else {
-						SLG_LOG("WARNING: light tasks wanted but the "
-								"task count leaves no light-task tail "
-								"and no other light pass can compensate: "
-								"disabling light tracing, hybrid and "
-								"vertex connection");
-						cfg.Set(Property("path.lighttracing.enable")(false));
-						cfg.Set(Property("path.hybridbackforward.enable")(false));
-					}
-					// Vertex connection needs the GPU light-task
-					// population for its vertex cache: with no tail to
-					// carve it is unimplementable, and leaving it on
-					// would re-promote light tracing in StartLockLess
-					cfg.Set(Property("path.vertexconnection.enable")(false));
+					SLG_LOG("WARNING: light tasks wanted but the "
+							"task count leaves no light-task tail "
+							"and no other light pass can compensate: "
+							"disabling light tracing, hybrid and "
+							"vertex connection");
+					cfg.Set(Property("path.lighttracing.enable")(false));
+					cfg.Set(Property("path.hybridbackforward.enable")(false));
 				}
+				// Vertex connection needs the GPU light-task
+				// population for its vertex cache: with no tail to
+				// carve it is unimplementable, and leaving it on
+				// would re-promote light tracing in StartLockLess
+				cfg.Set(Property("path.vertexconnection.enable")(false));
 			}
 		}
 	}

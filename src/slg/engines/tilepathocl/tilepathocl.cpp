@@ -141,14 +141,13 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 					// while some light pass exists to deposit what it
 					// removes. Unlike PATHOCL there is no partition pin
 					// here, so native threads still run the CPU light
-					// pass under hybrid and compensate; so does the
-					// PhotonGI caustic cache. Only a GPU-only render
-					// without the cache is uncompensated - demote the
-					// request before ParseOptions/taskConfig consume it.
-					const bool compensated = (nativeRenderThreadCount > 0) ||
-							cfg.Get(Property("path.photongi.caustic.enabled")(
-							false)).Get<bool>();
-					if (!compensated) {
+					// pass under hybrid and compensate. The PhotonGI
+					// caustic cache cannot compensate: with hbf on it is
+					// only consulted at depth != 0, so the depth-0 pool
+					// still relies on a light pass. Only a GPU-only
+					// render is uncompensated - demote the request
+					// before ParseOptions/taskConfig consume it.
+					if (nativeRenderThreadCount == 0) {
 						SLG_LOG("WARNING: light tasks wanted but the "
 								"task count leaves no light-task tail "
 								"and no other light pass can compensate: "
