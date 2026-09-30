@@ -1196,31 +1196,8 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 				conflicting = pendingBuffers.count(metalBuff) != 0;
 		}
 
-		if (conflicting) {
-			// Wait only on command buffers that actually reference this
-			// buffer - FinishQueue() would drain unrelated work too and
-			// serialize the stream. CBs on one queue complete in commit
-			// order, so waiting on the LAST conflicting cb transitively
-			// covers every earlier conflicting dispatch (and pendingCB
-			// too once committed).
-			std::vector<MTLCommandBufferHandle> waiting;
-			{
-				std::lock_guard<std::mutex> lock(inFlightMutex);
-				CommitPendingLocked();
-				for (auto it = inFlightWork.begin(); it != inFlightWork.end(); ) {
-					bool uses = false;
-					for (const MetalDeviceBuffer *b : it->buffers) {
-						if (b == metalBuff) { uses = true; break; }
-					}
-					if (uses) { waiting.push_back(it->cb); it = inFlightWork.erase(it); }
-					else ++it;
-				}
-			}
-			for (auto cb : waiting) {
-				[(__bridge id<MTLCommandBuffer>)cb waitUntilCompleted];
-				[(__bridge id<MTLCommandBuffer>)cb release];
-			}
-		}
+		if (conflicting)
+			WaitOnBuffer(metalBuff);
 	}
 
 	memcpy([(__bridge id<MTLBuffer>)metalBuff->metalBuff contents], ptr, size);
@@ -1228,6 +1205,29 @@ void MetalDevice::EnqueueWriteBuffer(const HardwareDeviceBuffer *buff,
 		FinishQueue();
 }
 
+
+void MetalDevice::WaitOnBuffer(const MetalDeviceBuffer *buff) {
+	// Commit pendingCB so a not-yet-committed batch can't slip past the
+	// wait. In-order queue: waiting on each conflicting CB in commit
+	// order covers earlier conflicting dispatches transitively.
+	std::vector<MTLCommandBufferHandle> waiting;
+	{
+		std::lock_guard<std::mutex> lock(inFlightMutex);
+		CommitPendingLocked();
+		for (auto it = inFlightWork.begin(); it != inFlightWork.end(); ) {
+			bool uses = false;
+			for (const MetalDeviceBuffer *b : it->buffers) {
+				if (b == buff) { uses = true; break; }
+			}
+			if (uses) { waiting.push_back(it->cb); it = inFlightWork.erase(it); }
+			else ++it;
+		}
+	}
+	for (auto cb : waiting) {
+		[(__bridge id<MTLCommandBuffer>)cb waitUntilCompleted];
+		[(__bridge id<MTLCommandBuffer>)cb release];
+	}
+}
 void MetalDevice::FlushQueue() {
 	// Commit pending batched work without waiting - starts the GPU
 	// earlier and keeps the OpenCL flush semantics.
@@ -1268,7 +1268,7 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 	// Handle the case of an empty buffer
 	if (!size) {
 		if (metalBuff->metalBuff) {
-			FinishQueue();   // pending work may still reference the buffer
+			WaitOnBuffer(metalBuff);   // pending work may still reference the buffer
 
 			FreeMemory(metalBuff->size);
 			[(__bridge id<MTLBuffer>)metalBuff->metalBuff release];
@@ -1288,27 +1288,28 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 				bool conflicting = false;
 				{
 					std::lock_guard<std::mutex> lock(inFlightMutex);
-						for (auto &w : inFlightWork) {
-							for (const MetalDeviceBuffer *b : w.buffers) {
-								if (b == metalBuff) {
-									conflicting = true;
-									break;
-								}
-							}
-							if (conflicting)
+					for (auto &w : inFlightWork) {
+						for (const MetalDeviceBuffer *b : w.buffers) {
+							if (b == metalBuff) {
+								conflicting = true;
 								break;
+							}
 						}
-						if (!conflicting)
-							conflicting = pendingBuffers.count(metalBuff) != 0;
+						if (conflicting)
+							break;
+					}
+					if (!conflicting)
+						conflicting = pendingBuffers.count(metalBuff) != 0;
 				}
 				if (conflicting)
-					FinishQueue();
+					WaitOnBuffer(metalBuff);
 				memcpy([(__bridge id<MTLBuffer>)metalBuff->metalBuff contents], src, size);
 			}
 			return;
 		} else {
-			// Free the buffer
-			FinishQueue();   // pending work may still reference the buffer
+			// The MTLBuffer is about to be freed: drain only the
+			// dispatches that could still read it, not the whole queue.
+			WaitOnBuffer(metalBuff);
 
 			FreeMemory(metalBuff->size);
 			[(__bridge id<MTLBuffer>)metalBuff->metalBuff release];

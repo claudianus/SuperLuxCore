@@ -912,3 +912,18 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   target (transitively covered by in-order queue). Unrelated kernels
   keep overlapping the host memcpy.
 - Parity cornell + strands PASS.
+
+## Metal write/alloc hazards now use scoped waits (2026-10-01)
+
+- Added `MetalDevice::WaitOnBuffer(buff)` - walks inFlightWork, waits
+  only on committed CBs referencing `buff`, leaves unrelated work
+  running. Same conflict-scan pattern EnqueueReadBuffer already used.
+- Applied to: `EnqueueWriteBuffer` conflict path (was FinishQueue),
+  `AllocBuffer` overwrite-with-same-size path, `AllocBuffer` free-
+  on-resize path, `AllocBuffer` free-on-empty path.
+- `FreeBuffer` keeps `FinishQueue` (the wrapper dies - all its users
+  must drain).
+- Effect: a write to one buffer no longer serializes other buffers'
+  in-flight kernels. On PATHOCL this mostly shows up when film
+  upload / debug counter drain overlaps trace dispatches.
+- Parity cornell + strands PASS.

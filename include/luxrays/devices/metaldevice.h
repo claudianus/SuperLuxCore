@@ -340,6 +340,10 @@ protected:
 	// Commit pendingCB into inFlightWork. inFlightMutex must be held.
 	void CommitPendingLocked();
 	void FlushPending();   // lock + CommitPendingLocked, no wait
+	// Wait only on committed command buffers that reference `buff`
+	// (pendingCB first). Used by the EnqueueWriteBuffer/AllocBuffer
+	// conflict paths so one buffer's hazard doesn't drain the queue.
+	void WaitOnBuffer(const MetalDeviceBuffer *buff);
 };
 
 }
