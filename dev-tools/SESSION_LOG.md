@@ -684,3 +684,38 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   PASS_BATCH=4, adaptive gate once per run, filmless path batches the
   single shared slot.
 - Sanity: cornell @32spp SOBOL 0.3767 / METROPOLIS 0.3766, no NaN.
+
+## Volume const-param cache + GPU Owen memo + profiler r3 — 2026-10-01
+
+- `HomogeneousVolume`: sigmaA/sigmaS/emission evaluated through virtual
+  `Texture::GetSpectrumValue` + a fully built `HitPoint` per volume
+  event (Scatter, ScatterEquiangular, TransmittanceEstimate), but
+  homogeneous volumes are almost always `ConstFloat3`-parameterized.
+  Ctor now caches the clamped spectra (`constSigmaParams` gate, off
+  under the SSS albedo parametrization) and the RGB path
+  (`!Spectral::Current()`) serves them without HitPoint/virtuals.
+  Spectral renders keep per-path wavelength eval - values are
+  path-dependent there.
+- GPU `SobolSequence_GetSample`: Owen path recomputed the per-pass
+  nested-uniform shuffle + 2 `BlueNoiseHash` on every dimension call
+  (~16 dims/sample). `SobolSample` gains `shuffledPass`/`shuffledPassKey`
+  (appended fields; `pass` offset unchanged for the `sampler_funcs.cl`
+  peek). Keyed memo mirrors the CPU `SobolSequence` design;
+  `SobolSampler_InitNewSample` invalidates the key on pass change.
+  TilePath callsites pass NULL slots. Bit-identical scramble values,
+  just computed once per (pass,pixel) instead of once per dimension.
+- `Mutate`/`MutateScaled`: `static const` -> `constexpr` constants -
+  drops the per-call static-init guard in the per-dimension mutation
+  loop. Same values, same rounding.
+- Verification: PATHCPU prism-conservatory 64spp finite, same
+  distribution (PATHCPU seeds off wall-clock, no bit-compare possible).
+  e94 serialization 3/3. e34 volume guiding parity cpu/gpu ratio
+  0.9978/0.9987 (Metal/OpenCL). cpu-gpu-parity cornell 0.0009 reldiff
+  PASS. e50 zero-config defaults + auto-caustic routing (e51) ok.
+- Fresh profiler round (PATHCPU prism-conservatory 35s sample, busy
+  threads): Embree ~35%, Metropolis GetSample ~12%, Sobol
+  InitNewSample ~11%, HitPoint attr chain ~10%, libm ~6%,
+  PathVolumeInfo ~3%, LightBVH ~3% (already dot-space). Logged as
+  ledger r3 - remaining open items: hitpoint chain, PathVolumeInfo
+  has-volumes gate, wavefront queue-totals stall root cause, GPU PGIC
+  KD-tree update (big), GPU Sobol dimension LUT (needs GPU profile).
