@@ -1051,3 +1051,14 @@ strands parity PASS.
 
 `fetch_add + load` was two atomic RMWs where the returned previous value
 suffices. Now one fetch_add + compare.
+
+## TileRepository::NextTile - filmMutex-only merge (2026-10-01)
+
+The old shape held tileMutex across Film::AddFilm, serializing all
+TILEPATHCPU workers through the O(tile-pixel) merge. Split NextTile
+into three phases: (1) tileMutex for queue bookkeeping, (2) filmMutex
+alone for the pixel merge, (3) tileMutex for the convergence + next-
+tile checks. Correctness: pendingTiles/todoTiles/convergedTiles access
+is unchanged (still under tileMutex in phases 1+3); film.AddFilm is
+still mutually exclusive across threads via filmMutex. TILEPATHCPU
+luxball renders 4spp clean in 2.4s; no deadlock under 20 threads.

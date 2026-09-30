@@ -482,32 +482,39 @@ bool TileRepository::GetNewTileWork(TileWork &tileWork) {
 
 bool TileRepository::NextTile(FilmRef film, std::mutex *filmMutex,
 		TileWork &tileWork, FilmRef tileFilm) {
-	// Now I have to lock the repository
-	std::unique_lock<std::mutex> lock(tileMutex);
+	// Phase 1 (tileMutex): tile bookkeeping. The O(tile-pixel)
+	// film.AddFilm merge runs in Phase 2 under filmMutex alone so
+	// workers don't serialize behind tileMutex.
+	{
+		std::unique_lock<std::mutex> lock(tileMutex);
+		if (tileWork.HasWork()) {
+			Tile *tile = tileWork.tile;
 
-	// Check if I have to add the tile to the film
+			// Add the pass to the tile
+			tileWork.AddPass(tileFilm);
+
+			// Remove the first copy of tile from pending list (there can be multiple copy of the same tile)
+			pendingTiles.erase(find(pendingTiles.begin(), pendingTiles.end(), tile));
+
+			if (tile->done) {
+				// All done for this tile, add to the convergedTiles list, if it is
+				// not already there
+				if (find(convergedTiles.begin(), convergedTiles.end(), tile) == convergedTiles.end())
+					convergedTiles.push_back(tile);
+			} else {
+				// Re-add to the todoTiles priority queue, if it is not already there
+				if (find(todoTiles.begin(), todoTiles.end(), tile) == todoTiles.end())
+					todoTiles.push(tile);
+			}
+		}
+	}
+
+	// Phase 2 (filmMutex): merge this tile's film into the global film.
+	// Safe to run without tileMutex - the tileWork state is already
+	// committed and the merge only mutates the film.
 	if (tileWork.HasWork()) {
 		Tile *tile = tileWork.tile;
-
-		// Add the pass to the tile
-		tileWork.AddPass(tileFilm);
-
-		// Remove the first copy of tile from pending list (there can be multiple copy of the same tile)
-		pendingTiles.erase(find(pendingTiles.begin(), pendingTiles.end(), tile));
-
-		if (tile->done) {
-			// All done for this tile, add to the convergedTiles list, if it is
-			// not already there
-			if (find(convergedTiles.begin(), convergedTiles.end(), tile) == convergedTiles.end())
-				convergedTiles.push_back(tile);
-		} else {
-			// Re-add to the todoTiles priority queue, if it is not already there
-			if (find(todoTiles.begin(), todoTiles.end(), tile) == todoTiles.end())
-				todoTiles.push(tile);
-		}
-
-		// Add the tile also to the global film
-		std::unique_lock<std::mutex> lock(*filmMutex);
+		std::unique_lock<std::mutex> filmLock(*filmMutex);
 
 		// This allow to avoid to have to clear the film
 		if (enableFirstPassClear && (tileWork.passToRender == 1)) {
@@ -525,16 +532,18 @@ bool TileRepository::NextTile(FilmRef film, std::mutex *filmMutex,
 		}
 	}
 
+	// Phase 3 (tileMutex again): pop the next tile / check convergence.
+	// todoTiles / pendingTiles / convergedTiles live behind tileMutex.
+	std::unique_lock<std::mutex> lock(tileMutex);
+
 	// For the support of film halt conditions
 	if (film.GetConvergence() == 1.f) {
 		if (pendingTiles.size() == 0) {
 			// Rendering done
 			SetDone(film);
 		}
-
 		return false;
 	}
-
 	// For support of TileRepository halt condition and multi-pass rendering
 	if (todoTiles.size() == 0) {
 		if (!enableMultipassRendering) {
