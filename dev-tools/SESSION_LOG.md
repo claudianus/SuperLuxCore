@@ -592,3 +592,17 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   classified non-caustic exactly like the CPU bug. Mirrored with
   Material_IsDelta(bsdf->materialIndex). PATHOCL md0 render verifies:
   mean 0.328 (CPU 0.330), no NaN, kernel compiles through cl2msl.
+
+## Distribution1D hinted segment search — 2026-10-01 (cont.)
+
+- Distribution1D::SampleContinuous: replaced the full-range
+  std::upper_bound (log2(65) ~ 7 mispredicted iters) with a hinted
+  linear walk (offset = u*count, bounded to 8/16 steps) + binary-search
+  fallback when the hint misses (spiky env-map tables). Bit-identical:
+  the returned segment satisfies cdf[offset] <= u < cdf[offset+1]
+  either way.
+- Callers: pixel FilterDistribution::SampleContinuous (every eye
+  sample, ~1% profile share) and env-light Distribution2D sampling
+  (sky2/infinite light NEE - bounded walk guards their spiky CDFs).
+- Sanity: cornell 160x90 PATHCPU @48spp mean 0.37672 - matches
+  pre-change 0.37671 within FP-drift band.

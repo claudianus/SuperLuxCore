@@ -358,9 +358,24 @@ float Distribution1D::SampleContinuous(float u, float *pdf, u_int *off) const {
 			*off = count - 1;
 		return 1.f;
 	}
-	const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
-	const u_int offset = ptr - &cdf[0] - 1;
-	assert ((offset >= 0) && (offset < count));
+	// Hinted segment search: for the smooth, roughly-uniform CDFs that
+	// pixel-filter tables produce, u * count lands within a segment or
+	// two of the answer - a short linear walk beats a binary search
+	// (~7 mispredicted iterations). For spiky tables (env-map light
+	// distributions) the hint can be off by many segments, so cap the
+	// walk and fall back to upper_bound on the remaining span. Finds
+	// the identical segment either way - bit-identical results.
+	u_int offset = (u_int)(u * (float)count);
+	offset = Min(offset, count - 1);
+	u_int walked = 0;
+	while (u < cdf[offset] && walked++ < 8)
+		--offset;
+	while ((u >= cdf[offset + 1]) && (offset < count - 1) && walked++ < 16)
+		++offset;
+	if ((u < cdf[offset]) || (u >= cdf[offset + 1])) {
+		const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
+		offset = u_int(ptr - &cdf[0] - 1);
+	}
 
 	// Compute offset along CDF segment
 	const float du = (u - cdf[offset]) /
