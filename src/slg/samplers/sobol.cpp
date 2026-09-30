@@ -637,7 +637,7 @@ PropertiesUPtr SobolSampler::GetDefaultProps() {
 			Property("sampler.sobol.tilesize")(16) <<
 			Property("sampler.sobol.supersampling")(1) <<
 			Property("sampler.sobol.overlapping")(1) <<
-			Property("sampler.sobol.bluenoise.enable")(false) <<
+			Property("sampler.sobol.bluenoise.enable")(true) <<
 			Property("sampler.sobol.owen.enable")(true) <<
 			Property("sampler.sobol.owen.tile.enable")(true) <<
 			Property("sampler.sobol.adaptive.moments.enable")(true) <<

@@ -839,3 +839,14 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   Preprocess).
 - prism PATHCPU: 6.27 -> 6.76 Ms/s (~+8% on top of the diff cache).
 - Parity: cornell + strands PASS.
+
+## sampler.sobol.bluenoise.enable on by default
+
+- SobolSequence::BlueNoiseHash already implemented (per-dim Owen-style
+  scramble) but the prop defaulted off. Flip: same Sobol point set,
+  permuted - zero bias, better pixel decorrelation at low spp.
+- luxball PATHOCL 32spp: mean identical to 2.5e-5 rel; per-pixel
+  variance redistributed (visually cleaner at preview counts).
+- Speed: 4.93M vs 4.80M samples/s - within measurement noise on the
+  busy host.
+- Parity: cornell + strands PASS.
