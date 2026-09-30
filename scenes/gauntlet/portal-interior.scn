@@ -48,7 +48,7 @@ scene.objects.floor.ply = scenes/gauntlet/mesh/floor_plane.ply
 scene.objects.fogbox.material = mat_fog
 scene.objects.fogbox.ply = scenes/gauntlet/mesh/fogbox.ply
 # Subject cluster inside: pedestal + orb near the sun patch landing zone,
-# brass ring further into the dim region.
+# copper ring further into the dim region.
 scene.objects.ped.material = pedestal
 scene.objects.ped.ply = scenes/gauntlet/mesh/pedestal_s.ply
 scene.objects.ped.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.5 7.0 0.0 1.0

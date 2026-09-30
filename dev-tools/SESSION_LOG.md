@@ -421,3 +421,30 @@ lt/hbf requests now warn+ignore in StartLockLess; MNEE auto stays
 (eye-side). e102 also fixed (bigmonkey .scn needs repo-root cwd):
 matrix 11/11 PASS, e17 5/5, Release parity 4/4. Doc:
 doc/engineering/light-pass-channel-matrix.md.
+
+Review pass on the suppression-deposit contract exposed three more
+holes, all in the same family:
+- TILEPATHOCL/RTPATHOCL zero-tail demote was a no-op: InitTaskCount
+  runs AFTER ParseOptions (tileRepository needs parsed values), so its
+  cfg.Set() calls never reached CompilePathTracer, which reads the
+  parsed pathTracer members. Suppression stayed on with
+  lightTaskCount==0 in every case. The demote now clears
+  pathTracer.lightTracingEnable/hybridBackForwardEnable/
+  vertexConnectEnable directly, unconditionally - the native>0 keep
+  rested on a false premise: TilePathNativeRenderThread is eye-only
+  (no light sampler/splatter; identical to upstream). hbf->lt
+  promotion on tile engines is now unconditional too: hbf+natives>0
+  previously suppressed at ANY task count since only lt spawns light
+  tasks.
+- PATHOCL demote sat inside the camera-supported else, so lt plus a
+  non-perspective/ortho camera left the tail at 0 with lt on -
+  hoisted the lightTaskCount==0 check out of the else.
+- InitFilm channel gates missed the third promotion source:
+  path.vertexconnection.enable alone promotes hbf and runs the light
+  pass. pathcpu.cpp and pathoclbase.cpp now gate
+  RADIANCE_PER_SCREEN_NORMALIZED on hbf || lt || vc.
+- TILEPATHCPU warn+ignore now also clears vertexConnectEnable.
+e102: +3 TILEPATHOCL zero-tail rows (tile.size=32, aa=1 -> taskCount
+8192; lt / hbf / natives=2 variants; TILEPATHSAMPLER required -
+CheckSamplersForTile rejects Sobol on tile engines).
+Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.

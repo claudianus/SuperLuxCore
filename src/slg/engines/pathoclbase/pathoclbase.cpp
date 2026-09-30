@@ -333,10 +333,14 @@ void PathOCLBaseRenderEngine::InitFilm() {
 	// pathTracer has not yet been initialized
 	const bool hybridBackForwardEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
 			Get("path.hybridbackforward.enable")).Get<bool>();
-	// GPU light tracing splats into the same screen-normalized channel
+	// GPU light tracing splats into the same screen-normalized channel;
+	// vertex connection hosts its vertex cache on the light tasks, so it
+	// promotes light tracing too (UpdateTaskCount/InitTaskCount)
 	const bool lightTracingEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
 			Get("path.lighttracing.enable")).Get<bool>();
-	if (hybridBackForwardEnable || lightTracingEnable)
+	const bool vertexConnectEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
+			Get("path.vertexconnection.enable")).Get<bool>();
+	if (hybridBackForwardEnable || lightTracingEnable || vertexConnectEnable)
 		GetFilm().AddChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED);
 		lightSamplerSharedData = MetropolisSamplerSharedData::FromProperties(Properties(), seedBaseGenerator, GetFilm());
 

@@ -1204,9 +1204,11 @@ MNEE auto stays enabled on TILEPATHCPU — it is a pure eye-side solver.
 The CPU film-channel contract: auto-LT injects `lighttracing.enable`
 but never `hybridbackforward.enable`, and `InitFilm` runs before
 `ParseOptions` promotes lt→hbf. `PathCPURenderEngine::InitFilm`
-therefore gates `RADIANCE_PER_SCREEN_NORMALIZED` on `hbf || lt`
+therefore gates `RADIANCE_PER_SCREEN_NORMALIZED` on `hbf || lt || vc`
 (previously `hbf` only — auto-LT CPU renders had no splatter channel
-and came out black; e102 `caustic.cpu-zero` caught it).
+and came out black; e102 `caustic.cpu-zero` caught it). The same
+`hbf || lt || vc` gate is in `pathoclbase.cpp` InitFilm — a vc-only
+request promotes lt *after* the film is initialized.
 Full matrix: `doc/engineering/light-pass-channel-matrix.md`.
 
 Zero-tail hazard on GPU: light tasks are carved out of the task
@@ -1215,7 +1217,9 @@ population in 8192-chunks, so `taskCount <= 8192` always yields
 suppression, so without a compensating light pass the caustic class
 vanishes from the film — a silent ~black render (e17 originally caught
 this: film mean ~4e-5). `UpdateTaskCount()`/`InitTaskCount()` therefore
-demote before `ParseOptions`/`taskConfig` consume the flags:
+demote before `taskConfig` consumes the flags — PATHOCL writes cfg
+(its `UpdateTaskCount` precedes `ParseOptions`), tile engines clear the
+parsed `pathTracer` members (their `InitTaskCount` follows it):
 
 - **PATHOCL**: native threads are pinned eye-only (`partition=1.0`) while
   GPU lt stays on, so they cannot compensate. The PhotonGI caustic cache
@@ -1228,10 +1232,16 @@ demote before `ParseOptions`/`taskConfig` consume the flags:
   the eye path then estimates caustics unbiased and any enabled PhotonGI
   cache keeps its all-depths boost (VC needs the GPU light-task
   population and would re-promote lt in `StartLockLess`).
-- **TILEPATHOCL**: no partition pin — native threads run the light pass
-  through the splatter even with lt on, so `nativeRenderThreadCount > 0`
-  keeps lt enabled; only a GPU-only render demotes (pgic cannot
-  substitute for the depth-0 pool, same as PATHOCL).
+- **TILEPATHOCL / RTPATHOCL**: tile native threads are eye-only
+  (`TilePathNativeRenderThread` has no light sampler or splatter), so
+  there is never a compensating CPU light pass — the demote is
+  unconditional on tile engines. Two ordering gotchas hide here:
+  `InitTaskCount()` runs *after* `pathTracer.ParseOptions()` (the tile
+  repository needs parsed values first), so the demote clears the
+  `pathTracer` members, not cfg — cfg writes would never reach
+  `CompilePathTracer`. And the hbf→lt promotion is unconditional on
+  `nativeRenderThreadCount` for the same reason: an `hbf` request on a
+  tile engine is served by the GPU tail or by nothing.
 
 CPU engines never hit this: their light pass is a per-sample probability
 split inside each thread, not a block-quantized task population.

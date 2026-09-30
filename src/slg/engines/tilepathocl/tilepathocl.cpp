@@ -90,30 +90,26 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 	eyeTaskCount = taskCount;
 	lightTaskCount = 0;
 	auto& cfg = renderConfig.GetConfig();
-	bool lightTracingEnable = cfg.Get(PathTracer::GetDefaultProps()->
-			Get("path.lighttracing.enable")).Get<bool>();
-	// Same promotion as PathOCLRenderEngine::UpdateTaskCount: hybrid
-	// without native threads has no compensating light pass, so serve it
-	// from the GPU light population.
-	if (!lightTracingEnable &&
-			(nativeRenderThreadCount == 0) &&
-			cfg.Get(PathTracer::GetDefaultProps()->
-			Get("path.hybridbackforward.enable")).Get<bool>()) {
-		lightTracingEnable = true;
-		SLG_LOG("WARNING: path.hybridbackforward without native threads has "
-				"no light pass; enabling GPU light tracing");
+	// Unlike PathOCLRenderEngine::UpdateTaskCount (which runs BEFORE
+	// ParseOptions and can rewrite cfg), tile engines run ParseOptions
+	// first - tileRepository needs the parsed values - so the resolved
+	// lt/hbf/vc state lives on the pathTracer members and cfg writes here
+	// would never reach CompilePathTracer. Native threads are eye-only on
+	// tile engines (tilepathnativethread.cpp has no light sampler or
+	// splatter): the GPU task tail is the ONLY light pass, so hybrid and
+	// vertex-connection requests promote to GPU light tracing regardless
+	// of nativeRenderThreadCount.
+	if (!pathTracer.lightTracingEnable &&
+			(pathTracer.hybridBackForwardEnable || pathTracer.vertexConnectEnable)) {
+		pathTracer.lightTracingEnable = true;
+		if (!cfg.IsDefined("path.lighttracing.taskfraction"))
+			pathTracer.lightTracingTaskFraction = Clamp(
+					1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
+		SLG_LOG("WARNING: tile engines have no native-thread light pass; "
+				"serving hybrid/vertex-connection from the GPU light-task "
+				"tail");
 	}
-	// Vertex connection (M6) hosts the light vertex cache on the GPU
-	// light-task population - it needs the tasks even when native
-	// threads exist (a CPU light pass can not feed a GPU-side cache).
-	if (!lightTracingEnable &&
-			cfg.Get(PathTracer::GetDefaultProps()->
-			Get("path.vertexconnection.enable")).Get<bool>()) {
-		lightTracingEnable = true;
-		SLG_LOG("WARNING: path.vertexconnection requires the GPU light "
-				"task population; enabling GPU light tracing");
-	}
-	if (lightTracingEnable) {
+	if (pathTracer.lightTracingEnable) {
 		const Camera::CameraType camType = renderConfig.GetScene().GetCamera().GetType();
 		if ((camType != Camera::PERSPECTIVE) && (camType != Camera::ORTHOGRAPHIC)) {
 			SLG_LOG("WARNING: path.lighttracing supports only perspective and "
@@ -136,29 +132,36 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 						Min(taskCount - 8192u,
 						RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
 				eyeTaskCount = taskCount - lightTaskCount;
-				if (lightTaskCount == 0) {
-					// The eye side runs hybrid caustic suppression only
-					// while some light pass exists to deposit what it
-					// removes. Unlike PATHOCL there is no partition pin
-					// here, so native threads still run the CPU light
-					// pass under hybrid and compensate. The PhotonGI
-					// caustic cache cannot compensate: with hbf on it is
-					// only consulted at depth != 0, so the depth-0 pool
-					// still relies on a light pass. Only a GPU-only
-					// render is uncompensated - demote the request
-					// before ParseOptions/taskConfig consume it.
-					if (nativeRenderThreadCount == 0) {
-						SLG_LOG("WARNING: light tasks wanted but the "
-								"task count leaves no light-task tail "
-								"and no other light pass can compensate: "
-								"disabling light tracing, hybrid and "
-								"vertex connection");
-						cfg.Set(Property("path.lighttracing.enable")(false));
-						cfg.Set(Property("path.hybridbackforward.enable")(false));
-						cfg.Set(Property("path.vertexconnection.enable")(false));
-					}
-				}
 			}
+		}
+		if (lightTaskCount == 0) {
+			// The eye side runs hybrid caustic suppression only while some
+			// light pass exists to deposit what it removes. A missing tail
+			// is never compensated on tile engines: native threads run eye
+			// sampling only, and the PhotonGI caustic cache is consulted
+			// only at depth != 0 under hbf (the depth-0 pool belongs to
+			// the light pass). Demote on the parsed members so the eye
+			// path estimates caustics unbiased - this also covers the
+			// unsupported-camera case above, which leaves the split at 0.
+			SLG_LOG("WARNING: light tasks wanted but the task count leaves "
+					"no light-task tail and tile engines have no other "
+					"light pass: disabling light tracing, hybrid and "
+					"vertex connection");
+			pathTracer.lightTracingEnable = false;
+			pathTracer.hybridBackForwardEnable = false;
+			pathTracer.vertexConnectEnable = false;
+			// RTPATHOCL EndFilmEdit (film resize) re-enters here after
+			// taskConfig/compiledPathTracer were already built: mirror the
+			// demote so the compiled kernels stop suppressing too
+			// (pre-start this is overwritten by InitGPUTaskConfiguration)
+			if (compiledScene) {
+				compiledScene->compiledPathTracer.lightTracing.enabled = 0;
+				compiledScene->compiledPathTracer.hybridBackForward.enabled = 0;
+				compiledScene->compiledPathTracer.vertexConnect.enabled = 0;
+			}
+			taskConfig.pathTracer.lightTracing.enabled = 0;
+			taskConfig.pathTracer.hybridBackForward.enabled = 0;
+			taskConfig.pathTracer.vertexConnect.enabled = 0;
 		}
 	}
 }
@@ -239,19 +242,6 @@ void TilePathOCLRenderEngine::StartLockLess() {
 	// pathTracer must be configured here because it is then used
 	// to set tileRepository->varianceClamping, etc.
 	pathTracer.ParseOptions(cfg, *defaultProps);
-
-	// Mirror of the InitTaskCount() handling for hybrid-without-light-
-	// pass (no native threads to run the CPU light pass): promoted to
-	// GPU light tracing in InitTaskCount, so mark the parsed
-	// configuration the same way. Vertex connection is promoted
-	// unconditionally - its vertex cache lives on the GPU light tasks.
-	if ((pathTracer.hybridBackForwardEnable && (nativeRenderThreadCount == 0) ||
-			pathTracer.vertexConnectEnable) && !pathTracer.lightTracingEnable) {
-		pathTracer.lightTracingEnable = true;
-		if (!cfg.IsDefined("path.lighttracing.taskfraction"))
-			pathTracer.lightTracingTaskFraction = Clamp(
-					1.f - pathTracer.hybridBackForwardPartition, 0.f, .9f);
-	}
 
 	//--------------------------------------------------------------------------
 	// Restore render state if there is one

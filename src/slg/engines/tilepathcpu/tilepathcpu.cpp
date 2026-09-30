@@ -74,15 +74,19 @@ void TilePathCPURenderEngine::StartLockLess() {
 	pathTracer.ParseOptions(cfg, *GetDefaultProps());
 
 	// TILEPATHCPU has no light-pass machinery (no light sampler, no
-	// splatter, no screen-normalized film channel): a hybrid/light-tracing
-	// request would only turn eye-side caustic suppression on with nothing
-	// to deposit - clear both so the request degrades to plain path
-	// tracing instead of silently losing the caustic class
-	if (pathTracer.lightTracingEnable || pathTracer.hybridBackForwardEnable) {
-		SLG_LOG("WARNING: TILEPATHCPU does not support light tracing or "
-				"hybrid backward/forward - request ignored");
+	// splatter, no screen-normalized film channel): a hybrid/light-tracing/
+	// vertex-connection request would only turn eye-side caustic
+	// suppression on with nothing to deposit - clear all three so the
+	// request degrades to plain path tracing instead of silently losing
+	// the caustic class
+	if (pathTracer.lightTracingEnable || pathTracer.hybridBackForwardEnable ||
+			pathTracer.vertexConnectEnable) {
+		SLG_LOG("WARNING: TILEPATHCPU does not support light tracing, "
+				"hybrid backward/forward or vertex connection - request "
+				"ignored");
 		pathTracer.lightTracingEnable = false;
 		pathTracer.hybridBackForwardEnable = false;
+		pathTracer.vertexConnectEnable = false;
 	}
 
 	//--------------------------------------------------------------------------

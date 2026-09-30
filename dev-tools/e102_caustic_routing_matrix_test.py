@@ -50,6 +50,22 @@ ROWS = [
      "path.lighttracing.only = 1\n", 0.0005),
     ("caustic.cpu-zero",      SCENE_CAUSTIC, "PATHCPU", "", 0.001),
     ("diffuse.cpu-zero",      SCENE_DIFFUSE, "PATHCPU", "", 0.001),
+    # TILEPATHOCL: 32px tiles * aa=1 -> taskCount=8192 -> zero light-task
+    # tail. Tile native threads are eye-only, so every variant must
+    # demote on the parsed pathTracer members (InitTaskCount runs AFTER
+    # ParseOptions - cfg writes would be dead).
+    ("caustic.tile-zerotail", SCENE_CAUSTIC, "TILEPATHOCL",
+     "sampler.type = TILEPATHSAMPLER\ntile.size = 32\n"
+     "tilepath.sampling.aa.size = 1\npath.lighttracing.enable = 1\n"
+     "opencl.native.threads.count = 0\n", 0.001),
+    ("caustic.tile-hbf",      SCENE_CAUSTIC, "TILEPATHOCL",
+     "sampler.type = TILEPATHSAMPLER\ntile.size = 32\n"
+     "tilepath.sampling.aa.size = 1\npath.hybridbackforward.enable = 1\n"
+     "opencl.native.threads.count = 0\n", 0.001),
+    ("caustic.tile-natives",  SCENE_CAUSTIC, "TILEPATHOCL",
+     "sampler.type = TILEPATHSAMPLER\ntile.size = 32\n"
+     "tilepath.sampling.aa.size = 1\npath.lighttracing.enable = 1\n"
+     "opencl.native.threads.count = 2\n", 0.001),
 ]
 
 
