@@ -962,3 +962,13 @@ No new wins landed. Moving to startup-time wins next.
 - Now `AtomicAdd(&pixel[CHANNELS-1], weight)` - all channels atomic.
 - Non-atomic `AddWeightedPixel` unchanged (single-thread use only).
 - Parity cornell + strands PASS.
+
+## Splatter: skip zero-weight splat (2026-10-01)
+
+- `AtomicSplatSample` filtered path called `AtomicAddSampleResultColor`
+  even when `weight * filterWeight == 0` - 29 atomic channel writes
+  per wasted splat.
+- Blackman-Harris / box / gaussian filters all produce zero or
+  near-zero weights outside the filter radius on many LUT cells.
+- Skipped with `filteredWeight == 0.f` continue.
+- Parity cornell + strands PASS.

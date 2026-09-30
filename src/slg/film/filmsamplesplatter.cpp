@@ -118,6 +118,10 @@ void FilmSampleSplatter::AtomicSplatSample(FilmConstRef film, const SampleResult
 					break;
 
 				const float filteredWeight = weight * filterWeight;
+				// A zero-weight splat carries no contribution; skip the
+				// ~29 atomic channel updates it would still pay
+				if (filteredWeight == 0.f)
+					continue;
 				film.AtomicAddSampleResultColor(ix, iy, sampleResult, filteredWeight);
 			}
 		}
