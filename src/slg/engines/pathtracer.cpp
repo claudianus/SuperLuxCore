@@ -1991,6 +1991,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 void PathTracer::ProjectSampleResultToRGB(SampleResult &sr, const PathWavelengths &sw) {
 	Spectral::RGBProjector proj;
 	Spectral::PrepareRGBProjection(sw, proj);
+	ProjectSampleResultToRGB(sr, proj);
+}
+
+void PathTracer::ProjectSampleResultToRGB(SampleResult &sr, const Spectral::RGBProjector &proj) {
+	// The projector (CIE weights + sampled white point) is a function of
+	// the drawn wavelengths only - the caller prepares it once per path
+	// and every splat reuses it.
 	for (u_int i = 0; i < sr.radiance.Size(); ++i)
 		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], proj);
 	// Field-level early-out: directDiffuse/indirectGlossy/etc. stay black
@@ -2061,8 +2068,10 @@ void PathTracer::RenderEyeSample(
 			sspTail);
 
 	if (wlScope.Active()) {
+		Spectral::RGBProjector proj;
+		Spectral::PrepareRGBProjection(sw, proj);
 		for (u_int i = 0; i < (u_int)sampleResults.size(); ++i)
-			ProjectSampleResultToRGB(sampleResults[i], sw);
+			ProjectSampleResultToRGB(sampleResults[i], proj);
 	}
 }
 
@@ -2843,8 +2852,10 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 	}
 
 	if (wlScope.Active()) {
+		Spectral::RGBProjector proj;
+		Spectral::PrepareRGBProjection(sw, proj);
 		for (u_int i = 0; i < used; ++i)
-			ProjectSampleResultToRGB(sampleResults[i], sw);
+			ProjectSampleResultToRGB(sampleResults[i], proj);
 	}
 }
 

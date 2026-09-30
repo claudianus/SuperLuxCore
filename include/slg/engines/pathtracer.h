@@ -216,6 +216,8 @@ public:
 	// Shared by the CPU path engines and BIDIRCPU.
 	static void ProjectSampleResultToRGB(SampleResult &sr,
 			const luxrays::PathWavelengths &sw);
+	static void ProjectSampleResultToRGB(SampleResult &sr,
+			const luxrays::Spectral::RGBProjector &proj);
 
 	// LPE: accumulate r into the lpeRadiance slots of every expression
 	// whose NFA accepts the terminal symbol sym (see slg/utils/lpe.h).
