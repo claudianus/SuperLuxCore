@@ -43,6 +43,40 @@ backlog drained. Shares are top-of-stack on render threads.
 | 6 | HitPoint attr chain (`Init`+`GetDifferentials`+interpolate+Buffer[] stubs) | ~9% | open | — |
 | 7 | PathVolumeInfo bookkeeping | ~3% | open (has-volumes fast gate) | — |
 
+## CPU render-thread profile (2026-10-01 r3, PATHCPU, prism-conservatory 640x360)
+
+Volume+custic scene after the r2 backlog drained. Shares are
+top-of-stack on render threads (35s `sample`, idle cvwait excluded).
+
+| # | Hotspot | Share | Status | Commit |
+|---|---------|-------|--------|--------|
+| 1 | Embree tri+instance traversal | ~35% | natural cost | — |
+| 2 | `MetropolisSampler::GetSample` mutation walk | ~12% | residual (amortized per-stamp) | — |
+| 3 | `SobolSampler::InitNewSample` pick loop | ~11% | residual | — |
+| 4 | `HomogeneousVolume::Scatter*` HitPoint+virtual tex evals | ~6% | **landed** (const-param fast path) | `242ec2765` |
+| 5 | HitPoint attr chain | ~10% | open (as r2) | — |
+| 6 | libm `__sincosf/atan2f/expf` on samplers/env lights | ~6% | no redundant calls; approx breaks parity | — |
+| 7 | `PathVolumeInfo` bookkeeping | ~3% | open (as r2) | — |
+| 8 | LightBVH `NodeImportance`+`SampleLights` | ~3% | already dot-space/trig-free | — |
+
+### r3 #4 Volume const-param cache (`242ec2765`)
+
+- Path: `HomogeneousVolume::Scatter`, `ScatterEquiangular`,
+  `TransmittanceEstimate` — per volume event.
+- Observation: each event built a full `HitPoint` (~15 stores) and ran
+  3 virtual `Texture::GetSpectrumValue` dispatches to recover values
+  that are compile-time constants for a `ConstFloat3`-parameterized
+  volume (the near-universal homogeneous fog config).
+- Change: cache the clamped sigma_a/sigma_s/emission spectra at
+  construction when all three textures are `CONST_FLOAT`/`CONST_FLOAT3`
+  and the SSS albedo parametrization is off; serve them on the
+  non-spectral path (`!Spectral::Current()`). Spectral renders keep
+  per-path wavelength eval (values are path-dependent there).
+- Validation: Release build clean; PATHCPU prism-conservatory 64spp
+  finite, distribution matches (bit-compare impossible: PATHCPU
+  samplers seed off wall-clock). e94 serialization suite 3/3.
+
+
 ### r2 #2 Sobol InitNewSample film cache (`537a48c6d`)
 
 - Path: `SobolSampler::InitNewSample` per eye sample — adaptive
