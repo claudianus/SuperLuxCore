@@ -163,6 +163,31 @@ bottleneck is therefore *light-side Newton attempts on physically
 unsolvable configurations* - the failure-evidence cap bounds their
 cost; a smarter candidate prefilter would be the next lever.
 
+Crawl bail (what worked, e52/e55 round): the line search accepts any
+strict residual decrease, so a walk hunting an unreachable root can
+post two consecutive sub-25% improvements and then burn the whole
+12-iteration budget (the "exhausted" class: 2.49M solves per 256spp
+e52 run). Two consecutive sub-25% accepted steps now bail
+(`LUX_MNEE_CRAWL=0` disables): e52 256spp solver iterations
+100.3M -> 81.1M (-19%), exhausted 2.49M -> 0.64M, bright-region energy
+delta inside the same-config noise floor. The chain solver uses the
+same rule (its accepted steps cost n re-projections each).
+
+Candidate prefilter (measured and rejected, same round): the closed-
+body continuation probe - trace the seed blocker's continuation toward
+the endpoint with the post-entry volume and route evidence-gated
+doomed single-vertex glass solves straight to the chain. Physically
+sound (a single refraction cannot cross a closed dielectric) and it
+did cut solver iterations (-6% on top of the crawl bail), but the
+escalated chains cost more than the skipped capped probes save:
+e52 wall 0 to +10%, e53 wall +4%, ms-newton grows (the probe's
+straight-continuation pair also mis-seeds the chain Newton compared to
+the refracted discovery walk - deliberately not handed over in the
+evidence-gated variant, which still did not pay). The failure-evidence
+cap + crawl bail remain the right cost bound for the doomed
+population; a prefilter would need to be free of the escalation cost
+to win.
+
 Research anchor for the next round: Hong, Duan, Wang, Yuksel, Zeltner,
 Lin, "Sample Space Partitioning and Spatiotemporal Resampling for
 Specular Manifold Sampling" (SIGGRAPH Asia 2025). Tile-based sample
