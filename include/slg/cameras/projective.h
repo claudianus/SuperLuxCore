@@ -123,6 +123,10 @@ protected:
 		luxrays::Transform screenToCamera, screenToWorld;
 		luxrays::Transform rasterToScreen, rasterToWorld;
 		luxrays::Transform rasterToCamera;
+		// Cached inverses - GetSamplePosition and friends otherwise
+		// recompute them per call (per ConnectToEye for light tracing).
+		luxrays::Transform worldToCamera;
+		luxrays::Transform worldToRaster;
 	} CameraTransforms;
 	
 	virtual void InitCameraTransforms(CameraTransforms *trans) = 0;

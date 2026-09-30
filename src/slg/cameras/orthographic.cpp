@@ -55,6 +55,8 @@ void OrthographicCamera::InitCameraTransforms(CameraTransforms *trans) {
 		Scale(1.f / filmWidth, 1.f / filmHeight, 1.f);
 	trans->rasterToCamera = trans->screenToCamera * trans->rasterToScreen;
 	trans->rasterToWorld = trans->screenToWorld * trans->rasterToScreen;
+	trans->worldToCamera = Inverse(trans->cameraToWorld);
+	trans->worldToRaster = Inverse(trans->rasterToWorld);
 }
 
 void OrthographicCamera::InitCameraData() {
@@ -84,7 +86,7 @@ bool OrthographicCamera::ProjectToImage(Ray *ray, float *x, float *y) const {
 		return false;
 
 	// Get coordinates of point in image plane
-	Point pO = Inverse(camTrans.rasterToWorld) * ray->o;
+	Point pO = camTrans.worldToRaster * ray->o;
 	if (motionSystem)
 		pO *= motionSystem->Sample(ray->time);
 
@@ -121,7 +123,7 @@ bool OrthographicCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 		return false;
 
 	const Point endPoint = (*ray)(ray->maxt);
-	Point pO = Inverse(camTrans.rasterToWorld) * endPoint;
+	Point pO = camTrans.worldToRaster * endPoint;
 	if (motionSystem)
 		pO *= motionSystem->Sample(ray->time);
 

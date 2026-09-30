@@ -74,6 +74,8 @@ void PerspectiveCamera::InitCameraTransforms(CameraTransforms *trans) {
 		Scale(1.f / filmWidth, 1.f / filmHeight, 1.f);
 	trans->rasterToCamera = trans->screenToCamera * trans->rasterToScreen;
 	trans->rasterToWorld = trans->screenToWorld * trans->rasterToScreen;
+	trans->worldToCamera = Inverse(trans->cameraToWorld);
+	trans->worldToRaster = Inverse(trans->rasterToWorld);
 }
 
 void PerspectiveCamera::InitCameraData() {
@@ -146,7 +148,7 @@ bool PerspectiveCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 	Point pO = (ray->o + ((lensRadius > 0.f) ? (ray->d * (focalDistance / cosi)) : ray->d));
 	if (motionSystem)
 		pO *= motionSystem->SampleInverse(ray->time);
-	pO *= Inverse(camTrans.rasterToWorld);
+	pO *= camTrans.worldToRaster;
 
 	*x = pO.x;
 	*y = filmHeight - 1 - pO.y;

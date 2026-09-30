@@ -121,6 +121,8 @@ protected:
 		luxrays::Transform screenToCamera, screenToWorld;
 		luxrays::Transform rasterToScreen, rasterToWorld;
 		luxrays::Transform rasterToCamera;
+		luxrays::Transform worldToCamera;
+		luxrays::Transform worldToRaster;
 	} CameraTransforms;
 
 	float screenWindow[4];

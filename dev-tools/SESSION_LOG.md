@@ -1062,3 +1062,16 @@ tile checks. Correctness: pendingTiles/todoTiles/convergedTiles access
 is unchanged (still under tileMutex in phases 1+3); film.AddFilm is
 still mutually exclusive across threads via filmMutex. TILEPATHCPU
 luxball renders 4spp clean in 2.4s; no deadlock under 20 threads.
+
+## Camera: cache worldToRaster / worldToCamera (2026-10-01)
+
+`PerspectiveCamera::GetSamplePosition` ran `Inverse(camTrans.rasterToWorld)`
+per call - a 4x4 matrix inverse on every ConnectToEye (light-tracing
+vertex) and every shadow-camera query. Same for `OrthographicCamera`
+(two sites) and `EnvironmentCamera::GetSamplePosition`
+(`Inverse(camTrans.cameraToWorld)` per call). Added
+`worldToRaster` / `worldToCamera` to `CameraTransforms` in
+`projective.h` and `environment.h`; populated once in
+`InitCameraTransforms` (called by `Update` on camera motion).
+Correctness: identical matrix math, just hoisted. cornell + strands
+parity PASS.

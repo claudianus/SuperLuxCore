@@ -116,7 +116,7 @@ bool EnvironmentCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 	if (!isinf(ray->maxt) && (ray->maxt < clipHither || ray->maxt > clipYon))
 		return false;
 
-	const Vector w(Inverse(camTrans.cameraToWorld) * ray->d);
+	const Vector w(camTrans.worldToCamera * ray->d);
 	const float cosTheta = w.y;
 	const float theta = acosf(Min(1.f, cosTheta));
 	*y = filmHeight - 1 - (theta * filmHeight * INV_PI);
@@ -175,6 +175,8 @@ void EnvironmentCamera::InitCameraTransforms(CameraTransforms *trans) {
 		Scale(1.f / filmWidth, 1.f / filmHeight, 1.f);
 	trans->rasterToCamera = trans->screenToCamera * trans->rasterToScreen;
 	trans->rasterToWorld = trans->screenToWorld * trans->rasterToScreen;
+	trans->worldToCamera = Inverse(trans->cameraToWorld);
+	trans->worldToRaster = Inverse(trans->rasterToWorld);
 }
 
 void EnvironmentCamera::InitPixelArea() {
