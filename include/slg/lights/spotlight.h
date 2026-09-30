@@ -36,6 +36,9 @@ public:
 	void GetPreprocessedData(float *emittedFactor, float *absolutePos,
 		float *cosTotalWidth, float *cosFalloffStart,
 		const luxrays::Transform **alignedLight2World) const;
+	const luxrays::Transform &GetAlignedWorldToLight() const {
+		return alignedWorldToLight;
+	}
 
 	virtual LightSourceType GetType() const { return TYPE_SPOT; }
 	virtual float GetPower(SceneConstRef scene) const;
@@ -68,6 +71,11 @@ protected:
 	luxrays::Point absolutePos;
 	float cosTotalWidth, cosFalloffStart;
 	luxrays::Transform alignedLight2World;
+	// Cached inverse of alignedLight2World - Illuminate /
+	// IsAlwaysInShadow / LightFocusEmit each take a world-space
+	// direction into the aligned light frame; without this the
+	// 4x4 Inverse() ran once per query (per NEE + per light path).
+	luxrays::Transform alignedWorldToLight;
 };
 
 }

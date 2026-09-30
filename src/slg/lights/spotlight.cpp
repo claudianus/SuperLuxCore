@@ -62,6 +62,7 @@ void SpotLight::Preprocess() {
 	alignedLight2World = lightToWorld *
 			Translate(Vector(localPos.x, localPos.y, localPos.z)) /
 			dirToZ;
+	alignedWorldToLight = Inverse(alignedLight2World);
 }
 
 void SpotLight::GetPreprocessedData(float *emittedFactorData, float *absolutePosData,
@@ -133,7 +134,7 @@ Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	const float shadowRayDistance = sqrtf(shadowRayDistanceSquared);
 	const Vector shadowRayDir = toLight / shadowRayDistance;
 
-	const Vector localFromLight = Normalize(Inverse(alignedLight2World) * (-shadowRayDir));
+	const Vector localFromLight = Normalize(alignedWorldToLight * (-shadowRayDir));
 	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart);
 	if (falloff == 0.f)
 		return Spectrum();
@@ -157,7 +158,7 @@ bool SpotLight::IsAlwaysInShadow(SceneConstRef scene,
 	const float distance = toLight.Length();
 	const Vector dir = toLight / distance;
 
-	const Vector localFromLight = Normalize(Inverse(alignedLight2World) * (-dir));
+	const Vector localFromLight = Normalize(alignedWorldToLight * (-dir));
 	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart);
 
 	return (falloff == 0.f);

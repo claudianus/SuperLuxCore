@@ -1090,3 +1090,14 @@ forwards to the active eye. `ProjectPointToFilm` uses the cached
 transforms now. Same math, hoisted.
 
 cornell + strands parity PASS.
+
+## SpotLight: cache alignedWorldToLight (2026-10-01)
+
+`SpotLight::Illuminate`, `IsAlwaysInShadow` and `LightFocusEmit`'s spot
+branch each ran a 4x4 Inverse() of `alignedLight2World` per call (once
+per NEE sample + once per focused emission on point/spot). Cached the
+inverse on Preprocess as `alignedWorldToLight`, exposed via
+`GetAlignedWorldToLight`, and rewired all three callsites. Identical
+math, hoisted.
+
+cornell + strands parity PASS.

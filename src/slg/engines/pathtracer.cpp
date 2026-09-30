@@ -2444,10 +2444,13 @@ void PathTracer::LightFocusEmitU(SceneConstRef scene,
 						(1.f / (4.f * M_PI));
 			} else {
 				float ef[3], cosTotalWidth, cosFalloffStart;
-				const Transform *l2w;
 				static_cast<const SpotLight &>(light).GetPreprocessedData(
-						ef, nullptr, &cosTotalWidth, &cosFalloffStart, &l2w);
-				const Vector localDir = Normalize(Inverse(*l2w) * newDir);
+						ef, nullptr, &cosTotalWidth, &cosFalloffStart, nullptr);
+				// Reuse the cached world->light transform (was a per-call
+				// Inverse of alignedLight2World).
+				const Vector localDir = Normalize(
+						static_cast<const SpotLight &>(light).
+						GetAlignedWorldToLight() * newDir);
 				// Outside the cone the falloff is 0 and the path dies,
 				// exactly like the GPU's leaked rim sample
 				flux = Spectral::Emission(Spectrum(ef[0], ef[1], ef[2])) *
