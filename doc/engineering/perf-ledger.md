@@ -188,4 +188,29 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   (`07d856585`): OpenCL GPU + Metal GPU were both selected,
   spawning a second render thread that crashed inside Apple's
   OpenCL->Metal shim (gldExecuteKernel null-deref). Parity suite
-  6/6 PASS, 28s.
+
+### r5 sampleResults keep-sized + pendingTotal wiring (2026-10-01)
+
+- Path: `PathTracer::RenderLightSample` → `AddLightSampleResult` →
+  splat loop; `FilmSamplesCounts::AddSampleCount`; Metropolis
+  accept-path `currentSampleResults = sampleResults`.
+- Observation: `sampleResults.clear()` destroyed every slot's inner
+  `SpectrumGroup` vector each light path and `Init()` reallocated it —
+  2 heap free/alloc pairs per vertex × ~10M light samples/s.
+  `pendingTotal` existed but was never accumulated — the shared
+  `total_SampleCountAtomic` still got a `fetch_add` per splat.
+  Metropolis accept copied the full `maxPathDepth+2` vector when only
+  `used` slots were live.
+- Change: light-path `sampleResults` stays at `maxPathDepth+2`;
+  `u_int &used` plumbed through `RenderLightSample`, `ConnectToEye`,
+  the LMNEE single/multi/tail chain and `ConnectToEyeCallBackType`;
+  `Sampler::NextSample` takes a `used` bound (default SIZE_MAX keeps
+  other engines unchanged). `pendingTotal` flushed at 64. Accept-path
+  element-copies `used` slots (resize-once on first accept).
+- Validation: cornell+strands CPU/GPU parity PASS both rounds;
+  profile deltas AddSampleCount 19k→12.6k, Metro NextSample
+  3.5k→2.2k, `_xzm_free` 2.1k→1.6k.
+- Follow-up: `InitNewSample` adaptive re-pick + embree BVH + MLT
+  replay are algorithmic floors, not accidental cost — next
+  structural win is per-thread splat buffers or SampleResult
+  footprint (serialization risk).
