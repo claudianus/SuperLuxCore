@@ -1269,3 +1269,12 @@ AtomicAddSampleResultColor ran ~20 HasChannel() calls per splat; each was a
 std::unordered_set<FilmChannelType>::count() bucket walk. SampleResult now
 carries a channelsMask computed once in Init() and HasChannel is a shift+and.
 cornell + strands parity PASS.
+
+## FilmSamplesCounts: pad per-thread counters to separate cache lines (2026-10-01)
+
+The old layout packed three doubles per thread into adjacent vector slots:
+threads i and i+1 shared a 64B cache line, so every per-sample
+AddSampleCount() bounced the line between cores. Replaced with an
+alignas(64) PerThreadCounts struct (one line per thread).
+
+cornell + strands parity PASS.

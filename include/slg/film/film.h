@@ -88,13 +88,22 @@ public:
 private:
 	template<class Archive> void serialize(Archive &ar, const unsigned int version) {
 		ar & threadCount;
-		ar & total_SampleCount;
-		ar & RADIANCE_PER_PIXEL_NORMALIZED_SampleCount;
-		ar & RADIANCE_PER_SCREEN_NORMALIZED_SampleCount;
+		// PerThreadCounts is trivially-copyable
+		for (auto &t : perThread) {
+			ar & t.total;
+			ar & t.pixelNorm;
+			ar & t.screenNorm;
+		}
 	}
 	u_int threadCount;
-	std::vector<double> total_SampleCount;
-	std::vector<double> RADIANCE_PER_PIXEL_NORMALIZED_SampleCount, RADIANCE_PER_SCREEN_NORMALIZED_SampleCount;
+	// Per-thread counters were 3 adjacent doubles each - neighbouring
+	// threads' slots packed into one 128B cache line and every
+	// AddSampleCount() bounced the line between cores. Pad each
+	// thread's group to its own line.
+	struct alignas(64) PerThreadCounts {
+		double total, pixelNorm, screenNorm;
+	};
+	std::vector<PerThreadCounts> perThread;
 	// Atomic fast-path total: AddSampleCount accumulates here too so
 	// GetSampleCount (called once per splat during warmup checks) is
 	// O(1) instead of O(threadCount). Written by all render threads.

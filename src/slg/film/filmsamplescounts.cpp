@@ -37,45 +37,45 @@ void FilmSamplesCounts::Init(const u_int count) {
 	assert (count > 0);
 
 	threadCount = count;
-
-	total_SampleCount.resize(threadCount);
-	RADIANCE_PER_PIXEL_NORMALIZED_SampleCount.resize(threadCount);
-	RADIANCE_PER_SCREEN_NORMALIZED_SampleCount.resize(threadCount);
-
-	fill(total_SampleCount.begin(), total_SampleCount.end(), 0.0);
-	fill(RADIANCE_PER_PIXEL_NORMALIZED_SampleCount.begin(), RADIANCE_PER_PIXEL_NORMALIZED_SampleCount.end(), 0.0);
-	fill(RADIANCE_PER_SCREEN_NORMALIZED_SampleCount.begin(), RADIANCE_PER_SCREEN_NORMALIZED_SampleCount.end(), 0.0);
+	perThread.resize(threadCount);
+	for (auto &t : perThread) {
+		t.total = 0.0;
+		t.pixelNorm = 0.0;
+		t.screenNorm = 0.0;
+	}
 	total_SampleCountAtomic.store(0.0, std::memory_order_relaxed);
 }
 
 void FilmSamplesCounts::Clear() {
-	fill(total_SampleCount.begin(), total_SampleCount.end(), 0.0);
-	fill(RADIANCE_PER_PIXEL_NORMALIZED_SampleCount.begin(), RADIANCE_PER_PIXEL_NORMALIZED_SampleCount.end(), 0.0);
-	fill(RADIANCE_PER_SCREEN_NORMALIZED_SampleCount.begin(), RADIANCE_PER_SCREEN_NORMALIZED_SampleCount.end(), 0.0);
+	for (auto &t : perThread) {
+		t.total = 0.0;
+		t.pixelNorm = 0.0;
+		t.screenNorm = 0.0;
+	}
 	total_SampleCountAtomic.store(0.0, std::memory_order_relaxed);
 }
 
 void FilmSamplesCounts::SetSampleCount(const double sampleCount,
 		const double RADIANCE_PER_PIXEL_NORMALIZED_count,
 		const double RADIANCE_PER_SCREEN_NORMALIZED_count) {
-	total_SampleCount[0] = sampleCount;
-	RADIANCE_PER_PIXEL_NORMALIZED_SampleCount[0] = RADIANCE_PER_PIXEL_NORMALIZED_count;
-	RADIANCE_PER_SCREEN_NORMALIZED_SampleCount[0] = RADIANCE_PER_SCREEN_NORMALIZED_count;
+	perThread[0].total = sampleCount;
+	perThread[0].pixelNorm = RADIANCE_PER_PIXEL_NORMALIZED_count;
+	perThread[0].screenNorm = RADIANCE_PER_SCREEN_NORMALIZED_count;
 	total_SampleCountAtomic.store(sampleCount, std::memory_order_relaxed);
 
 	for (u_int i = 1; i < threadCount; ++i) {
-		total_SampleCount[i] = 0.0;
-		RADIANCE_PER_PIXEL_NORMALIZED_SampleCount[i] = 0.0;
-		RADIANCE_PER_SCREEN_NORMALIZED_SampleCount[i] = 0.0;
+		perThread[i].total = 0.0;
+		perThread[i].pixelNorm = 0.0;
+		perThread[i].screenNorm = 0.0;
 	}
 }
 
 void FilmSamplesCounts::AddSampleCount(const double sampleCount,
 		const double RADIANCE_PER_PIXEL_NORMALIZED_count,
 		const double RADIANCE_PER_SCREEN_NORMALIZED_count) {
-	total_SampleCount[0] += sampleCount;
-	RADIANCE_PER_PIXEL_NORMALIZED_SampleCount[0] += RADIANCE_PER_PIXEL_NORMALIZED_count;
-	RADIANCE_PER_SCREEN_NORMALIZED_SampleCount[0] += RADIANCE_PER_SCREEN_NORMALIZED_count;
+	perThread[0].total += sampleCount;
+	perThread[0].pixelNorm += RADIANCE_PER_PIXEL_NORMALIZED_count;
+	perThread[0].screenNorm += RADIANCE_PER_SCREEN_NORMALIZED_count;
 	total_SampleCountAtomic.fetch_add(sampleCount, std::memory_order_relaxed);
 }
 
@@ -84,12 +84,12 @@ void FilmSamplesCounts::AddSampleCount(const u_int threadIndex,
 		const double RADIANCE_PER_SCREEN_NORMALIZED_count) {
 	assert (threadIndex < threadCount);
 
-	total_SampleCount[threadIndex] += Max(RADIANCE_PER_PIXEL_NORMALIZED_count, RADIANCE_PER_SCREEN_NORMALIZED_count);
-	RADIANCE_PER_PIXEL_NORMALIZED_SampleCount[threadIndex] += RADIANCE_PER_PIXEL_NORMALIZED_count;
-	RADIANCE_PER_SCREEN_NORMALIZED_SampleCount[threadIndex] += RADIANCE_PER_SCREEN_NORMALIZED_count;
-	total_SampleCountAtomic.fetch_add(
-			Max(RADIANCE_PER_PIXEL_NORMALIZED_count, RADIANCE_PER_SCREEN_NORMALIZED_count),
-			std::memory_order_relaxed);
+	PerThreadCounts &t = perThread[threadIndex];
+	const double total = Max(RADIANCE_PER_PIXEL_NORMALIZED_count, RADIANCE_PER_SCREEN_NORMALIZED_count);
+	t.total += total;
+	t.pixelNorm += RADIANCE_PER_PIXEL_NORMALIZED_count;
+	t.screenNorm += RADIANCE_PER_SCREEN_NORMALIZED_count;
+	total_SampleCountAtomic.fetch_add(total, std::memory_order_relaxed);
 }
 
 double FilmSamplesCounts::GetSampleCount() const {
@@ -99,14 +99,14 @@ double FilmSamplesCounts::GetSampleCount() const {
 double FilmSamplesCounts::GetSampleCount_RADIANCE_PER_PIXEL_NORMALIZED() const {
 	double result = 0.0;
 	for (u_int i = 0; i < threadCount; ++i)
-		result += RADIANCE_PER_PIXEL_NORMALIZED_SampleCount[i];
-	return result;	
+		result += perThread[i].pixelNorm;
+	return result;
 }
 
 double FilmSamplesCounts::GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED() const {
 	double result = 0.0;
 	for (u_int i = 0; i < threadCount; ++i)
-		result += RADIANCE_PER_SCREEN_NORMALIZED_SampleCount[i];
-	return result;	
+		result += perThread[i].screenNorm;
+	return result;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
