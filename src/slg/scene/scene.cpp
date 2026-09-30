@@ -889,10 +889,14 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 	// intersection (and not BSDF initialization)
 	bsdf->hitPoint.throughShadowTransparency = false;
 
-	// Resolve the Embree accelerator once per call: GetAccelerator() is a
-	// map lookup that was showing up per segment on the hot path.
-	const AcceleratorConstSPtr embreeAccel = device ?
-			AcceleratorConstSPtr() : dataSet->GetAccelerator(ACCEL_EMBREE);
+	// The Embree accelerator is pinned on the scene at dataSet build:
+	// a raw pointer here skips the shared_ptr atomic inc/dec + map
+	// lookup that the old per-call GetAccelerator() paid on every ray.
+	const luxrays::AcceleratorConstSPtr fallbackAccel =
+			cachedEmbreeAccel ? AcceleratorConstSPtr() :
+			dataSet->GetAccelerator(ACCEL_EMBREE);
+	const luxrays::Accelerator *embreeAccel = cachedEmbreeAccel ?
+			cachedEmbreeAccel.get() : fallbackAccel.get();
 	for (;;) {
 		const SceneObject *sceneObjPtr = nullptr;
 		bool hit = device ?

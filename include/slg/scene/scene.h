@@ -375,6 +375,11 @@ protected:
 
 	// DataSet ownership is not very clear, we set it shared
 	luxrays::DataSetSPtr dataSet;
+	// Pinned Embree accelerator: GetAccelerator() is a map lookup whose
+	// shared_ptr copy costs two atomics on every Scene::Intersect call
+	// (the hottest function in the engine). Cached at dataSet build so
+	// the hit path is a raw-pointer chase.
+	luxrays::AcceleratorConstSPtr cachedEmbreeAccel;
 
 	// The bounding sphere of the scene (including the camera)
 	luxrays::BSphere sceneBSphere;

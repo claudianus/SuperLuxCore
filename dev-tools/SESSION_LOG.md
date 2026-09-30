@@ -828,3 +828,14 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   rename scheme as the translation cache.
 - Verify: luxball PATHOCL 320x180 boots clean cold/warm; parity
   re-run green (vol_caustic 0.19 reldiff on retry - MC noise).
+
+## Scene::Intersect - pinned Embree accelerator pointer
+
+- `AcceleratorConstSPtr` shared_ptr copy on every Scene::Intersect
+  call paid two atomic refcount updates on the hottest call in the
+  engine. Pinned `cachedEmbreeAccel` on Scene at dataSet build;
+  Intersect now dereferences a raw pointer (falls back to the old
+  lookup when the cache is unset - e.g. first Intersect before
+  Preprocess).
+- prism PATHCPU: 6.27 -> 6.76 Ms/s (~+8% on top of the diff cache).
+- Parity: cornell + strands PASS.

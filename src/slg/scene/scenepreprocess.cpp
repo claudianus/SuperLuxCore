@@ -98,6 +98,7 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 			dataSet->Add(objDefs->GetSceneObject(i).GetExtMesh());
 
 		dataSet->Preprocess();
+		cachedEmbreeAccel = dataSet->GetAccelerator(ACCEL_EMBREE);
 
 		// Set the LuxRays DataSet
 		ctx.SetDataSet(dataSet);
