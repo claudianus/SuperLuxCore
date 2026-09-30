@@ -184,6 +184,10 @@ SobolSampler::~SobolSampler() {
 // valid for all a < 2^32 when d >= 1 (same trick compilers emit).
 static inline u_int FastDivByCached(const u_int a, const u_int d,
 		const u_int magic) {
+	// d == 1 has no u32 magic (would need 2^32 + 1): divide directly so
+	// overlapping=1 (the default) doesn't fold every bucket to pixel 0.
+	if (d <= 1)
+		return a;
 	return (u_int)(((u_longlong)a * magic) >> 32);
 }
 
@@ -283,10 +287,13 @@ void SobolSampler::InitNewSample() {
 			const u_int mortonCurveOffset = pixelBucketIndex & (tileSize * tileSize - 1);
 			const u_int pixelTileIndex = pixelBucketIndex >> (tileSizeLog2 * 2);
 
-			const u_int pixelTileIndexX = FastDivByCached(pixelTileIndex,
+			const u_int pixelTileIndexY = FastDivByCached(pixelTileIndex,
 					tiletWidthCount, cacheTileWidthCountMagic);
-			const u_int subRegionPixelX = pixelTileIndexX * tileSize + DecodeMorton2X(mortonCurveOffset);
-			const u_int subRegionPixelY = (pixelTileIndex - pixelTileIndexX * tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
+			// Row-major tile ordering: X = index % tilesX, Y = index / tilesX
+			// (commit 537a48c6 swapped them when converting to magic-div,
+			// clamping the sweep to the first few tile columns).
+			const u_int subRegionPixelX = (pixelTileIndex - pixelTileIndexY * tiletWidthCount) * tileSize + DecodeMorton2X(mortonCurveOffset);
+			const u_int subRegionPixelY = pixelTileIndexY * tileSize + DecodeMorton2Y(mortonCurveOffset);
 			if ((subRegionPixelX >= subRegionWidth) || (subRegionPixelY >= subRegionHeight)) {
 				// Skip the pixels out of the film sub region
 				continue;

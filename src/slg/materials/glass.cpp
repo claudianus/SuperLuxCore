@@ -19,7 +19,10 @@
 #include "luxrays/core/color/spectral.h"
 #include "slg/textures/fresnel/fresneltexture.h"
 #include "slg/materials/glass.h"
+#include "slg/materials/glassmicrofacet.h"
 #include "slg/materials/thinfilmcoating.h"
+#include <atomic>
+#include <cstdio>
 
 using namespace std;
 using namespace luxrays;
@@ -48,6 +51,17 @@ Dispersion GlassMaterial::GetDispersion(const HitPoint &hitPoint) const {
 Spectrum GlassMaterial::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,
 	float *directPdfW, float *reversePdfW) const {
+	if (hitPoint.regularization > 0.f) {
+		// PSR delta->lobe: answer the connect as a GGX microfacet
+		// dielectric with alpha = the vertex's regularization sigma.
+		return GlassMicrofacet_Evaluate(hitPoint, localLightDir, localEyeDir,
+				event, directPdfW, reversePdfW,
+				Kr->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f),
+				Kt->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f),
+				ExtractExteriorIors(hitPoint, exteriorIor),
+				ExtractInteriorIors(hitPoint, interiorIor),
+				GetDispersion(hitPoint), true);
+	}
 	return Spectrum();
 }
 
@@ -200,7 +214,15 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 
 	const Dispersion disp = GetDispersion(hitPoint);
 
-	Vector transLocalSampledDir; 
+	if (hitPoint.regularization > 0.f) {
+		// PSR delta->lobe: GGX microfacet dielectric at alpha = sigma
+		return GlassMicrofacet_Sample(hitPoint, localFixedDir,
+				localSampledDir, u0, u1, passThroughEvent,
+				pdfW, event, kr, kt, nc, nt, disp, true);
+	}
+
+
+	Vector transLocalSampledDir;
 	const Spectrum trans = EvalSpecularTransmission(hitPoint, localFixedDir, u0,
 			kt, nc, nt, disp, &transLocalSampledDir);
 	
@@ -262,11 +284,23 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 void GlassMaterial::Pdf(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
 	float *directPdfW, float *reversePdfW) const {
+	if (hitPoint.regularization > 0.f) {
+		// PSR delta->lobe: microfacet half-vector pdf
+		GlassMicrofacet_Pdf(hitPoint, localLightDir, localEyeDir,
+				directPdfW, reversePdfW,
+				Kr->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f),
+				Kt->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f),
+				ExtractExteriorIors(hitPoint, exteriorIor),
+				ExtractInteriorIors(hitPoint, interiorIor),
+				GetDispersion(hitPoint), true);
+		return;
+	}
 	if (directPdfW)
 		*directPdfW = 0.f;
 	if (reversePdfW)
 		*reversePdfW = 0.f;
 }
+
 
 void GlassMaterial::AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexs) const {
 	Material::AddReferencedTextures(referencedTexs);

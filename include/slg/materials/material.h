@@ -137,6 +137,12 @@ public:
     float GetBumpSampleDistance() const { return bumpSampleDistance; }
 
 	virtual bool IsDelta() const { return false; }
+	// PSR delta->lobe promotion: materials that can answer
+	// Evaluate/Sample/Pdf as a microfacet lobe when a secondary vertex
+	// carries hitPoint.regularization > 0 (BSDF::IsDelta gates the
+	// promotion per vertex). Materials without an implementation keep
+	// false and stay hard deltas under PSR.
+	virtual bool RegularizesAsLobe() const { return false; }
 	virtual float GetAvgPassThroughTransparency() const { return avgPassThroughTransparency; }
 	virtual luxrays::Spectrum GetPassThroughTransparency(const HitPoint &hitPoint,
 		const luxrays::Vector &localFixedDir, const float passThroughEvent,

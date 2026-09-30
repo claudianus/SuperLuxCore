@@ -42,6 +42,11 @@ public:
 	virtual BSDFEvent GetEventTypes() const { return SPECULAR | REFLECT | TRANSMIT; };
 
 	virtual bool IsDelta() const { return true; }
+	// Under PSR, secondary glass vertices sample/evaluate a GGX
+	// microfacet lobe with alpha = hitPoint.regularization
+	// (glassmicrofacet.h) - the vertex answers NEE instead of staying
+	// an unreachable delta. First bounce keeps the exact delta path.
+	virtual bool RegularizesAsLobe() const { return true; }
 
 	virtual luxrays::Spectrum Evaluate(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir, BSDFEvent *event,

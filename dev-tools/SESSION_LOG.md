@@ -525,3 +525,45 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - Also this round: mesh fused hit-UV fetch into GetDifferentials
   (2767b2398) — removed a duplicate triangle+3-corner-UV read per
   intersect; smoke render + parity 4/4.
+
+## PSR light-pass blackout + Sobol pixel-fold — 2026-10-01
+
+- mirror-sphere-psr.scn, `path.regularization.mindepth=0` +
+  `sigma=0.15`, PATHCPU: 100%-black output (mean 0.00028, 12 px lit).
+  Delta and `mindepth=1` rendered fine. Root-cause chain: light
+  deposits reached `ConnectToEye` (`vis` 36k/48k connects, deposits
+  rad ~0.05-2.7) but `MetropolisSampler::NextSample` drops every
+  non-caustic result (`addonlycaustics=1` on the light pass).
+  `sampleResult.isCaustic` comes from the adaptive partition: at the
+  regularized mirror the sampled event is `GLOSSY|REFLECT`, so
+  `LightPathInfo::AddVertex` recorded `firstVertexDelta=false` ->
+  `IsAdaptiveTerminalHard` failed (`vertexGloss=0` -> solidAngle test
+  can't pass) -> every deposit classified non-caustic -> dropped.
+  FILMS probe = 0 at md0 vs 4.1M at md1.
+- Fix A (`pathinfo.cpp`): `firstVertexDelta` now ORs the sampled event
+  with the *static* material delta flag - classification must track
+  the transport chain (delta), not the widened shading lobe.
+- Fix B (`pathtracer.cpp` ConnectToEye): the LMNEE blocker gate read
+  `bsdfConn.IsDelta()` (dynamic - false under PSR) and skipped the
+  specular-manifold solve for every mirror-blocked connect; now
+  `GetMaterial()->IsDelta()` (static), matching the doc split
+  introduced for PSR.
+- Fix C (`sobol.cpp`, second bug surfaced by cornell black):
+  `FastDivByCached` magic = floor(2^32/d)+1 is unrepresentable for
+  d=1 - with `overlapping=1` (default) `*bucketIndex / 1` evaluated
+  to `(*bucketIndex * 1) >> 32` = 0 forever, folding every eye sample
+  into bucket 0's pixel range (12-28 px lit strip, 1000x black).
+  Same latent bug for tiletWidthCount=1. Added the `d <= 1` fast
+  path. Also `pixelTileIndexX/Y` were swapped in commit 537a48c6's
+  magic-div conversion (`/` where `%` belongs): X = tileIdx/tilesX
+  clamped the sweep to ~96px and Y = tileIdx%tilesX skipped 40% of
+  buckets - restored row-major order (X = index - Y*tilesX).
+- Verification (160x90 PATHCPU haltspp 48-64): cornell 0.00028 ->
+  0.377 full-frame; mirror-sphere md0 0.00028 -> 0.330 vs delta
+  0.321 (PSR lobe blur, expected); mirror-maze reg/delta both lit;
+  cols 0-159 rows 0-89 everywhere.
+- Note: `path.lighttracing.only` is dead on PATHCPU (field set, never
+  read) - flag only implemented on GPU task split.
+- Also swept all stale fprintf probes (C2E/DEP/GEO/LID/FILM/FILMS/
+  SC/PSR-MIRR/PSR-GLASS/PSR-SAMP/BSAMP/EVERT/EMISS/DHI/LASTV2/BLK/
+  TAIL) added during debugging.

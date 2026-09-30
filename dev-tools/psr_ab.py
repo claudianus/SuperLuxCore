@@ -73,6 +73,30 @@ if MODE == "ref":
         haltspp=4096)
     np.save(REF, img.astype(np.float32))
     print(f"ref saved: {REF} spp={spp}")
+elif MODE == "curve":
+    # Early-frame benefit: RMSE at fixed spp counts - the region where
+    # the halflife schedule still has sigma active.
+    ref = np.load(REF)
+    lum = ref.mean(axis=2)
+    hot = lum > np.percentile(lum, 99)  # caustic ring region
+    print(f"ref: hot pixels={hot.sum()}, lum max={lum.max():.2f}")
+    for tag, extra in (
+        ("auto-stack", ""),
+        ("auto-no-psr", "path.regularization.auto = 0\n"),
+        ("psr-only", "path.lighttracing.enable = 0\n"
+                     "path.mnee.enable = 0\n"),
+        ("plain-pt", "path.lighttracing.enable = 0\n"
+                     "path.mnee.enable = 0\n"
+                     "path.regularization.auto = 0\n"),
+    ):
+        for halt in (16, 64, 256):
+            spp, img = run(extra, haltspp=halt)
+            d = img - ref
+            rm_all = float(np.sqrt((d * d).mean()))
+            rm_hot = float(np.sqrt((d * d)[hot].mean()))
+            mx = float(np.abs(d).max())
+            print(f"{tag:>11} @{halt:>4}spp: rmse={rm_all:.5f} "
+                  f"rmse-hot={rm_hot:.5f} maxerr={mx:.4f} spp={spp}")
 else:
     ref = np.load(REF)
     # Auto stack (lt+mnee+psr auto): today's zero-config

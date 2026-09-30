@@ -109,7 +109,18 @@ public:
 	
 	bool IsEmpty() const { return (not material); }
 	bool IsLightSource() const { return material->IsLightSource(); }
-	bool IsDelta() const { return material->IsDelta(); }
+	// PSR delta->lobe: a delta material with a lobe implementation
+	// (Material::RegularizesAsLobe - glass, mirror) reports non-delta
+	// at regularized secondary vertices (hitPoint.regularization > 0),
+	// so NEE/guiding/strategy caches treat it like a glossy vertex
+	// while the exact-delta first bounce stays untouched. Material
+	// classification (MNEE chain eligibility, light-pass bookkeeping)
+	// still reads the static flag via material->IsDelta().
+	bool IsDelta() const {
+		return material->IsDelta() &&
+				!(hitPoint.regularization > 0.f &&
+					material->RegularizesAsLobe());
+	}
 	bool IsVisibleIndirectDiffuse() const { return material->IsVisibleIndirectDiffuse(); }
 	bool IsVisibleIndirectGlossy() const { return material->IsVisibleIndirectGlossy(); }
 	bool IsVisibleIndirectSpecular() const { return material->IsVisibleIndirectSpecular(); }

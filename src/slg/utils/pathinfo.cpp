@@ -203,7 +203,12 @@ void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
 		firstVertexSeen = true;
 		firstVertexP = bsdf.hitPoint.p;
 		firstVertexGlossiness = glossiness;
-		firstVertexDelta = (event & SPECULAR);
+		// PSR: classification, not transport - a regularized delta surface
+		// (mirror/glass lobe) still ends an eye-hard light-adjacent chain:
+		// IsAdaptiveTerminalHard treats it as delta. The sampled event is
+		// GLOSSY under PSR, so read the static material flag (mirrors the
+		// MNEE blocker gate which needs the same static-vs-dynamic split).
+		firstVertexDelta = (event & SPECULAR) || bsdf.GetMaterial()->IsDelta();
 	}
 
 	// Update last path vertex information

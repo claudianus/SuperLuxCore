@@ -2180,7 +2180,12 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				}
 			} else {
 				if (mneeEnable && !bsdfConn.IsVolume() &&
-					bsdfConn.IsDelta() &&
+					// PSR: a regularized delta blocker still routes to the
+					// specular-manifold solver - regularization widens the
+					// shading lobe, the transport chain stays delta, so the
+					// gate uses the static material flag (BSDF::IsDelta would
+					// report non-delta and drop every mirror-blocked connect).
+					bsdfConn.GetMaterial()->IsDelta() &&
 					(bsdfConn.GetEventTypes() & SPECULAR)) {
 				// The connect was blocked by a delta specular surface.
 				// LMNEE: solve the specular manifold x0 -> x1 -> lens and

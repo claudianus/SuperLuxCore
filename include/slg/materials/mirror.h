@@ -38,6 +38,11 @@ public:
 	virtual BSDFEvent GetEventTypes() const { return SPECULAR | REFLECT; };
 
 	virtual bool IsDelta() const { return true; }
+	// Under PSR, secondary mirror vertices reflect through a GGX
+	// microfacet lobe with alpha = hitPoint.regularization
+	// (glassmicrofacet.h, transmission disabled) - the vertex answers
+	// NEE instead of staying an unreachable delta.
+	virtual bool RegularizesAsLobe() const { return true; }
 
 	virtual luxrays::Spectrum Evaluate(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir, BSDFEvent *event,
@@ -48,12 +53,7 @@ public:
 		float *pdfW, BSDFEvent *event) const;
 	virtual void Pdf(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
-		float *directPdfW, float *reversePdfW) const {
-		if (directPdfW)
-			*directPdfW = 0.f;
-		if (reversePdfW)
-			*reversePdfW = 0.f;
-	}
+		float *directPdfW, float *reversePdfW) const;
 
 	virtual void AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexsreferencedTexs) const;
 	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex);
