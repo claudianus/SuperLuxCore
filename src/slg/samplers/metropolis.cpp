@@ -195,7 +195,7 @@ void MetropolisSampler::RequestSamples(const SampleType smplType, const u_int si
 	currentLuminance = 0.f;
 	stamp = 1;
 	currentStamp = 1;
-	currentSampleResults.resize(0);
+	currentSampleResults.clear();
 }
 
 float MetropolisSampler::GetSample(const u_int index) {
@@ -361,7 +361,13 @@ void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults
 		std::copy_n(samples.begin(), requestedSamples, currentSamples.begin());
 		std::copy_n(sampleStamps.begin(), requestedSamples, currentSampleStamps.begin());
 		currentSampleResultsUsed = used;
-		currentSampleResults = sampleResults;
+		// Only the first `used` slots are live - element-assign avoids the
+		// vector-assign of stale tail slots (each SampleResult copy hits
+		// its SpectrumGroup inner vector).
+		if (currentSampleResults.size() < used)
+			currentSampleResults.resize(used);
+		for (u_int i = 0; i < used; ++i)
+			currentSampleResults[i] = sampleResults[i];
 
 		consecRejects = 0;
 	} else {
