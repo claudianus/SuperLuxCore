@@ -31,7 +31,8 @@ using namespace slg;
 // SobolSequence
 //------------------------------------------------------------------------------
 
-SobolSequence::SobolSequence() : directions(NULL), directionsReversed(NULL) {
+SobolSequence::SobolSequence() : directions(NULL), directionsReversed(NULL),
+		directionsLut(NULL), directionsReversedLut(NULL) {
 	rngPass = 0;
 	rng0 = 0.f;
 	rng1 = 0.f;
@@ -48,6 +49,8 @@ SobolSequence::SobolSequence() : directions(NULL), directionsReversed(NULL) {
 SobolSequence::~SobolSequence() {
 	delete[] directions;
 	delete[] directionsReversed;
+	delete[] directionsLut;
+	delete[] directionsReversedLut;
 }
 
 void SobolSequence::RequestSamples(const u_int size) {
@@ -59,13 +62,42 @@ void SobolSequence::RequestSamples(const u_int size) {
 	directionsReversed = new u_int[size * SOBOL_BITS];
 	for (u_int d = 0; d < size * SOBOL_BITS; ++d)
 		directionsReversed[d] = ReverseBits(directions[d]);
+
+	// Byte-blocked LUTs: 4 table lookups per dimension instead of a
+	// popcount-length dependent loop (see member comment)
+	directionsLut = new u_int[size * 4 * 256];
+	directionsReversedLut = new u_int[size * 4 * 256];
+	for (u_int d = 0; d < size; ++d) {
+		for (u_int b = 0; b < 4; ++b) {
+			for (u_int v = 0; v < 256; ++v) {
+				u_int f = 0, fr = 0;
+				for (u_int bit = 0; bit < 8; ++bit) {
+					if (v & (1u << bit)) {
+						f ^= directions[d * SOBOL_BITS + b * 8 + bit];
+						fr ^= directionsReversed[d * SOBOL_BITS + b * 8 + bit];
+					}
+				}
+				directionsLut[(d * 4 + b) * 256 + v] = f;
+				directionsReversedLut[(d * 4 + b) * 256 + v] = fr;
+			}
+		}
+	}
 }
 
 u_int SobolSequence::SobolDimension(const u_int index, const u_int dimension,
 		const u_int *table) const {
-	// Clear-lowest-set-bit walk: touches only the set bits of the index
-	// (popcount iterations) instead of every bit position up to the
-	// highest set one. Identical XOR factorization, bit-identical result.
+	// Byte-blocked XOR factorization: 4 unconditional lookups replace
+	// the popcount-walk's data-dependent iterations (bit-identical -
+	// XOR distributes over XOR).
+	const u_int *lut = (table == directions) ? directionsLut :
+			(table == directionsReversed) ? directionsReversedLut : nullptr;
+	if (lut) {
+		const u_int *row = lut + dimension * 4 * 256;
+		return row[index & 0xff] ^
+				row[256 + ((index >> 8) & 0xff)] ^
+				row[512 + ((index >> 16) & 0xff)] ^
+				row[768 + ((index >> 24) & 0xff)];
+	}
 	const u_int offset = dimension * SOBOL_BITS;
 	u_int result = 0;
 	u_int i = index;

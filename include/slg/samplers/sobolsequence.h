@@ -97,8 +97,14 @@ private:
 	// Bit-reversed copy of directions: ReverseBits is XOR-linear over the
 	// Sobol matrix, so ReverseBits(SobolDimension(i, dirs)) ==
 	// SobolDimension(i, dirsReversed) exactly - the Owen path needs the
-	// reversed value and this skips one ReverseBits per dimension sample.
 	u_int *directionsReversed;
+	// Byte-blocked XOR factorization of the direction tables: per
+	// dimension, 4 lookups of 256 precomputed rows replace the
+	// popcount-walk (up to 32 data-dependent iterations). LUT[d][b][v]
+	// = XOR over the set bits of v of table[d*32 + b*8 + bit] - the XOR
+	// result is bit-identical by distributivity of XOR over XOR.
+	u_int *directionsLut;
+	u_int *directionsReversedLut;
 	bool blueNoiseEnable;
 	bool owenEnable;
 	u_int blueNoiseSeed;

@@ -2828,7 +2828,11 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 		lpi->firstVertPY = hp.y;
 		lpi->firstVertPZ = hp.z;
 		lpi->firstVertGloss = glossiness;
-		lpi->firstVertDelta = (event & SPECULAR) ? 1 : 0;
+		// PSR parity with CPU LightPathInfo::AddVertex: a regularized
+		// delta surface must still end the eye-hard chain - read the
+		// static material flag, not the widened (GLOSSY) sampled event.
+		lpi->firstVertDelta = ((event & SPECULAR) ||
+				Material_IsDelta(bsdf->materialIndex MATERIALS_PARAM)) ? 1 : 0;
 	}
 
 	lpi->lastBSDFEvent = event;

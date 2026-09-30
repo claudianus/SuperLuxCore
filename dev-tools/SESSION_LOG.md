@@ -567,3 +567,28 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - Also swept all stale fprintf probes (C2E/DEP/GEO/LID/FILM/FILMS/
   SC/PSR-MIRR/PSR-GLASS/PSR-SAMP/BSAMP/EVERT/EMISS/DHI/LASTV2/BLK/
   TAIL) added during debugging.
+
+## SobolSequence byte-LUT + GPU firstVertexDelta parity — 2026-10-01
+
+- Re-profiled e53 gauntlet (prism-conservatory 640x360 PATHCPU,
+  `sample` 60s): sampler group ~7.1% total (SobolSequence::GetSample
+  2.6%, InitNewSample 2.4%, Metropolis::GetSample 2.1%), embree
+  intersect 7.2%, instance intersector 1.5%.
+- SobolDimension: replaced the popcount-walk (up to 32 dependent
+  iterations, data-mispredicted) with byte-blocked XOR LUTs - 4
+  unconditional 1KB-row lookups per dimension, built once per
+  RequestSamples for both directions tables. Bit-identical by
+  construction (XOR distributes over XOR; LUT[d][b][v] is exactly the
+  XOR of the table rows indexed by v's set bits in byte b).
+- Result: SobolSequence::GetSample 51,926 -> 12,426 top-stack
+  samples (-76%); sampler group ~142k -> ~89k (-37%). The remaining
+  12k is the Owen ReversedBitOwen + BlueNoiseHash per dimension,
+  which the LUT can't fold (nonlinear hash).
+- GPU parity fix for the md0 PSR blackout: CPU pathinfo.cpp
+  firstVertexDelta used the static material flag, but the CL twin
+  (LightPathInfo_AddVertex, pathoclbase_kernels_micro.cl:2831) still
+  read (event & SPECULAR) - on PATHOCL/TILEPATHOCL a regularized
+  mirror vertex breaks the eye-hard chain and light deposits get
+  classified non-caustic exactly like the CPU bug. Mirrored with
+  Material_IsDelta(bsdf->materialIndex). PATHOCL md0 render verifies:
+  mean 0.328 (CPU 0.330), no NaN, kernel compiles through cl2msl.
