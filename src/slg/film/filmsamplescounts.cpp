@@ -94,7 +94,16 @@ void FilmSamplesCounts::AddSampleCount(const u_int threadIndex,
 	t.total += total;
 	t.pixelNorm += RADIANCE_PER_PIXEL_NORMALIZED_count;
 	t.screenNorm += RADIANCE_PER_SCREEN_NORMALIZED_count;
-	total_SampleCountAtomic.fetch_add(total, std::memory_order_relaxed);
+
+	// pendingTotal accumulates the per-splat total locally and pushes one
+	// batch to the shared atomic when it crosses SAMPLE_COUNT_BATCH -
+	// the previous per-splat fetch_add made the line bounce across all
+	// cores on every contribution.
+	t.pendingTotal += total;
+	if (t.pendingTotal >= SAMPLE_COUNT_BATCH) {
+		total_SampleCountAtomic.fetch_add(t.pendingTotal, std::memory_order_relaxed);
+		t.pendingTotal = 0.0;
+	}
 }
 
 double FilmSamplesCounts::GetSampleCount() const {
