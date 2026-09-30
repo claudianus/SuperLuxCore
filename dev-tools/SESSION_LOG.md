@@ -1017,3 +1017,19 @@ No new wins landed. Moving to startup-time wins next.
 - New helper `MetalDevice::WaitOnBuffer`: EnqueueWriteBuffer and
   AllocBuffer conflict paths now wait only on CBs referencing the
   target buffer - previously drained the whole queue.
+
+## FilmSamplesCounts: O(1) total + SetSampleCount bugfix (2026-10-01)
+
+- `GetSampleCount()` summed over `threadCount` doubles per call. On
+  PATHCPU+Metropolis it ran once per splat during BCD warmup checks.
+  Replaced with an atomic `total_SampleCountAtomic` fast-path;
+  `AddSampleCount`/`SetSampleCount`/`Init`/`Clear` all maintain it.
+- Found a real bug in `SetSampleCount`: the loop wrote
+  `total_SampleCount[0] = 0.0` instead of `total_SampleCount[i]` -
+  every GPU taskStats drain zeroed slot 0 (the GPU count) instead of
+  clearing the native-thread slots. Total count could read stale or
+  miss the GPU half. Fixed.
+- `total_SampleCountAtomic` is the only authoritative read for
+  total samples; the per-thread vector still feeds the 3 channel
+  splits for stats reporting.
+- Parity cornell + strands PASS; luxball PATHOCL clean.

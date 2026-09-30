@@ -92,10 +92,13 @@ private:
 		ar & RADIANCE_PER_PIXEL_NORMALIZED_SampleCount;
 		ar & RADIANCE_PER_SCREEN_NORMALIZED_SampleCount;
 	}
-
 	u_int threadCount;
 	std::vector<double> total_SampleCount;
 	std::vector<double> RADIANCE_PER_PIXEL_NORMALIZED_SampleCount, RADIANCE_PER_SCREEN_NORMALIZED_SampleCount;
+	// Atomic fast-path total: AddSampleCount accumulates here too so
+	// GetSampleCount (called once per splat during warmup checks) is
+	// O(1) instead of O(threadCount). Written by all render threads.
+	std::atomic<double> total_SampleCountAtomic{0.0};
 };
 
 //------------------------------------------------------------------------------
