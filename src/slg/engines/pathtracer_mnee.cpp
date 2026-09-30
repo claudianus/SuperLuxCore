@@ -530,7 +530,11 @@ static MneeRejWhy g_mneeRejWhyEye[] = {
 };
 static MneeRejWhy g_mneeRejWhyLight[] = {
 	{"ms-newton"}, {"ms-mirror-side"}, {"ms-sameside"}, {"ms-tir"},
-	{"ms-spec"}, {"ms-geojac"}, {"ms-chain<2"}, {"other"}
+	{"ms-spec"}, {"ms-geojac"}, {"ms-chain<2"}, {"ms-geotri"},
+	{"ms-geo"}, {"ms-camproj"}, {"ms-recv"}, {"ms-segblock"},
+	{"ms-nan"}, {"newton"}, {"newton-s"}, {"spec"}, {"geo"},
+	{"camproj"}, {"recv"}, {"seg2block"}, {"mode"}, {"material"},
+	{"nan"}, {"other"}
 };
 
 // Solve-cost diagnostics under the same LUX_MNEE_SEED_STATS gate: Newton
