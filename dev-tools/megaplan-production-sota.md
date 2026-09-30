@@ -37,6 +37,7 @@
 | SSP tail | `path.ssp.enable` | 커스틱 경로 이득, 디퓨즈 씬 비용 | 중 | ◐ |
 | 적응 커스틱 파티션 | `path.hybridbackforward.adaptivecaustic` | e25 회귀 통과 | 저 | ◐ auto-causal 라우팅과 통합 |
 | 라이트 패스 자동 | `path.lighttracing.auto`(기본 on) + 씬 시그니처 | 커스틱 가능 재질(SPECULAR\|GLOSSY)/산란볼륨+광원 → 자동 enable; 디퓨즈-only는 태스크 예산 보존 | 중 | ✅ `67b15c522` (HBF는 기존 프로모션 규칙으로 연동) |
+| MNEE 자동 | `path.mnee.auto`(기본 on) + 동일 시그니처 | eye-side 커스틱 솔버 — connect당 자체 게이트라 미적용 씬에서 거의 무비용; GPU LMNEE는 LT 태스크에 편승 | 중 | ✅ `72369ed5f` (luxball/bigmonkey 6케이스 + stress 씬 24spp 커스틱 + GPU finite + 패리티 4/4) |
 | VC/VM | `path.vertexconnection.enable` | VCM 본질 biased — 문서화 후 제한적 기본 | 중 | — 일관성 게이트 먼저 |
 | PSR | `path.regularization.sigma` | v1 랜딩, 감쇠 미구현 | 중 | ◐ halflife 완성 후 |
 | ARC | 적응 클램핑 | e42 통과 | 저 | ◐ 기본값 재검토 |

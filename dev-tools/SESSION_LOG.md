@@ -314,3 +314,27 @@ regression gate on every OS, no GPU needed.
 + addon sources synced, smoke-import OK.
 
 Parity (Release console): 4/4 PASS under the new defaults.
+
+## Session cont. — MNEE auto-enable (`72369ed5f`)
+
+**MNEE -> auto on caustic-capable scenes** (`path.mnee.auto`, default
+on): the same `SceneHasCausticCapablePaths` signature that gates light
+tracing now also resolves `path.mnee.enable` when unpinned. Rationale:
+MNEE covers the eye-side half of the caustic class (delta/glossy chain
+blocking a direct-light connect), the solver gates itself per connect
+so non-caustic scenes pay ~nothing, and on GPU the LMNEE probe path
+piggybacks the light tasks the LT gate already provides. Both flags
+stay independent: `path.lighttracing.auto=0` keeps MNEE auto and vice
+versa; explicit `.enable` always wins.
+
+Verified: luxball lt+mnee on / bigmonkey both off / `mnee.auto=0` off /
+`mnee.enable=0` off / bigmonkey `mnee.enable=1` on. luxball PATHOCL
+16spp finite mean 0.0984 (vs 0.0985 LT-only — MNEE overhead inside
+noise). caustic-stress-many PATHCPU 24spp zero-config renders visible
+under-sphere caustic pools. Parity (Release): 4/4.
+
+Matrix updated: megaplan row "MNEE 자동" -> landed. Remaining ◐ rows
+need wall-clock gates (guiding auto-condition, ReSTIR GI auto,
+SSP tail, adaptive caustic partition) — next: measure guiding
+overhead on diffuse-only vs indirect-dominated scenes to design the
+auto signature.
