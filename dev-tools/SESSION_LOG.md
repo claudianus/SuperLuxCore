@@ -671,3 +671,8 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   GlassMicrofacet_Sample (CPU header): _sdbg/_rdbg counters printed
   every 16th PSR sample - stderr noise + lock contention on the hot
   path.
+- Verification (dispersive glass): prism-spectral-caustic @32spp with
+  PSR sigma=0.15, mindepth=0 - PATHOCL mean 0.3709 vs PATHCPU 0.3720
+  (0.3% band, inside spp noise). GPU kernel compiles through cl2msl,
+  no NaN. Dispersive transmit (cauchyb=0.08) exercises the
+  Spectral_DispersiveIOR + CollapseToHero branches.
