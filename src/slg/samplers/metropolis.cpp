@@ -90,13 +90,15 @@ MetropolisSampler::~MetropolisSampler() {
 //
 // The original version used in old LuxRender
 static float Mutate(const float x, const float randomValue) {
-	static const float s1 = 1.f / 512.f;
-	static const float s2 = 1.f / 16.f;
+	constexpr float s1 = 1.f / 512.f;
+	constexpr float s2 = 1.f / 16.f;
 	// s1/s2 is a power-of-two quotient (32.f) and the second term is a
 	// constant: hoist both out of the hot per-dimension mutation path
-	// (bit-identical - same operands, same rounding, computed once)
-	static const float s1OverS2 = s1 / s2;
-	static const float s1Term = s1 / (s1 / s2 + 1.f);
+	// (bit-identical - same operands, same rounding, computed once;
+	// constexpr also drops the static-init guard the local statics paid
+	// on every Mutate call)
+	constexpr float s1OverS2 = s1 / s2;
+	constexpr float s1Term = s1 / (s1 / s2 + 1.f);
 
 	const float dx = s1 / (s1OverS2 + fabsf(2.f * randomValue - 1.f)) -
 			s1Term;
@@ -145,13 +147,13 @@ static float Mutate(const float x, const float randomValue) {
 
 // Mutate a value max. by a range value
 float MutateScaled(const float x, const float range, const float randomValue) {
-	static const float s1 = 32.f;
+	constexpr float s1 = 32.f;
 	// The kernel's two denominator constants are compile-time constants
 	// and s1 is a power of two (range/s1 == range*(1/s1), exact): hoist
 	// them so the hot path keeps a single division (bit-identical)
-	static const float aTerm = s1 / (1.f + s1);
-	static const float bTerm = (s1 * s1) / (1.f + s1);
-	static const float invS1 = 1.f / s1;
+	constexpr float aTerm = s1 / (1.f + s1);
+	constexpr float bTerm = (s1 * s1) / (1.f + s1);
+	constexpr float invS1 = 1.f / s1;
 
 	const float dx = range / (aTerm + bTerm *
 		fabsf(2.f * randomValue - 1.f)) - range * invS1;

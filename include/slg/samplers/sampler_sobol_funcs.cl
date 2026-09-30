@@ -89,7 +89,8 @@ OPENCL_FORCE_INLINE uint SobolSequence_NestedUniformScramble(const uint i, const
 OPENCL_FORCE_INLINE float SobolSequence_GetSample(
 		__global const uint* restrict sobolDirections,
 		const uint pass, const uint rngPass, const float rng0, const float rng1,
-		const uint index, const bool blueNoiseEnable, const bool owenEnable) {
+		const uint index, const bool blueNoiseEnable, const bool owenEnable,
+		__global uint *shuffledPassSlot, __global uint *shuffledPassKeySlot) {
 	uint iResult;
 	float shift;
 
@@ -100,9 +101,22 @@ OPENCL_FORCE_INLINE float SobolSequence_GetSample(
 		// progressive sampling), then each dimension is scrambled with a
 		// per-pixel, per-dimension seed - no Cranley-Patterson rotation is
 		// needed because Owen scrambling already provides the randomization.
+		// The shuffle is per (pass, pixel): memoize it in the sample slot
+		// across dimension calls (key = pass; InitNewSample invalidates
+		// the key so a new pass always recomputes).
 		const uint shuffleSeed = SobolSequence_BlueNoiseHash(rngPass ^ 0x70efbc49u);
 		const uint dimSeed = SobolSequence_BlueNoiseHash(rngPass ^ (index * 0x9e3779b9u + 0x85ebca6bu));
-		const uint i = SobolSequence_NestedUniformScramble(pass, shuffleSeed);
+		uint i;
+		if (shuffledPassSlot && shuffledPassKeySlot &&
+				(*shuffledPassKeySlot == pass))
+			i = *shuffledPassSlot;
+		else {
+			i = SobolSequence_NestedUniformScramble(pass, shuffleSeed);
+			if (shuffledPassSlot && shuffledPassKeySlot) {
+				*shuffledPassSlot = i;
+				*shuffledPassKeySlot = pass;
+			}
+		}
 		iResult = SobolSequence_NestedUniformScramble(
 				SobolSequence_SobolDimension(sobolDirections, i, index), dimSeed);
 		// Blue-noise Cranley-Patterson offset from the rank tile (rng0
@@ -189,7 +203,8 @@ OPENCL_FORCE_INLINE float SobolSampler_GetSample(
 			__constant const Sampler *sampler = &taskConfig->sampler;
 
 			return SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, index,
-					sampler->sobol.bluenoiseEnable != 0u, sampler->sobol.owenEnable != 0u);
+					sampler->sobol.bluenoiseEnable != 0u, sampler->sobol.owenEnable != 0u,
+					&sample->shuffledPass, &sample->shuffledPassKey);
 		}
 	}
 }
@@ -452,8 +467,13 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 		__global const uint* restrict sobolDirections = SobolSampler_GetSobolDirectionsPtr(samplerSharedData);
 		const bool blueNoiseEnable = (sampler->sobol.bluenoiseEnable != 0u);
 		const bool owenEnable = (sampler->sobol.owenEnable != 0u);
-		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, blueNoiseEnable, owenEnable);
-		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, blueNoiseEnable, owenEnable);
+		// New pass: drop the memoized Owen shuffle so GetSample
+		// recomputes it for this pixel/pass pair
+		sample->shuffledPassKey = 0xFFFFFFFFu;
+		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, blueNoiseEnable, owenEnable,
+				&sample->shuffledPass, &sample->shuffledPassKey);
+		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, blueNoiseEnable, owenEnable,
+				&sample->shuffledPass, &sample->shuffledPassKey);
 		break;
 	}
 	

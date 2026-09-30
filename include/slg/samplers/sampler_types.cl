@@ -91,9 +91,16 @@ typedef struct {
 	unsigned int rngPass;
 	float rng0, rng1;
 
+	// Owen mode: memoized NestedUniformScramble(pass, shuffleSeed) for
+	// the current pass (SobolSequence_GetSample redoes the scramble per
+	// dimension otherwise). shuffledPassKey holds the pass the value
+	// was computed for; InitNewSample invalidates it (0xFFFFFFFF = none).
+	unsigned int shuffledPass, shuffledPassKey;
+
 	// See RandomSample::bucketCycleStart
 	unsigned int bucketCycleStart;
 } SobolSample;
+
 
 typedef struct {
 	unsigned int rngPass;
