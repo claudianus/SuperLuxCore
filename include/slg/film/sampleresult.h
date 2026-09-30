@@ -52,7 +52,10 @@ public:
 	// between samples so every splat field returns to its default.
 	void Reset() { Init(channels, radiance.Size()); }
 
-	bool HasChannel(const Film::FilmChannelType type) const { return channels->count(type) > 0; }
+	// O(1) channel test via a mask computed in Init - the old
+	// unordered_set::count walked a bucket chain per query (called ~20
+	// times per splat inside AtomicAddSampleResultColor).
+	bool HasChannel(const Film::FilmChannelType type) const { return (channelsMask >> (u_int)type) & 1ull; }
 
 	luxrays::Spectrum GetSpectrum(const std::vector<RadianceChannelScale> &radianceChannelScales) const;
 	float GetY(const std::vector<RadianceChannelScale> &radianceChannelScales) const;
@@ -128,6 +131,7 @@ public:
 
 private:
 	const Film::FilmChannels *channels;
+	u_longlong channelsMask = 0;
 };
 
 }

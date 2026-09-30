@@ -1262,3 +1262,10 @@ SceneObjectConstRef; the meshIndex signature is now a delegating shim
 (used by the point-on-surface BSDF::Init variant).
 
 cornell + strands parity PASS.
+
+## SampleResult::HasChannel -> u64 bitmask (2026-10-01)
+
+AtomicAddSampleResultColor ran ~20 HasChannel() calls per splat; each was a
+std::unordered_set<FilmChannelType>::count() bucket walk. SampleResult now
+carries a channelsMask computed once in Init() and HasChannel is a shift+and.
+cornell + strands parity PASS.

@@ -29,6 +29,9 @@ using namespace slg;
 
 void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGroupCount) {
 	channels = chnls;
+	channelsMask = 0;
+	for (auto const c : *chnls)
+		channelsMask |= (1ull << (u_int)c);
 
 	if (HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED) && HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED))
 		throw runtime_error("RADIANCE_PER_PIXEL_NORMALIZED and RADIANCE_PER_SCREEN_NORMALIZED, both used in SampleResult");
