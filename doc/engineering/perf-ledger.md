@@ -62,9 +62,19 @@ backlog drained. Shares are top-of-stack on render threads.
   (-29%) at identical 25s `sample` window.
 
 
+- Wavefront queues auto promotion — **rejected** (2026-09-30,
+  `dev-tools/wf_ab.py`, PATHOCL Metal, 1280x720, 25s, min-of-2
+  interleaved). Unstable in both directions: cornell on=0.27 vs
+  off=5.41 Ms/s (stall-class collapse, same signature as the known
+  stale-totals 6x regression), classroom on=0.65–10.67 vs off=7.18,
+  focused-ring on=2.34–7.44 vs off=5.58, luxball -17% consistently.
+  The occasional wins (classroom rep0 +49%, focused-ring rep1 +33%)
+  are real but the collapse mode (tasks sitting in queue tails
+  beyond stale launch sizes) is a correctness-adjacent stall —
+  `pathocl.wavefront` stays opt-in until the stall mode is root-caused
+  and fixed. Diagnosis path: instrument queue-totals readback timing +
+  per-state launch sizes on Metal.
 - GPU crawl-bail for the wavefront MNEE state machine — corrupts state
-  when bailing mid-phase; rule: early exits only at valid phase
-  boundaries (`ab7e944e6`, see `megaplan` + session log).
 - Candidate-prefilter round — measured no-win (`24599e018`).
 
 ## Entry details

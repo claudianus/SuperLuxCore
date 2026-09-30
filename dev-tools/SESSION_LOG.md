@@ -472,3 +472,26 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   InterpolateTri* + Buffer[] PLT stubs), PathVolumeInfo bookkeeping
   ~3% (has-volumes fast gate candidate), Metropolis
   GetSample/NextSample ~8% residual.
+
+## Wavefront auto-promotion A/B — REJECTED (stall-class instability)
+
+- Ran dev-tools/wf_ab.py (new interleaved off/on harness, PATHOCL
+  Metal, 1280x720, 25s/render, min-of-2) after the M3a device-prefix
+  rework promised a ~2.5x cornell win.
+- Results are unstable in BOTH directions and include stall-class
+  collapses: cornell on=0.27 vs off=5.41 Ms/s (7 spp in 25s — same
+  signature as the documented stale-totals 6x regression: tasks
+  landing past the stale launch size wait for the next resync);
+  classroom on=0.65 vs off=7.18 in rep1 while rep0 won at 10.67;
+  focused-ring on=2.34 then 7.44 vs off=5.58-5.81; luxball -17%
+  consistently (3.42-3.60 vs 4.12-4.19).
+- Verdict: `pathocl.wavefront` stays opt-in. The occasional +30-49%
+  wins are real, but the collapse mode is correctness-adjacent
+  (queued tasks starve) — promotion blocked until the stall is
+  root-caused. Diagnosis: instrument queue-totals readback cadence
+  and per-state launch sizing on Metal (EnqueueReadBuffer drains
+  queues on this backend; a totals read that lands before
+  BuildQueues completes may race the prefix write).
+- Also this round: mesh fused hit-UV fetch into GetDifferentials
+  (2767b2398) — removed a duplicate triangle+3-corner-UV read per
+  intersect; smoke render + parity 4/4.
