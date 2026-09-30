@@ -343,7 +343,7 @@ void EnvLightVisibilityCache::BuildCacheEntry(
 		const Vector globalSamplingDir = frame.ToWorld(localSamplingDir);
 
 		// Get the map pixel x/y
-		const Vector localLightDir = Normalize(Inverse(envLight->lightToWorld) * globalSamplingDir);
+		const Vector localLightDir = Normalize(envLight->worldToLight * globalSamplingDir);
 
 		float u, v, latLongMappingPdf;
 		EnvLightSource::ToLatLongMapping(localLightDir, &u, &v, &latLongMappingPdf);

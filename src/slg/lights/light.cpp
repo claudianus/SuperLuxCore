@@ -73,6 +73,10 @@ string LightSource::LightSourceType2String(const LightSourceType type) {
 
 void NotIntersectableLightSource::Preprocess() {
 	temperatureScale = (temperature >= 0.f) ? TemperatureToWhitePoint(temperature, normalizeTemperature) : Spectrum(1.f);
+	// Inverse of the scene-set lightToWorld (loaded before Preprocess
+	// runs); callers transform world directions/points into the light's
+	// local frame without re-inverting per query.
+	worldToLight = Inverse(lightToWorld);
 }
 
 PropertiesUPtr NotIntersectableLightSource::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

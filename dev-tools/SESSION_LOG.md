@@ -1101,3 +1101,21 @@ inverse on Preprocess as `alignedWorldToLight`, exposed via
 math, hoisted.
 
 cornell + strands parity PASS.
+
+## Light sources: cache worldToLight / inverse transforms (2026-10-01)
+
+Every NEE `Illuminate()` and env `GetRadiance`/`GetEnvUV` ran a 4x4
+`Inverse(lightToWorld)` per call. Added `worldToLight` to
+`NotIntersectableLightSource` (populated in `Preprocess` where the
+parser has already set `lightToWorld`). Rewired:
+- InfiniteLight::GetEnvUV + GetRadiance
+- ConstantInfiniteLight::GetRadiance
+- MapPointLight::Illuminate
+- MapSphereLight::Emit + Illuminate
+- EnvLightVisibilityCache (visibility map lookup per ray)
+
+SpotLight got `alignedWorldToLight` (already committed) plus
+ProjectionLight got `worldToAlignedLight` + `inverseLightProjection`
+for Emit + Illuminate.
+
+cornell + strands parity PASS.

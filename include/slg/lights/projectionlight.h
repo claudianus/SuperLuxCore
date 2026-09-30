@@ -73,6 +73,8 @@ protected:
 	float screenX0, screenX1, screenY0, screenY1, area;
 	float cosTotalWidth;
 	luxrays::Transform alignedLight2World, lightProjection;
+	// Cached inverses for Illuminate/Emit queries.
+	luxrays::Transform worldToAlignedLight, inverseLightProjection;
 };
 
 }

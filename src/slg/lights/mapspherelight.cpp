@@ -67,7 +67,7 @@ Spectrum MapSphereLight::Emit(SceneConstRef scene,
 			ray, emissionPdfW,
 			directPdfA, cosThetaAtLight);
 
-	const Vector localFromLight = Normalize(Inverse(lightToWorld) * ray.d);
+	const Vector localFromLight = Normalize(worldToLight * ray.d);
 
 	return result *	((SphericalFunction *)func)->Evaluate(localFromLight) /
 			func->Average();
@@ -81,7 +81,7 @@ Spectrum MapSphereLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 			passThroughEvent, shadowRay, directPdfW,
 			emissionPdfW, cosThetaAtLight);
 
-	const Vector localFromLight = Normalize(Inverse(lightToWorld) * (-shadowRay.d));
+	const Vector localFromLight = Normalize(worldToLight * (-shadowRay.d));
 	const float funcPdf = func->Pdf(localFromLight);
 	if (funcPdf == 0.f)
 		return Spectrum();

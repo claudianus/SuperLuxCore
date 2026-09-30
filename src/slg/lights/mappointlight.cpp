@@ -85,7 +85,7 @@ Spectrum MapPointLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
         Ray &shadowRay, float &directPdfW,
 		float *emissionPdfW, float *cosThetaAtLight) const {
 	const Point shadowRayOrig = bsdf.GetRayOrigin(absolutePos - bsdf.hitPoint.p);
-	const Vector localFromLight = Normalize(Inverse(lightToWorld) * shadowRayOrig - localPos);
+	const Vector localFromLight = Normalize(worldToLight * shadowRayOrig - localPos);
 	const float funcPdf = func->Pdf(localFromLight);
 	if (funcPdf == 0.f)
 		return Spectrum();

@@ -96,7 +96,7 @@ float InfiniteLight::GetPower(SceneConstRef scene) const {
 
 UV InfiniteLight::GetEnvUV(const luxrays::Vector &dir) const {
 	UV uv;
-	const Vector localDir = Normalize(Inverse(lightToWorld) * -dir);
+	const Vector localDir = Normalize(worldToLight * -dir);
 	ToLatLongMapping(localDir, &uv.u, &uv.v);
 	
 	return uv;
@@ -105,7 +105,7 @@ UV InfiniteLight::GetEnvUV(const luxrays::Vector &dir) const {
 Spectrum InfiniteLight::GetRadiance(SceneConstRef scene,
 		const BSDF *bsdf, const Vector &dir,
 		float *directPdfA, float *emissionPdfW) const {
-	const Vector localDir = Normalize(Inverse(lightToWorld) * -dir);
+	const Vector localDir = Normalize(worldToLight * -dir);
 
 	float u, v, latLongMappingPdf;
 	ToLatLongMapping(localDir, &u, &v, &latLongMappingPdf);

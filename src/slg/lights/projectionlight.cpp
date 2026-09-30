@@ -71,6 +71,8 @@ void ProjectionLight::Preprocess() {
 	const float hither = DEFAULT_EPSILON_STATIC;
 	const float yon = 1e30f;
 	lightProjection = Perspective(fov, hither, yon);
+	inverseLightProjection = Inverse(lightProjection);
+	worldToAlignedLight = Inverse(alignedLight2World);
 
 	// Compute cosine of cone surrounding projection directions
 	const float opposite = tanf(Radians(fov) / 2.f);
@@ -137,7 +139,7 @@ Spectrum ProjectionLight::Emit(SceneConstRef scene,
 		Ray &ray, float &emissionPdfW,
 		float *directPdfA, float *cosThetaAtLight) const {
 	const Point rayOrig = absolutePos;
-	const Point ps = Inverse(lightProjection) *
+	const Point ps = inverseLightProjection *
 		Point(u0 * (screenX1 - screenX0) + screenX0, u1 * (screenY1 - screenY0) + screenY0, 0.f);
 	const Vector rayDir = Normalize(alignedLight2World * Vector(ps.x, ps.y, ps.z));
 	const float cos = Dot(rayDir, lightNormal);
@@ -173,7 +175,7 @@ Spectrum ProjectionLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 		return Spectrum();
 
 	// Check if the point is inside the image plane
-	const Vector localFromLight = Normalize(Inverse(alignedLight2World) * (-shadowRayDir));
+	const Vector localFromLight = Normalize(worldToAlignedLight * (-shadowRayDir));
 	const Point p0 = lightProjection * Point(localFromLight.x, localFromLight.y, localFromLight.z);
 	if ((p0.x < screenX0) || (p0.x >= screenX1) || (p0.y < screenY0) || (p0.y >= screenY1))
 		return Spectrum();

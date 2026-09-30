@@ -183,6 +183,10 @@ public:
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 	luxrays::Transform lightToWorld;
+	// Cached inverse of lightToWorld - Illuminate/IsAlwaysInShadow on
+	// spot/projection/infinite lights otherwise recompute it per call.
+	// Populated in Preprocess() once the world transform is known.
+	luxrays::Transform worldToLight;
 	luxrays::Spectrum gain;
 
 	float temperature;
