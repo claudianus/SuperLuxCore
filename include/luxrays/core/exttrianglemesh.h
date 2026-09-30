@@ -261,7 +261,13 @@ public:
     virtual void GetDifferentials(const luxrays::Transform &local2World,
 			const u_int triIndex, const Normal &shadeNormal, const u_int layerIndex,
 			Vector *dpdu, Vector *dpdv,
-			Normal *dndu, Normal *dndv) const;
+			Normal *dndu, Normal *dndv,
+			// Optional: the interpolated UV at the hit point. The
+			// differentials already fetch all three corner UVs, so
+			// deriving the hit UV here saves HitPoint::Init() a second
+			// triangle+layer fetch (bary weights needed for it).
+			const float hitB1 = 0.f, const float hitB2 = 0.f,
+			UV *hitUV = nullptr) const;
 
 	virtual Normal InterpolateTriNormal(const luxrays::Transform &local2World,
 			const u_int triIndex, const float b1, const float b2) const = 0;

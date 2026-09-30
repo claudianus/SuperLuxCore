@@ -46,7 +46,8 @@ BOOST_CLASS_EXPORT_IMPLEMENT(luxrays::ExtMesh)
 void ExtMesh::GetDifferentials(const Transform &local2World,
 		const u_int triIndex, const Normal &shadeNormal, const u_int dataIndex,
         Vector *dpdu, Vector *dpdv,
-        Normal *dndu, Normal *dndv) const {
+        Normal *dndu, Normal *dndv,
+        const float hitB1, const float hitB2, UV *hitUV) const {
     // Compute triangle partial derivatives
     const Triangle &tri = GetTriangles()[triIndex];
 	const u_int v0Index = tri.v[0];
@@ -62,6 +63,16 @@ void ExtMesh::GetDifferentials(const Transform &local2World,
 		uv0 = UV(.5f, .5f);
 		uv1 = UV(.5f, .5f);
 		uv2 = UV(.5f, .5f);
+	}
+
+	if (hitUV) {
+		if (HasUVs(dataIndex)) {
+			// The hit UV rides on the same corner fetch — mirrors
+			// InterpolateTriUV() exactly (b0 = 1-b1-b2 weighting)
+			const float b0 = 1.f - hitB1 - hitB2;
+			*hitUV = b0 * uv0 + hitB1 * uv1 + hitB2 * uv2;
+		} else
+			*hitUV = UV(0.f, 0.f);
 	}
 
     // Compute deltas for triangle partial derivatives
