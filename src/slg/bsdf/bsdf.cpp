@@ -57,21 +57,30 @@ void BSDF::Init(
 		VolumeConstPtr(nullptr)
 	);
 
-	// Check if it is a light source
-	if (material->IsLightSource())
-		triangleLightSource =
-			&scene.GetLightSources().GetLightSourceByMeshAndTriIndex(
-				rayHit.meshIndex, rayHit.triangleIndex
-			);
-	else
+	// For a transparent shadow hit we need only `material` and the
+	// interpolated UV (GetPassThroughShadowTransparency reads a
+	// Spectrum field). The triangle-light lookup, bump evaluation and
+	// frame construction are dead work - the path does not terminate
+	// here.
+	if (!throughShadowTransparency) {
+		// Check if it is a light source
+		if (material->IsLightSource())
+			triangleLightSource =
+				&scene.GetLightSources().GetLightSourceByMeshAndTriIndex(
+					rayHit.meshIndex, rayHit.triangleIndex
+				);
+		else
+			triangleLightSource = nullptr;
+
+		// Apply bump or normal mapping
+		material->Bump(&hitPoint);
+
+		// Build the local reference system
+		frame = hitPoint.GetFrame();
+	} else
 		triangleLightSource = nullptr;
-
-	// Apply bump or normal mapping
-	material->Bump(&hitPoint);
-
-	// Build the local reference system
-	frame = hitPoint.GetFrame();
 }
+
 
 // Used when have a point of a surface
 void BSDF::Init(

@@ -71,16 +71,23 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 	shadeN = interpolatedN;
 	intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 
-	// Interpolate UV coordinates: computed inside GetDifferentials so
-	// the triangle's three corner UVs are fetched once (fused). Mirrors
-	// mesh->InterpolateTriUV(triIndex, b1, b2, 0) bit-exactly, including
-	// the no-UVs -> UV(0,0) fallback.
-	// Compute geometry differentials (always with the first set of UVs)
-	mesh->GetDifferentials(localToWorld,
-			triangleIndex, shadeN,
-			0, // The UV set to use, always the first
-			&dpdu, &dpdv, &dndu, &dndv,
-			b1, b2, &defaultUV);
+	// Interpolate UV coordinates: needed by transparent-shadow checks
+	// (transparency textures read `defaultUV`). For a shadow hit we do
+	// not need dpdu/dpdv or the normal differentials - skip the
+	// GetDifferentials() inverse and synthesize a canonical frame.
+	if (throughShadowTransparency) {
+		defaultUV = mesh->InterpolateTriUV(triangleIndex, b1, b2, 0);
+		CoordinateSystem(Vector(shadeN), &dpdu, &dpdv);
+		dndu = Normal();
+		dndv = Normal();
+	} else {
+		// Compute geometry differentials (always with the first set of UVs)
+		mesh->GetDifferentials(localToWorld,
+				triangleIndex, shadeN,
+				0, // The UV set to use, always the first
+				&dpdu, &dpdv, &dndu, &dndv,
+				b1, b2, &defaultUV);
+	}
 
 	// Note: I'm not initializing volume related information here
 	interiorVolume = nullptr;

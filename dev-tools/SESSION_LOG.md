@@ -1119,3 +1119,20 @@ ProjectionLight got `worldToAlignedLight` + `inverseLightProjection`
 for Emit + Illuminate.
 
 cornell + strands parity PASS.
+
+## Shadow-transparent hits: skip BSDF::Init dead work (2026-10-01)
+
+Scene::Intersect's transparent-shadow path still ran the full
+BSDF::Init - triangle-light lookup, Bump evaluation, Frame
+construction, and the HitPoint::Init GetDifferentials inverse. All
+dead work: the path continues, GetPassThroughShadowTransparency reads
+a cached Spectrum field, and transparent textures need only
+defaultUV.
+
+- BSDF::Init(throughShadowTransparency=true) now skips IsLightSource
+  lookup + Bump + GetFrame.
+- HitPoint::Init(throughShadowTransparency=true) replaces
+  GetDifferentials with InterpolateTriUV (needed by transparency
+  textures) and a canonical CoordinateSystem frame; dndu/dndv zeroed.
+
+cornell + strands parity PASS.
