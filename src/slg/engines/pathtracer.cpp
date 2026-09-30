@@ -1993,20 +1993,37 @@ void PathTracer::ProjectSampleResultToRGB(SampleResult &sr, const PathWavelength
 	Spectral::PrepareRGBProjection(sw, proj);
 	for (u_int i = 0; i < sr.radiance.Size(); ++i)
 		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], proj);
-	sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, proj);
-	sr.directDiffuseTransmit = Spectral::ProjectToRGB(sr.directDiffuseTransmit, proj);
-	sr.directGlossyReflect = Spectral::ProjectToRGB(sr.directGlossyReflect, proj);
-	sr.directGlossyTransmit = Spectral::ProjectToRGB(sr.directGlossyTransmit, proj);
-	sr.emission = Spectral::ProjectToRGB(sr.emission, proj);
-	sr.indirectDiffuseReflect = Spectral::ProjectToRGB(sr.indirectDiffuseReflect, proj);
-	sr.indirectDiffuseTransmit = Spectral::ProjectToRGB(sr.indirectDiffuseTransmit, proj);
-	sr.indirectGlossyReflect = Spectral::ProjectToRGB(sr.indirectGlossyReflect, proj);
-	sr.indirectGlossyTransmit = Spectral::ProjectToRGB(sr.indirectGlossyTransmit, proj);
-	sr.indirectSpecularReflect = Spectral::ProjectToRGB(sr.indirectSpecularReflect, proj);
-	sr.indirectSpecularTransmit = Spectral::ProjectToRGB(sr.indirectSpecularTransmit, proj);
-	sr.irradiance = Spectral::ProjectToRGB(sr.irradiance, proj);
-	sr.irradiancePathThroughput = Spectral::ProjectToRGB(sr.irradiancePathThroughput, proj);
-	sr.albedo = Spectral::ProjectToRGB(sr.albedo, proj);
+	// Field-level early-out: directDiffuse/indirectGlossy/etc. stay black
+	// until explicitly written - a Spectrum::Black() check is cheaper than
+	// running the 4-bin dot against zero coefficients on all 13 fields.
+	if (!sr.directDiffuseReflect.Black())
+		sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, proj);
+	if (!sr.directDiffuseTransmit.Black())
+		sr.directDiffuseTransmit = Spectral::ProjectToRGB(sr.directDiffuseTransmit, proj);
+	if (!sr.directGlossyReflect.Black())
+		sr.directGlossyReflect = Spectral::ProjectToRGB(sr.directGlossyReflect, proj);
+	if (!sr.directGlossyTransmit.Black())
+		sr.directGlossyTransmit = Spectral::ProjectToRGB(sr.directGlossyTransmit, proj);
+	if (!sr.emission.Black())
+		sr.emission = Spectral::ProjectToRGB(sr.emission, proj);
+	if (!sr.indirectDiffuseReflect.Black())
+		sr.indirectDiffuseReflect = Spectral::ProjectToRGB(sr.indirectDiffuseReflect, proj);
+	if (!sr.indirectDiffuseTransmit.Black())
+		sr.indirectDiffuseTransmit = Spectral::ProjectToRGB(sr.indirectDiffuseTransmit, proj);
+	if (!sr.indirectGlossyReflect.Black())
+		sr.indirectGlossyReflect = Spectral::ProjectToRGB(sr.indirectGlossyReflect, proj);
+	if (!sr.indirectGlossyTransmit.Black())
+		sr.indirectGlossyTransmit = Spectral::ProjectToRGB(sr.indirectGlossyTransmit, proj);
+	if (!sr.indirectSpecularReflect.Black())
+		sr.indirectSpecularReflect = Spectral::ProjectToRGB(sr.indirectSpecularReflect, proj);
+	if (!sr.indirectSpecularTransmit.Black())
+		sr.indirectSpecularTransmit = Spectral::ProjectToRGB(sr.indirectSpecularTransmit, proj);
+	if (!sr.irradiance.Black())
+		sr.irradiance = Spectral::ProjectToRGB(sr.irradiance, proj);
+	if (!sr.irradiancePathThroughput.Black())
+		sr.irradiancePathThroughput = Spectral::ProjectToRGB(sr.irradiancePathThroughput, proj);
+	if (!sr.albedo.Black())
+		sr.albedo = Spectral::ProjectToRGB(sr.albedo, proj);
 }
 
 void PathTracer::RenderEyeSample(
