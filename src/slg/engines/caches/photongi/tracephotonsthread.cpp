@@ -89,8 +89,12 @@ void TracePhotonsThread::Mutate(RandomGenerator &rndGen,
 	assert (candidatePathSamples.size() == currentPathSamples.size());
 	assert (mutationSize != 0.f);
 
+	// The kernel exponent is loop-invariant: hoist the division out of
+	// the per-dimension path (bit-identical - same operands each time)
+	const float exponent = 1.f / mutationSize + 1.f;
+
 	for (u_int i = 0; i < currentPathSamples.size(); ++i) {
-		const float deltaU = powf(rndGen.floatValue(), 1.f / mutationSize + 1.f);
+		const float deltaU = powf(rndGen.floatValue(), exponent);
 
 		float mutateValue = currentPathSamples[i];
 		if (rndGen.floatValue() < .5f) {

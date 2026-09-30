@@ -160,8 +160,13 @@ Spectrum SkyLight2::ComputeSkyRadiance(const Vector &w) const {
 
 	const Spectrum expTerm(dTerm * Exp(eTerm * gamma));
 	const Spectrum rayleighTerm(fTerm * cosG2);
-	const Spectrum mieTerm(gTerm * (1.f + cosG2) /
-		Pow(Spectrum(1.f) + iTerm * (iTerm - Spectrum(2.f * cosG)), 1.5f));
+	// x^1.5 == x * sqrt(x) exactly in real arithmetic: replaces the
+	// generic per-component powf with a hardware sqrt (~1ulp class
+	// difference, covered by the e53 A/B noise floor). Degenerate
+	// components behave like the generic Pow: s <= 0 yields inf/nan
+	// here exactly as powf(neg) = nan and the 0-divide did before.
+	const Spectrum mieBase = Spectrum(1.f) + iTerm * (iTerm - Spectrum(2.f * cosG));
+	const Spectrum mieTerm(gTerm * (1.f + cosG2) / (mieBase * mieBase.Sqrt()));
 	const Spectrum zenithTerm(hTerm * sqrtf(cosT));
 
 	// 683 is a scaling factor to convert W to lm
