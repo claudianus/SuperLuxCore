@@ -89,10 +89,10 @@ private:
 	template<class Archive> void serialize(Archive &ar, const unsigned int version) {
 		ar & threadCount;
 		// PerThreadCounts is trivially-copyable
-		for (auto &t : perThread) {
-			ar & t.total;
-			ar & t.pixelNorm;
-			ar & t.screenNorm;
+		for (u_int i = 0; i < threadCount; ++i) {
+			ar & perThread[i].total;
+			ar & perThread[i].pixelNorm;
+			ar & perThread[i].screenNorm;
 		}
 	}
 	u_int threadCount;
@@ -102,8 +102,18 @@ private:
 	// thread's group to its own line.
 	struct alignas(64) PerThreadCounts {
 		double total, pixelNorm, screenNorm;
+		// pendingTotal accumulates locally; flushed to the shared atomic
+		// only when it crosses SAMPLE_COUNT_BATCH so the atomic line
+		// isn't a cross-core bounce on every splat.
+		double pendingTotal = 0.0;
 	};
-	std::vector<PerThreadCounts> perThread;
+	static constexpr double SAMPLE_COUNT_BATCH = 64.0;
+	// vector<>::data is only guaranteed element-aligned; the per-thread
+	// slots must sit on their own line or neighbouring threads ping-pong
+	// it. aligned_alloc gives 64B bases; vector-with-default-alloc on
+	// macOS was still packing two slots per line.
+	struct CountsDeleter { void operator()(PerThreadCounts *p) const { std::free(p); } };
+	std::unique_ptr<PerThreadCounts[], CountsDeleter> perThread;
 	// Atomic fast-path total: AddSampleCount accumulates here too so
 	// GetSampleCount (called once per splat during warmup checks) is
 	// O(1) instead of O(threadCount). Written by all render threads.

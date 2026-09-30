@@ -222,7 +222,7 @@ private:
 	// expires, so a pixel that converges mid-run gets at most
 	// PASS_BATCH-1 extra samples - bounded, and the same bound the
 	// unbatched loop applies on the next sample.
-	static const u_int PASS_BATCH = 4;
+	static const u_int PASS_BATCH = 16;
 	u_int pixelPassRunLeft, pixelPassRunIdx;
 	luxrays::TauswortheRandomGenerator rngGenerator;
 

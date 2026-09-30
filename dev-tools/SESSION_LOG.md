@@ -1278,3 +1278,13 @@ AddSampleCount() bounced the line between cores. Replaced with an
 alignas(64) PerThreadCounts struct (one line per thread).
 
 cornell + strands parity PASS.
+
+## FilmSamplesCounts: pendingTotal revert (2026-10-01)
+
+The batching deferred the shared atomic push but added a pendingTotal write
+per call. On ARM (no pause hint in AtomicAdd) the shared-line RMW is a CAS
+spin - batching didn't help because the CAS still ran per splat when the
+batch wasn't hit, and the added per-call write cost more than the save.
+
+Kept: aligned_alloc + 64B-per-thread struct padding (that part works -
+removed neighbour-thread line sharing).

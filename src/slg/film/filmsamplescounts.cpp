@@ -37,20 +37,23 @@ void FilmSamplesCounts::Init(const u_int count) {
 	assert (count > 0);
 
 	threadCount = count;
-	perThread.resize(threadCount);
-	for (auto &t : perThread) {
-		t.total = 0.0;
-		t.pixelNorm = 0.0;
-		t.screenNorm = 0.0;
+	perThread.reset(static_cast<PerThreadCounts *>(
+			std::aligned_alloc(64, threadCount * sizeof(PerThreadCounts))));
+	for (u_int i = 0; i < threadCount; ++i) {
+		perThread[i].total = 0.0;
+		perThread[i].pixelNorm = 0.0;
+		perThread[i].screenNorm = 0.0;
+		perThread[i].pendingTotal = 0.0;
 	}
 	total_SampleCountAtomic.store(0.0, std::memory_order_relaxed);
 }
 
 void FilmSamplesCounts::Clear() {
-	for (auto &t : perThread) {
-		t.total = 0.0;
-		t.pixelNorm = 0.0;
-		t.screenNorm = 0.0;
+	for (u_int i = 0; i < threadCount; ++i) {
+		perThread[i].total = 0.0;
+		perThread[i].pixelNorm = 0.0;
+		perThread[i].screenNorm = 0.0;
+		perThread[i].pendingTotal = 0.0;
 	}
 	total_SampleCountAtomic.store(0.0, std::memory_order_relaxed);
 }
@@ -61,12 +64,14 @@ void FilmSamplesCounts::SetSampleCount(const double sampleCount,
 	perThread[0].total = sampleCount;
 	perThread[0].pixelNorm = RADIANCE_PER_PIXEL_NORMALIZED_count;
 	perThread[0].screenNorm = RADIANCE_PER_SCREEN_NORMALIZED_count;
+	perThread[0].pendingTotal = 0.0;
 	total_SampleCountAtomic.store(sampleCount, std::memory_order_relaxed);
 
 	for (u_int i = 1; i < threadCount; ++i) {
 		perThread[i].total = 0.0;
 		perThread[i].pixelNorm = 0.0;
 		perThread[i].screenNorm = 0.0;
+		perThread[i].pendingTotal = 0.0;
 	}
 }
 
