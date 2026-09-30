@@ -927,3 +927,26 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   in-flight kernels. On PATHOCL this mostly shows up when film
   upload / debug counter drain overlaps trace dispatches.
 - Parity cornell + strands PASS.
+
+## PATHCPU hot-path micro-scan (2026-10-01, prism-conservatory)
+
+`sample` profile on `prism-conservatory.scn` (PATHCPU, METROPOLIS, 640x360):
+- Scene::Intersect 664, MetropolisSampler::GetSample 628,
+  ScatterEquiangular 360, ExtMesh::GetDifferentials 295, BSDF::Init 157.
+
+Findings, all already-optimal after earlier passes:
+- `Mutate` uses constexpr-hoisted constants, division-only (no exp/log).
+- `triDiffCache` caches per-triangle differentials - hit means few
+  flops; misses only on instance/motion meshes (correct to skip cache).
+- `GetLightSourceByMeshAndTriIndex` is O(1) table lookup.
+- Light-path extra non-specular bounce (diffuse+glossy > 1) is a
+  documented Metropolis stabilization - removing it breaks the
+  average-luminance estimate; the earlier bail does not waste work
+  (ConnectToEye runs before the bail).
+- MNEE auto-enable fires on this scene (caustic signature), so a
+  large share of `Scene::Intersect` is solver iterations - a solver
+  iteration is ~1 shadow ray by design.
+- ScatterEquiangular already evaluates weights in a single pass with
+  a 64-entry small-array cache for the typical light count.
+
+No new wins landed. Moving to startup-time wins next.
