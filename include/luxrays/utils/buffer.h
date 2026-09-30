@@ -103,20 +103,23 @@ public:
 	std::span<TYPE> Subset(std::size_t offset, std::size_t count = std::dynamic_extent);
 
 	// Indexation
-	TYPE& operator[](size_t index);
-	const TYPE& operator[](size_t index) const;
+	// Indexation - inline: this is on every vertex/normal/UV fetch, on
+	// every hit; the .cpp definition + explicit instantiation prevented
+	// inlining (each call went through PLT).
+	TYPE& operator[](size_t index) { return asType[index]; }
+	const TYPE& operator[](size_t index) const { return asType[index]; }
 
 	// Implicit conversion operator
-	operator std::span<TYPE>() const;
+	operator std::span<TYPE>() const { return asType; }
 
 	// Element count (in TYPE elements)
-	size_t Count() const;
+	size_t Count() const { return asType.size(); }
 
 	// Underlying structure (const)
-	void * Data() const;
+	void * Data() const { return data.get(); }
 
 	// Emptiness
-	explicit operator bool() const noexcept;
+	explicit operator bool() const noexcept { return not asType.empty(); }
 
 	// True when the storage is an adopted external mapping (e.g. an
 	// .lxm section or a spill file) rather than owned heap memory.

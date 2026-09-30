@@ -1238,3 +1238,18 @@ local geoBlocks and skip the re-eval (and the per-block reprojection
 cost of MneeChainJacobian).
 
 cornell + strands parity PASS.
+
+## luxrays::Buffer accessors moved inline (2026-10-01)
+
+operator[], Count(), Data(), operator bool() and the span conversion
+were defined in buffer.cpp and bound by `template class Buffer<…>`
+explicit instantiation - so the .h decl was the only one visible to
+callers and every normal/vertex/UV/triangle fetch paid a PLT stub +
+out-of-line call (sample-visible as `Buffer::operator[]` +
+`DYLD-STUB$$…` entries in CPU profiles).
+
+Moved the five accessors into the header inline. The .cpp retains the
+explicit instantiation (ODR still satisfied; cold functions like
+Allocate/SpillToFile stay out-of-line).
+
+cornell + strands parity PASS.

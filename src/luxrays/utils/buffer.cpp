@@ -211,40 +211,6 @@ void Buffer<TYPE, SUBTYPE, PAD>::Set(std::span<const SUBTYPE> from) {
 }
 
 
-// Indexation
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-TYPE& Buffer<TYPE, SUBTYPE, PAD>::operator[](size_t index) {
-        return asType[index];
-}
-
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-const TYPE& Buffer<TYPE, SUBTYPE, PAD>::operator[](size_t index) const {
-        return asType[index];
-}
-
-// Implicit conversion operator
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-Buffer<TYPE, SUBTYPE, PAD>::operator std::span<TYPE>() const {
-        return asType;
-}
-
-// Element count
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-size_t Buffer<TYPE, SUBTYPE, PAD>::Count() const {
-	return asType.size();
-}
-
-// Underlying structure
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-void * Buffer<TYPE, SUBTYPE, PAD>::Data() const {
-	return data.get();
-}
-
-// Emptiness
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-Buffer<TYPE, SUBTYPE, PAD>::operator bool() const noexcept {
-	return not asType.empty();
-}
 
 
 // Instanciations
