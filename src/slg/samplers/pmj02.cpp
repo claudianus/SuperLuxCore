@@ -315,7 +315,7 @@ float PMJ02Sampler::GetSample(const u_int index) {
 			(v >= 1.f ? v - 1.f : v);
 }
 
-void PMJ02Sampler::NextSample(const vector<SampleResult> &sampleResults) {
+void PMJ02Sampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	if (film) {
 		switch (sampleType) {
 			case PIXEL_NORMALIZED_ONLY:
@@ -333,7 +333,7 @@ void PMJ02Sampler::NextSample(const vector<SampleResult> &sampleResults) {
 				throw runtime_error("Unknown sample type in PMJ02Sampler::NextSample(): " + ToString(sampleType));
 		}
 
-		AtomicAddSamplesToFilm(sampleResults);
+		AtomicAddSamplesToFilm(sampleResults, used, 1.f);
 	}
 
 	InitNewSample();

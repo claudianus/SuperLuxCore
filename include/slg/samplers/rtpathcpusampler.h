@@ -95,7 +95,7 @@ public:
 	virtual std::string GetTag() const { return GetObjectTag(); }
 
 	virtual float GetSample(const u_int index);
-	virtual void NextSample(const std::vector<SampleResult> &sampleResults);
+	virtual void NextSampleImpl(const std::vector<SampleResult> &sampleResults, const u_int used);
 
 	void SetRenderEngine(RTPathCPURenderEngine *engine);
 	void Reset(FilmPtr flm);

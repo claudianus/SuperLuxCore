@@ -89,7 +89,7 @@ float TilePathSampler::GetSample(const u_int index) {
 	}
 }
 
-void TilePathSampler::NextSample(const vector<SampleResult> &sampleResults) {
+void TilePathSampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	tileFilm->AddSampleCount(threadIndex, 1.0, 0.0);
 	tileFilm->AddSample(tileX, tileY, sampleResults[0]);
 

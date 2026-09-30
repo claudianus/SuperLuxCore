@@ -2044,8 +2044,8 @@ void PathTracer::RenderEyeSample(
 			sspTail);
 
 	if (wlScope.Active()) {
-		for (auto &sr : sampleResults)
-			ProjectSampleResultToRGB(sr, sw);
+		for (u_int i = 0; i < (u_int)sampleResults.size(); ++i)
+			ProjectSampleResultToRGB(sampleResults[i], sw);
 	}
 }
 
@@ -2054,11 +2054,13 @@ void PathTracer::RenderEyeSample(
 //------------------------------------------------------------------------------
 
 SampleResult &PathTracer::AddLightSampleResult(vector<SampleResult> &sampleResults,
-		FilmConstRef film) {
-	const u_int size = sampleResults.size();
-	sampleResults.resize(size + 1);
-
-	SampleResult &sampleResult = sampleResults[size];
+		u_int &used, FilmConstRef film) {
+	// The outer vector is kept at its reserved size for the render
+	// session - `used` is the live entry count. Never shrink it:
+	// clear()+resize() destroyed each SampleResult's inner SpectrumGroup
+	// vector, forcing a malloc/free pair per light-path vertex.
+	assert (used < sampleResults.size());
+	SampleResult &sampleResult = sampleResults[used++];
 	sampleResult.Init(&lightSampleResultsChannels, film.GetRadianceGroupCount());
 
 	return sampleResult;
@@ -2071,7 +2073,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 		const LightSource &light, const BSDF &bsdf, 
 		const Spectrum &flux, const LightPathInfo &pathInfo,
 		const SspTail *sspTail,
-		vector<SampleResult> &sampleResults) const {
+		vector<SampleResult> &sampleResults, u_int &used) const {
 	// I don't connect camera invisible objects with the eye
 	if (bsdf.IsCameraInvisible() || bsdf.IsDelta())
 		return;
@@ -2155,7 +2157,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				float fluxToRadianceFactor;
 				scene.GetCamera().GetPDF(eyeRay, eyeDistance, filmX, filmY, nullptr, &fluxToRadianceFactor);
 
-				SampleResult &sampleResult = AddLightSampleResult(sampleResults, film);
+				SampleResult &sampleResult = AddLightSampleResult(sampleResults, used, film);
 				sampleResult.filmX = filmX;
 				sampleResult.filmY = filmY;
 
@@ -2209,7 +2211,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				if (!LMNEEConnectToEye(device, scene, film, time, light,
 						bsdf, flux, pathInfo, traceRayHit, bsdfConn,
 						mneeVolInfo, warmV0, warmV1, warmOk,
-						sampleResults)) {
+						sampleResults, used)) {
 					// SSP tail: if a recorded eye path walked a specular
 					// chain ending at the blocker, rebuild it directly
 					// (cheaper and better-seeded than the discovery walk).
@@ -2225,7 +2227,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 								PathVolumeInfo tailVolInfo = pathInfo.volume;
 								tailOk = LMNEETailConnectToEye(device, scene,
 										film, time, light, bsdf, flux, pathInfo,
-										sspTail, tailVolInfo, sampleResults);
+										sspTail, tailVolInfo, sampleResults, used);
 								break;
 							}
 						}
@@ -2240,7 +2242,7 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 								bsdf, flux, pathInfo, bsdfConn, mneeChainVolInfo,
 								warmOk ? &warmV0 : nullptr,
 								warmOk ? &warmV1 : nullptr,
-								sampleResults);
+								sampleResults, used);
 					}
 				}
 			}
@@ -2625,12 +2627,15 @@ void PathTracer::LightFocusEmitDistantU(SceneConstRef scene,
 void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		SceneConstRef scene, FilmConstRef film,
 		Sampler& sampler, vector<SampleResult> &sampleResults,
+		u_int &used,
 		const ConnectToEyeCallBackType &ConnectToEyeCallBack,
 		const SspTail *sspTail) const {
-	sampleResults.clear();
-	// One result per light-path vertex at most: pre-reserve so the
-	// resize(size + 1) growth in AddLightSampleResult never reallocates
-	sampleResults.reserve(maxPathDepth.depth + 2);
+	// Keep the vector at its reserved size - clear() would destroy each
+	// SampleResult and drop the inner SpectrumGroup allocation, forcing
+	// a malloc/free pair per vertex on the next AddLightSampleResult.
+	if (sampleResults.size() < maxPathDepth.depth + 2)
+		sampleResults.resize(maxPathDepth.depth + 2);
+	used = 0;
 
 	// Spectral transport: draw the path wavelengths (the extra boot
 	// dimension allocated by ParseOptions) for the light path
@@ -2747,16 +2752,16 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 			scene.GetCamera().SampleLens(time, sampler.GetSample(6), sampler.GetSample(7),
 				&pathInfo.lensPoint);
 
-			const size_t sampleResultsBefore = sampleResults.size();
+			const u_int usedBefore = used;
 			if (ConnectToEyeCallBack){
-				ConnectToEyeCallBack(pathInfo, bsdf, light->GetID(), lightPathFlux, sampleResults);
+				ConnectToEyeCallBack(pathInfo, bsdf, light->GetID(), lightPathFlux, sampleResults, used);
 			} else {
 				ConnectToEye(device, scene, film,
 						nextEventRay.time,
 						sampler.GetSample(sampleOffset + 1),
 						sampler.GetSample(sampleOffset + 2),
 						sampler.GetSample(sampleOffset + 3),
-						*light, bsdf, lightPathFlux, pathInfo, sspTail, sampleResults);
+						*light, bsdf, lightPathFlux, pathInfo, sspTail, sampleResults, used);
 			}
 
 			// A connect that produced a screen contribution after
@@ -2764,7 +2769,7 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 			// it (once per path, GPU parity - the flag clears so a later
 			// second delta bounce can still be credited)
 			if (hasDeltaVertex &&
-					(sampleResults.size() > sampleResultsBefore)) {
+					(used > usedBefore)) {
 				LightFocusCredit(scene, light->lightSceneIndex, firstDeltaP);
 				hasDeltaVertex = false;
 			}
@@ -2821,8 +2826,8 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 	}
 
 	if (wlScope.Active()) {
-		for (auto &sr : sampleResults)
-			ProjectSampleResultToRGB(sr, sw);
+		for (u_int i = 0; i < used; ++i)
+			ProjectSampleResultToRGB(sampleResults[i], sw);
 	}
 }
 
@@ -2854,7 +2859,11 @@ void PathTracer::ApplyVarianceClamp(const PathTracerThreadState &state,
 		vector<SampleResult> &sampleResults) const {
 	// Variance clamping
 	if (state.varianceClamping->hasClamping()) {
-		for(u_int i = 0; i < sampleResults.size(); ++i) {
+		// Light-path results keep the outer vector at capacity and track
+		// the live prefix in lightSampleResultsUsed - bound the scan.
+		const u_int usedCount = (&sampleResults == &state.GetLightSampleResults()) ?
+				state.lightSampleResultsUsed : (u_int)sampleResults.size();
+		for(u_int i = 0; i < usedCount; ++i) {
 			SampleResult &sampleResult = sampleResults[i];
 
 			// I clamp only eye paths samples (variance clamping would cut
@@ -2893,6 +2902,7 @@ void PathTracer::RenderSample(PathTracerThreadState &state) const {
 				state.GetFilm(),
 				sampler,
 				sampleResults,
+				state.lightSampleResultsUsed,
 				ConnectToEyeCallBackType(),
 				sspEnable ? &state.sspTail : nullptr
 			);
@@ -2907,7 +2917,10 @@ void PathTracer::RenderSample(PathTracerThreadState &state) const {
 	// Apply variance clamping
 	ApplyVarianceClamp(state, sampleResults);
 
-	sampler.NextSample(sampleResults);
+	// Light-path results: only the first used slots are live
+	const u_int usedCount = (&sampleResults == &state.GetLightSampleResults()) ?
+			state.lightSampleResultsUsed : std::numeric_limits<u_int>::max();
+	sampler.NextSample(sampleResults, usedCount);
 }
 
 //------------------------------------------------------------------------------

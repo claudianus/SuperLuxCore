@@ -68,7 +68,8 @@ protected:
 	void RenderEyeSample(const BakeMapInfo &mapInfo, PathTracerThreadState &state) const;
 	void RenderConnectToEyeCallBack(const BakeMapInfo &mapInfo,
 			const LightPathInfo &pathInfo, const BSDF &bsdf, const u_int lightID,
-			const luxrays::Spectrum &lightPathFlux, std::vector<SampleResult> &sampleResults) const;
+			const luxrays::Spectrum &lightPathFlux, std::vector<SampleResult> &sampleResults,
+			u_int &used) const;
 	void RenderLightSample(const BakeMapInfo &mapInfo, PathTracerThreadState &state) const;
 	void RenderSample(const BakeMapInfo &mapInfo, PathTracerThreadState &state) const;
 	void RenderFunc(std::stop_token stop_token);

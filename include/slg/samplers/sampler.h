@@ -125,8 +125,14 @@ public:
 
 	// index 0 and 1 are always image X and image Y
 	virtual float GetSample(const u_int index) = 0;
-	virtual void NextSample(const std::vector<SampleResult> &sampleResults) = 0;
-
+	// used bounds iteration when the caller keeps a capacity-sized vector
+	// (PATHCPU light-path results). Default SIZE_MAX = all entries.
+	void NextSample(const std::vector<SampleResult> &sampleResults,
+			const u_int used = std::numeric_limits<u_int>::max()) {
+		NextSampleImpl(sampleResults, std::min(used, (u_int)sampleResults.size()));
+	}
+	virtual void NextSampleImpl(const std::vector<SampleResult> &sampleResults,
+			const u_int used) = 0;
 	// Per-sample unique counter for path guiding (P1-3 M1): the guide
 	// bin pick must not reuse a sampler dimension that shares a
 	// Cranley-Patterson shift with the jitter dims (correlated triple =
@@ -187,6 +193,16 @@ protected:
 	) const {
 		for (auto const &sr : sampleResults)
 			AtomicAddSampleToFilm(sr, weight);
+	}
+
+	// Light-path results keep the outer vector at capacity and track live
+	// entries in `used` - splat only those (stale slots carry pixel 0
+	// coords and would deposit black radiance in a wasted atomic op).
+	void AtomicAddSamplesToFilm(
+		const std::vector<SampleResult> &sampleResults, const u_int used,
+		const float weight) const {
+		for (u_int i = 0; i < used; ++i)
+			AtomicAddSampleToFilm(sampleResults[i], weight);
 	}
 
 	u_int threadIndex;

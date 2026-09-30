@@ -1299,3 +1299,21 @@ per converged pixel - still negligible at production spp.
 
 Note: absolute throughput numbers today are unreliable - vitest workers
 were running on the box during measurement.
+
+## Light-path sampleResults: keep vector sized, track `used` (2026-10-01)
+
+RenderLightSample ran sampleResults.clear() then AddLightSampleResult's
+resize(size+1) per vertex - every clear() destroyed each SampleResult's
+inner SpectrumGroup (heap free) and every Init() reallocated it. With
+~10M light samples/sec on PATHCPU that was 2 malloc/free pairs per
+light-path vertex.
+
+Now: vector stays at maxPathDepth+2 capacity; AddLightSampleResult writes
+used slots in place. Plumbed `u_int &used` through RenderLightSample,
+ConnectToEye, the LMNEE single/multi/tail chain and the
+ConnectToEyeCallBackType typedef; added a `used` bound on
+Sampler::NextSample (default SIZE_MAX keeps other engines' callsites
+unchanged) and AtomicAddSamplesToFilm.
+
+BakeCPU's bind callback gets the extra arg via placeholders::_6.
+cornell+strands CPU/GPU parity PASS.

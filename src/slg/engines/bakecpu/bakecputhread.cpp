@@ -331,7 +331,8 @@ void BakeCPURenderThread::RenderEyeSample(const BakeMapInfo &mapInfo, PathTracer
 void BakeCPURenderThread::RenderConnectToEyeCallBack(const BakeMapInfo &mapInfo,
 		const LightPathInfo &pathInfo,
 		const BSDF &bsdf, const u_int lightID,
-		const Spectrum &lightPathFlux, vector<SampleResult> &sampleResults) const {
+		const Spectrum &lightPathFlux, vector<SampleResult> &sampleResults,
+		u_int &used) const {
 	BakeCPURenderEngine *engine = (BakeCPURenderEngine *)renderEngine;
 
 	// Bake only caustics (note: pathInfo is not updated with the current hit point):
@@ -343,7 +344,7 @@ void BakeCPURenderThread::RenderConnectToEyeCallBack(const BakeMapInfo &mapInfo,
 		// Check if the hit point is on one of the objects I'm baking
 		for (u_int i = 0; i < engine->currentSceneObjsToBake.size(); ++i) {
 			if (engine->currentSceneObjsToBake[i] == &bsdf.GetSceneObject()) {
-				SampleResult &sampleResult = PathTracer::AddLightSampleResult(sampleResults, engine->GetMapFilm());
+				SampleResult &sampleResult = PathTracer::AddLightSampleResult(sampleResults, used, engine->GetMapFilm());
 
 				SetSampleResultXY(mapInfo, bsdf.hitPoint, engine->GetMapFilm(), sampleResult);
 
@@ -365,10 +366,12 @@ void BakeCPURenderThread::RenderLightSample(const BakeMapInfo &mapInfo, PathTrac
 	const PathTracer &pathTracer = engine->pathTracer;
 	
 	const PathTracer::ConnectToEyeCallBackType connectToEyeCallBack = std::bind(
-			&BakeCPURenderThread::RenderConnectToEyeCallBack, this, mapInfo, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5);
+			&BakeCPURenderThread::RenderConnectToEyeCallBack, this, mapInfo, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5, std::placeholders::_6);
 
+	u_int used;
 	pathTracer.RenderLightSample(state.device, state.scene, state.GetFilm(), state.GetLightSampler(),
-			state.GetLightSampleResults(), connectToEyeCallBack);
+			state.GetLightSampleResults(), used, connectToEyeCallBack);
+	state.SetLightSampleResultsUsed(used);
 }
 
 void BakeCPURenderThread::RenderSample(const BakeMapInfo &mapInfo, PathTracerThreadState &state) const {
@@ -391,7 +394,7 @@ void BakeCPURenderThread::RenderSample(const BakeMapInfo &mapInfo, PathTracerThr
 	// Variance clamping
 	pathTracer.ApplyVarianceClamp(state, sampleResults);
 
-	sampler.NextSample(sampleResults);
+	sampler.NextSample(sampleResults, eyeSampling ? std::numeric_limits<u_int>::max() : state.GetLightSampleResultsUsed());
 }
 
 void BakeCPURenderThread::RenderFunc(std::stop_token stop_token) {

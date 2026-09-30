@@ -199,7 +199,7 @@ float RandomSampler::GetSample(const u_int index) {
 	}
 }
 
-void RandomSampler::NextSample(const vector<SampleResult> &sampleResults) {
+void RandomSampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	if (film) {
 		double pixelNormalizedCount, screenNormalizedCount;
 		switch (sampleType) {
@@ -220,7 +220,7 @@ void RandomSampler::NextSample(const vector<SampleResult> &sampleResults) {
 		}
 		GetFilm().AddSampleCount(threadIndex, pixelNormalizedCount, screenNormalizedCount);
 
-		AtomicAddSamplesToFilm(sampleResults);
+		AtomicAddSamplesToFilm(sampleResults, used, 1.f);
 	}
 
 	InitNewSample();

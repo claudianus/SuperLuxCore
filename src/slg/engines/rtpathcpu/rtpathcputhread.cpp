@@ -159,11 +159,13 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 		} else {
 			lightSampleCount += 1.0;
 
+			u_int used;
 			pathTracer.RenderLightSample(device, engine->renderConfig.GetScene(),
 					engine->GetFilm(), *lightSampler, lightSampleResults,
+					used,
 					PathTracer::ConnectToEyeCallBackType(),
 					pathTracer.sspEnable ? &sspTail : nullptr);
-			lightSampler->NextSample(lightSampleResults);
+			lightSampler->NextSample(lightSampleResults, used);
 		}
 
 #ifdef WIN32

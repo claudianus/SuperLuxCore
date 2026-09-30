@@ -94,7 +94,7 @@ public:
 	virtual void RequestSamples(const SampleType sampleType, const u_int size);
 
 	virtual float GetSample(const u_int index);
-	virtual void NextSample(const std::vector<SampleResult> &sampleResults);
+	virtual void NextSampleImpl(const std::vector<SampleResult> &sampleResults, const u_int used);
 
 	// Used, most of the times, when not having a film
 	MetropolisSampleType GetLastSampleAcceptance(float &weight) const;
@@ -139,6 +139,9 @@ private:
 	std::vector<float> currentSamples;
 	std::vector<u_int> currentSampleStamps;
 	std::vector<SampleResult> currentSampleResults;
+	// Live slots in currentSampleResults (PATHCPU light-path vector stays
+	// at capacity; used marks the live prefix)
+	u_int currentSampleResultsUsed = 0;
 
 	// Used, most of the times, when not having a film
 	MetropolisSampleType lastSampleAcceptance;

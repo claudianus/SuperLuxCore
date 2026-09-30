@@ -2353,6 +2353,7 @@ static bool LMneeRejEnabled() {
 static void LMneeSplat(FilmConstRef film, const LightSource &light,
 		const float filmX, const float filmY, const Spectrum &radiance,
 		const BSDF &receiver, std::vector<SampleResult> &sampleResults,
+		u_int &used,
 		const char *how = nullptr, const Point *x0dbg = nullptr) {
 	if (LMneeRejEnabled() && how) {
 		printf("LMNEE_ACC %s film=%.1f %.1f r=%.4g %.4g %.4g x0=%.4g %.4g %.4g\n",
@@ -2362,7 +2363,7 @@ static void LMneeSplat(FilmConstRef film, const LightSource &light,
 		fflush(stdout);
 	}
 	SampleResult &sampleResult =
-			PathTracer::AddLightSampleResult(sampleResults, film);
+			PathTracer::AddLightSampleResult(sampleResults, used, film);
 	sampleResult.filmX = filmX;
 	sampleResult.filmY = filmY;
 	sampleResult.pixelX = Floor2UInt(filmX);
@@ -2383,7 +2384,7 @@ bool PathTracer::LMNEEConnectToEye(
 		const luxrays::RayHit &shadowRayHit,
 		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 		BSDF &warmV0, BSDF &warmV1, bool &warmOk,
-		std::vector<SampleResult> &sampleResults) const {
+		std::vector<SampleResult> &sampleResults, u_int &used) const {
 	warmOk = false;
 	const Point &x0p = bsdf.hitPoint.p;
 	const Point &lensPoint = pathInfo.lensPoint;
@@ -2602,7 +2603,7 @@ bool PathTracer::LMNEEConnectToEye(
 	if (radiance.IsNaN() || radiance.IsInf())
 		{ LMNEE_REJ("nan"); return false; }
 
-	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "single", &x0p);
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, used, "single", &x0p);
 
 	// Manifold-guided emission: a solved-manifold connect reaches the
 	// camera only through specular interfaces - credit the receiver x0
@@ -2639,7 +2640,7 @@ bool PathTracer::LMNEEMultiConnectToEye(
 		const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 		const BSDF *warmV0, const BSDF *warmV1,
-		std::vector<SampleResult> &sampleResults) const {
+		std::vector<SampleResult> &sampleResults, u_int &used) const {
 	const Point &x0p = bsdf.hitPoint.p;
 	const Point &lensPoint = pathInfo.lensPoint;
 	// The camera endpoint is always a finite position (the sampled lens point).
@@ -2704,7 +2705,7 @@ bool PathTracer::LMNEEMultiConnectToEye(
 		return false;
 	}
 
-	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "chain", &x0p);
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, used, "chain", &x0p);
 	LightFocusCredit(scene, light.lightSceneIndex, x0p);
 	return true;
 }
@@ -2873,7 +2874,7 @@ bool PathTracer::LMNEETailConnectToEye(
 		const LightSource &light, const BSDF &bsdf,
 		const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 		const SspTail *sspTail, PathVolumeInfo &volInfo,
-		std::vector<SampleResult> &sampleResults) const {
+		std::vector<SampleResult> &sampleResults, u_int &used) const {
 	const Point &x0p = bsdf.hitPoint.p;
 
 	MneeEndpoint ep;
@@ -2903,7 +2904,7 @@ bool PathTracer::LMNEETailConnectToEye(
 			mneeMaxIterations, volInfo, bsdf, flux, radiance, filmX, filmY))
 		return false;
 
-	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, "tail", &x0p);
+	LMneeSplat(film, light, filmX, filmY, radiance, bsdf, sampleResults, used, "tail", &x0p);
 	LightFocusCredit(scene, light.lightSceneIndex, x0p);
 	return true;
 }

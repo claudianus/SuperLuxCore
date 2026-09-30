@@ -237,7 +237,7 @@ float MetropolisSampler::GetSample(const u_int index) {
 	}
 }
 
-void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
+void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	//--------------------------------------------------------------------------
 	// Some hard coded parameter:
 	//--------------------------------------------------------------------------
@@ -273,10 +273,11 @@ void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
 
 	// Calculate the sample result luminance
 	float newLuminance = 0.f;
-	for (vector<SampleResult>::const_iterator sr = sampleResults.begin(); sr != sampleResults.end(); ++sr) {
-		if (sr->HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED)) {
-			for (u_int i = 0; i < sr->radiance.Size(); ++i) {
-				const float luminance = sr->radiance[i].Y();
+	for (u_int sri = 0; sri < used; ++sri) {
+		const SampleResult &sr = sampleResults[sri];
+		if (sr.HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED)) {
+			for (u_int i = 0; i < sr.radiance.Size(); ++i) {
+				const float luminance = sr.radiance[i].Y();
 				verify (!isnan(luminance) && !isinf(luminance) && (luminance >= 0.f));
 
 				if ((luminance > 0.f) && !isnan(luminance) && !isinf(luminance))
@@ -284,9 +285,9 @@ void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
 			}
 		}
 
-		if (sr->HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED)) {
-			for (u_int i = 0; i < sr->radiance.Size(); ++i) {
-				const float luminance = sr->radiance[i].Y();
+		if (sr.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED)) {
+			for (u_int i = 0; i < sr.radiance.Size(); ++i) {
+				const float luminance = sr.radiance[i].Y();
 				verify (!isnan(luminance) && !isinf(luminance) && (luminance >= 0.f));
 
 				if ((luminance > 0.f) && !isnan(luminance) && !isinf(luminance))
@@ -342,7 +343,8 @@ void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
 						norm, consecRejects);*/
 
 			if (film) {
-				for (auto const &sr : currentSampleResults) {
+				for (u_int i = 0; i < currentSampleResultsUsed; ++i) {
+					const SampleResult &sr = currentSampleResults[i];
 					if (!addOnlyCuastics || (sr.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED) && sr.isCaustic))
 						AtomicAddSampleToFilm(sr, norm);
 				}
@@ -358,6 +360,7 @@ void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
 		currentLuminance = newLuminance;
 		std::copy_n(samples.begin(), requestedSamples, currentSamples.begin());
 		std::copy_n(sampleStamps.begin(), requestedSamples, currentSampleStamps.begin());
+		currentSampleResultsUsed = used;
 		currentSampleResults = sampleResults;
 
 		consecRejects = 0;
@@ -376,7 +379,8 @@ void MetropolisSampler::NextSample(const vector<SampleResult> &sampleResults) {
 						norm, consecRejects);*/
 
 			if (film) {
-				for (auto const &sr : sampleResults) {
+				for (u_int i = 0; i < used; ++i) {
+					const SampleResult &sr = sampleResults[i];
 					if (!addOnlyCuastics || (sr.HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED) && sr.isCaustic))
 						AtomicAddSampleToFilm(sr, norm);
 				}

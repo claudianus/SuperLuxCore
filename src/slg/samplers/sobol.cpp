@@ -484,7 +484,7 @@ float SobolSampler::GetSample(const u_int index) {
 	}
 }
 
-void SobolSampler::NextSample(const vector<SampleResult> &sampleResults) {
+void SobolSampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	if (film) {
 		switch (sampleType) {
 			case PIXEL_NORMALIZED_ONLY:
@@ -502,7 +502,7 @@ void SobolSampler::NextSample(const vector<SampleResult> &sampleResults) {
 				throw runtime_error("Unknown sample type in SobolSampler::NextSample(): " + ToString(sampleType));
 		}
 
-		AtomicAddSamplesToFilm(sampleResults);
+		AtomicAddSamplesToFilm(sampleResults, used, 1.f);
 	}
 
 	InitNewSample();

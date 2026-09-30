@@ -142,16 +142,17 @@ void PathOCLNativeRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 					break;
 			}
 
+			u_int used;
 			pathTracer.RenderLightSample(intersectionDevice,
 					engine->renderConfig.GetScene(), *film,
-					*ltSampler, sampleResults);
+					*ltSampler, sampleResults, used);
 
 			if (varianceClamping.hasClamping()) {
-				for(u_int i = 0; i < sampleResults.size(); ++i)
+				for(u_int i = 0; i < used; ++i)
 					varianceClamping.Clamp(*film, sampleResults[i]);
 			}
 
-			ltSampler->NextSample(sampleResults);
+			ltSampler->NextSample(sampleResults, used);
 
 #ifdef WIN32
 			// Work around Windows bad scheduling

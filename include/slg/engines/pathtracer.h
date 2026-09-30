@@ -84,7 +84,10 @@ public:
 	const VarianceClamping *varianceClamping;
 
 	std::vector<SampleResult> & GetEyeSampleResults() { return std::ref(eyeSampleResults); }
+	const std::vector<SampleResult> & GetLightSampleResults() const { return std::ref(lightSampleResults); }
 	std::vector<SampleResult> & GetLightSampleResults() { return std::ref(lightSampleResults); }
+	u_int GetLightSampleResultsUsed() const { return lightSampleResultsUsed; }
+	void SetLightSampleResultsUsed(const u_int v) { lightSampleResultsUsed = v; }
 
 	// SSP eye-side specular tail (path.ssp.enable): the eye sample records
 	// its leading delta-specular run here, the light sample of the same
@@ -100,6 +103,13 @@ private:
 	const SamplerUPtr& lightSampler;
 	FilmRef film;
 	std::vector<SampleResult> eyeSampleResults, lightSampleResults;
+	// Live slot count in lightSampleResults - kept at max capacity so
+	// AddLightSampleResult reuses inner SpectrumGroup storage instead of
+	// clear()+resize() churning a malloc/free pair per vertex. Only the
+	// first lightSampleResultsUsed slots are live; bound splat loops by
+	// it, not size().
+	u_int lightSampleResultsUsed = 0;
+	friend class PathTracer;
 };
 
 class PhotonGICache;
@@ -112,7 +122,7 @@ public:
 
 	typedef std::function<void(const LightPathInfo &pathInfo,
 			const BSDF &, const u_int, const luxrays::Spectrum &,
-			std::vector<SampleResult> &sampleResults)> ConnectToEyeCallBackType;
+			std::vector<SampleResult> &sampleResults, u_int &used)> ConnectToEyeCallBackType;
 
 	PathTracer();
 	virtual ~PathTracer();
@@ -171,6 +181,7 @@ public:
 		FilmConstRef film,
 		Sampler& sampler,
 		std::vector<SampleResult> &sampleResults,
+		u_int &used,
 		const ConnectToEyeCallBackType &ConnectToEyeCallBack,
 		const SspTail *sspTail = nullptr) const;
 	void RenderLightSample(
@@ -178,10 +189,11 @@ public:
 		SceneConstRef scene,
 		FilmConstRef film,
 		Sampler& sampler,
-		std::vector<SampleResult> &sampleResults
+		std::vector<SampleResult> &sampleResults,
+		u_int &used
 	) const {
 		static const ConnectToEyeCallBackType noCallback;
-		RenderLightSample(device, scene, film, sampler, sampleResults, noCallback);
+		RenderLightSample(device, scene, film, sampler, sampleResults, used, noCallback);
 	}
 
 	bool HasToRenderEyeSample(PathTracerThreadState &state) const;
@@ -193,7 +205,7 @@ public:
 			const bool useFilmSplat = false);
 	static void ResetEyeSampleResults(std::vector<SampleResult> &sampleResults);
 	static SampleResult &AddLightSampleResult(std::vector<SampleResult> &sampleResults,
-			FilmConstRef film);
+			u_int &used, FilmConstRef film);
 
 	static luxrays::PropertiesUPtr ToProperties(const luxrays::Properties &cfg);
 	static luxrays::PropertiesUPtr GetDefaultProps();
@@ -475,7 +487,7 @@ private:
 			const LightSource &light,  const BSDF &bsdf,
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			const SspTail *sspTail,
-			std::vector<SampleResult> &sampleResults) const;
+			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera
 	// lens, the CPU port of the GPU LMnee_* driver. Called by ConnectToEye
@@ -490,7 +502,7 @@ private:
 			const luxrays::RayHit &shadowRayHit,
 			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 			BSDF &warmV0, BSDF &warmV1, bool &warmOk,
-			std::vector<SampleResult> &sampleResults) const;
+			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// LMNEE, multi-specular variant: x0 -> x1 -> ... -> xN -> lens for
 	// closed dielectrics (slabs, spheres) that need more than one
@@ -505,7 +517,7 @@ private:
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 			const BSDF *warmV0, const BSDF *warmV1,
-			std::vector<SampleResult> &sampleResults) const;
+			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// SSP tail connect: rebuild the specular chain from a recorded eye
 	// tail (reproject + MneeChainVertexInit per anchor, light->lens order)
@@ -518,7 +530,7 @@ private:
 			const LightSource &light, const BSDF &bsdf,
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			const SspTail *sspTail, PathVolumeInfo &volInfo,
-			std::vector<SampleResult> &sampleResults) const;
+			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// Caustic focus cache (CPU side of the GPU lightFocus rings):
 	// lazy allocation against the scene light count, hotspot crediting

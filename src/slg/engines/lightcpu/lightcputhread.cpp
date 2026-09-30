@@ -82,16 +82,17 @@ void LightCPURenderThread::RenderFunc(std::stop_token stop_token) {
 				break;
 		}
 
+		u_int used;
 		pathTracer.RenderLightSample(device, engine->renderConfig.GetScene(),
-				engine->GetFilm(), *sampler, sampleResults);
+				engine->GetFilm(), *sampler, sampleResults, used);
 
-		// Variance clamping
+		// Variance clamping - bound by the live count, not the reserved size
 		if (varianceClamping.hasClamping()) {
-			for(u_int i = 0; i < sampleResults.size(); ++i)
+			for(u_int i = 0; i < used; ++i)
 				varianceClamping.Clamp(engine->GetFilm(), sampleResults[i]);
 		}
 
-		sampler->NextSample(sampleResults);
+		sampler->NextSample(sampleResults, used);
 
 #ifdef WIN32
 		// Work around Windows bad scheduling

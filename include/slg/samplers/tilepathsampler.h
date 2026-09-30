@@ -65,7 +65,7 @@ public:
 	virtual void RequestSamples(const SampleType sampleType, const u_int size);
 
 	virtual float GetSample(const u_int index);
-	virtual void NextSample(const std::vector<SampleResult> &sampleResults);
+	virtual void NextSampleImpl(const std::vector<SampleResult> &sampleResults, const u_int used);
 	virtual u_int GetPass() const { return tilePass; }
 
 	//--------------------------------------------------------------------------

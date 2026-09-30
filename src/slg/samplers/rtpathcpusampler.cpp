@@ -305,7 +305,7 @@ float RTPathCPUSampler::GetSample(const u_int index) {
 	return u;
 }
 
-void RTPathCPUSampler::NextSample(const vector<SampleResult> &sampleResults) {
+void RTPathCPUSampler::NextSampleImpl(const vector<SampleResult> &sampleResults, const u_int used) {
 	// film->AddSampleCount(1.0) is done in NextPixel()
 
 	const SampleResult *sr = &sampleResults[0];
