@@ -188,6 +188,15 @@ cap + crawl bail remain the right cost bound for the doomed
 population; a prefilter would need to be free of the escalation cost
 to win.
 
+GPU crawl-bail port (measured and REVERTED, same round): the wavefront
+kernel port of the two-strike rule produced NaN/Inf-scale output and a
+7x wall swing on the e55 fixed-spp GPU A/B (the subtler e23 disc
+luminance shift was the same corruption). The bail fired
+FailToChainOrExit from mid-accept context - wavefront sub-state
+machines may only transition at phase boundaries. A GPU crawl bail
+needs its own clean handoff phase plus a fixed-spp GPU image A/B gate
+before the parity suites; do not re-land the inline exit.
+
 Research anchor for the next round: Hong, Duan, Wang, Yuksel, Zeltner,
 Lin, "Sample Space Partitioning and Spatiotemporal Resampling for
 Specular Manifold Sampling" (SIGGRAPH Asia 2025). Tile-based sample
