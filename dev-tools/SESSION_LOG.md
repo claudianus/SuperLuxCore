@@ -620,3 +620,23 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   ScatterEquiangular top-stack 22k; this halves its per-light trig.
 - Sanity: cornell-vol-caustic 160x90 @32spp PATHCPU renders clean
   (mean 0.4104, no NaN).
+
+## SobolSampler pixel-pass batch claims — 2026-10-01 (cont.)
+
+- InitNewSample: passPerPixel claims are a per-sample atomic RMW on a
+  false-shared counter array (16 counters / 64B line); in the filmless
+  light-pass path every thread RMWs the SAME slot (index 0). Now
+  claims runs of PASS_BATCH=4 per pixel via GetNewPixelPassBatch()
+  (one AtomicAdd) and serves the other 3 locally; the adaptive gate
+  evaluates once per run instead of per sample (bounded: a pixel
+  converging mid-run sees <=3 extra samples, the same bound the
+  unbatched loop applies on its next pick). runHit also skips the
+  redundant noise/moments re-read for a pinned pixel.
+- Statistics-preserving: the set of (pixel -> pass) assignments is
+  unchanged; only claim granularity differs. Film accumulation is
+  commutative, so a converged render is bit-equivalent; per-sample
+  thread->pixel pairing shifts (already non-deterministic).
+- SobolSamplerSharedData::GetNewPixelPassBatch added
+  (AtomicAdd(&passPerPixel[i], k) - same contention slot, 1 RMW per k).
+- Sanity: cornell 160x90 @32spp PATHCPU mean 0.3767 (matches pre-change
+  0.3767), prism-conservatory mean 0.3380, no NaN.

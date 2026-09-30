@@ -94,6 +94,13 @@ u_int SobolSamplerSharedData::GetNewPixelPass(const u_int pixelIndex) {
 	return AtomicInc(&passPerPixel[pixelIndex]);
 }
 
+u_int SobolSamplerSharedData::GetNewPixelPassBatch(const u_int pixelIndex,
+		const u_int k) {
+	// AtomicAdd returns the pre-add value - the first of the k claimed
+	// passes. Same contention slot as GetNewPixelPass, one RMW per k.
+	return AtomicAdd(&passPerPixel[pixelIndex], k);
+}
+
 u_int SobolSamplerSharedData::GetPassCount(const u_int bucketCount) const {
 	return *bucketIndex / bucketCount;
 }
@@ -170,6 +177,8 @@ SobolSampler::SobolSampler(
 	sobolAdaptiveMomentsEnable(false),
 	sobolAdaptiveRelErrTarget(.02f),
 	bucketIndex(std::make_shared<u_int>(0)),
+	pixelPassRunLeft(0u),
+	pixelPassRunIdx(0u),
 	filmCacheValid(false),
 	cacheHasNoiseChannel(false), cacheHasUserImportanceChannel(false),
 	bucketSizeLog2(UIntLog2(bucketSz)),
@@ -302,8 +311,17 @@ void SobolSampler::InitNewSample() {
 			pixelX = filmSubRegion[0] + subRegionPixelX;
 			pixelY = filmSubRegion[2] + subRegionPixelY;
 
+			const u_int pixelIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+			// An active pass run pins the candidate: skip the adaptive
+			// gate entirely (same pixel, already accepted). Evaluated
+			// only on run expiry - a pixel that converges mid-run gets
+			// at most PASS_BATCH-1 extra samples, the bound the
+			// unbatched loop applies on the next pick.
+			const bool runHit = (pixelPassRunLeft > 0u) &&
+					(pixelPassRunIdx == pixelIdx);
+
 			// Check if the current pixel is over or under the convergence threshold
-			if ((adaptiveStrength > 0.f) && (cacheHasNoiseChannel || sobolAdaptiveMomentsEnable)) {
+			if (!runHit && (adaptiveStrength > 0.f) && (cacheHasNoiseChannel || sobolAdaptiveMomentsEnable)) {
 				// Pixels are sampled in accordance with how far from convergence they are
 				float noise = std::numeric_limits<float>::infinity();
 				bool noiseValid = false;
@@ -381,12 +399,29 @@ void SobolSampler::InitNewSample() {
 				}
 			}
 
-			pass = sharedData->GetNewPixelPass(subRegionPixelX + subRegionPixelY * subRegionWidth);
+			if (runHit) {
+				++pass;
+				--pixelPassRunLeft;
+			} else {
+				pixelPassRunLeft = PASS_BATCH - 1u;
+				pixelPassRunIdx = pixelIdx;
+				pass = sharedData->GetNewPixelPassBatch(pixelIdx, PASS_BATCH);
+			}
 		} else {
 			pixelX = 0;
 			pixelY = 0;
 
-			pass = sharedData->GetNewPixelPass();
+			// Single shared counter (index 0) for filmless samples -
+			// every light-pass thread RMWs the same slot, so the batch
+			// pays off even more than in the film path.
+			if ((pixelPassRunLeft == 0u) || (pixelPassRunIdx != 0u)) {
+				pixelPassRunLeft = PASS_BATCH - 1u;
+				pixelPassRunIdx = 0u;
+				pass = sharedData->GetNewPixelPassBatch(0u, PASS_BATCH);
+			} else {
+				++pass;
+				--pixelPassRunLeft;
+			}
 		}
 
 		// Initialize rng0, rng1 and rngPass

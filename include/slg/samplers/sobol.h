@@ -51,6 +51,14 @@ public:
 	std::tuple<u_int, u_int> GetNewBucket(u_int bucketCount);
 
 	u_int GetNewPixelPass(const u_int pixelIndex = 0);
+	// Claims k consecutive passes for pixelIndex in one atomic add and
+	// returns the first of them. Same pass set as k individual
+	// GetNewPixelPass() calls (film accumulation is commutative), but
+	// a single RMW on the false-shared counter array. Only usable when
+	// the adaptive re-pick gates are off: they read PeekPixelPass()
+	// per sample and a counter running ahead by up to k-1 would skew
+	// the min-samples estimate.
+	u_int GetNewPixelPassBatch(const u_int pixelIndex, const u_int k);
 
 	// Current pass count without incrementing (adaptive sampling estimate)
 	u_int PeekPixelPass(const u_int pixelIndex) const {
@@ -206,6 +214,16 @@ private:
 
 	std::shared_ptr<u_int> bucketIndex;
 	u_int pixelOffset, passOffset, pass;
+	// Pixel-pass run batching: one GetNewPixelPassBatch claims
+	// PASS_BATCH consecutive passes for a pixel; pixelPassRunLeft /
+	// pixelPassRunIdx key the run to its pixel. Cuts the per-sample
+	// atomic RMW on the false-shared passPerPixel array by
+	// PASS_BATCH. The adaptive gates are evaluated only when a run
+	// expires, so a pixel that converges mid-run gets at most
+	// PASS_BATCH-1 extra samples - bounded, and the same bound the
+	// unbatched loop applies on the next sample.
+	static const u_int PASS_BATCH = 4;
+	u_int pixelPassRunLeft, pixelPassRunIdx;
 	luxrays::TauswortheRandomGenerator rngGenerator;
 
 	float sample0, sample1;
