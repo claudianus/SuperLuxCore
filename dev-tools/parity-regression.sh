@@ -30,8 +30,8 @@ ROOT="$(pwd)"
 CONSOLE="${1:-}"
 if [ -z "$CONSOLE" ]; then
     for cand in \
-        "$ROOT/out/build/samples/luxcoreconsole/Debug/luxcoreconsole" \
         "$ROOT/out/build/samples/luxcoreconsole/Release/luxcoreconsole" \
+        "$ROOT/out/build/samples/luxcoreconsole/Debug/luxcoreconsole" \
         "$ROOT/out/install/Release/bin/luxcoreconsole"; do
         if [ -x "$cand" ]; then CONSOLE="$cand"; break; fi
     done

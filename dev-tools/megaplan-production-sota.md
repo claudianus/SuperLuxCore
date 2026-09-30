@@ -38,6 +38,7 @@
 | 적응 커스틱 파티션 | `path.hybridbackforward.adaptivecaustic` | e25 회귀 통과 | 저 | ◐ auto-causal 라우팅과 통합 |
 | 라이트 패스 자동 | `path.lighttracing.auto`(기본 on) + 씬 시그니처 | 커스틱 가능 재질(SPECULAR\|GLOSSY)/산란볼륨+광원 → 자동 enable; 디퓨즈-only는 태스크 예산 보존 | 중 | ✅ `67b15c522` (HBF는 기존 프로모션 규칙으로 연동) |
 | MNEE 자동 | `path.mnee.auto`(기본 on) + 동일 시그니처 | eye-side 커스틱 솔버 — connect당 자체 게이트라 미적용 씬에서 거의 무비용; GPU LMNEE는 LT 태스크에 편승 | 중 | ✅ `72369ed5f` (luxball/bigmonkey 6케이스 + stress 씬 24spp 커스틱 + GPU finite + 패리티 4/4) |
+| GPU zero-tail 폴백 | `taskCount<=8192` 시 `lightTaskCount==0` | 억제만 걸리고 보상 패스 없는 잠복 블랙아웃 — PATHOCL은 네이티브로 라이트 패스 위임(hbf 강등), TILEPATHOCL은 네이티브/PGIC 보상 시 lt 유지, 무보상 시 lt/hbf/vc 해제 | 중 | ✅ (e17 T-1 회귀 추가, 패리티 4/4, demote 시 mean 0.0626 finite) |
 | VC/VM | `path.vertexconnection.enable` | VCM 본질 biased — 문서화 후 제한적 기본 | 중 | — 일관성 게이트 먼저 |
 | PSR | `path.regularization.sigma` | v1 랜딩, 감쇠 미구현 | 중 | ◐ halflife 완성 후 |
 | ARC | 적응 클램핑 | e42 통과 | 저 | ◐ 기본값 재검토 |

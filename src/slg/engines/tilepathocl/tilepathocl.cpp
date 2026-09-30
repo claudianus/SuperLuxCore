@@ -136,6 +136,29 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 						Min(taskCount - 8192u,
 						RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
 				eyeTaskCount = taskCount - lightTaskCount;
+				if (lightTaskCount == 0) {
+					// The eye side runs hybrid caustic suppression only
+					// while some light pass exists to deposit what it
+					// removes. Unlike PATHOCL there is no partition pin
+					// here, so native threads still run the CPU light
+					// pass under hybrid and compensate; so does the
+					// PhotonGI caustic cache. Only a GPU-only render
+					// without the cache is uncompensated - demote the
+					// request before ParseOptions/taskConfig consume it.
+					const bool compensated = (nativeRenderThreadCount > 0) ||
+							cfg.Get(Property("path.photongi.caustic.enabled")(
+							false)).Get<bool>();
+					if (!compensated) {
+						SLG_LOG("WARNING: light tasks wanted but the "
+								"task count leaves no light-task tail "
+								"and no other light pass can compensate: "
+								"disabling light tracing, hybrid and "
+								"vertex connection");
+						cfg.Set(Property("path.lighttracing.enable")(false));
+						cfg.Set(Property("path.hybridbackforward.enable")(false));
+						cfg.Set(Property("path.vertexconnection.enable")(false));
+					}
+				}
 			}
 		}
 	}

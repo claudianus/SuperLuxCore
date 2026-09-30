@@ -338,3 +338,42 @@ need wall-clock gates (guiding auto-condition, ReSTIR GI auto,
 SSP tail, adaptive caustic partition) — next: measure guiding
 overhead on diffuse-only vs indirect-dominated scenes to design the
 auto signature.
+
+## Session cont. — GPU zero-light-task fallback (uncommitted->next)
+
+**Bug:** auto light tracing on `taskCount <= 8192` produced a ~black
+film (mean ~4e-5). Light tasks are carved in 8192-chunks, so a small
+population yields `lightTaskCount == 0` — but the eye side still ran
+hybrid caustic suppression, so the caustic class was removed with no
+estimator to deposit it. e17 caught it only because auto-lt newly
+exposed the latent hole.
+
+**Fix** (`pathocl.cpp`, `tilepathocl.cpp` — demote before
+`ParseOptions`/`taskConfig` consume the flags):
+
+- PATHOCL: GPU lt pins native threads eye-only (`partition=1.0`), so
+  they cannot compensate while lt stays on. native>0 -> demote to
+  `lt=0, hbf=1` (CPU Metropolis light pass + splatter deposits
+  instead); native=0 and no PhotonGI caustic cache -> disable
+  lt/hbf/vc (VC would re-promote lt in StartLockLess).
+- TILEPATHOCL: no partition pin — native threads still run the light
+  pass via splatter under hbf promotion, so native>0 or
+  `photongi.caustic.enabled` keeps lt on; only GPU-only+cache-less
+  demotes.
+- CPU engines unaffected: light pass is a per-sample probability
+  split, not a block-quantized population.
+
+**e17 fixes while debugging:** the test hard-coded the sibling
+`LuxCore/` checkout (stale binary) and measured MNEE vacuously —
+auto-lt promotes hbf, which by design suppresses eye-side MNEE.
+Now pins `lt=0/hbf=0` explicitly for the MNEE-isolated asserts, and
+gains T-1: auto-demote-not-black (unpinned auto config at
+taskCount=8192 must render finite, mean>0.001).
+
+Verified: e17 ALL PASS (T-1 + T0..T3); Release parity 4/4;
+TILEPATHOCL smoke finite/valid; PATHOCL demote log "handing the
+light pass to the native threads" + mean 0.0626.
+Docs: `doc/features/gpu_lighttracing.md` auto-enable/zero-tail
+section; `doc/features/mnee.md` `path.mnee.auto` property.
+Also: parity-regression.sh now prefers Release over Debug (Debug
+silently won twice, masking fresh binaries).

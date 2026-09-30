@@ -178,6 +178,9 @@ that a real caustic is produced (proving solves actually ran).
 ### Properties
 
 - `path.mnee.enable` (default off) — specular-chain direct light sampling.
+- `path.mnee.auto` (default on) — auto-enables MNEE on caustic-capable
+  scenes (same `ApplyAutoLightTracing` signature gate as light tracing,
+  see `gpu_lighttracing.md`). Explicit `path.mnee.enable` always wins.
 - `path.mnee.maxiterations` (default 12) — Newton/line-search bound.
 - `path.mnee.maxspecular` (default 1) — 2..4 enable multi-specular chains.
 - `path.mnee.seedcache` (default on, CPU + GPU) — manifold seed cache

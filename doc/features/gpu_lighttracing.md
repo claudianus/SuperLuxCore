@@ -1184,6 +1184,41 @@ in addition to everything above:
 None of that is in v1 scope; the task/state/buffer separation chosen here
 is what makes it reachable without restructuring.
 
+## Auto-enable and the zero-light-task tail
+
+`path.lighttracing.auto` (default on) + `path.mnee.auto` (default on):
+`RenderConfig::ApplyAutoLightTracing()` (`renderconfig.cpp`) stamps a
+caustic-capable scene signature — at least one emitter AND a non-`NULLMAT`
+material with SPECULAR|GLOSSY events or a scattering volume — and injects
+`path.lighttracing.enable=1` / `path.mnee.enable=1` into the resolved
+config when the artist left them unset (`NULLMAT` is excluded: it reports
+SPECULAR|TRANSMIT but is a passthrough that focuses nothing). Explicit
+`.enable` values and `*.auto=0` remain authoritative. Engines: PATHCPU,
+RTPATHCPU, PATHOCL, TILEPATHOCL, RTPATHOCL.
+
+Zero-tail hazard on GPU: light tasks are carved out of the task
+population in 8192-chunks, so `taskCount <= 8192` always yields
+`lightTaskCount == 0`. The eye side still runs hybrid caustic
+suppression, so without a compensating light pass the caustic class
+vanishes from the film — a silent ~black render (e17 originally caught
+this: film mean ~4e-5). `UpdateTaskCount()`/`InitTaskCount()` therefore
+demote before `ParseOptions`/`taskConfig` consume the flags:
+
+- **PATHOCL**: native threads are pinned eye-only (`partition=1.0`) while
+  GPU lt stays on, so they cannot compensate. With native threads the
+  engine demotes to `lt=0, hbf=1` — the CPU Metropolis light pass +
+  splatter deposit instead (verified: film mean 0.0626, finite, vs the
+  old ~4e-5). With no native threads and no PhotonGI caustic cache, lt,
+  hbf and vertex connection are all disabled (VC needs the GPU
+  light-task population and would re-promote lt in `StartLockLess`).
+- **TILEPATHOCL**: no partition pin — native threads run the light pass
+  through the splatter even with lt on, so `nativeRenderThreadCount > 0`
+  or `path.photongi.caustic.enabled` keep lt enabled; only a GPU-only,
+  cache-less render demotes.
+
+CPU engines never hit this: their light pass is a per-sample probability
+split inside each thread, not a block-quantized task population.
+
 ## Platforms
 
 CPU (reference), OpenCL GPU, Metal GPU — same code path via cl2msl;

@@ -43,14 +43,21 @@ fire and produce a refracted caustic pool on the floor.
 
 Safety: runs with a small task count and a hard per-render deadline
 instead of an infinite wait; run it under an external shell timeout too.
+
+Estimator isolation: eye-side MNEE is suppressed whenever the hybrid
+split is on (the light pass owns caustic-class paths - see
+pathtracer.cpp "every MNEE path is caustic-class"). Since
+path.lighttracing.auto now enables it on caustic-capable scenes, the
+test pins lighttracing/hybrid off so the GPU MNEE solve is what makes
+the floor pool.
 """
 import sys, os, time
-sys.path.insert(0, "/Users/modumaru/Desktop/code/superluxcore/LuxCore/out/build/src/pysuperluxcore/Release")
+sys.path.insert(0, "/Users/modumaru/Desktop/code/superluxcore/SuperLuxCore/out/build/src/pysuperluxcore/Release")
 import pysuperluxcore
 import numpy as np
 
 # PLY refs inside the .scn are cwd-relative: chdir into the scene dir.
-SCENE_DIR = "/Users/modumaru/Desktop/code/superluxcore/LuxCore/scenes/mnee"
+SCENE_DIR = "/Users/modumaru/Desktop/code/superluxcore/SuperLuxCore/scenes/mnee"
 SCENE = "seedcache.scn"
 TASK_COUNT = 8192       # small: development-time bound, not production size
 RENDER_TIMEOUT_S = 240  # hard deadline; far below the macOS GPU watchdog
@@ -58,7 +65,7 @@ SPP = 256
 W, H = 192, 144
 
 
-def render(mnee_enable, seedcache, seed=1):
+def render(mnee_enable, seedcache, seed=1, extra=""):
     scn = pysuperluxcore.Properties(SCENE)  # ply refs resolve via chdir(SCENE_DIR)
     sc = pysuperluxcore.Scene(); sc.Parse(scn)
     cfg = pysuperluxcore.Properties()
@@ -73,6 +80,7 @@ opencl.task.count = {TASK_COUNT}
 path.mnee.enable = {mnee_enable}
 path.mnee.seedcache = {seedcache}
 film.imagepipelines.0.0.type = NOP
+{extra}
 """)
     ses = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(cfg, sc))
     ses.Start()
@@ -99,11 +107,25 @@ def main():
     print(f"MNEE seed cache on GPU ({SCENE}, {W}x{H}, {SPP}spp)", flush=True)
     checks = []
 
+    # --- T-1: zero-config sanity on the tiny task count -----------------
+    # opencl.task.count=8192 leaves no light-task tail. Auto light
+    # tracing must then demote itself (or hand the light pass to native
+    # threads) instead of letting hybrid suppression black out the
+    # caustic class - this regressed to a ~zero film once.
+    img_auto = render(1, 1)  # no lt/hbf pins: auto signature decides
+    checks.append(("T-1.auto-demote-not-black",
+                   np.isfinite(img_auto).all() and img_auto.mean() > 0.001,
+                   f"mean={img_auto.mean():.5f} finite={np.isfinite(img_auto).all()}"))
+    print(f"  [{'PASS' if checks[-1][1] else 'FAIL'}] {checks[-1][0]}: {checks[-1][2]}", flush=True)
+
     # --- T0: prove MNEE actually runs in this scene ---------------------
     # Without MNEE the refracted caustic cannot be connected, so the
     # bright region collapses. If it does not, the scene is vacuous.
-    img_off_mnee = render(0, 0)
-    img_on_mnee = render(1, 1)
+    # lt/hbf are pinned off: hybrid mode suppresses eye-side MNEE by
+    # design, so leaving them to the auto gate would vacuously pass/fail.
+    PINS = "path.lighttracing.enable = 0\npath.hybridbackforward.enable = 0\n"
+    img_off_mnee = render(0, 0, extra=PINS)
+    img_on_mnee = render(1, 1, extra=PINS)
     lum_off = img_off_mnee.mean(axis=2)
     lum_on = img_on_mnee.mean(axis=2)
     bright = lum_on > np.percentile(lum_on, 90)
@@ -120,8 +142,8 @@ def main():
         return
 
     # --- T1/T2/T3: seed-cache on/off equivalence on an MNEE-active scene -
-    off = (render(1, 0, 1) + render(1, 0, 2)) / 2
-    on = (render(1, 1, 1) + render(1, 1, 2)) / 2
+    off = (render(1, 0, 1, PINS) + render(1, 0, 2, PINS)) / 2
+    on = (render(1, 1, 1, PINS) + render(1, 1, 2, PINS)) / 2
 
     m_off, m_on = off.mean(), on.mean()
     lum = off.mean(axis=2)
