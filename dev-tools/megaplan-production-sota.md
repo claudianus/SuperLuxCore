@@ -36,7 +36,7 @@
 | ReSTIR GI | `path.restir.gi.enable` + BLC 토글 | e19 10/10, manylights RMSE -37% | 중 | ◐ 자동 조건 설계 |
 | SSP tail | `path.ssp.enable` | 커스틱 경로 이득, 디퓨즈 씬 비용 | 중 | ◐ |
 | 적응 커스틱 파티션 | `path.hybridbackforward.adaptivecaustic` | e25 회귀 통과 | 저 | ◐ auto-causal 라우팅과 통합 |
-| 하이브리드 백포워드 | `path.hybridbackforward.enable` | LT 조합 기본 후보 | 중 | ◐ |
+| 라이트 패스 자동 | `path.lighttracing.auto`(기본 on) + 씬 시그니처 | 커스틱 가능 재질(SPECULAR\|GLOSSY)/산란볼륨+광원 → 자동 enable; 디퓨즈-only는 태스크 예산 보존 | 중 | ✅ `67b15c522` (HBF는 기존 프로모션 규칙으로 연동) |
 | VC/VM | `path.vertexconnection.enable` | VCM 본질 biased — 문서화 후 제한적 기본 | 중 | — 일관성 게이트 먼저 |
 | PSR | `path.regularization.sigma` | v1 랜딩, 감쇠 미구현 | 중 | ◐ halflife 완성 후 |
 | ARC | 적응 클램핑 | e42 통과 | 저 | ◐ 기본값 재검토 |

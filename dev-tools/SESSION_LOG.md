@@ -279,3 +279,38 @@ Timing A/B deferred: machine load 3.8-47 during session, micro-op
 Pending backlog notes: wavefront remains auto-off (dense mode faster
 on measured workloads); GPU crawl-bail stays reverted (state machine
 boundary rule); spectral parity e28 e2e pending a clean idle run.
+
+## Session cont. — M4 promotions + CI film gate (`5be8ade72`, `0e4f7ccfc`, `67b15c522`)
+
+**LIGHT_BVH -> default `lightstrategy.type`** (3 sites in
+lightstrategy.cpp): e26 10/10 gates (unbiased vs LOG_POWER, RMSE
+0.0017 < flat 0.0027, cpu-gpu parity). Flat distribution still built
+via LogPower base for emit/infinite-only tasks. Escape:
+`lightstrategy.type=LOG_POWER`.
+
+**Auto light tracing** (`path.lighttracing.auto`, default on):
+`RenderConfig::ApplyAutoLightTracing()` runs in `Parse()` right after
+`GetConfig().Set(props)` — the resolved `lighttracing.enable` is
+*injected into cfg* so every raw reader (6 film-channel sites in
+pathcpu/pathocl/tilepathocl/pathoclbase/bakecpu + light strategy
+setup) sees one value. Signature: any non-NULLMAT material with
+SPECULAR|GLOSSY events, or scattering volume (CLEAR_VOL excluded), +
+>=1 emitter; engines restricted to PATH/TILEPATH/RT* (light-task
+populations). NULLMAT is SPECULAR|TRANSMIT but focuses nothing —
+excluded. Verified: luxball on / bigmonkey off / vol-densitygrid on /
+auto=0 and enable=0/1 honored; luxball PATHOCL 16spp finite,
+mean 0.0985 == non-LT baseline.
+
+Gotcha encoded: ParseOptions has no scene; film channel decisions read
+raw cfg BEFORE pathTracer exists (pathoclbase InitFilm) — that's why
+injection happens in RenderConfig::Parse, not ParseOptions.
+
+**CI**: wheel-builder already runs `pysuperluxcoretest` on
+ubuntu/windows/macos(2) — added `AssertFilmSane` gate (all pixels
+finite + mean > 1e-4) to SimpleRender/StrandsRender -> real render
+regression gate on every OS, no GPU needed.
+
+**Blender**: `sync_dev_install.sh` ran — site-packages .so + dev wheel
++ addon sources synced, smoke-import OK.
+
+Parity (Release console): 4/4 PASS under the new defaults.
