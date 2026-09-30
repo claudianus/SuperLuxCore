@@ -809,3 +809,22 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - Cache gate added: `buffersFromFileMapping` skips proxy meshes -
   building it would fault every vertex/normal page at load and
   defeat the ray-driven residency path. Parity 6/6 re-verified.
+
+## Metal offline metallib - PATHOCL cold-start 23.5s -> ~10s
+
+- `newLibraryWithSource` JITs every process (~2.5s warm, ~20s cold
+  for the 3.6MB PATHOCL program). Metal-1.x `atomic_uint`/
+  `atomic_fetch_add_explicit` shims were the only blocker for the
+  offline `xcrun metal` front-end - migrated the cl2msl shim to
+  `metal::atomic<T>` (semantic-identical rename, same memory model).
+- `OfflineCompileMSL` (metaldevice.mm): first cache-miss runs
+  `xcrun metal -std=macos-metal2.4 -ffast-math` + `xcrun metallib`,
+  stores `<key>.metallib` next to the `.msl`/`.json` translation
+  files. `newLibraryWithURL` loads it in ~40ms.
+- PATHOCL cold boot: 23.5s -> ~10s (cl2msl 3s + xcrun ~7s, no more
+  per-process JIT). Warm boot: kernels compile 3190ms -> 40ms.
+- Fall back to JIT silently when xcrun is absent (CI, stripped
+  installs); the .metallib is written under the same pid-temp +
+  rename scheme as the translation cache.
+- Verify: luxball PATHOCL 320x180 boots clean cold/warm; parity
+  re-run green (vol_caustic 0.19 reldiff on retry - MC noise).

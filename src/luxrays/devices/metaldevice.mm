@@ -328,9 +328,58 @@ static bool RunCL2MSL(const Context &ctx,
 	js << jf.rdbuf();
 	mslSource = ms.str();
 	layoutJson = js.str();
-
 	StoreCachedTranslation(cacheDir, key, mslSource, layoutJson);
 	return true;
+}
+
+
+// Compile the translated MSL into a loadable library without paying
+// newLibraryWithSource's ~20s JIT on every process: on the first cold
+// run we hand the file to the offline `xcrun metal` front-end
+// (~1.5-3s for the 3.6MB PATHOCL program) and keep the resulting
+// .metallib next to the translation files. Every later process loads
+// it via newLibraryWithFile (~ms). Returns "" when the toolchain is
+// not there (CI, stripped installs) - the caller falls back to the
+// JIT path.
+static string OfflineCompileMSL(const Context &ctx,
+		const string &cacheDir, const string &key,
+		const string &mslSource, const string &programName) {
+	const string mslPath = cacheDir + "/" + key + ".msl";
+	const string libPath = cacheDir + "/" + key + ".metallib";
+
+	// newLibraryWithSource auto-injects <metal_stdlib>; the offline
+	// -x metal front-end does not, so hand it a wrapper that pulls
+	// the stdlib in before the translated body. The bare .msl kept
+	// by StoreCachedTranslation stays canonical for the JIT path.
+	const string offlSrcPath = cacheDir + "/" + key + "_offline.msl";
+	{
+		ofstream w(offlSrcPath, ios::binary);
+		w << "#include <metal_stdlib>\n#include <metal_atomic>\n\n"
+			<< mslSource;
+	}
+
+	struct stat st;
+	if (stat(libPath.c_str(), &st) == 0 && st.st_size > 0)
+		return libPath;
+
+	// Write into a pid-unique temp file then rename - a concurrent
+	// session doing the same compile must not hand us a truncated lib.
+	const string tmpPath = libPath + ".tmp" + to_string((long)getpid());
+	const string cmd = "xcrun metal -x metal -std=macos-metal2.4"
+		" -ffast-math -c \"" + offlSrcPath + "\" -o \"" + tmpPath + ".air\""
+		" && xcrun metallib \"" + tmpPath + ".air\" -o \"" + tmpPath + "\""
+		" && mv \"" + tmpPath + "\" \"" + libPath + "\""
+		" ; rm -f \"" + tmpPath + ".air\"";
+	const int rc = system(cmd.c_str());
+	if (rc != 0 || stat(libPath.c_str(), &st) != 0 || st.st_size == 0) {
+		LR_LOG(ctx, "[" << programName << "] xcrun metal unavailable"
+				" or failed (rc=" << rc << ") - falling back to JIT");
+		unlink(tmpPath.c_str());
+		return "";
+	}
+	LR_LOG(ctx, "[" << programName << "] offline metallib built (" <<
+			(st.st_size / 1024) << "Kbytes)");
+	return libPath;
 }
 
 // MetalDeviceProgram: the compiled-pipeline archive is serialized when
@@ -375,14 +424,30 @@ HardwareDeviceProgramUPtr MetalDevice::CompileProgram(
 		throw runtime_error(programName + " METAL program translation error");
 	}
 
-	LR_LOG(deviceContext, "[" << programName << "] Compiling Metal kernels ("
-			<< (mslSource.size() / 1024) << "Kbytes)");
-
 	id<MTLDevice> dev = (__bridge id<MTLDevice>)device;
 	NSError *err = nil;
-	id<MTLLibrary> lib = [dev newLibraryWithSource:
-			[NSString stringWithUTF8String:mslSource.c_str()]
-			options:nil error:&err];
+	id<MTLLibrary> lib = nil;
+
+	// Prefer a pre-built .metallib (built once per install by
+	// OfflineCompileMSL): newLibraryWithFile is ~ms vs ~2.5s for
+	// newLibraryWithSource on a cached translation and ~20s on a
+	// cold one.
+	{
+		const string libPath = OfflineCompileMSL(deviceContext,
+				cacheDir, cacheKey, mslSource, programName);
+		if (!libPath.empty())
+			lib = [dev newLibraryWithURL:
+					[NSURL fileURLWithPath:
+						[NSString stringWithUTF8String:libPath.c_str()]]
+					error:&err];
+	}
+	if (!lib) {
+		LR_LOG(deviceContext, "[" << programName << "] Compiling Metal kernels ("
+				<< (mslSource.size() / 1024) << "Kbytes)");
+		lib = [dev newLibraryWithSource:
+				[NSString stringWithUTF8String:mslSource.c_str()]
+				options:nil error:&err];
+	}
 	if (!lib) {
 		LR_LOG(deviceContext, "[" << programName << "] Metal program compilation error: "
 				<< endl << (err ? err.localizedDescription.UTF8String : "?"));

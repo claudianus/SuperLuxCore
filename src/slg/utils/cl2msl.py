@@ -166,9 +166,13 @@ inline float vload_half(size_t o, const device half *p) { return (float)p[o]; }
 inline float vload_half(size_t o, const thread half *p) { return (float)p[o]; }
 inline void vstore_half(float v, size_t o, device half *p) { p[o] = (half)v; }
 
-inline uint atomic_inc(device metal::atomic_uint *a) { return metal::atomic_fetch_add_explicit(a, 1u, metal::memory_order_relaxed); }
+// Metal-3 atomics: atomic<T> is layout-compatible with T and works
+// in both the JIT (newLibraryWithSource) and offline (xcrun metal)
+// front-ends. The atomic_uint/atomic_fetch_add_explicit names are
+// Metal-1.x dialect that only the JIT still accepts.
+inline uint atomic_inc(device metal::atomic<uint> *a) { return metal::atomic_fetch_add_explicit(a, 1u, metal::memory_order_relaxed); }
 inline uint atomic_inc(device uint *p) {
-    device metal::atomic_uint *ap = reinterpret_cast<device metal::atomic_uint *>(p);
+    device metal::atomic<uint> *ap = reinterpret_cast<device metal::atomic<uint> *>(p);
     return metal::atomic_fetch_add_explicit(ap, 1u, metal::memory_order_relaxed);
 }
 
@@ -190,14 +194,14 @@ inline int as_int(float x) { return as_type<int>(x); }
 inline float as_float(uint x) { return as_type<float>(x); }
 
 inline uint atomic_cmpxchg(device uint *p, uint expected, uint desired) {
-    device metal::atomic_uint *ap = reinterpret_cast<device metal::atomic_uint *>(p);
+    device metal::atomic<uint> *ap = reinterpret_cast<device metal::atomic<uint> *>(p);
     uint current = expected;
     metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
         metal::memory_order_relaxed, metal::memory_order_relaxed);
     return current;
 }
 inline int atomic_cmpxchg(device int *p, int expected, int desired) {
-    device metal::atomic_int *ap = reinterpret_cast<device metal::atomic_int *>(p);
+    device metal::atomic<int> *ap = reinterpret_cast<device metal::atomic<int> *>(p);
     int current = expected;
     metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
         metal::memory_order_relaxed, metal::memory_order_relaxed);
