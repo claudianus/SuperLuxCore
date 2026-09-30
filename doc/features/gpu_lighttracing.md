@@ -1205,16 +1205,20 @@ this: film mean ~4e-5). `UpdateTaskCount()`/`InitTaskCount()` therefore
 demote before `ParseOptions`/`taskConfig` consume the flags:
 
 - **PATHOCL**: native threads are pinned eye-only (`partition=1.0`) while
-  GPU lt stays on, so they cannot compensate. With native threads the
-  engine demotes to `lt=0, hbf=1` — the CPU Metropolis light pass +
-  splatter deposit instead (verified: film mean 0.0626, finite, vs the
-  old ~4e-5). With no native threads and no PhotonGI caustic cache, lt,
-  hbf and vertex connection are all disabled (VC needs the GPU
-  light-task population and would re-promote lt in `StartLockLess`).
+  GPU lt stays on, so they cannot compensate. The PhotonGI caustic cache
+  cannot either — under hbf it is only consulted at `depth != 0`
+  (pathtracer.cpp `IsCausticEnabled` gate), so the depth-0 caustic pool
+  still needs a light pass. With native threads the engine demotes to
+  `lt=0, hbf=1` — the CPU Metropolis light pass + splatter deposit
+  instead (verified: film mean 0.0626, finite, vs the old ~4e-5). With
+  no native threads, lt, hbf and vertex connection are all disabled:
+  the eye path then estimates caustics unbiased and any enabled PhotonGI
+  cache keeps its all-depths boost (VC needs the GPU light-task
+  population and would re-promote lt in `StartLockLess`).
 - **TILEPATHOCL**: no partition pin — native threads run the light pass
   through the splatter even with lt on, so `nativeRenderThreadCount > 0`
-  or `path.photongi.caustic.enabled` keep lt enabled; only a GPU-only,
-  cache-less render demotes.
+  keeps lt enabled; only a GPU-only render demotes (pgic cannot
+  substitute for the depth-0 pool, same as PATHOCL).
 
 CPU engines never hit this: their light pass is a per-sample probability
 split inside each thread, not a block-quantized task population.
