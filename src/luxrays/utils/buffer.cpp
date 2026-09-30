@@ -126,33 +126,6 @@ void Buffer<TYPE, SUBTYPE, PAD>::Allocate(size_t count) {
 }
 
 
-// Getters
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-std::span<TYPE> Buffer<TYPE, SUBTYPE, PAD>::GetObjects() const {
-	// Compute size (without padding)
-	size_t size = effectiveSize / sizeof(TYPE);
-
-	// Make span
-	auto * ptr = reinterpret_cast<TYPE*>(data.get());
-	return std::span<TYPE>(ptr, size);
-}
-
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-std::span<SUBTYPE> Buffer<TYPE, SUBTYPE, PAD>::GetSubObjects() const {
-	// Compute size (without padding)
-	size_t size = effectiveSize / sizeof(SUBTYPE);
-
-	// Make span
-	auto * ptr = reinterpret_cast<SUBTYPE*>(data.get());
-	return std::span<SUBTYPE>(ptr, size);
-}
-
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-std::span<std::byte> Buffer<TYPE, SUBTYPE, PAD>::GetBytes(bool withPad) const {
-	return std::span<std::byte>(data.get(), withPad ? totalSize : effectiveSize);
-}
-
-
 template< typename TYPE, typename SUBTYPE, std::array PAD >
 std::span<const std::byte> Buffer<TYPE, SUBTYPE, PAD>::GetPad() const {
 	// Adopted memory has no trailing pad in the allocation itself
@@ -161,12 +134,6 @@ std::span<const std::byte> Buffer<TYPE, SUBTYPE, PAD>::GetPad() const {
 	return GetBytes(true).subspan(effectiveSize);
 }
 
-
-// Subset
-template< typename TYPE, typename SUBTYPE, std::array PAD >
-std::span<TYPE> Buffer<TYPE, SUBTYPE, PAD>::Subset(std::size_t offset, std::size_t count) {
-	return asType.subspan(offset, count);
-}
 
 // Set: Copy 'from' into 'this'
 // Realloc if needed

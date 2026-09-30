@@ -85,10 +85,14 @@ public:
 	// Allocate internal container for count objects of type TYPE
 	void Allocate(std::size_t count);
 
-	// Getters
-	std::span<TYPE> GetObjects() const;
-	std::span<SUBTYPE> GetSubObjects() const;
-	std::span<std::byte> GetBytes(bool withPad=false) const;
+	// Getters - inline: same per-hit PLT cost as operator[]
+	std::span<TYPE> GetObjects() const { return asType; }
+	std::span<SUBTYPE> GetSubObjects() const { return asSubType; }
+	std::span<std::byte> GetBytes(bool withPad=false) const {
+		const size_t n = withPad ? totalSize : effectiveSize;
+		return std::span<std::byte>(
+				reinterpret_cast<std::byte*>(data.get()), n);
+	}
 
 	// Get pad value
 	// Pad is directly read in buffer, so as it allows to check integrity
@@ -100,7 +104,9 @@ public:
 	void Set(std::span<const SUBTYPE> from);
 
 	// Subset
-	std::span<TYPE> Subset(std::size_t offset, std::size_t count = std::dynamic_extent);
+	std::span<TYPE> Subset(std::size_t offset, std::size_t count = std::dynamic_extent) {
+		return asType.subspan(offset, count);
+	}
 
 	// Indexation
 	// Indexation - inline: this is on every vertex/normal/UV fetch, on
