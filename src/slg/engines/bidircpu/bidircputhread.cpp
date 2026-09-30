@@ -97,7 +97,7 @@ void BiDirCPURenderThread::AOVWarmUp(
 		Film::ALBEDO, Film::AVG_SHADING_NORMAL
 	});
 
-	sampleResult.Init(&sampleResultsChannels, engine->GetFilm().GetRadianceGroupCount());
+	sampleResult.Init(&sampleResultsChannels, engine->GetFilm().GetRadianceGroupCount(), engine->GetFilm().GetLPECount());
 
 	// Initialize the max. path depth
 	PathDepthInfo maxPathDepthInfo;
@@ -256,7 +256,8 @@ SampleResult &BiDirCPURenderThread::AddResult(vector<SampleResult> &sampleResult
 
 	sampleResult.Init(
 			fromLight ? &lightSampleResultsChannels : &eyeSampleResultsChannels,
-			engine->GetFilm().GetRadianceGroupCount());
+			engine->GetFilm().GetRadianceGroupCount(),
+			engine->GetFilm().GetLPECount());
 
 	return sampleResult;
 }

@@ -27,7 +27,7 @@ using namespace slg;
 // SampleResult
 //------------------------------------------------------------------------------
 
-void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGroupCount) {
+void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGroupCount, const u_int lpeCount) {
 	channels = chnls;
 	channelsMask = 0;
 	for (auto const c : *chnls)
@@ -108,7 +108,8 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 		motionVector[3] = 0.f;
 	}
 
-	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
+	lpeSlotsUsed = Min(lpeCount, (u_int)SLG_LPE_MAX_EXPRESSIONS);
+	for (u_int i = 0; i < lpeSlotsUsed; ++i)
 		lpeRadiance[i] = Spectrum();
 
 	firstPathVertexEvent = NONE;

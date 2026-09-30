@@ -217,7 +217,7 @@ void PathTracer::InitEyeSampleResults(FilmConstRef film, vector<SampleResult> &s
 		const bool useFilmSplat) {
 	SampleResult &sampleResult = sampleResults[0];
 
-	sampleResult.Init(&eyeSampleResultsChannels, film.GetRadianceGroupCount());
+	sampleResult.Init(&eyeSampleResultsChannels, film.GetRadianceGroupCount(), film.GetLPECount());
 	sampleResult.useFilmSplat = useFilmSplat;
 }
 
@@ -2087,7 +2087,7 @@ SampleResult &PathTracer::AddLightSampleResult(vector<SampleResult> &sampleResul
 	// vector, forcing a malloc/free pair per light-path vertex.
 	assert (used < sampleResults.size());
 	SampleResult &sampleResult = sampleResults[used++];
-	sampleResult.Init(&lightSampleResultsChannels, film.GetRadianceGroupCount());
+	sampleResult.Init(&lightSampleResultsChannels, film.GetRadianceGroupCount(), film.GetLPECount());
 
 	return sampleResult;
 }

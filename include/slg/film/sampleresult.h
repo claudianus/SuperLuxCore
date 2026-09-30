@@ -47,10 +47,11 @@ public:
 	}
 	~SampleResult() { }
 
-	void Init(const Film::FilmChannels *channels, const u_int radianceGroupCount);
+	void Init(const Film::FilmChannels *channels, const u_int radianceGroupCount,
+			const u_int lpeCount = 0);
 	// Re-run Init with the stored channel set - the idempotent reset used
 	// between samples so every splat field returns to its default.
-	void Reset() { Init(channels, radiance.Size()); }
+	void Reset() { Init(channels, radiance.Size(), lpeSlotsUsed); }
 
 	// O(1) channel test via a mask computed in Init - the old
 	// unordered_set::count walked a bucket chain per query (called ~20
@@ -132,6 +133,9 @@ public:
 private:
 	const Film::FilmChannels *channels;
 	u_longlong channelsMask = 0;
+	// LPE slots in lpeRadiance that were live at Init - Init only zeroes
+	// that prefix so LPE-off scenes pay nothing for the fixed array.
+	u_int lpeSlotsUsed = 0;
 };
 
 }
