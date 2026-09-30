@@ -1288,3 +1288,14 @@ batch wasn't hit, and the added per-call write cost more than the save.
 
 Kept: aligned_alloc + 64B-per-thread struct padding (that part works -
 removed neighbour-thread line sharing).
+
+## Sobol PASS_BATCH 4 -> 16 (2026-10-01)
+
+passPerPixel is a shared u_int array - 16 pixels per 64B line. Each
+GetNewPixelPassBatch() does an atomic RMW on one slot; with batch=4 that
+was one invalidating write per 4 samples per thread. 16 cuts the RMW rate
+and line bouncing 4x. Adaptive-gate drift bound grows from 3 to 15 samples
+per converged pixel - still negligible at production spp.
+
+Note: absolute throughput numbers today are unreliable - vitest workers
+were running on the box during measurement.
