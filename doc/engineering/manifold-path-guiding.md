@@ -156,3 +156,15 @@ are cheap early-outs; eye-side chain fails are ~0. The residual
 bottleneck is therefore *light-side Newton attempts on physically
 unsolvable configurations* - the failure-evidence cap bounds their
 cost; a smarter candidate prefilter would be the next lever.
+
+Research anchor for the next round: Hong, Duan, Wang, Yuksel, Zeltner,
+Lin, "Sample Space Partitioning and Spatiotemporal Resampling for
+Specular Manifold Sampling" (SIGGRAPH Asia 2025). Tile-based sample
+space partitioning bounds the manifold walk region and builds a
+per-frame prior distribution concentrating initial guesses near
+solutions; ReSTIR reuse amortizes solve cost. Our seed grid is already
+a spatial prior - the missing pieces are (a) bounding the walk to the
+cell region (cuts no-step/exhausted waste), and (b) resampling across
+cells. Batch-SMS (pommpy.net/BatchSMS) is the complementary idea:
+allocate Bernoulli trials across the *set* of solutions per shading
+point instead of one-solve-per-sample.
