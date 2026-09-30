@@ -336,6 +336,10 @@ protected:
 	// the linear scan O(thousands) per write.
 	std::unordered_set<const MetalDeviceBuffer *> pendingBuffers;
 	u_int pendingEncoderCount;
+	// Buffers that already had useResource() on pendingCB - the driver
+	// call is idempotent, so a second call for the same buffer in the
+	// same command buffer is pure overhead. Cleared on commit.
+	std::unordered_set<const MetalDeviceBuffer *> pendingResident;
 
 	// Commit pendingCB into inFlightWork. inFlightMutex must be held.
 	void CommitPendingLocked();

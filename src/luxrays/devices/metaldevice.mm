@@ -1021,10 +1021,14 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 		}
 	}
 	// Table-slot buffers need explicit residency every dispatch (see
-	// the marshalTable comment in the arg walk).
-	for (const MetalDeviceBuffer *mb : metalDeviceKernel.marshalTable)
-		[e useResource:(__bridge id<MTLBuffer>)mb->metalBuff
-			usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+	// the marshalTable comment in the arg walk), but useResource on a
+	// buffer already registered on this command buffer is a no-op at
+	// driver level - dedup via pendingResident.
+	for (const MetalDeviceBuffer *mb : metalDeviceKernel.marshalTable) {
+		if (pendingResident.insert(mb).second)
+			[e useResource:(__bridge id<MTLBuffer>)mb->metalBuff
+				usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+	}
 
 	const size_t groupSize = max<size_t>(workGroupSize.sizes[0], 1);
 	const size_t global = globalSize.sizes[0];
@@ -1059,6 +1063,7 @@ void MetalDevice::CommitPendingLocked() {
 	inFlightWork.push_back({pendingCB,
 			{pendingBuffers.begin(), pendingBuffers.end()}});
 	pendingBuffers.clear();
+	pendingResident.clear();
 	[(__bridge id<MTLCommandBuffer>)pendingCB commit];
 	pendingCB = nullptr;
 	pendingEncoderCount = 0;

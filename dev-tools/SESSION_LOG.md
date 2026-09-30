@@ -972,3 +972,16 @@ No new wins landed. Moving to startup-time wins next.
   near-zero weights outside the filter radius on many LUT cells.
 - Skipped with `filteredWeight == 0.f` continue.
 - Parity cornell + strands PASS.
+
+## Metal useResource dedup (2026-10-01)
+
+- `EnqueueKernel` re-called `useResource` on every `marshalTable`
+  buffer, every dispatch. Metal's residency hint is idempotent
+  within a command buffer - N× the work for identical effect.
+- Added `pendingResident` (cleared with `pendingBuffers` on
+  commit): `useResource` now only fires once per buffer per CB.
+- Effect: small but uniform - PATHOCL kernels have ~10-20
+  table-bound buffers (film, tasks, textures, lights) and run
+  64 dispatches per pendingCB, so this removes hundreds of
+  driver calls per batch.
+- Parity cornell + strands PASS.
