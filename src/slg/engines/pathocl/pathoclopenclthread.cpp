@@ -19,6 +19,7 @@
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include <mutex>
+#include <sstream>
 #include <boost/lexical_cast.hpp>
 
 #include "luxrays/core/geometry/transform.h"
@@ -305,6 +306,42 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		totalIterations += iterations;
 
 		intersectionDevice.FinishQueue();
+
+		// LUX_TASKSTATE_DUMP: per-batch GPU task-state histogram
+		// (wavefront stall diagnosis - tasks stranded in tail states
+		// are exactly the collapse mode the 09-30 wavefront A/B showed;
+		// MK_DONE/bounce-vs-NEE balance measures batch health).
+		// tasksStateBuff is sizeof(u_int)*taskCount.
+		static const bool dumpStates = getenv("LUX_TASKSTATE_DUMP") != nullptr;
+		if (dumpStates && tasksStateBuff) {
+			const size_t stateSize = sizeof(slg::ocl::pathoclbase::GPUTaskState);
+			std::vector<u_int> states(taskCount);
+			std::vector<char> raw(stateSize * taskCount);
+			intersectionDevice.EnqueueReadBuffer(tasksStateBuff, CL_TRUE,
+					raw.size(), raw.data());
+			intersectionDevice.FinishQueue();
+			for (u_int i = 0; i < taskCount; ++i)
+				states[i] = *reinterpret_cast<const u_int *>(
+						raw.data() + i * stateSize);
+			static const char *names[] = {
+				"RT_NEXT_VERTEX","HIT_NOTHING","HIT_OBJECT","DL_ILLUMINATE",
+				"DL_SAMPLE_BSDF","RT_DL","GEN_NEXT_RAY","SPLAT","NEXT_SAMPLE",
+				"GEN_CAMERA_RAY","DONE","MNEE_NEXT_VERTEX","RT_RESTIR",
+				"RT_GI_BOUNCE","RT_GI_RESOLVE","LIGHT_INIT","LIGHT_VERTEX",
+				"VC_CONNECT","PT_BOUNCE","PT_RESTIR_MERGE","RT_PT_BOUNCE"};
+			std::vector<u_int> hist(sizeof(names) / sizeof(names[0]), 0u);
+			u_int other = 0;
+			for (u_int i = 0; i < taskCount; ++i) {
+				if (states[i] < hist.size()) ++hist[states[i]];
+				else ++other;
+			}
+			std::ostringstream os;
+			os << "[taskstates t=" << threadIndex << "]";
+			for (u_int s = 0; s < hist.size(); ++s)
+				if (hist[s]) os << " " << names[s] << "=" << hist[s];
+			if (other) os << " other=" << other;
+			SLG_LOG(os.str());
+		}
 
 		// Path guiding (P1-3 M2b-2): drain GPU training records once per
 		// batch, after the queue drain above. A per-iteration drain

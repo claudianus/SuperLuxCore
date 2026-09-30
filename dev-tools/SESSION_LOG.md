@@ -767,3 +767,22 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - e26_lightbvh_test.py: 10/10 PASS on the OpenCL-dup fix build
   (T3 mesh cpu-gpu parity 0.171920 vs 0.171330, T4 unbiased
   0.171920 vs ref 0.171714).
+
+## GPU task-state histogram (LUX_TASKSTATE_DUMP) — 2026-10-01 (cont.)
+
+- Added an env-gated per-batch state readback in
+  pathoclopenclthread.cpp: after each FinishQueue, drains
+  tasksStateBuff (sizeof(GPUTaskState)*taskCount) and logs a
+  histogram. Gives the first occupancy signal for the wavefront
+  stall investigation noted in perf-ledger.
+- Correct-stride fix landed in the same commit: the buffer element
+  is a GPUTaskState STRUCT (PathState at offset 0), not a u32 state;
+  an earlier u32-stride read showed 181K/524K "other" - reading
+  per-task struct fields, not states.
+- Observed (cornell PATHOCL 720p, taskCount 524288): dense batches
+  sit RT_NEXT_VERTEX≈334K + RT_DL≈190K; wavefront splits the same
+  population into HIT_OBJECT/DL_SAMPLE_BSDF/GEN_NEXT_RAY/etc as
+  designed - no stranded-tail distribution. A/B: dense 11.0 Ms/s vs
+  wavefront 5.7 Ms/s on cornell (wavefront still opt-in; its win
+  needs heavy-divergence scenes where the dense launch is dominated
+  by the longest state).
