@@ -177,6 +177,21 @@ private:
 	void InitNewSample();
 	float GetSobolSample(const u_int index);
 
+	// Film-geometry + channel flags cached between subregion changes
+	// (channels are frozen once Film::Init() has run; only the subregion
+	// may still move, e.g. runtime resolution reduction)
+	void UpdateFilmCache();
+	u_int filmCacheSubRegion[4];
+	u_int filmCacheWidth, filmCacheHeight;
+	u_int cacheSubRegionWidth, cacheSubRegionHeight;
+	u_int cacheTileWidthCount, cacheTileHeightCount, cacheBucketCount;
+	// Magic multipliers for the per-sample udivs (u32->u64 mulhi trick)
+	u_int cacheTileWidthCountMagic, cacheOverlappingMagic;
+	bool filmCacheValid;
+	bool cacheHasNoiseChannel, cacheHasUserImportanceChannel;
+	// log2 of the pow2 sizes (all RoundUpPow2'd at construction)
+	u_int bucketSizeLog2, tileSizeLog2;
+
 	static luxrays::PropertiesUPtr GetDefaultProps();
 
 	std::shared_ptr<SobolSamplerSharedData> sharedData;

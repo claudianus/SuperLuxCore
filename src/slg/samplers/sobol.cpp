@@ -136,7 +136,11 @@ SobolSampler::SobolSampler(
 	sobolOwenTileEnable(false),
 	sobolAdaptiveMomentsEnable(false),
 	sobolAdaptiveRelErrTarget(.02f),
-	bucketIndex(std::make_shared<u_int>(0))
+	bucketIndex(std::make_shared<u_int>(0)),
+	filmCacheValid(false),
+	cacheHasNoiseChannel(false), cacheHasUserImportanceChannel(false),
+	bucketSizeLog2(UIntLog2(bucketSz)),
+	tileSizeLog2(UIntLog2(tileSz))
 {}
 SobolSampler::SobolSampler(
 	const RandomGeneratorUPtr & rnd,
@@ -165,30 +169,81 @@ SobolSampler::SobolSampler(
 	sobolOwenTileEnable(false),
 	sobolAdaptiveMomentsEnable(false),
 	sobolAdaptiveRelErrTarget(.02f),
-	bucketIndex(std::make_shared<u_int>(0))
+	bucketIndex(std::make_shared<u_int>(0)),
+	filmCacheValid(false),
+	cacheHasNoiseChannel(false), cacheHasUserImportanceChannel(false),
+	bucketSizeLog2(UIntLog2(bucketSz)),
+	tileSizeLog2(UIntLog2(tileSz))
 {}
 
 SobolSampler::~SobolSampler() {
 }
 
+// Returns floor(a / b) for u32 via precomputed magic: magic = ceil(2^k/b)
+// is wrong in general; we use the exact "mulhi by floor(2^32/d)+1" form,
+// valid for all a < 2^32 when d >= 1 (same trick compilers emit).
+static inline u_int FastDivByCached(const u_int a, const u_int d,
+		const u_int magic) {
+	return (u_int)(((u_longlong)a * magic) >> 32);
+}
+
+void SobolSampler::UpdateFilmCache() {
+	const bool doImageSamples = (imageSamplesEnable && film);
+	if (!doImageSamples) {
+		filmCacheValid = false;
+		return;
+	}
+
+	const u_int *filmSubRegion = GetFilm().GetSubRegion();
+	if (filmCacheValid &&
+			filmCacheSubRegion[0] == filmSubRegion[0] &&
+			filmCacheSubRegion[1] == filmSubRegion[1] &&
+			filmCacheSubRegion[2] == filmSubRegion[2] &&
+			filmCacheSubRegion[3] == filmSubRegion[3] &&
+			filmCacheWidth == GetFilm().GetWidth() &&
+			filmCacheHeight == GetFilm().GetHeight())
+		return;
+
+	filmCacheSubRegion[0] = filmSubRegion[0];
+	filmCacheSubRegion[1] = filmSubRegion[1];
+	filmCacheSubRegion[2] = filmSubRegion[2];
+	filmCacheSubRegion[3] = filmSubRegion[3];
+	filmCacheWidth = GetFilm().GetWidth();
+	filmCacheHeight = GetFilm().GetHeight();
+
+	cacheSubRegionWidth = filmSubRegion[1] - filmSubRegion[0] + 1;
+	cacheSubRegionHeight = filmSubRegion[3] - filmSubRegion[2] + 1;
+
+	cacheTileWidthCount = (cacheSubRegionWidth + tileSize - 1) / tileSize;
+	cacheTileHeightCount = (cacheSubRegionHeight + tileSize - 1) / tileSize;
+
+	// floor(2^32/d)+1 magic is exact for every u32 dividend
+	cacheTileWidthCountMagic = (u_int)((0x100000000ULL / cacheTileWidthCount) + 1);
+	cacheOverlappingMagic = (u_int)((0x100000000ULL / overlapping) + 1);
+
+	cacheBucketCount = overlapping *
+			(cacheTileWidthCount * tileSize * cacheTileHeightCount * tileSize +
+			bucketSize - 1) / bucketSize;
+
+	// Channels are frozen after Film::Init(); re-reading them here is a
+	// one-time cost per subregion change instead of per sample.
+	cacheHasNoiseChannel = GetFilm().HasChannel(Film::NOISE);
+	cacheHasUserImportanceChannel = GetFilm().HasChannel(Film::USER_IMPORTANCE);
+
+	filmCacheValid = true;
+}
+
 void SobolSampler::InitNewSample() {
 	const bool doImageSamples = (imageSamplesEnable && film);
 
-	const u_int *filmSubRegion;
-	u_int subRegionWidth, subRegionHeight, tiletWidthCount, tileHeightCount, bucketCount;
+	if (doImageSamples)
+		UpdateFilmCache();
 
-	if (doImageSamples) {
-		filmSubRegion = GetFilm().GetSubRegion();
-
-		subRegionWidth = filmSubRegion[1] - filmSubRegion[0] + 1;
-		subRegionHeight = filmSubRegion[3] - filmSubRegion[2] + 1;
-
-		tiletWidthCount = (subRegionWidth + tileSize - 1) / tileSize;
-		tileHeightCount = (subRegionHeight + tileSize - 1) / tileSize;
-
-		bucketCount = overlapping * (tiletWidthCount * tileSize * tileHeightCount * tileSize + bucketSize - 1) / bucketSize;
-	} else
-		bucketCount = 0xffffffffu;
+	const u_int *filmSubRegion = doImageSamples ? filmCacheSubRegion : nullptr;
+	const u_int subRegionWidth = doImageSamples ? cacheSubRegionWidth : 0;
+	const u_int subRegionHeight = doImageSamples ? cacheSubRegionHeight : 0;
+	const u_int tiletWidthCount = cacheTileWidthCount;
+	const u_int bucketCount = doImageSamples ? cacheBucketCount : 0xffffffffu;
 
 	// Update pixelIndexOffset
 
@@ -223,12 +278,15 @@ void SobolSampler::InitNewSample() {
 		if (doImageSamples) {
 			// Transform the bucket index in a pixel coordinate
 
-			const u_int pixelBucketIndex = (*bucketIndex / overlapping) * bucketSize + pixelOffset;
-			const u_int mortonCurveOffset = pixelBucketIndex % (tileSize * tileSize);
-			const u_int pixelTileIndex = pixelBucketIndex / (tileSize * tileSize);
+			const u_int pixelBucketIndex = FastDivByCached(*bucketIndex,
+					overlapping, cacheOverlappingMagic) * bucketSize + pixelOffset;
+			const u_int mortonCurveOffset = pixelBucketIndex & (tileSize * tileSize - 1);
+			const u_int pixelTileIndex = pixelBucketIndex >> (tileSizeLog2 * 2);
 
-			const u_int subRegionPixelX = (pixelTileIndex % tiletWidthCount) * tileSize + DecodeMorton2X(mortonCurveOffset);
-			const u_int subRegionPixelY = (pixelTileIndex / tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
+			const u_int pixelTileIndexX = FastDivByCached(pixelTileIndex,
+					tiletWidthCount, cacheTileWidthCountMagic);
+			const u_int subRegionPixelX = pixelTileIndexX * tileSize + DecodeMorton2X(mortonCurveOffset);
+			const u_int subRegionPixelY = (pixelTileIndex - pixelTileIndexX * tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
 			if ((subRegionPixelX >= subRegionWidth) || (subRegionPixelY >= subRegionHeight)) {
 				// Skip the pixels out of the film sub region
 				continue;
@@ -238,8 +296,7 @@ void SobolSampler::InitNewSample() {
 			pixelY = filmSubRegion[2] + subRegionPixelY;
 
 			// Check if the current pixel is over or under the convergence threshold
-			auto& film = sharedData->GetEngineFilm();
-			if ((adaptiveStrength > 0.f) && (GetFilm().HasChannel(Film::NOISE) || sobolAdaptiveMomentsEnable)) {
+			if ((adaptiveStrength > 0.f) && (cacheHasNoiseChannel || sobolAdaptiveMomentsEnable)) {
 				// Pixels are sampled in accordance with how far from convergence they are
 				float noise = std::numeric_limits<float>::infinity();
 				bool noiseValid = false;
@@ -254,7 +311,7 @@ void SobolSampler::InitNewSample() {
 					const u_int curPass = sharedData->PeekPixelPass(subIdx);
 					if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
 						const float n = (float)(curPass - SOBOL_STARTOFFSET);
-						const float *mom = &GetFilm().pixelLumaMoments[(pixelX + pixelY * GetFilm().GetWidth()) * 2];
+						const float *mom = &GetFilm().pixelLumaMoments[(pixelX + pixelY * filmCacheWidth) * 2];
 						// NaN/Inf accumulators (a corrupt sample reached
 						// the moments) collapse to relErr=0 and would
 						// starve the pixel - leave noiseValid false so
@@ -270,7 +327,7 @@ void SobolSampler::InitNewSample() {
 					}
 				}
 
-				if (GetFilm().HasChannel(Film::NOISE)) {
+				if (cacheHasNoiseChannel) {
 					const float chNoise =
 						*(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
 					// Max-combine the two estimators: a pixel is only
@@ -289,7 +346,7 @@ void SobolSampler::InitNewSample() {
 
 				// Factor user driven importance sampling too
 				float threshold;
-				if (GetFilm().HasChannel(Film::USER_IMPORTANCE)) {
+				if (cacheHasUserImportanceChannel) {
 					const float userImportance = *(GetFilm().channel_USER_IMPORTANCE->GetPixel(pixelX, pixelY));
 
 					// Noise is initialized to INFINITY at start
