@@ -38,6 +38,36 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			// a huge delta, relaunching a worker every poll
 			((filmSPP > lastUpdateSpp) &&
 			((filmSPP - lastUpdateSpp) > params.caustic.updateSpp)))) {
+		// Saturation backoff (CPU re-trace mode, LUX_PGIC_SATBACKOFF=0
+		// disables): a generation retraces the whole photon budget and
+		// rebuilds the index - seconds of worker CPU competing with
+		// render threads. Once the radius refinement has reached its
+		// floor (the compounding pass^-0.02 decay is capped by
+		// minLookUpRadius) a swap only replaces the population with an
+		// equal-size fresh one at the same radius: statistically
+		// identical cache quality, pure waste (e56: ~4s/pass with the
+		// radius pinned at its floor). Skip while nothing can change; a
+		// scene edit recreates the whole cache (engine restart), so a
+		// static session stays correct. GPU ingest mode is untouched
+		// (its per-pass cost is an index rebuild only).
+		static const bool saturationBackoffOn = !getenv("LUX_PGIC_SATBACKOFF") ||
+				(getenv("LUX_PGIC_SATBACKOFF")[0] != '0');
+		if (saturationBackoffOn && !initialUpdatePending && !ingestOnly) {
+			const float nextRadius = Max(params.caustic.lookUpRadius /
+					powf(float(causticPhotonPass + 1),
+					.5f * (1.f - params.caustic.radiusReduction)),
+					params.caustic.minLookUpRadius);
+			if (nextRadius >= params.caustic.lookUpRadius * (1.f - 1e-4f)) {
+				if (!saturationBackoffLogged) {
+					saturationBackoffLogged = true;
+					SLG_LOG("PhotonGI caustic cache lookup radius at its "
+							"floor: skipping further update passes "
+							"(LUX_PGIC_SATBACKOFF=0 restores)");
+				}
+				lastUpdateSpp = filmSPP;
+				return false;
+			}
+		}
 		// A safety check to avoid the update if visibility map has been
 		// deallocated (caustic beams and frustum-culled deposits do not
 		// need it)

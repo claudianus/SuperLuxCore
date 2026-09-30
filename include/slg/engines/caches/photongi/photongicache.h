@@ -487,6 +487,8 @@ private:
 	// (ingest mode is resolved by then, so GPU deposit sessions build
 	// gen-1 from device records instead of a CPU trace)
 	std::atomic<bool> initialUpdatePending{false};
+	// Saturation backoff: logs the first skipped update pass only
+	bool saturationBackoffLogged = false;
 
 	// GPU photon deposit staging (B1'): IngestTracedPhotons() fills
 	// these under the mutex; UpdateWorker() absorbs them into the
