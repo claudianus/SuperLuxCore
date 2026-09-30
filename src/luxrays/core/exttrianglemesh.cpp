@@ -286,6 +286,12 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 	// always take dataIndex=0); other layers keep the base path. Requires
 	// normals for the dn1/dn2 entries to matter - a no-normal mesh is
 	// cheaper through the base (it early-outs on det==0 anyway).
+	// Proxy meshes keep their vertex buffers in a file mapping for
+	// ray-driven residency; building the cache here would fault every
+	// vertex/normal page in at load, defeating it (same reason the
+	// triNormals fill skips external buffers).
+	if (buffersFromFileMapping)
+		return;
 	if (!HasUVs(0) || !normals || (tris.Count() == 0) ||
 			(tris.Count() > triDiffCacheMaxTris))
 		return;

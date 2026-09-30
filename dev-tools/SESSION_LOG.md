@@ -806,3 +806,6 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
 - Verify: cpu-gpu-parity 6/6 PASS (unchanged reldiffs); prism PATHCPU
   128spp throughput 4.6-6.0 -> 5.8-6.3 Ms/s (+~5-25%,
   host-noise-bound). e26 LightBVH 10/10 unchanged.
+- Cache gate added: `buffersFromFileMapping` skips proxy meshes -
+  building it would fault every vertex/normal page at load and
+  defeat the ray-driven residency path. Parity 6/6 re-verified.
