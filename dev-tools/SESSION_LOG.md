@@ -1000,3 +1000,20 @@ No new wins landed. Moving to startup-time wins next.
   task-queue compaction doesn't pay for its bookkeeping.
 - `pathocl.wavefront = on` remains available for bench scenes where
   it might win (uniform transport).
+
+## wavefront investigation + misc small wins (2026-10-01)
+
+- `pathocl.wavefront = auto` resolves OFF (correctly - measured 12x
+  slowdown on prism-conservatory vs dense); stays opt-in for scenes
+  where it pays off. The `wf_auto_bench.py` docstring was misleading
+  (auto didn't turn on wavefront).
+- `EnqueueKernel` marshal dedup: `useResource` for `marshalTable`
+  buffers now runs once per command buffer (was: per dispatch).
+- `pathoclopenclthread`: fused eyeTask/lightTask sample-count loops.
+- Film-splatter: skipped zero-weight splats (was paying 29 atomic
+  writes per dead splat through the filter LUT).
+- Framebuffer race fix (separate commit): `AtomicAddWeightedPixel`
+  now atomically updates the weight channel.
+- New helper `MetalDevice::WaitOnBuffer`: EnqueueWriteBuffer and
+  AllocBuffer conflict paths now wait only on CBs referencing the
+  target buffer - previously drained the whole queue.
