@@ -894,6 +894,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 	const AcceleratorConstSPtr embreeAccel = device ?
 			AcceleratorConstSPtr() : dataSet->GetAccelerator(ACCEL_EMBREE);
 	for (;;) {
+		const SceneObject *sceneObjPtr = nullptr;
 		bool hit = device ?
 			device->TraceRay(ray, rayHit) :
 			embreeAccel->Intersect(ray, rayHit);
@@ -919,8 +920,11 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			rayVolume = bsdf->hitPoint.intoObject ?
 				bsdf->hitPoint.exteriorVolume : bsdf->hitPoint.interiorVolume;
 
-			// Check if it a triangle with bevel edges
-			auto& mesh = objDefs->GetSceneObject(rayHit->meshIndex).GetExtMesh();
+			// Single scene-object fetch per hit (was fetched again
+			// below for IsCameraInvisible)
+			const auto& sceneObj = objDefs->GetSceneObject(rayHit->meshIndex);
+			sceneObjPtr = &sceneObj;
+			auto& mesh = sceneObj.GetExtMesh();
 			if (mesh.GetBevelRadius() > 0.f) {
 				float t;
 				Point p;
@@ -1013,7 +1017,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 					// Check if the volume priority system tells me to continue to trace the ray
 					volInfo->ContinueToTrace(*bsdf) ||
 					// Check if it is a camera invisible object and we are a tracing a camera ray
-					(cameraRay && objDefs->GetSceneObject(rayHit->meshIndex).IsCameraInvisible());
+					(cameraRay && sceneObjPtr->IsCameraInvisible());
 
 			// Check if it is a pass through point
 			if (!continueToTrace) {
