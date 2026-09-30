@@ -67,6 +67,40 @@ OPENCL_FORCE_INLINE void MirrorMaterial_Evaluate(__global const Material* restri
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
+	// PSR parity with CPU MirrorMaterial::Evaluate: under regularization
+	// the vertex answers the isotropic GGX-conductor lobe
+	// (GlassMicrofacet_Evaluate reflect branch, allowTransmit = false ->
+	// F = 1, threshold = 0).
+	if (hitPoint->regularization > 0.f) {
+		if (lightDir.z * eyeDir.z < 0.f) {
+			MATERIAL_EVALUATE_RETURN_BLACK;
+		}
+		const float cosThetaO = fabs(lightDir.z);
+		const float cosThetaI = fabs(eyeDir.z);
+		if ((cosThetaO == 0.f) || (cosThetaI == 0.f)) {
+			MATERIAL_EVALUATE_RETURN_BLACK;
+		}
+		float3 wh = lightDir + eyeDir;
+		if (wh.x == 0.f && wh.y == 0.f && wh.z == 0.f) {
+			MATERIAL_EVALUATE_RETURN_BLACK;
+		}
+		wh = normalize(wh);
+		if (wh.z < 0.f)
+			wh = -wh;
+
+		const float alpha = hitPoint->regularization;
+		const float D = Microfacet_GgxD(wh, alpha, alpha);
+		const float G = Microfacet_GgxG2(lightDir, eyeDir, alpha, alpha);
+		const float specPdfD = Microfacet_GgxVNDFReflectionPdf(eyeDir, wh, alpha, alpha);
+		const float3 krVal = Texture_GetSpectrumValue(material->mirror.krTexIndex, hitPoint TEXTURES_PARAM);
+		const float3 result = Spectrum_Clamp(krVal) * (D * G / (4.f * cosThetaI));
+
+		EvalStack_PushFloat3(result);
+		EvalStack_PushBSDFEvent(GLOSSY | REFLECT);
+		EvalStack_PushFloat(specPdfD);
+		return;
+	}
+
 	MATERIAL_EVALUATE_RETURN_BLACK;
 }
 
@@ -81,13 +115,59 @@ OPENCL_FORCE_INLINE void MirrorMaterial_Sample(__global const Material* restrict
 	float3 fixedDir;
 	EvalStack_PopFloat3(fixedDir);
 
+	const float3 krVal = Texture_GetSpectrumValue(material->mirror.krTexIndex, hitPoint TEXTURES_PARAM);
+	const float3 kr = Spectrum_Clamp(krVal);
+
+	// PSR parity with CPU MirrorMaterial::Sample: a regularized mirror
+	// vertex scatters the isotropic GGX-conductor lobe (alpha = sigma),
+	// not the delta reflection. F = 1 (reflectance folded into kr),
+	// threshold = 0 (no transmit lobe) - same specialization the CPU
+	// GlassMicrofacet_Sample applies with allowTransmit = false.
+	if (hitPoint->regularization > 0.f) {
+		if (fabs(fixedDir.z) < DEFAULT_COS_EPSILON_STATIC) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float alpha = hitPoint->regularization;
+
+		float3 wh = Microfacet_GgxSampleVNDF(fixedDir, alpha, alpha, u0, u1);
+		const float specPdf = Microfacet_GgxVNDFHalfPdf(fixedDir, wh, alpha, alpha);
+		if (specPdf <= 0.f) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		if (wh.z < 0.f)
+			wh = -wh;
+		const float cosThetaOH = dot(fixedDir, wh);
+
+		float pdfW = specPdf / (4.f * fabs(cosThetaOH));
+		if (pdfW <= 0.f) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float3 sampledDirReg = 2.f * cosThetaOH * wh - fixedDir;
+		const float cosi = fabs(sampledDirReg.z);
+		if ((cosi < DEFAULT_COS_EPSILON_STATIC) ||
+				(fixedDir.z * sampledDirReg.z < 0.f)) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+
+		const float g1 = Microfacet_GgxG1(fixedDir, alpha, alpha);
+		if (g1 <= 0.f) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float3 result = kr *
+				(Microfacet_GgxG2(sampledDirReg, fixedDir, alpha, alpha) / g1);
+
+		EvalStack_PushFloat3(result);
+		EvalStack_PushFloat3(sampledDirReg);
+		EvalStack_PushFloat(pdfW);
+		EvalStack_PushBSDFEvent(GLOSSY | REFLECT);
+	}
+
 	const BSDFEvent event = SPECULAR | REFLECT;
 
 	const float3 sampledDir = MAKE_FLOAT3(-fixedDir.x, -fixedDir.y, fixedDir.z);
 	const float pdfW = 1.f;
 
-	const float3 krVal = Texture_GetSpectrumValue(material->mirror.krTexIndex, hitPoint TEXTURES_PARAM);
-	const float3 result = Spectrum_Clamp(krVal);
+	const float3 result = kr;
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

@@ -221,10 +221,6 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 		*localSampledDir = 2.f * cosThetaOH * wh - localFixedDir;
 
 		const float cosi = fabsf(localSampledDir->z);
-		static int _sdbg = 0;
-		if ((_sdbg++ & 0xf) == 0)
-			fprintf(stderr, "[GMF-SAMP] cosi=%f hemi=%f thr=%f\n",
-					cosi, localFixedDir.z * localSampledDir->z, threshold);
 		if ((cosi < DEFAULT_COS_EPSILON_STATIC) ||
 				(localFixedDir.z * localSampledDir->z < 0.f))
 			return luxrays::Spectrum();
@@ -237,11 +233,6 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 				DispersiveFresnelR(nt, nc, disp, cosThetaOH) :
 				luxrays::Spectrum(1.f);
 		const float g1 = GgxG1(localFixedDir, alpha, alpha);
-		static int _rdbg = 0;
-		if ((_rdbg++ & 0xf) == 0)
-			fprintf(stderr, "[GMF-REFL] F=%f g1=%f g2=%f cosOH=%f thr=%f\n",
-					F.c[0], g1, GgxG2(*localSampledDir, localFixedDir, alpha, alpha),
-					cosThetaOH, threshold);
 		if (g1 <= 0.f)
 			return luxrays::Spectrum();
 		result = kr * F *

@@ -640,3 +640,34 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   (AtomicAdd(&passPerPixel[i], k) - same contention slot, 1 RMW per k).
 - Sanity: cornell 160x90 @32spp PATHCPU mean 0.3767 (matches pre-change
   0.3767), prism-conservatory mean 0.3380, no NaN.
+
+## GPU PSR parity for delta materials + debug cleanup — 2026-10-01 (cont.)
+
+- Path-space regularization (PSR) existed only on CPU for the DELTA
+  materials: MirrorMaterial / GlassMaterial returned perfect-specular
+  results on PATHOCL/TILEPATHOCL while PATHCPU answered the
+  GlassMicrofacet GGX lobe (alpha = sigma). Caustic-path regularization
+  therefore diverged CPU vs GPU on any mirror/glass-heavy scene.
+- Mirrored the CPU contract on GPU:
+  - MirrorMaterial_Sample: isotropic GGX-conductor lobe
+    (allowTransmit=false -> F=1, threshold=0, result = kr * G2/G1).
+  - MirrorMaterial_Evaluate: reflect branch (D*G/4cosI)*kr,
+    directPdfW = VNDF reflection pdf.
+  - GlassMaterial_Sample: full dielectric port (Transmit + Reflect,
+    threshold = 0/.5/1 by kt/kr blackness, DispersiveIOR/Sellmeier /
+    Cauchy IOR, Spectral_CollapseToHero on dispersive transmit,
+    fromLight = rayFlags&LIGHT_RAY for the transmit pdf/Fresnel
+    convention).
+  - GlassMaterial_Evaluate: new GlassMaterial_GGXDielectricEval
+    helper - transmit and reflect branches with VNDF half-pdf /
+    reflection-pdf (renamed from a prototype overload; OpenCL C has
+    no overloading).
+  - Forwarding kernels/callers unchanged: regularization <= 0 keeps
+    the old delta behavior bit-identical.
+- PATHOCL mirror-sphere-psr @32spp: mean 0.33584 vs PATHCPU 0.33013,
+  no NaN - same parity band as the pre-fix build (the lobe change is
+  statistical, not bit-level).
+- Removed debug fprintf spam left inside
+  GlassMicrofacet_Sample (CPU header): _sdbg/_rdbg counters printed
+  every 16th PSR sample - stderr noise + lock contention on the hot
+  path.

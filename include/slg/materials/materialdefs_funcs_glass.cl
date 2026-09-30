@@ -219,6 +219,126 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularTransmission(__global const
 	return lkt * ce;
 }
 
+OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material* restrict material,
+		__global const HitPoint *hitPoint,
+		float3 lightDir, float3 eyeDir,
+		float3 *result, BSDFEvent *event, float *directPdfW
+		MATERIALS_PARAM_DECL) {
+	const float3 ktVal = Texture_GetSpectrumValue(material->glass.ktTexIndex, hitPoint TEXTURES_PARAM);
+	const float3 krVal = Texture_GetSpectrumValue(material->glass.krTexIndex, hitPoint TEXTURES_PARAM);
+	const float3 kt = Spectrum_Clamp(ktVal);
+	const float3 kr = Spectrum_Clamp(krVal);
+
+	const bool isKtBlack = Spectrum_IsBlack(kt);
+	const bool isKrBlack = Spectrum_IsBlack(kr);
+	if (isKtBlack && isKrBlack) {
+		*result = BLACK;
+		*event = NONE;
+		*directPdfW = 0.f;
+		return;
+	}
+
+	const float nc = ExtractExteriorIors(hitPoint, material->glass.exteriorIorTexIndex TEXTURES_PARAM);
+	const float nt = ExtractInteriorIors(hitPoint, material->glass.interiorIorTexIndex TEXTURES_PARAM);
+	const float cauchyB = (material->glass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->glass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+	const float3 sellB = (material->glass.sellmeierBTex != NULL_INDEX &&
+			material->glass.sellmeierCTex != NULL_INDEX) ?
+			Texture_GetSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			MAKE_FLOAT3(-1.f, 0.f, 0.f);
+	const float3 sellC = (sellB.x >= 0.f) ?
+			Texture_GetSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			BLACK;
+#if defined(SLG_SPECTRAL)
+	// Dispersion: the direction-defining wavelength is the hero bin
+	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, sellB, sellC, hitPoint);
+#else
+	const float ntEff = Spectral_RefIOR(nt, cauchyB, sellB, sellC);
+#endif
+	const float ntc = ntEff / nc;
+
+	// CPU GlassMicrofacet_Evaluate: isotropic alpha = regularization.
+	const float alpha = hitPoint->regularization;
+	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
+
+	if (lightDir.z * eyeDir.z < 0.f) {
+		// Transmit
+		const bool entering = (CosTheta(lightDir) > 0.f);
+		const float eta = entering ? (nc / ntEff) : ntc;
+
+		float3 wh = eta * lightDir + eyeDir;
+		if (wh.z < 0.f)
+			wh = -wh;
+
+		const float lengthSquared = dot(wh, wh);
+		if (!(lengthSquared > 0.f)) {
+			*result = BLACK;
+			*event = NONE;
+			*directPdfW = 0.f;
+			return;
+		}
+		wh /= sqrt(lengthSquared);
+		const float cosThetaI = fabs(CosTheta(eyeDir));
+		const float cosThetaIH = fabs(dot(eyeDir, wh));
+		const float cosThetaOH = dot(lightDir, wh);
+
+		const float D = Microfacet_GgxD(wh, alpha, alpha);
+		const float G = Microfacet_GgxG2(lightDir, eyeDir, alpha, alpha);
+		const float specPdfD = Microfacet_GgxVNDFHalfPdf(eyeDir, wh, alpha, alpha);
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaOH, hitPoint);
+#else
+		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
+				FresnelCauchy_Evaluate(ntc, cosThetaOH), FresnelCauchy_Evaluate(ntc, cosThetaOH));
+#endif
+
+		const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
+		*directPdfW = threshold * specPdfD *
+				(fromLight ? fabs(cosThetaIH) :
+						(fabs(cosThetaOH) * eta * eta)) / lengthSquared;
+
+		*result = (fabs(cosThetaOH) * cosThetaIH * D *
+				G / (cosThetaI * lengthSquared)) *
+				kt * (WHITE - F);
+		*event = GLOSSY | TRANSMIT;
+	} else {
+		// Reflect
+		const float cosThetaO = fabs(CosTheta(lightDir));
+		const float cosThetaI = fabs(CosTheta(eyeDir));
+		if ((cosThetaO == 0.f) || (cosThetaI == 0.f)) {
+			*result = BLACK;
+			*event = NONE;
+			*directPdfW = 0.f;
+			return;
+		}
+		float3 wh = lightDir + eyeDir;
+		if (wh.x == 0.f && wh.y == 0.f && wh.z == 0.f) {
+			*result = BLACK;
+			*event = NONE;
+			*directPdfW = 0.f;
+			return;
+		}
+		wh = normalize(wh);
+		if (wh.z < 0.f)
+			wh = -wh;
+
+		const float cosThetaH = dot(eyeDir, wh);
+		const float D = Microfacet_GgxD(wh, alpha, alpha);
+		const float G = Microfacet_GgxG2(lightDir, eyeDir, alpha, alpha);
+		const float specPdf = Microfacet_GgxVNDFReflectionPdf(eyeDir, wh, alpha, alpha);
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosThetaH, hitPoint);
+#else
+		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaH),
+				FresnelCauchy_Evaluate(ntc, cosThetaH), FresnelCauchy_Evaluate(ntc, cosThetaH));
+#endif
+
+		*directPdfW = (1.f - threshold) * specPdf;
+		// Regularized delta lobe is single-scatter: no multibounce.
+		*result = (D * G / (4.f * cosThetaI)) * kr * F;
+		*event = GLOSSY | REFLECT;
+	}
+}
+
 OPENCL_FORCE_INLINE void GlassMaterial_Evaluate(__global const Material* restrict material,
 		__global const HitPoint *hitPoint,
 		__global float *evalStack, uint *evalStackOffset
@@ -226,6 +346,21 @@ OPENCL_FORCE_INLINE void GlassMaterial_Evaluate(__global const Material* restric
 	float3 lightDir, eyeDir;
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
+
+	// PSR parity with CPU GlassMaterial::Evaluate: under regularization
+	// the vertex answers the isotropic GGX-dielectric lobe
+	// (GlassMicrofacet_Evaluate, allowTransmit = true).
+	if (hitPoint->regularization > 0.f) {
+		float3 result;
+		BSDFEvent event;
+		float directPdfW;
+		GlassMaterial_GGXDielectricEval(material, hitPoint, lightDir, eyeDir,
+				&result, &event, &directPdfW MATERIALS_PARAM);
+		EvalStack_PushFloat3(result);
+		EvalStack_PushBSDFEvent(event);
+		EvalStack_PushFloat(directPdfW);
+		return;
+	}
 
 	MATERIAL_EVALUATE_RETURN_BLACK;
 }
@@ -258,6 +393,139 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	const float3 sellC = (sellB.x >= 0.f) ?
 			Texture_GetSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
 			BLACK;
+
+	// PSR parity with CPU GlassMaterial::Sample: a regularized glass
+	// vertex scatters the isotropic GGX-dielectric lobe (alpha = sigma),
+	// allowTransmit = true - same structure as RoughGlassMaterial_Sample
+	// with useGgx forced and no multibounce/thin-film extras.
+	if (hitPoint->regularization > 0.f) {
+		if (fabs(fixedDir.z) < DEFAULT_COS_EPSILON_STATIC) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const bool isKtBlack = Spectrum_IsBlack(kt);
+		const bool isKrBlack = Spectrum_IsBlack(kr);
+		if (isKtBlack && isKrBlack) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		const float alpha = hitPoint->regularization;
+#if defined(SLG_SPECTRAL)
+		// Dispersion: the direction-defining wavelength is the hero bin
+		const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, sellB, sellC, hitPoint);
+#else
+		const float ntEff = Spectral_RefIOR(nt, cauchyB, sellB, sellC);
+#endif
+		const float ntc = ntEff / nc;
+
+		float3 wh = Microfacet_GgxSampleVNDF(fixedDir, alpha, alpha, u0, u1);
+		const float specPdf = Microfacet_GgxVNDFHalfPdf(fixedDir, wh, alpha, alpha);
+		if (specPdf <= 0.f) {
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		if (wh.z < 0.f)
+			wh = -wh;
+		const float cosThetaOH = dot(fixedDir, wh);
+
+		float threshold;
+		if (!isKrBlack) {
+			threshold = isKtBlack ? 0.f : .5f;
+		} else {
+			if (!isKtBlack)
+				threshold = 1.f;
+			else {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+		}
+
+		float3 sampledDir;
+		BSDFEvent event;
+		float pdfW;
+		float3 result;
+		if (passThroughEvent < threshold) {
+			// Transmit
+			const bool entering = (CosTheta(fixedDir) > 0.f);
+			const float eta = entering ? (nc / ntEff) : ntc;
+			const float eta2 = eta * eta;
+			const float sinThetaIH2 = eta2 * fmax(0.f, 1.f - cosThetaOH * cosThetaOH);
+			if (sinThetaIH2 >= 1.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			float cosThetaIH = sqrt(1.f - sinThetaIH2);
+			if (entering)
+				cosThetaIH = -cosThetaIH;
+			const float length = eta * cosThetaOH + cosThetaIH;
+			sampledDir = length * wh - eta * fixedDir;
+
+			const float lengthSquared = length * length;
+			pdfW = specPdf * fabs(cosThetaIH) / lengthSquared;
+			if (pdfW <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+			// (f*cos)/pdf = kt*(1-F)*G2/G1(wo) with VNDF sampling
+			const float g1 = Microfacet_GgxG1(fixedDir, alpha, alpha);
+			if (g1 <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			const float g2 = Microfacet_GgxG2(sampledDir, fixedDir, alpha, alpha);
+			const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
+#if defined(SLG_SPECTRAL)
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC,
+					fromLight ? cosThetaOH : cosThetaIH, hitPoint);
+#else
+			const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc,
+						fromLight ? cosThetaOH : cosThetaIH),
+					FresnelCauchy_Evaluate(ntc, fromLight ? cosThetaOH : cosThetaIH),
+					FresnelCauchy_Evaluate(ntc, fromLight ? cosThetaOH : cosThetaIH));
+#endif
+			result = kt * (WHITE - F) * (g2 / (g1 * threshold));
+
+			pdfW *= threshold;
+			event = GLOSSY | TRANSMIT;
+#if defined(SLG_SPECTRAL)
+			// Dispersive refraction terminates the secondary wavelengths
+			if ((cauchyB > 0.f) || (sellB.x >= 0.f))
+				result *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
+#endif
+		} else {
+			// Reflect
+			pdfW = specPdf / (4.f * fabs(cosThetaOH));
+			if (pdfW <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			sampledDir = 2.f * cosThetaOH * wh - fixedDir;
+
+			const float cosi = fabs(sampledDir.z);
+			if ((cosi < DEFAULT_COS_EPSILON_STATIC) ||
+					(fixedDir.z * sampledDir.z < 0.f)) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+
+#if defined(SLG_SPECTRAL)
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC,
+					cosThetaOH, hitPoint);
+#else
+			const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
+					FresnelCauchy_Evaluate(ntc, cosThetaOH),
+					FresnelCauchy_Evaluate(ntc, cosThetaOH));
+#endif
+			const float g1 = Microfacet_GgxG1(fixedDir, alpha, alpha);
+			if (g1 <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
+			result = kr * F *
+					(Microfacet_GgxG2(sampledDir, fixedDir, alpha, alpha) /
+					(g1 * (1.f - threshold)));
+
+			pdfW *= (1.f - threshold);
+			event = GLOSSY | REFLECT;
+		}
+
+		EvalStack_PushFloat3(result);
+		EvalStack_PushFloat3(sampledDir);
+		EvalStack_PushFloat(pdfW);
+		EvalStack_PushBSDFEvent(event);
+		return;
+	}
 
 	float3 transLocalSampledDir; 
 	const float3 trans = GlassMaterial_EvalSpecularTransmission(hitPoint, fixedDir, u0,
