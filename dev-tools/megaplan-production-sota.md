@@ -28,7 +28,7 @@
 
 | 기능 | 프로퍼티/플래그 | 측정 근거 | 기본값 변경 리스크 | 상태 |
 |---|---|---|---|---|
-| 라이트 전략 자동 | `lightstrategy.type=AUTO` 내부 분기 | Light BVH가 다광원에서 DLSC/power 대비 우위(e26) — 분기 규칙 미측정 | 중(전략 선택 바뀜) | ◐ M4에서 분기 규칙 측정 |
+| 라이트 전략 자동 | `lightstrategy.type` 기본값 | e26 10/10(unbiased·RMSE -36%·cpu-gpu 패리티) + 건틀릿 평균동등 — 분기 규칙 불필요, BVH가 flat을 지배하고 emit 전용은 LogPower 폴백 | 중(전략 선택 바뀜) | ✅ `5be8ade72` 기본값 승격 |
 | GGX 디폴트 | 머티리얼 `distribution=ggx` (6종 opt-in 완료) | 에너지 보존 정확도↑, 외관 델타 존재 | 고(외관 변경) | ❌ 호환 플래그 설계 후 승격 |
 | 멀티바운스 GGX | `multibounce` opt-in (metal2/roughglass/carpaint/disney) | e50 패리티, 등시간 이득 미정량 | 중 | ◐ 건틀릿 A/B 필요 |
 | Wavefront 큐 | `pathocl.wavefront=auto` (현 auto=off) | cornell ~2.5x, classroom/luxball은 dense 우세 — 자동 분기 기준 미확립 | 중 | ❌ M2 매트릭스 후 판단 |
