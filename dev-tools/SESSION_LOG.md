@@ -1317,3 +1317,23 @@ unchanged) and AtomicAddSamplesToFilm.
 
 BakeCPU's bind callback gets the extra arg via placeholders::_6.
 cornell+strands CPU/GPU parity PASS.
+
+## Round: splat-path + accept-path micros (2026-10-01 cont.)
+
+- `ProjectSampleResultToRGB`: 13 Spectrum fields each ran the 4-bin
+  dot even when they had never been written - Black() early-out added
+  (the ProjectToRGB inner check saved the loop but not the call).
+- Metropolis accept: `currentSampleResults = sampleResults` copied the
+  whole maxPathDepth+2 vector including stale slots; now bounded by
+  `used` + resize-once at accept.
+- `FilmSamplesCounts::AddSampleCount`: `pendingTotal` field existed but
+  was never accumulated - fetch_add ran per-splat. Wired to flush at
+  SAMPLE_COUNT_BATCH=64.
+- Audited and found already-optimal: GetNewBucket atomic (amortized by
+  bucketSize*superSampling), cachedEmbreeAccel pinned pointer (no map
+  lookup), FilmDenoiser::AddSample early-out, AtomicSplatSample LUT
+  walk + zero-filterWeight skip + subRegion clamping.
+
+Remaining leaf hotspots are structural: InitNewSample adaptive re-pick
+loop (algorithmic), embree BVH traversal (intrinsic), MetropolisSampler::
+GetSample replay math (MLT-inherent).
