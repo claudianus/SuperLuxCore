@@ -279,6 +279,15 @@ void RenderConfig::ApplyAutoLightTracing() {
 			(engineType != "RTPATHCPU") && (engineType != "PATHOCL") &&
 			(engineType != "TILEPATHOCL") && (engineType != "RTPATHOCL"))
 		return;
+	// path.lighttracing.only is a debug/validation mode: an explicit
+	// request implies enable even on scenes whose signature is not
+	// caustic-capable (the user asked for light paths, period)
+	if (GetConfig().Get(Property("path.lighttracing.only")(false)).Get<bool>() &&
+			!GetConfig().IsDefined("path.lighttracing.enable")) {
+		GetConfig().Set(Property("path.lighttracing.enable")(true));
+		SDL_LOG("path.lighttracing.only: enabled light tracing"
+				" (explicit light-only request)");
+	}
 	if (!SceneHasCausticCapablePaths(GetScene()))
 		return;
 	if (GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>() &&
