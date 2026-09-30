@@ -337,7 +337,10 @@ static MneeMat2 MneeLightJacobian(const Point &x0p, const Point &lightPos,
 // Jacobian dC/dX used by the Newton step) is not null it receives J1.
 static float MneeGeometricTermWithJacobians(const Point &x0p,
 		const MneeEndpoint &ep, const MneeVertex &vtx, MneeMat2 *jacVertex,
-		float *det1Out = nullptr, float *det2Out = nullptr) {
+		float *det1Out = nullptr, float *det2Out = nullptr,
+		MneeVec2 *residualOut = nullptr, bool *residualOk = nullptr) {
+	if (residualOk)
+		*residualOk = false;
 	Vector wi = x0p - vtx.p;
 	const float r01 = wi.Length();
 	if (r01 < 1e-3f)
@@ -364,8 +367,22 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 	Vector h = wi + eta * wo;
 	if (eta != 1.f)
 		h = -h;
-	const float ilh = 1.f / h.Length();
+	const float hLen = h.Length();
+	if (hLen < 1e-9f) {
+		// Degenerate half-vector (wi = -eta*wo exactly): no constraint
+		// direction exists - same "residual fail" as the early-outs above.
+		return 0.f;
+	}
+	const float ilh = 1.f / hLen;
 	h *= ilh;
+	if (residualOk)
+		*residualOk = true;
+	// Constraint residual - same h as the Jacobian below, computed once
+	// per iteration here instead of in a separate MneeResidual call.
+	if (residualOut) {
+		residualOut->x = Dot(vtx.s, h);
+		residualOut->y = Dot(vtx.t, h);
+	}
 	// Vertex-side coupling of wo to x1. For a point endpoint wo =
 	// normalize(pos - x1) moves with x1: ilo = eta*ilh/r12. For a directional
 	// endpoint wo is constant: ilo = 0, dropping the wo-motion terms from J1.
@@ -811,14 +828,20 @@ static bool MneeSolveSingleVertex(
 	u_int failStage = 3;  // exhausted unless a break says otherwise
 
 	while (iteration < maxIterations) {
-		// Constraint residual and analytic Jacobian of the current vertex
-		if (!MneeResidual(x0p, ep, *vtx, residual)) {
+		// Fused residual+Jacobian: one wi/wo/eta/h computation per
+		// iteration (was MneeResidual + MneeGeometricTermWithJacobians
+		// duplicating the shared half-vector work). `residualOk` tells
+		// apart "no valid h" (residual fail -> bail) from "g=0 due to a
+		// singular Jacobian" (still a Newton attempt).
+		bool residualOk = false;
+		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx,
+				&jac, nullptr, nullptr, &residual, &residualOk);
+		if (!residualOk) {
 			failStage = 0;
 			break;
 		}
 		const float resNorm =
 				sqrtf(residual.x * residual.x + residual.y * residual.y);
-		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx, &jac);
 
 		if (resNorm < 3e-4f) {
 			solved = true;

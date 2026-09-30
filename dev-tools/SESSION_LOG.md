@@ -1187,3 +1187,21 @@ stale heap values into the film, AOVs and the denoiser.
 
 cornell + strands parity PASS. This also fixes latent garbage in
 RADIANCE_PER_SCREEN_NORMALIZED light splats on multi-connection paths.
+
+## MNEE: fuse residual + Jacobian per Newton iteration (2026-10-01)
+
+MneeSolveSingleVertex ran MneeResidual then
+MneeGeometricTermWithJacobians per iteration - both recomputed
+wi/wo/eta flip/h/~sqrt/Normalize. ~10-15 vector ops + sqrt duplicated
+per iteration on the dominant PATHCPU light-sample path (MNEE is the
+top hotspot per profile).
+
+Added `residualOut` + `residualOk` params to
+MneeGeometricTermWithJacobians. The function now emits the constraint
+residual alongside J1 from the same half-vector work; a new hLen
+degenerate-guard replaces the residual-side early-outs (bit-identical
+fail surface). `residualOk` distinguishes "no valid h" (fail) from
+"Jacobian singular" (retry-able) - the previous `g == 0.f` gate
+conflated them and could terminate a solve that had a valid descent.
+
+cornell + strands parity PASS.
