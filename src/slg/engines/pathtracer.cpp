@@ -3196,6 +3196,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.ratio")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.radius")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.mnee.auto")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxiterations")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.maxspecular")) <<
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
@@ -3287,6 +3288,10 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.lighttracing.focus.ratio")(0.5) <<
 			Property("path.lighttracing.focus.radius")(0.01f) <<
 			Property("path.mnee.enable")(false) <<
+			// Zero-config default (RenderConfig::ApplyAutoLightTracing):
+			// when .enable is unset, a caustic-capable scene signature
+			// turns the solver on. Pin .enable or set auto=0 to override.
+			Property("path.mnee.auto")(true) <<
 			Property("path.mnee.maxiterations")(12) <<
 			Property("path.mnee.maxspecular")(1) <<
 			Property("path.mnee.seedcache")(true) <<

@@ -266,11 +266,12 @@ static bool SceneHasCausticCapablePaths(SceneConstRef scene) {
 	return false;
 }
 
-// Zero-config light pass (path.lighttracing.auto, default on): when the
-// user hasn't pinned path.lighttracing.enable, enable it only on engines
-// with a light-task population and only when the scene can form
-// caustic-class paths - on diffuse-only scenes the tail tasks would
-// deposit nothing (wasted budget), so auto keeps the eye side at 100%.
+// Zero-config caustic stack (path.lighttracing.auto / path.mnee.auto,
+// both default on): when the user hasn't pinned the flags, enable the
+// light pass + the MNEE solver only on engines with a light-task
+// population and only when the scene can form caustic-class paths - on
+// diffuse-only scenes the tail tasks would deposit nothing (wasted
+// budget), so auto keeps the eye side at 100%.
 void RenderConfig::ApplyAutoLightTracing() {
 	const string engineType = GetConfig().Get(
 		Property("renderengine.type")("PATHCPU")).Get<string>();
@@ -278,15 +279,23 @@ void RenderConfig::ApplyAutoLightTracing() {
 			(engineType != "RTPATHCPU") && (engineType != "PATHOCL") &&
 			(engineType != "TILEPATHOCL") && (engineType != "RTPATHOCL"))
 		return;
-	if (!GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>())
-		return;
-	if (GetConfig().IsDefined("path.lighttracing.enable"))
-		return;
 	if (!SceneHasCausticCapablePaths(GetScene()))
 		return;
-	GetConfig().Set(Property("path.lighttracing.enable")(true));
-	SDL_LOG("path.lighttracing.auto: enabled light tracing"
-			" (caustic-capable scene signature)");
+	if (GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>() &&
+			!GetConfig().IsDefined("path.lighttracing.enable")) {
+		GetConfig().Set(Property("path.lighttracing.enable")(true));
+		SDL_LOG("path.lighttracing.auto: enabled light tracing"
+				" (caustic-capable scene signature)");
+	}
+	// MNEE covers the eye-side half of the same class: delta/glossy
+	// chains blocking a direct-light connect. It is near-free on scenes
+	// that never trigger it, and the solver gates itself per connect.
+	if (GetConfig().Get(Property("path.mnee.auto")(true)).Get<bool>() &&
+			!GetConfig().IsDefined("path.mnee.enable")) {
+		GetConfig().Set(Property("path.mnee.enable")(true));
+		SDL_LOG("path.mnee.auto: enabled the MNEE solver"
+				" (caustic-capable scene signature)");
+	}
 }
 
 void RenderConfig::DeleteAllFilmImagePipelinesProperties() {
