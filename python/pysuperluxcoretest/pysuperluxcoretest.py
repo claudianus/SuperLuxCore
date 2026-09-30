@@ -15,6 +15,7 @@ import tempfile
 import shutil
 import subprocess
 import platform
+import math
 
 # sys.path.append("./lib")
 
@@ -224,7 +225,33 @@ def SimpleRender():
     # Save the rendered image
     session.GetFilm().Save()
 
+    AssertFilmSane(session, "SimpleRender")
+
     print("Done.", flush=True)
+
+
+def AssertFilmSane(session, tag):
+    """CI regression gate: every film pixel must be finite and the mean
+    luminance non-degenerate. Catches NaN/Inf collapses and black frames
+    on all wheel-builder OSes (no GPU needed)."""
+    film = session.GetFilm()
+    w, h = film.GetWidth(), film.GetHeight()
+    buf = array("f", [0.0] * (w * h * 3))
+    film.GetOutputFloat(
+        pysuperluxcore.FilmOutputType.RGB_IMAGEPIPELINE, buf
+    )
+    finite = sum(1 for v in buf if math.isfinite(v))
+    mean = sum(buf) / len(buf)
+    print(
+        "[%s] film gate: finite=%d/%d mean=%.5f" % (tag, finite, len(buf), mean),
+        flush=True,
+    )
+    if finite != len(buf):
+        raise RuntimeError(
+            "%s: %d non-finite film pixels" % (tag, len(buf) - finite)
+        )
+    if mean <= 1e-4:
+        raise RuntimeError("%s: degenerate film mean %.6f" % (tag, mean))
 
 
 ################################################################################
@@ -519,6 +546,8 @@ def StrandsRender():
 
     # Save the rendered image
     session.GetFilm().Save()
+
+    AssertFilmSane(session, "StrandsRender")
 
     print("Done.", flush=True)
 
