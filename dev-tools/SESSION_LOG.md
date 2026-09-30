@@ -950,3 +950,15 @@ Findings, all already-optimal after earlier passes:
   a 64-entry small-array cache for the typical light count.
 
 No new wins landed. Moving to startup-time wins next.
+
+## Framebuffer: weight-channel atomicity (2026-10-01)
+
+- `GenericFrameBuffer<4,1>::AtomicAddWeightedPixel` used `+=` on the
+  weight channel while the RGB channels were `AtomicAdd`. Concurrent
+  splats on the same pixel lost weight updates (a real race - the
+  radiance sums stay correct but the per-pixel weight drifts low,
+  which biases normalization on shared pixels in Metropolis /
+  hybrid paths).
+- Now `AtomicAdd(&pixel[CHANNELS-1], weight)` - all channels atomic.
+- Non-atomic `AddWeightedPixel` unchanged (single-thread use only).
+- Parity cornell + strands PASS.

@@ -243,7 +243,11 @@ public:
 		} else {
 			for (u_int i = 0; i < CHANNELS - 1; ++i)
 				luxrays::AtomicAdd(&pixel[i], v[i] * weight);
-			pixel[CHANNELS - 1] += weight;
+			// The weight slot is a running total too - a non-atomic +=
+			// races with concurrent splats on the same pixel (the lost
+			// update shows up as a slightly wrong Alpha/Weight channel
+			// when two threads land on the same texel).
+			luxrays::AtomicAdd(&pixel[CHANNELS - 1], weight);
 		}
 	}
 
