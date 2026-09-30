@@ -461,12 +461,6 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 	return dw0Dx1 * dx1Dx2;
 }
 
-static float MneeGeometricTerm(const Point &x0p, const MneeEndpoint &ep,
-		const MneeVertex &vtx, float *det1Out = nullptr,
-		float *det2Out = nullptr) {
-	return MneeGeometricTermWithJacobians(x0p, ep, vtx, nullptr,
-			det1Out, det2Out);
-}
 
 // Term-by-term diagnostic of the assembly. Enabled with LUX_MNEE_DEBUG=1: for
 // every accepted contribution it prints the receiver, the solved specular
@@ -759,7 +753,8 @@ static bool MneeSolveSingleVertex(
 		const BSDF &x0Bsdf, const RayHit &shadowRayHit,
 		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 		const float etaVertex, const u_int maxIterations,
-		const MneeVertex *seedVtx, MneeVertex *vtx, BSDF *finalBsdf) {
+		const MneeVertex *seedVtx, MneeVertex *vtx, BSDF *finalBsdf,
+		float *gOut = nullptr, float *det1Out = nullptr, float *det2Out = nullptr) {
 	if (seedVtx)
 		*vtx = *seedVtx;
 	else
@@ -822,6 +817,7 @@ static bool MneeSolveSingleVertex(
 	MneeVec2 residual{ 0.f, 0.f };
 	MneeMat2 jac{ 0.f, 0.f, 0.f, 0.f };
 	u_int dbgMeshMiss = 0, dbgResFail = 0, dbgEsc = 0;
+	float lastG = 0.f, lastDet1 = 0.f, lastDet2 = 0.f;
 
 	u_int iteration = 0;
 	MneeSolveAccount solveAccount{ iteration };
@@ -835,7 +831,8 @@ static bool MneeSolveSingleVertex(
 		// singular Jacobian" (still a Newton attempt).
 		bool residualOk = false;
 		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx,
-				&jac, nullptr, nullptr, &residual, &residualOk);
+				&jac, &lastDet1, &lastDet2, &residual, &residualOk);
+		lastG = g;
 		if (!residualOk) {
 			failStage = 0;
 			break;
@@ -963,6 +960,15 @@ static bool MneeSolveSingleVertex(
 				&g_mneeSolveStats.failExhausted };
 		stageCtr[failStage]->fetch_add(1, std::memory_order_relaxed);
 	}
+	// On success the last iteration's g/dets describe vtx's final
+	// constraint solution - hand them out so callers skip a redundant
+	// MneeGeometricTerm at the same point.
+	if (solved && gOut)
+		*gOut = lastG;
+	if (solved && det1Out)
+		*det1Out = lastDet1;
+	if (solved && det2Out)
+		*det2Out = lastDet2;
 	return solved;
 }
 
@@ -1115,11 +1121,12 @@ bool PathTracer::MNEEDirectSampling(
 	if (g_seedStatsOn && failEvidence >= 2u)
 		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
+	float solvedG = 0.f, solvedDet1 = 0.f, solvedDet2 = 0.f;
 	MneeVertex vtx;
 	BSDF finalBsdf = shadowBsdf;
 	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 			shadowRayHit, shadowBsdf, volInfo, etaVertex, solveBudget,
-			seedPtr, &vtx, &finalBsdf);
+			seedPtr, &vtx, &finalBsdf, &solvedG, &solvedDet1, &solvedDet2);
 	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
 			mneeSeedCacheEnable && mneeSeeds &&
 			MneeSeedLookup(mneeSeeds.get(), seedKey, seedLightIndex,
@@ -1130,7 +1137,8 @@ bool PathTracer::MNEEDirectSampling(
 		// (x0, light, cache state): the estimator stays unbiased.
 		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 				shadowRayHit, shadowBsdf, volInfo, etaVertex,
-				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
+				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf,
+				&solvedG, &solvedDet1, &solvedDet2);
 	}
 	if (!solveOk) {
 		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
@@ -1211,9 +1219,10 @@ bool PathTracer::MNEEDirectSampling(
 	// No clamping: the true Jacobian exceeds 1 near glancing configurations
 	// and clamping would bias the estimate.
 	//------------------------------------------------------------------------------
-	float mneeDet1 = 0.f, mneeDet2 = 0.f;
-	const float geometricTerm = MneeGeometricTerm(x0p, ep, vtx,
-			&mneeDet1, &mneeDet2);
+	// Reuse the solver's last-iteration g/dets at the converged vtx -
+	// no second Jacobian pass.
+	const float geometricTerm = solvedG;
+	const float mneeDet1 = solvedDet1, mneeDet2 = solvedDet2;
 	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm)) {
 		MNEE_REJX("geoterm");
 		return false;
@@ -2540,11 +2549,12 @@ bool PathTracer::LMNEEConnectToEye(
 	if (g_seedStatsOn && failEvidence >= 2u)
 		g_mneeSolveStats.capped.fetch_add(1, std::memory_order_relaxed);
 
+	float solvedG = 0.f, solvedDet1 = 0.f, solvedDet2 = 0.f;
 	MneeVertex vtx;
 	BSDF finalBsdf;
 	bool solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 			shadowRayHit, shadowBsdf, volInfo, etaVertex, solveBudget,
-			seedPtr, &vtx, &finalBsdf);
+			seedPtr, &vtx, &finalBsdf, &solvedG, &solvedDet1, &solvedDet2);
 	if (!solveOk && (etaVertex != 1.f) && !seedPtr &&
 			mneeSeedCacheEnable && mneeSeeds &&
 			MneeSeedLookup(mneeSeeds.get(), seedKey, LMNEE_CAMERA_SEED_ID,
@@ -2553,7 +2563,8 @@ bool PathTracer::LMNEEConnectToEye(
 		// same reason as the eye side).
 		solveOk = MneeSolveSingleVertex(device, scene, time, x0p, ep, bsdf,
 				shadowRayHit, shadowBsdf, volInfo, etaVertex,
-				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf);
+				mneeMaxIterations, &seedVtx, &vtx, &finalBsdf,
+				&solvedG, &solvedDet1, &solvedDet2);
 	}
 	if (!solveOk) {
 		if (g_poisonOn && mneeSeedCacheEnable && mneeSeeds)
@@ -2601,7 +2612,9 @@ bool PathTracer::LMNEEConnectToEye(
 	if (specFactor.Black())
 		{ LMNEE_REJ("spec"); return false; }
 
-	const float geometricTerm = MneeGeometricTerm(x0p, ep, vtx);
+	// Reuse the solver's last-iteration g at the converged vtx -
+	// no second Jacobian pass.
+	const float geometricTerm = solvedG;
 	if (geometricTerm <= 0.f || isnan(geometricTerm) || isinf(geometricTerm))
 		{ LMNEE_REJ("geo"); return false; }
 

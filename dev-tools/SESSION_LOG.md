@@ -1205,3 +1205,21 @@ fail surface). `residualOk` distinguishes "no valid h" (fail) from
 conflated them and could terminate a solve that had a valid descent.
 
 cornell + strands parity PASS.
+
+## MNEE: reuse solver's last-iteration g/dets - drop redundant post-solve Jacobian (2026-10-01)
+
+After MneeSolveSingleVertex converged, both the eye-side
+MNEEDirectSampling and light-side LMNEEConnectToEye ran
+MneeGeometricTerm(x0p, ep, vtx) at the solved vertex - recomputing
+wi/wo/eta/h/J1/J2/dets that the final Newton iteration had already
+produced.
+
+- MneeSolveSingleVertex gains gOut/det1Out/det2Out, filled on the
+  converged iteration (resNorm < 3e-4f) before returning true.
+- Both callsites bind them and pass to the contribution assembly;
+  MneeGeometricTerm() is now dead and removed.
+
+Saves one full Jacobian eval per successful connect (the heaviest
+path of MNEE).
+
+cornell + strands parity PASS.
