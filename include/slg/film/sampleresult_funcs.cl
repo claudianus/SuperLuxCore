@@ -172,13 +172,17 @@ OPENCL_FORCE_INLINE float3 SampleResult_GetSpectrum(__constant const Film* restr
 // (radiance groups, light groups, denoiser inputs) receive RGB.
 OPENCL_FORCE_INLINE void SampleResult_ProjectSpectralToRGB(
 		__global SampleResult *sampleResult) {
+	// Fold the CIE SPDs + XYZ→RGB matrix + white normalization into
+	// per-bin coefficients once - reused across every field below.
+	SpectralRGBProjector proj;
+	Spectral_PrepareRGBProjection(sampleResult->spectralW,
+			sampleResult->spectralHeroAlive, &proj);
 	for (uint i = 0; i < FILM_MAX_RADIANCE_GROUP_COUNT; ++i)
-		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c),
-				sampleResult->spectralW, sampleResult->spectralHeroAlive),
+		VSTORE3F(Spectral_ProjectToRGBWith(
+				VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c), &proj),
 				sampleResult->radiancePerPixelNormalized[i].c);
 #define SLG_PROJECT_FIELD(f) \
-		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->f.c), \
-				sampleResult->spectralW, sampleResult->spectralHeroAlive), \
+		VSTORE3F(Spectral_ProjectToRGBWith(VLOAD3F(sampleResult->f.c), &proj), \
 				sampleResult->f.c)
 	SLG_PROJECT_FIELD(directDiffuse);
 	SLG_PROJECT_FIELD(directDiffuseReflect);
@@ -201,8 +205,8 @@ OPENCL_FORCE_INLINE void SampleResult_ProjectSpectralToRGB(
 	SLG_PROJECT_FIELD(albedo);
 #undef SLG_PROJECT_FIELD
 	for (uint i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
-		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->lpeRadiance[i].c),
-				sampleResult->spectralW, sampleResult->spectralHeroAlive),
+		VSTORE3F(Spectral_ProjectToRGBWith(
+				VLOAD3F(sampleResult->lpeRadiance[i].c), &proj),
 				sampleResult->lpeRadiance[i].c);
 }
 #endif

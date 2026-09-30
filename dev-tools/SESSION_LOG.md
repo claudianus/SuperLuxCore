@@ -1150,3 +1150,20 @@ Statistically-identical (same linear operator; ULP-level associativity
 change, well inside the 0.2% parity tolerance).
 
 cornell + strands parity PASS.
+
+## GPU spectral projection - shared RGBProjector (2026-10-01)
+
+Device mirror: SampleResult_ProjectSpectralToRGB re-ran
+Spectral_ProjectToRGB per field (~30x), each redoing the 3-bin CIE
+SPDs, XYZ→RGB matmul and white-point divide.
+
+- spectral_funcs.cl: new SpectralRGBProjector +
+  Spectral_PrepareRGBProjection (per-bin cr/cg/cb coefficients, one
+  time per sample result) + Spectral_ProjectToRGBWith (masked 3-FMA
+  dot per field). Original Spectral_ProjectToRGB kept for the
+  micro-kernel single-field path.
+- sampleresult_funcs.cl: build one proj, reuse over all fields.
+- `thread` address-space qualifier on the projector pointer - Metal
+  rejects unqualified pointers.
+
+cornell + strands parity PASS.

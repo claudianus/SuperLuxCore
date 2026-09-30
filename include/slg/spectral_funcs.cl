@@ -655,41 +655,75 @@ OPENCL_FORCE_INLINE float3 Spectral_Upsample(const float3 rgb,
 	return MAKE_FLOAT3(outv[0] * s, outv[1] * s, outv[2] * s);
 }
 
-// Same self-normalized CIE projection as spectral.cpp ProjectToRGB()
-OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGB(const float3 bins,
-		__global const float *w, const uint heroAlive) {
-	const uint aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
-	float X = 0.f, Y = 0.f, Z = 0.f;
+// Same self-normalized CIE projection as spectral.cpp ProjectToRGB():
+// per-bin RGB coefficients folded once, then one masked dot per field.
+typedef struct {
+	float cr[SLG_SPECTRAL_BINS], cg[SLG_SPECTRAL_BINS], cb[SLG_SPECTRAL_BINS];
+	uint aliveMask;
+	bool valid;
+} SpectralRGBProjector;
+
+OPENCL_FORCE_INLINE void Spectral_PrepareRGBProjection(
+		__global const float *w, const uint heroAlive,
+		thread SpectralRGBProjector *p) {
+	p->aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
+	float cx[SLG_SPECTRAL_BINS], cy[SLG_SPECTRAL_BINS], cz[SLG_SPECTRAL_BINS];
 	float nX = 0.f, nY = 0.f, nZ = 0.f;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
 		const float lambda = w[i];
-		const float cx = Spectral_SampleCIE(slgSpectralCIE_X, lambda);
-		const float cy = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
-		const float cz = Spectral_SampleCIE(slgSpectralCIE_Z, lambda);
-		nX += cx;
-		nY += cy;
-		nZ += cz;
-		if (aliveMask & (1u << i)) {
-			const float b = (i == 0) ? bins.x : ((i == 1) ? bins.y : bins.z);
-			X += b * cx;
-			Y += b * cy;
-			Z += b * cz;
-		}
+		cx[i] = Spectral_SampleCIE(slgSpectralCIE_X, lambda);
+		cy[i] = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
+		cz[i] = Spectral_SampleCIE(slgSpectralCIE_Z, lambda);
+		nX += cx[i];
+		nY += cy[i];
+		nZ += cz[i];
 	}
-	if (nY <= 0.f)
-		return BLACK;
-
+	p->valid = (nY > 0.f);
+	if (!p->valid) {
+		for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
+			p->cr[i] = 0.f;
+			p->cg[i] = 0.f;
+			p->cb[i] = 0.f;
+		}
+		return;
+	}
 	const float wR = slgSpectralXYZToRGB[0][0] * nX + slgSpectralXYZToRGB[0][1] * nY + slgSpectralXYZToRGB[0][2] * nZ;
 	const float wG = slgSpectralXYZToRGB[1][0] * nX + slgSpectralXYZToRGB[1][1] * nY + slgSpectralXYZToRGB[1][2] * nZ;
 	const float wB = slgSpectralXYZToRGB[2][0] * nX + slgSpectralXYZToRGB[2][1] * nY + slgSpectralXYZToRGB[2][2] * nZ;
-	const float cR = slgSpectralXYZToRGB[0][0] * X + slgSpectralXYZToRGB[0][1] * Y + slgSpectralXYZToRGB[0][2] * Z;
-	const float cG = slgSpectralXYZToRGB[1][0] * X + slgSpectralXYZToRGB[1][1] * Y + slgSpectralXYZToRGB[1][2] * Z;
-	const float cB = slgSpectralXYZToRGB[2][0] * X + slgSpectralXYZToRGB[2][1] * Y + slgSpectralXYZToRGB[2][2] * Z;
+	const float invR = (wR != 0.f) ? (1.f / wR) : 0.f;
+	const float invG = (wG != 0.f) ? (1.f / wG) : 0.f;
+	const float invB = (wB != 0.f) ? (1.f / wB) : 0.f;
 
-	return MAKE_FLOAT3(
-			(wR != 0.f) ? cR / wR : 0.f,
-			(wG != 0.f) ? cG / wG : 0.f,
-			(wB != 0.f) ? cB / wB : 0.f);
+	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
+		p->cr[i] = (slgSpectralXYZToRGB[0][0] * cx[i] + slgSpectralXYZToRGB[0][1] * cy[i] + slgSpectralXYZToRGB[0][2] * cz[i]) * invR;
+		p->cg[i] = (slgSpectralXYZToRGB[1][0] * cx[i] + slgSpectralXYZToRGB[1][1] * cy[i] + slgSpectralXYZToRGB[1][2] * cz[i]) * invG;
+		p->cb[i] = (slgSpectralXYZToRGB[2][0] * cx[i] + slgSpectralXYZToRGB[2][1] * cy[i] + slgSpectralXYZToRGB[2][2] * cz[i]) * invB;
+	}
+}
+
+OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGBWith(const float3 bins,
+		const thread SpectralRGBProjector *p) {
+	if (!p->valid || (bins.x == 0.f && bins.y == 0.f && bins.z == 0.f))
+		return BLACK;
+	float r = 0.f, g = 0.f, b = 0.f;
+	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
+		if (!(p->aliveMask & (1u << i)))
+			continue;
+		const float bv = (i == 0) ? bins.x : ((i == 1) ? bins.y : bins.z);
+		r += bv * p->cr[i];
+		g += bv * p->cg[i];
+		b += bv * p->cb[i];
+	}
+	return MAKE_FLOAT3(r, g, b);
+}
+
+// Kept for the micro-kernel path where wavelengths are carried on the
+// sample result and the caller needs only one field.
+OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGB(const float3 bins,
+		__global const float *w, const uint heroAlive) {
+	SpectralRGBProjector p;
+	Spectral_PrepareRGBProjection(w, heroAlive, &p);
+	return Spectral_ProjectToRGBWith(bins, &p);
 }
 
 // Same luminance renormalization as Spectral::WithLuminance(): scale the
