@@ -146,3 +146,13 @@ decrease the residual, so non-improvement already exits via no-step);
 seed snapshots must be re-read at rescue time (concurrent stores land
 between the pre-solve lookup and the failure - a stale snapshot
 measurably cut the rescue rate).
+
+Chain solve instrumentation (same env gate): per-reason histograms for
+the eye (`rej`) and light (`LMNEE_REJ`) chain paths. e52 decomposition:
+light-side Newton failures dominate - ms-newton=638k (chain Newton)
+plus newton=636k (single-vertex LMNEE, previously hidden in "other").
+Topology-discovery fails (ms-chain<2=189k) and mode/same-side rejects
+are cheap early-outs; eye-side chain fails are ~0. The residual
+bottleneck is therefore *light-side Newton attempts on physically
+unsolvable configurations* - the failure-evidence cap bounds their
+cost; a smarter candidate prefilter would be the next lever.
