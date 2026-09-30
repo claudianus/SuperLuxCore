@@ -169,3 +169,23 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
 - GPU PhotonGI deposits → full GPU cache update path (B-series).
 - Spectral: 4-bin → wider coverage / n,k table-driven IOR; M6 item.
 - `maxDepth`/device-scheduling heuristics for auto mode (M4 gate).
+
+### r4 dispatch-population + taskCount sweep (2026-10-01)
+
+- Added `LUX_TASKSTATE_DUMP` (`pathoclopenclthread.cpp`): per-batch
+  state histogram read from `tasksStateBuff` after FinishQueue.
+  Cornell PATHOCL 720p dense: ~334K tasks in `RT_NEXT_VERTEX` +
+  ~190K in `RT_DL`; wavefront splits them across
+  `HIT_OBJECT`/`DL_SAMPLE_BSDF`/`GEN_NEXT_RAY`/etc.
+- `opencl.task.count` sweep (cornell/multi-caustic 1280x720):
+  64K vs 512K AUTO lands inside ±12% run-to-run noise on M5 Pro -
+  AUTO stays. More tasks do not buy GPU occupancy past ~64K on
+  these scenes; the per-kernel no-op dispatch tax scales with
+  taskCount but remains sub-noise.
+- Wavefront re-A/B: cornell 720p dense 11.0 Ms/s vs wavefront
+  5.7 Ms/s (no collapse, just slower). Opt-in stays.
+- Apple `opencl.gpu.use=1` duplicate device bug fixed
+  (`07d856585`): OpenCL GPU + Metal GPU were both selected,
+  spawning a second render thread that crashed inside Apple's
+  OpenCL->Metal shim (gldExecuteKernel null-deref). Parity suite
+  6/6 PASS, 28s.
