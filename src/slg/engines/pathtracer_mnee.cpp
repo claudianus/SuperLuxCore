@@ -504,6 +504,13 @@ static const bool g_selfSeedOn = !getenv("LUX_MNEE_SELFSEED") ||
 // LUX_MNEE_POISON=0 disables failure-evidence entries (A/B measurement).
 static const bool g_poisonOn = !getenv("LUX_MNEE_POISON") ||
 		(getenv("LUX_MNEE_POISON")[0] != '0');
+// Crawl bail: two consecutive accepted Newton steps with < 25% residual
+// improvement give up (LUX_MNEE_CRAWL=0 disables, A/B measurement).
+// e52/e55 measured -19% solver iterations with the bright-region energy
+// delta inside the same-config noise floor.
+#define MNEE_CRAWL_RATIO .75f
+static const bool g_crawlBailOn = !getenv("LUX_MNEE_CRAWL") ||
+		(getenv("LUX_MNEE_CRAWL")[0] != '0');
 static struct MneeSeedStats {
 	~MneeSeedStats() {
 		if (tries.load() > 0)
@@ -794,6 +801,7 @@ static bool MneeSolveSingleVertex(
 
 	bool solved = false;
 	float beta = 1.f;
+	u_int crawlStrikes = 0;
 	MneeVec2 residual{ 0.f, 0.f };
 	MneeMat2 jac{ 0.f, 0.f, 0.f, 0.f };
 	u_int dbgMeshMiss = 0, dbgResFail = 0, dbgEsc = 0;
@@ -884,6 +892,20 @@ static bool MneeSolveSingleVertex(
 			const float resPropNorm = sqrtf(resProp.x * resProp.x + resProp.y * resProp.y);
 
 			if (resPropNorm < resNorm) {
+				// Crawl bail (LUX_MNEE_CRAWL=0 disables): near a root the
+				// residual collapses quadratically, so two consecutive
+				// sub-25% decreases mean the walk is crawling across facet
+				// boundaries toward an unreachable root - cut the budget
+				// burn instead of running the full 12 iters (e55: the
+				// exhausted class ran the whole budget).
+				if (g_crawlBailOn &&
+						(resPropNorm > MNEE_CRAWL_RATIO * resNorm)) {
+					if (++crawlStrikes >= 2) {
+						failStage = 2;
+						break;
+					}
+				} else
+					crawlStrikes = 0;
 				beta = Min(1.f, 2.f * beta);
 				*vtx = vProp;
 				*finalBsdf = propBsdf;
@@ -1891,6 +1913,7 @@ static bool MneeSolveChain(
 	MneeVec2 residual[MNEE_MS_MAX_VERTICES];
 	float maxResidual = 0.f;
 	float beta = 1.f;
+	u_int crawlStrikes = 0;
 	u_int iteration = 0;
 	MneeSolveAccount solveAccount{ iteration };
 	*failWhy = "iterations";
@@ -1955,6 +1978,18 @@ static bool MneeSolveChain(
 				float trialMax = 0.f;
 				if (MneeChainResiduals(x0p, endpoint, trial, n, trialRes, trialMax) &&
 						(trialMax < maxResidual)) {
+					// Crawl bail, chain edition: each accepted step costs n
+					// re-projections, so a crawling joint solve burns the
+					// budget n times faster than a single-vertex one (same
+					// two-strike rule as MneeSolveSingleVertex).
+					if (g_crawlBailOn &&
+							(trialMax > MNEE_CRAWL_RATIO * maxResidual)) {
+						if (++crawlStrikes >= 2) {
+							*failWhy = "no-step";
+							return false;
+						}
+					} else
+						crawlStrikes = 0;
 					for (u_int i = 0; i < n; ++i)
 						chain[i] = trial[i];
 					beta = Min(1.f, 2.f * beta);
