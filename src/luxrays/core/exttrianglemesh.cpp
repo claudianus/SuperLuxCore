@@ -278,6 +278,108 @@ void ExtTriangleMesh::Preprocess() {
 	}
 
 	PreprocessBevel();
+	BuildTriDiffCache();
+}
+
+void ExtTriangleMesh::BuildTriDiffCache() {
+	// Only layer-0 UVs have a hot-path user (HitPoint::Init's differentials
+	// always take dataIndex=0); other layers keep the base path. Requires
+	// normals for the dn1/dn2 entries to matter - a no-normal mesh is
+	// cheaper through the base (it early-outs on det==0 anyway).
+	if (!HasUVs(0) || !normals || (tris.Count() == 0) ||
+			(tris.Count() > triDiffCacheMaxTris))
+		return;
+
+	const auto &uvLayer = uvs[0];
+	const bool hasNormals = bool(normals);
+
+	triDiffCache.resize(tris.Count());
+	#pragma omp parallel for
+	for (long long i = 0; i < tris.Count(); ++i) {
+		const Triangle &tri = tris[i];
+		const u_int v0 = tri.v[0], v1 = tri.v[1], v2 = tri.v[2];
+
+		TriDifferentialCache &c = triDiffCache[i];
+		c.uv0 = uvLayer[v0];
+		c.uv1 = uvLayer[v1];
+		c.uv2 = uvLayer[v2];
+
+		const float du1 = c.uv0.u - c.uv2.u;
+		const float du2 = c.uv1.u - c.uv2.u;
+		const float dv1 = c.uv0.v - c.uv2.v;
+		const float dv2 = c.uv1.v - c.uv2.v;
+		const float determinant = du1 * dv2 - dv1 * du2;
+
+		if (determinant == 0.f) {
+			c.invdet = 0.f;
+			c.geometryDpDu = Vector();
+			c.geometryDpDv = Vector();
+			c.dn1 = Normal();
+			c.dn2 = Normal();
+		} else {
+			c.invdet = 1.f / determinant;
+
+			const Point p0 = vertices[v0];
+			const Point p1 = vertices[v1];
+			const Point p2 = vertices[v2];
+			const Vector dp1 = p0 - p2;
+			const Vector dp2 = p1 - p2;
+			c.geometryDpDu = (dv2 * dp1 - dv1 * dp2) * c.invdet;
+			c.geometryDpDv = (-du2 * dp1 + du1 * dp2) * c.invdet;
+
+			if (hasNormals) {
+				const Normal n0 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v0));
+				const Normal n1 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v1));
+				const Normal n2 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v2));
+				c.dn1 = n0 - n2;
+				c.dn2 = n1 - n2;
+			} else {
+				c.dn1 = Normal();
+				c.dn2 = Normal();
+			}
+		}
+	}
+}
+
+// Layer-0 hits run on the per-triangle cache (operand-identical
+// arithmetic - see the struct comment). Non-zero UV layers and
+// instance/motion meshes keep the base implementation (their
+// local2World application is per-hit).
+void ExtTriangleMesh::GetDifferentials(const Transform &local2World,
+		const u_int triIndex, const Normal &shadeNormal,
+		const u_int dataIndex,
+		Vector *dpdu, Vector *dpdv, Normal *dndu, Normal *dndv,
+		const float hitB1, const float hitB2, UV *hitUV) const {
+	if (!triDiffCache.empty() && (dataIndex == 0)) {
+		const TriDifferentialCache &c = triDiffCache[triIndex];
+
+		if (hitUV) {
+			// Same barycentric-weighted value as the base path's
+			// fused fetch (b0 = 1-b1-b2), bit-identical.
+			const float b0 = 1.f - hitB1 - hitB2;
+			*hitUV = b0 * c.uv0 + hitB1 * c.uv1 + hitB2 * c.uv2;
+		}
+
+		if (c.invdet == 0.f) {
+			CoordinateSystem(Vector(shadeNormal), dpdu, dpdv);
+			*dndu = Normal();
+			*dndv = Normal();
+		} else {
+			// du/dv deltas recomputed from the cached UVs: cheaper
+			// than 16B extra per triangle.
+			const float du1 = c.uv0.u - c.uv2.u;
+			const float du2 = c.uv1.u - c.uv2.u;
+			const float dv1 = c.uv0.v - c.uv2.v;
+			const float dv2 = c.uv1.v - c.uv2.v;
+			*dpdu = Cross(shadeNormal, Cross(c.geometryDpDu, shadeNormal));
+			*dpdv = Cross(shadeNormal, Cross(c.geometryDpDv, shadeNormal));
+			*dndu = ( dv2 * c.dn1 - dv1 * c.dn2) * c.invdet;
+			*dndv = (-du2 * c.dn1 + du1 * c.dn2) * c.invdet;
+		}
+		return;
+	}
+	ExtMesh::GetDifferentials(local2World, triIndex, shadeNormal, dataIndex,
+			dpdu, dpdv, dndu, dndv, hitB1, hitB2, hitUV);
 }
 
 // Spills every buffer over minBytes to `dir` and remaps it file-backed
@@ -458,6 +560,9 @@ void ExtTriangleMesh::ApplyTransform(const Transform &trans) {
 			normals[i] = Normalize(normals[i]);
 		}
 	}
+
+	// Cached differentials key off the vertex positions - invalidate.
+	triDiffCache.clear();
 
 	if (!curveCps.empty()) {
 		// Curve control points are object-space like the vertices: transform

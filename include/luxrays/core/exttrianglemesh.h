@@ -868,6 +868,39 @@ public:
 	// Catmull-Rom control points (xyz + radius); curveSegIndices are
 	// mesh-local per-segment start indices (the Metal index-buffer layout);
 	// curveCpAttrs has one entry per control point.
+
+	// Per-triangle shading differential cache (layer-0 UVs only).
+	// GetDifferentials() re-derives geometry dpdu/dpdv and dn1/dn2
+	// from six vertex/normal fetches on EVERY hit - all of it is a
+	// per-triangle constant, so the hot path pays the same nine loads
+	// millions of times per frame. The cache stores the exact operands
+	// the base implementation computes (corner UVs, vertex differentials,
+	// invdet, normal deltas), keeping every downstream float op
+	// bit-identical (same operand order, same temporaries). Only built
+	// for ExtTriangleMesh: its vertices are pre-transformed
+	// (GetVertex() ignores local2World), so the entries are hit-time
+	// exact. Instance/motion meshes keep the base path (their
+	// local2World application is per-hit).
+	struct TriDifferentialCache {
+		UV uv0, uv1, uv2;
+		Vector geometryDpDu, geometryDpDv;
+		float invdet;
+		Normal dn1, dn2;   // zeroed when the mesh has no normals
+		float pad;
+	};
+	mutable std::vector<TriDifferentialCache> triDiffCache;
+	// Capped: the cache is 96B/tri; above this the differential traffic
+	// saved per hit is smaller than the extra page pressure on big scenes.
+	static constexpr u_int triDiffCacheMaxTris = 2 * 1024 * 1024;
+	void BuildTriDiffCache();
+	virtual void GetDifferentials(const luxrays::Transform &local2World,
+			const u_int triIndex, const Normal &shadeNormal,
+			const u_int layerIndex,
+			Vector *dpdu, Vector *dpdv,
+			Normal *dndu, Normal *dndv,
+			const float hitB1 = 0.f, const float hitB2 = 0.f,
+			UV *hitUV = nullptr) const override;
+
 	std::vector<CurveControlPoint> curveCps;
 	std::vector<u_int> curveSegIndices;
 	std::vector<CurveCpAttr> curveCpAttrs;

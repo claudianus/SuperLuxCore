@@ -786,3 +786,23 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   wavefront 5.7 Ms/s on cornell (wavefront still opt-in; its win
   needs heavy-divergence scenes where the dense launch is dominated
   by the longest state).
+
+## ExtTriangleMesh per-tri differential cache — 2026-10-01 (cont.)
+
+- `sample` on prism-conservatory PATHCPU put `ExtMesh::GetDifferentials`
+  at ~19% of render-thread hits: per hit it re-derives geometry
+  dpdu/dpdv + dn1/dn2 from six vertex/normal/UV loads that are pure
+  per-triangle constants on a baked-space mesh.
+- `ExtTriangleMesh::BuildTriDiffCache()` (hooked into Preprocess, also
+  re-run by serialization load) stores uv0/uv1/uv2, geometryDpDu/Dv,
+  invdet, dn1/dn2 per triangle - every float operand order identical
+  to the base path, so output stays bit-identical. dn* fetched via
+  GetShadeNormal so appliedTransSwapsHandedness is preserved.
+  Invalidate on ApplyTransform; skipped on no-UV/no-normal meshes and
+  >2M-tri scenes (96B/tri page pressure not worth it).
+- `ExtTriangleMesh::GetDifferentials` override serves layer-0 hits
+  from the cache; instance/motion meshes keep the per-hit
+  local2World path (not bit-safe to hoist).
+- Verify: cpu-gpu-parity 6/6 PASS (unchanged reldiffs); prism PATHCPU
+  128spp throughput 4.6-6.0 -> 5.8-6.3 Ms/s (+~5-25%,
+  host-noise-bound). e26 LightBVH 10/10 unchanged.
