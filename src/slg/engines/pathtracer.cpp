@@ -3189,6 +3189,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.terminalglossiness")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.connectprob")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.lighttracing.auto")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.taskfraction")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.only")) <<
 			cfg.Get(GetDefaultProps()->Get("path.lighttracing.focus.enable")) <<
@@ -3274,6 +3275,12 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.hybridbackforward.terminalglossiness")(.3f) <<
 			Property("path.hybridbackforward.connectprob")(.5f) <<
 			Property("path.lighttracing.enable")(false) <<
+			// Zero-config default (RenderConfig::ApplyAutoLightTracing):
+			// when .enable is unset, a caustic-capable scene signature
+			// (any SPECULAR/GLOSSY lobe or scattering volume + emitters)
+			// turns the light pass on. Set auto=0 or pin .enable to
+			// override.
+			Property("path.lighttracing.auto")(true) <<
 			Property("path.lighttracing.taskfraction")(0.25) <<
 			Property("path.lighttracing.only")(false) <<
 			Property("path.lighttracing.focus.enable")(true) <<

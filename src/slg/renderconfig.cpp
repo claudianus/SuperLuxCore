@@ -32,6 +32,7 @@
 #include "luxrays/utils/serializationutils.h"
 #include "slg/usings.h"
 #include "slg/renderconfig.h"
+#include "slg/materials/materialdefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/film/film.h"
 
@@ -221,6 +222,9 @@ void RenderConfig::Parse(const Properties &props) {
 	// be a problem with OpenCL disabled (PATHOCL is not defined, etc.)
 	GetScene().SetEnableParsePrint(GetConfig().Get(Property("debug.scene.parse.print")(false)).Get<bool>());
 
+	// Scene-signature defaults before any strategy reader
+	ApplyAutoLightTracing();
+
 	UpdateFilmProperties(props);
 
 	// Scene epsilon is read directly from the cfg properties inside
@@ -237,6 +241,52 @@ void RenderConfig::Parse(const Properties &props) {
 	u_int *subRegion = Film::GetFilmSize(*cfg, &filmFullWidth, &filmFullHeight, filmSubRegion) ?
 		filmSubRegion : NULL;
 	GetScene().GetCamera().Update(filmFullWidth, filmFullHeight, subRegion);
+}
+
+// Can this scene form caustic-class (hard-for-the-eye) paths at all?
+// Any material with a SPECULAR or GLOSSY lobe - the eye-side partition's
+// own condition - or a scattering volume counts; at least one emitter
+// must exist for a light pass to make sense. Volumes live in matDefs
+// (Volume : Material), so one scan covers them.
+static bool SceneHasCausticCapablePaths(SceneConstRef scene) {
+	if (scene.GetLightSources().GetSize() == 0)
+		return false;
+	const auto &mats = scene.GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		// NULLMAT reports SPECULAR|TRANSMIT but only passes rays
+		// through - it focuses nothing, so it can't make a caustic
+		if (m.GetType() == NULLMAT)
+			continue;
+		if (m.GetEventTypes() & (SPECULAR | GLOSSY))
+			return true;
+		if (m.IsVolume() && (m.GetType() != CLEAR_VOL))
+			return true;
+	}
+	return false;
+}
+
+// Zero-config light pass (path.lighttracing.auto, default on): when the
+// user hasn't pinned path.lighttracing.enable, enable it only on engines
+// with a light-task population and only when the scene can form
+// caustic-class paths - on diffuse-only scenes the tail tasks would
+// deposit nothing (wasted budget), so auto keeps the eye side at 100%.
+void RenderConfig::ApplyAutoLightTracing() {
+	const string engineType = GetConfig().Get(
+		Property("renderengine.type")("PATHCPU")).Get<string>();
+	if ((engineType != "PATHCPU") && (engineType != "TILEPATHCPU") &&
+			(engineType != "RTPATHCPU") && (engineType != "PATHOCL") &&
+			(engineType != "TILEPATHOCL") && (engineType != "RTPATHOCL"))
+		return;
+	if (!GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>())
+		return;
+	if (GetConfig().IsDefined("path.lighttracing.enable"))
+		return;
+	if (!SceneHasCausticCapablePaths(GetScene()))
+		return;
+	GetConfig().Set(Property("path.lighttracing.enable")(true));
+	SDL_LOG("path.lighttracing.auto: enabled light tracing"
+			" (caustic-capable scene signature)");
 }
 
 void RenderConfig::DeleteAllFilmImagePipelinesProperties() {

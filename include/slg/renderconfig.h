@@ -146,6 +146,10 @@ private:
 	// For deserialization only
 	RenderConfig(PropertiesUPtr&& p_cfg, SceneRef p_scn, SceneUPtr&& p_internalscene);
 
+	// Scene-signature zero-config defaults (path.lighttracing.auto):
+	// resolves the light-pass enable before any engine/strategy reader.
+	void ApplyAutoLightTracing();
+
 	static void InitDefaultProperties();
 
 	mutable luxrays::PropertiesUPtr propsCache{std::make_unique<luxrays::Properties>()};
