@@ -38,3 +38,4 @@ docs live in `doc/features/` (see its README for the index).
 | [path-space-regularization.md](path-space-regularization.md) | PSR/OPSR design (Kaplanyan'13, Weier'21) — BSDF α-inflation via BSDF.regularization, depth-gated, shared microfacet helper |
 | [vc_pool_multiplicity_bias.md](vc_pool_multiplicity_bias.md) | VC pool connect-sum bias (thebox4 +28%): subpath-average normalization fix, replay winner's-curse residual |
 | [property-variant-casts.md](property-variant-casts.md) | `Get<float>` on API-written doubles threw bad_lexical_cast (exact-roundtrip check); lldb catch-vs-throw recipe |
+| [perf-ledger.md](perf-ledger.md) | Ranked bottleneck ledger: profile shares, hypotheses, constraints, A/B results, decisions |
