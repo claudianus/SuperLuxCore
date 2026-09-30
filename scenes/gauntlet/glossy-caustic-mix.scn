@@ -1,0 +1,62 @@
+# Gauntlet scene - "Glossy Caustic Mix".
+#
+# Open-air mixed-BSDF caustic case: low sun throws caustics from a glass
+# orb, a faceted gem and a standing prism onto a GLOSSY dark ground, so
+# the receiver both shows the caustic sheen and mirror-reflects the
+# emitters and the sky. Exercises glossy<->specular<->diffuse mixing,
+# adaptive-caustic partitioning and termination-glossiness heuristics.
+scene.camera.lookat.orig = 4.8 -5.2 2.3
+scene.camera.lookat.target = -0.4 0.6 0.7
+scene.camera.fieldofview = 46
+################################################################################
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.007 0.007 0.009
+scene.volumes.vol_glass.ior = 1.46
+################################################################################
+scene.materials.glossfloor.type = glossy2
+scene.materials.glossfloor.kd = 0.09 0.09 0.10
+scene.materials.glossfloor.ks = 0.55 0.55 0.58
+scene.materials.glossfloor.uroughness = 0.07
+scene.materials.glossfloor.vroughness = 0.07
+scene.materials.glossfloor.distribution = ggx
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.97 0.97 0.97
+scene.materials.glass.kr = 0.97 0.97 0.97
+scene.materials.glass.volume.interior = vol_glass
+scene.materials.prismglass.type = glass
+scene.materials.prismglass.kt = 0.97 0.97 0.97
+scene.materials.prismglass.kr = 0.97 0.97 0.97
+scene.materials.prismglass.volume.interior = vol_glass
+scene.materials.prismglass.cauchyb = 0.07
+scene.materials.copper.type = metal2
+scene.materials.copper.preset = copper
+scene.materials.copper.distribution = ggx
+scene.materials.copper.multibounce = 1
+scene.materials.copper.uroughness = 0.15
+scene.materials.copper.vroughness = 0.15
+################################################################################
+scene.objects.ground.material = glossfloor
+scene.objects.ground.ply = scenes/gauntlet/mesh/ground_big.ply
+scene.objects.orb.material = glass
+scene.objects.orb.ply = scenes/gauntlet/mesh/orb.ply
+scene.objects.orb.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 1.05 1.0
+scene.objects.gem.material = glass
+scene.objects.gem.ply = scenes/gauntlet/mesh/gem.ply
+scene.objects.gem.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  2.2 1.4 0.9 1.0
+scene.objects.prism.material = prismglass
+scene.objects.prism.ply = scenes/gauntlet/mesh/prism_b.ply
+scene.objects.prism.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -2.0 1.8 0.0 1.0
+scene.objects.ring.material = copper
+scene.objects.ring.ply = scenes/gauntlet/mesh/ring.ply
+scene.objects.ring.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.2 0.0  0.6 3.4 0.4 1.0
+################################################################################
+# Low sun for long glossy caustic streaks; dim sky keeps reflections
+# readable without lifting the diffuse floor much.
+scene.lights.sun.type = sun
+scene.lights.sun.dir = -0.75 0.35 0.40
+scene.lights.sun.turbidity = 6.0
+scene.lights.sun.relsize = 2.0
+scene.lights.sun.gain = 0.0016 0.0016 0.0016
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 4.0
+scene.lights.sky.gain = 0.0009 0.0009 0.0009

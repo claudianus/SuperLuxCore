@@ -244,6 +244,24 @@ def main():
     v, n, f = box((-6.9, -0.9, 0.01), (6.9, 14.9, 6.9))
     write_ply(MESH_DIR / "fogbox.ply", v, n, f)
 
+    # --- gauntlet v2 additions -------------------------------------------
+
+    # Sealed interior with ONE small high window on the -x wall: the
+    # portal-dominated worst case (all indirect except a small sun patch).
+    v, n, f = room_with_windows((-7, -1, 0), (7, 15, 7),
+                                windows=[(6.0, 8.0, 3.2, 5.0)])
+    write_ply(MESH_DIR / "room_portal.ply", v, n, f)
+
+    # Thin horizontal glass slab (table-top) for chained dielectric
+    # caustics: sun -> slab(S,T) -> orb(S,T) -> ground(D).
+    v, n, f = box((-1.5, -1.0, 0), (1.5, 1.0, 0.16))
+    write_ply(MESH_DIR / "slab.ply", v, n, f)
+
+    # Large ground plane for open-air scenes.
+    v, n, f = flat_mesh([(-25, -25, 0), (25, -25, 0), (25, 25, 0),
+                         (-25, 25, 0)], [(0, 1, 2, 3)])
+    write_ply(MESH_DIR / "ground_big.ply", v, n, f)
+
 
 if __name__ == "__main__":
     main()

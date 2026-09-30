@@ -889,10 +889,14 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 	// intersection (and not BSDF initialization)
 	bsdf->hitPoint.throughShadowTransparency = false;
 
+	// Resolve the Embree accelerator once per call: GetAccelerator() is a
+	// map lookup that was showing up per segment on the hot path.
+	const AcceleratorConstSPtr embreeAccel = device ?
+			AcceleratorConstSPtr() : dataSet->GetAccelerator(ACCEL_EMBREE);
 	for (;;) {
 		bool hit = device ?
 			device->TraceRay(ray, rayHit) :
-			dataSet->GetAccelerator(ACCEL_EMBREE)->Intersect(ray, rayHit);
+			embreeAccel->Intersect(ray, rayHit);
 
 		bool bevelContinueToTrace = !hit;
 		VolumeConstPtr rayVolume =

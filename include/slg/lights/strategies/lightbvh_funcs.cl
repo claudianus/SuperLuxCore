@@ -52,15 +52,31 @@ OPENCL_FORCE_INLINE float LightBVH_NodeImportance(
 		const float dc2 = dot(c2x, c2x);
 		float cosSurf = 1.f, cosOrient = 1.f;
 		if ((d2 > 0.f) && (dc2 > r2)) {
-			const float thetaB = asin(fmin(sqrt(r2 / dc2), 1.f));
+			// Work in dot space: no asin/acos/cos calls. With
+			// sB = sin(thetaB), cB = cos(thetaB) = sqrt(1 - sB^2):
+			//   cos(max(0, acos(d) - t)) == 1      when d >= cos(t)
+			//                            == d*cB + sqrt(1-d^2)*sB  else
+			// (sin(acos(d)) >= 0 since acos(d) in [0, PI]).
+			const float sB = fmin(sqrt(r2 / dc2), 1.f);
+			const float cB = sqrt(fmax(0.f, 1.f - sB * sB));
 			const float3 toC = -c2x / sqrt(dc2);
 			if (!isVolume) {
-				const float aN = acos(clamp(dot(n, toC), -1.f, 1.f));
-				cosSurf = fmax(0.f, cos(fmax(0.f, aN - thetaB)));
+				const float cosN = clamp(dot(n, toC), -1.f, 1.f);
+				cosSurf = (cosN >= cB) ? 1.f :
+						fmax(0.f, cosN * cB +
+						sqrt(fmax(0.f, 1.f - cosN * cosN)) * sB);
 			}
+			// thetaO + thetaB >= PI <=> thetaO >= PI - thetaB <=>
+			// (cO <= 0 && sB >= sO): the emission cone then covers
+			// every direction so the bound is 1 for all aO
+			const float cO = node->cosThetaO, sO = node->sinThetaO;
+			const float cBO = cB * cO - sB * sO;   // cos(thetaB + thetaO)
+			const float sBO = sB * cO + cB * sO;   // sin(thetaB + thetaO)
 			const float3 axis = VLOAD3F(&node->axis.x);
-			const float aO = acos(clamp(dot(axis, -toC), -1.f, 1.f));
-			cosOrient = fmax(0.f, cos(fmax(0.f, aO - node->thetaO - thetaB)));
+			const float cosO = clamp(dot(axis, -toC), -1.f, 1.f);
+			cosOrient = (((cO <= 0.f) && (sB >= sO)) || (cosO >= cBO)) ? 1.f :
+					fmax(0.f, cosO * cBO +
+					sqrt(fmax(0.f, 1.f - cosO * cosO)) * sBO);
 		}
 		imp += node->energyLocal * geo * cosSurf * cosOrient;
 	}

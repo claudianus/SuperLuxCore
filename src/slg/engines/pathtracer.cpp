@@ -1975,24 +1975,28 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 
 // Project every spectral color field of a SampleResult (wavelength bins)
 // back to film RGB under the CIE matching functions. Data fields (positions,
-// normals, IDs, alpha, masks) are left untouched.
+// normals, IDs, alpha, masks) are left untouched. The CIE weights and the
+// sampled white point are shared across all fields via one RGBProjector
+// (wavelength-only quantities); black fields early-out.
 void PathTracer::ProjectSampleResultToRGB(SampleResult &sr, const PathWavelengths &sw) {
+	Spectral::RGBProjector proj;
+	Spectral::PrepareRGBProjection(sw, proj);
 	for (u_int i = 0; i < sr.radiance.Size(); ++i)
-		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], sw);
-	sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, sw);
-	sr.directDiffuseTransmit = Spectral::ProjectToRGB(sr.directDiffuseTransmit, sw);
-	sr.directGlossyReflect = Spectral::ProjectToRGB(sr.directGlossyReflect, sw);
-	sr.directGlossyTransmit = Spectral::ProjectToRGB(sr.directGlossyTransmit, sw);
-	sr.emission = Spectral::ProjectToRGB(sr.emission, sw);
-	sr.indirectDiffuseReflect = Spectral::ProjectToRGB(sr.indirectDiffuseReflect, sw);
-	sr.indirectDiffuseTransmit = Spectral::ProjectToRGB(sr.indirectDiffuseTransmit, sw);
-	sr.indirectGlossyReflect = Spectral::ProjectToRGB(sr.indirectGlossyReflect, sw);
-	sr.indirectGlossyTransmit = Spectral::ProjectToRGB(sr.indirectGlossyTransmit, sw);
-	sr.indirectSpecularReflect = Spectral::ProjectToRGB(sr.indirectSpecularReflect, sw);
-	sr.indirectSpecularTransmit = Spectral::ProjectToRGB(sr.indirectSpecularTransmit, sw);
-	sr.irradiance = Spectral::ProjectToRGB(sr.irradiance, sw);
-	sr.irradiancePathThroughput = Spectral::ProjectToRGB(sr.irradiancePathThroughput, sw);
-	sr.albedo = Spectral::ProjectToRGB(sr.albedo, sw);
+		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], proj);
+	sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, proj);
+	sr.directDiffuseTransmit = Spectral::ProjectToRGB(sr.directDiffuseTransmit, proj);
+	sr.directGlossyReflect = Spectral::ProjectToRGB(sr.directGlossyReflect, proj);
+	sr.directGlossyTransmit = Spectral::ProjectToRGB(sr.directGlossyTransmit, proj);
+	sr.emission = Spectral::ProjectToRGB(sr.emission, proj);
+	sr.indirectDiffuseReflect = Spectral::ProjectToRGB(sr.indirectDiffuseReflect, proj);
+	sr.indirectDiffuseTransmit = Spectral::ProjectToRGB(sr.indirectDiffuseTransmit, proj);
+	sr.indirectGlossyReflect = Spectral::ProjectToRGB(sr.indirectGlossyReflect, proj);
+	sr.indirectGlossyTransmit = Spectral::ProjectToRGB(sr.indirectGlossyTransmit, proj);
+	sr.indirectSpecularReflect = Spectral::ProjectToRGB(sr.indirectSpecularReflect, proj);
+	sr.indirectSpecularTransmit = Spectral::ProjectToRGB(sr.indirectSpecularTransmit, proj);
+	sr.irradiance = Spectral::ProjectToRGB(sr.irradiance, proj);
+	sr.irradiancePathThroughput = Spectral::ProjectToRGB(sr.irradiancePathThroughput, proj);
+	sr.albedo = Spectral::ProjectToRGB(sr.albedo, proj);
 }
 
 void PathTracer::RenderEyeSample(

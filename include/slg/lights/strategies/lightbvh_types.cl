@@ -44,6 +44,10 @@ typedef struct {
 	// Bounding-cone axis (emission orientation bound)
 	Vector axis;
 	float thetaO;       // bounding-cone half-angle (flat leaves: 0)
+	// cos/sin of thetaO precomputed at build time: NodeImportance works
+	// in dot space (cos(a-b) = cosA*cosB + sinA*sinB) so no acos/cos
+	// calls are needed per evaluation
+	float cosThetaO, sinThetaO;
 	float energyFlat;   // total power of flat leaves below
 	float energyLocal;  // total power of local (clusterable) lights below
 	union {

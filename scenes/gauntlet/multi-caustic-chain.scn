@@ -1,0 +1,73 @@
+# Gauntlet scene - "Multi-Caustic Chain".
+#
+# Open-air stress case for chained dielectric caustics: a horizontal
+# dispersive glass slab refracts sunlight onto a clear glass orb, which
+# focuses a second-generation caustic onto the matte ground. A faceted
+# gem beside the orb adds its own small caustic chain. Paths exercised:
+# S->T slab -> S->T orb -> D ground (multi-interface chain), mild Cauchy
+# dispersion, specular shadows under glass.
+#
+# Units: metres. Ground z=0, slab plate at z=1.40..1.56, orb r=1.05
+# centred under the slab, gem to the side.
+scene.camera.lookat.orig = 4.4 -5.8 4.6
+scene.camera.lookat.target = -0.2 0.3 0.4
+scene.camera.fieldofview = 46
+################################################################################
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.006 0.006 0.008
+scene.volumes.vol_glass.ior = 1.46
+################################################################################
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.97 0.97 0.97
+scene.materials.glass.kr = 0.97 0.97 0.97
+scene.materials.glass.volume.interior = vol_glass
+# Slab glass: mild dispersion for spectral chain edges
+scene.materials.slabglass.type = glass
+scene.materials.slabglass.kt = 0.97 0.97 0.97
+scene.materials.slabglass.kr = 0.97 0.97 0.97
+scene.materials.slabglass.volume.interior = vol_glass
+scene.materials.slabglass.cauchyb = 0.04
+scene.materials.ground.type = matte
+scene.materials.ground.kd = 0.58 0.55 0.50
+scene.materials.steel.type = metal2
+scene.materials.steel.preset = aluminium
+scene.materials.steel.distribution = ggx
+scene.materials.steel.uroughness = 0.30
+scene.materials.steel.vroughness = 0.30
+################################################################################
+scene.objects.ground.material = ground
+scene.objects.ground.ply = scenes/gauntlet/mesh/ground_big.ply
+# Glass table-top slab, floating on four thin steel legs
+scene.objects.slab.material = slabglass
+scene.objects.slab.ply = scenes/gauntlet/mesh/slab.ply
+scene.objects.slab.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 1.40 1.0
+scene.objects.leg1.material = steel
+scene.objects.leg1.ply = scenes/gauntlet/mesh/rod.ply
+scene.objects.leg1.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.4 0.0  -1.3 -0.8 0.0 1.0
+scene.objects.leg2.material = steel
+scene.objects.leg2.ply = scenes/gauntlet/mesh/rod.ply
+scene.objects.leg2.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.4 0.0  1.3 -0.8 0.0 1.0
+scene.objects.leg3.material = steel
+scene.objects.leg3.ply = scenes/gauntlet/mesh/rod.ply
+scene.objects.leg3.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.4 0.0  -1.3 0.8 0.0 1.0
+scene.objects.leg4.material = steel
+scene.objects.leg4.ply = scenes/gauntlet/mesh/rod.ply
+scene.objects.leg4.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.4 0.0  1.3 0.8 0.0 1.0
+# Orb on the ground under the slab centre (second refractive stage)
+scene.objects.orb.material = glass
+scene.objects.orb.ply = scenes/gauntlet/mesh/orb.ply
+scene.objects.orb.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  0.0 0.0 1.05 1.0
+# Faceted gem beside the orb (independent chain for comparison)
+scene.objects.gem.material = glass
+scene.objects.gem.ply = scenes/gauntlet/mesh/gem.ply
+scene.objects.gem.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  2.2 1.8 0.9 1.0
+################################################################################
+# Sun ~28 deg off vertical so the chain lands offset under the stack.
+scene.lights.sun.type = sun
+scene.lights.sun.dir = -0.42 0.18 0.89
+scene.lights.sun.turbidity = 4.0
+scene.lights.sun.relsize = 3.0
+scene.lights.sun.gain = 0.00025 0.00025 0.00025
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 3.0
+scene.lights.sky.gain = 0.0006 0.0006 0.0006

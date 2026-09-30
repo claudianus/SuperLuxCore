@@ -188,6 +188,19 @@ float CollapseToHero();
 // scalar value exactly (achromatic-invariant projector).
 Spectrum ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw);
 
+// Per-wavelengths projection context: the CIE matching values and the
+// sampled white point depend only on the drawn wavelengths, so a sample's
+// ~15 spectral fields share one evaluation instead of re-sampling the
+// CIE SPDs and re-normalizing per field (bit-identical results).
+struct RGBProjector {
+	float cx[SPECTRAL_BINS], cy[SPECTRAL_BINS], cz[SPECTRAL_BINS];
+	float whiteR, whiteG, whiteB;
+	u_int aliveMask;
+	bool valid;
+};
+void PrepareRGBProjection(const PathWavelengths &sw, RGBProjector &p);
+Spectrum ProjectToRGB(const Spectrum &bins, const RGBProjector &p);
+
 // Non-mutating hero-only collapse of a connect contribution (MNEE manifold
 // connects): the half-vector constraint is satisfied only at the hero
 // wavelength, so the connect carries the MC wavelength-selection weight
