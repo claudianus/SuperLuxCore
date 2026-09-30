@@ -238,3 +238,44 @@ miss costs nothing.
 Verified: PATHCPU + photongi.caustic logs `injected 65536
 caustic-photon MNEE seed(s)` per generation (4x table cap engaged);
 e17 GPU ALL PASS; no crashes on PATHOCL ingest mode.
+
+## Session — gauntlet v2 + R1 hotpath cuts (`e25c8ffc6`)
+
+**Gauntlet v2** (`dev-tools/g1_gauntlet_bench.py`): 18-row scene table
+(+3 new stress scenes `multi-caustic-chain`, `portal-interior`,
+`glossy-caustic-mix`; meshes via `gauntlet_geo.py`), modes: fixed-wall
+(default), `--spp N` fixed-spp, `--reference`, `--parity` (cpu-gpu),
+`--quick`. Reports: spp, samples/s, mean/median luminance, peak RSS,
+finite-pixel check, RMSE vs reference, unique output names, OCIO ACES
+2.0 hero PNG, per-scene cwd (pool needs scene-dir rel paths), machine
+load warning. `vol-bunny.scn` dropped from the table — references
+missing `bunny_cloud.vdb`; replaced by self-contained
+`vol-densitygrid.scn`.
+
+**R1 CPU hotpath cuts** (from the sampler/photongi/libm profile round):
+- `Spectral::RGBProjector` — CIE weights + sampled white point are
+  wavelength-only quantities; `PrepareRGBProjection(sw)` once,
+  `ProjectToRGB(bins, proj)` per field. `ProjectSampleResultToRGB` ran
+  9 spd.Sample + whitepoint normalize + 2 ToRGB per each of ~15
+  fields; now once per sample + per-field dot+ToRGB. Black-field
+  early-out (ToRGB(0)=0 exact). Bit-identical.
+- `Scene::Intersect` — `dataSet->GetAccelerator(ACCEL_EMBREE)` was a
+  map::find per ray *segment* inside the for(;;) transparency loop;
+  hoisted to once per call.
+- LightBVH `NodeImportance` — dot-space rewrite removes all
+  transcendentals per call (was asin+2acos+2cos): node now stores
+  `cosThetaO`/`sinThetaO` baked at build (struct +8B, GPU layout
+  shared). `cos(max(0,acos(d)-t))` = 1 when `d >= cos(t)` else
+  `d*cos t + sqrt(1-d^2)*sin t`; `thetaO+thetaB >= PI` cover-case
+  detected as `cO <= 0 && sB >= sO`. CPU and `lightbvh_funcs.cl`
+  kept identical (parity contract).
+
+Validated: Release build clean; `parity-regression.sh` 4/4;
+`e26_lightbvh_test.py` 10/10 (unbiasedness vs LOG_POWER, bounded RMSE
+— bvh 0.0017 < flat 0.0027 — cpu-gpu parity, finite outputs).
+Timing A/B deferred: machine load 3.8-47 during session, micro-op
+(~0.1% profile share) below run-to-run noise without idle host.
+
+Pending backlog notes: wavefront remains auto-off (dense mode faster
+on measured workloads); GPU crawl-bail stays reverted (state machine
+boundary rule); spectral parity e28 e2e pending a clean idle run.
