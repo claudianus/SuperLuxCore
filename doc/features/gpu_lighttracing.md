@@ -1194,7 +1194,20 @@ material with SPECULAR|GLOSSY events or a scattering volume — and injects
 config when the artist left them unset (`NULLMAT` is excluded: it reports
 SPECULAR|TRANSMIT but is a passthrough that focuses nothing). Explicit
 `.enable` values and `*.auto=0` remain authoritative. Engines: PATHCPU,
-RTPATHCPU, PATHOCL, TILEPATHOCL, RTPATHOCL.
+RTPATHCPU, PATHOCL, TILEPATHOCL, RTPATHOCL. TILEPATHCPU is excluded —
+its thread runs eye sampling only and has no light sampler/splatter or
+screen-normalized channel (`tilepathcputhread.cpp`,
+`tilepathcpu.cpp` InitFilm); an explicit lt/hbf request there is now
+warned and ignored rather than silently suppressing the caustic class.
+MNEE auto stays enabled on TILEPATHCPU — it is a pure eye-side solver.
+
+The CPU film-channel contract: auto-LT injects `lighttracing.enable`
+but never `hybridbackforward.enable`, and `InitFilm` runs before
+`ParseOptions` promotes lt→hbf. `PathCPURenderEngine::InitFilm`
+therefore gates `RADIANCE_PER_SCREEN_NORMALIZED` on `hbf || lt`
+(previously `hbf` only — auto-LT CPU renders had no splatter channel
+and came out black; e102 `caustic.cpu-zero` caught it).
+Full matrix: `doc/engineering/light-pass-channel-matrix.md`.
 
 Zero-tail hazard on GPU: light tasks are carved out of the task
 population in 8192-chunks, so `taskCount <= 8192` always yields

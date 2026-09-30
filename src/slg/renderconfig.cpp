@@ -275,14 +275,22 @@ static bool SceneHasCausticCapablePaths(SceneConstRef scene) {
 void RenderConfig::ApplyAutoLightTracing() {
 	const string engineType = GetConfig().Get(
 		Property("renderengine.type")("PATHCPU")).Get<string>();
-	if ((engineType != "PATHCPU") && (engineType != "TILEPATHCPU") &&
-			(engineType != "RTPATHCPU") && (engineType != "PATHOCL") &&
-			(engineType != "TILEPATHOCL") && (engineType != "RTPATHOCL"))
+	// TILEPATHCPU has no light-pass machinery at all (no light sampler,
+	// no splatter, no screen-normalized channel): enabling lt there would
+	// only switch eye-side caustic suppression on with nothing to deposit
+	// - the same class of hole as the GPU zero-light-task tail. MNEE is
+	// still allowed: it lives inside the eye path.
+	const bool ltCapable = (engineType == "PATHCPU") ||
+			(engineType == "RTPATHCPU") || (engineType == "PATHOCL") ||
+			(engineType == "TILEPATHOCL") || (engineType == "RTPATHOCL");
+	const bool mneeCapable = ltCapable || (engineType == "TILEPATHCPU");
+	if (!mneeCapable)
 		return;
 	// path.lighttracing.only is a debug/validation mode: an explicit
 	// request implies enable even on scenes whose signature is not
 	// caustic-capable (the user asked for light paths, period)
-	if (GetConfig().Get(Property("path.lighttracing.only")(false)).Get<bool>() &&
+	if (ltCapable &&
+			GetConfig().Get(Property("path.lighttracing.only")(false)).Get<bool>() &&
 			!GetConfig().IsDefined("path.lighttracing.enable")) {
 		GetConfig().Set(Property("path.lighttracing.enable")(true));
 		SDL_LOG("path.lighttracing.only: enabled light tracing"
@@ -290,7 +298,8 @@ void RenderConfig::ApplyAutoLightTracing() {
 	}
 	if (!SceneHasCausticCapablePaths(GetScene()))
 		return;
-	if (GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>() &&
+	if (ltCapable &&
+			GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>() &&
 			!GetConfig().IsDefined("path.lighttracing.enable")) {
 		GetConfig().Set(Property("path.lighttracing.enable")(true));
 		SDL_LOG("path.lighttracing.auto: enabled light tracing"

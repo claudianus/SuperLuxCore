@@ -50,7 +50,12 @@ void PathCPURenderEngine::InitFilm() {
 	// pathTracer has not yet been initialized
 	const bool hybridBackForwardEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
 			Get("path.hybridbackforward.enable")).Get<bool>();
-	if (hybridBackForwardEnable)
+	// Light tracing also promotes the hybrid light pass (ParseOptions),
+	// whose deposits land in the screen-normalized channel - without it
+	// lt-only renders (incl. the auto gate) lose the whole caustic class
+	const bool lightTracingEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
+			Get("path.lighttracing.enable")).Get<bool>();
+	if (hybridBackForwardEnable || lightTracingEnable)
 		GetFilm().AddChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED);
 
 	GetFilm().SetRadianceGroupCount(renderConfig.GetScene().GetLightSources().GetLightGroupCount());

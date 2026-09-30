@@ -409,3 +409,15 @@ dominant term - still needs a light pass. PATHOCL now demotes to
 native-thread hbf whenever native>0 and disables lt/hbf/vc otherwise;
 TILEPATHOCL keeps lt only when native>0. Verified taskCount=8192/4096
 finite (mean ~0.042) and 65536 normal path intact.
+
+Suppression-deposit contract fixes: e102 exposed two holes where
+eye-side caustic suppression ran with no light-pass deposit.
+PATHCPU/RTPATHCPU auto-LT rendered black because InitFilm gated
+RADIANCE_PER_SCREEN_NORMALIZED on raw hbf only (auto injects lt, raw
+hbf stays unset; InitFilm precedes ParseOptions promotion) - now
+hbf || lt. TILEPATHCPU was in the auto-LT whitelist with no light-pass
+machinery at all - removed from ApplyAutoLightTracing and explicit
+lt/hbf requests now warn+ignore in StartLockLess; MNEE auto stays
+(eye-side). e102 also fixed (bigmonkey .scn needs repo-root cwd):
+matrix 11/11 PASS, e17 5/5, Release parity 4/4. Doc:
+doc/engineering/light-pass-channel-matrix.md.

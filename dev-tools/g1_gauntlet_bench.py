@@ -101,18 +101,13 @@ SCENES = [
      False, None, ""),
 ]
 
-# Default hard-path-friendly engine props applied on top of every cfg.
-# Mirrors the "just press render" target configuration.
-DEFAULT_PROPS = """
-path.hybridbackforward.enable = 1
-path.hybridbackforward.partition = 0.8
-path.hybridbackforward.adaptivecaustic = 1
-path.lighttracing.enable = 1
-path.lighttracing.taskfraction = 0.25
-path.photongi.caustic.enabled = 1
-path.photongi.caustic.updatespp = 4
-path.photongi.caustic.volumebeams = 1
-"""
+# Default engine props: empty = the production "just press render"
+# stack. The auto signature (path.lighttracing.auto / path.mnee.auto,
+# both on by default) provisions light tracing + MNEE per scene, so
+# forcing them here would measure a config users no longer get AND
+# waste the light-task tail on diffuse-only scenes. Scenes that need
+# the optional caches (PhotonGI) opt in through their extra column.
+DEFAULT_PROPS = ""
 
 
 def device_mask(want="METAL_GPU"):

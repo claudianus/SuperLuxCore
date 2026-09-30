@@ -39,3 +39,4 @@ docs live in `doc/features/` (see its README for the index).
 | [vc_pool_multiplicity_bias.md](vc_pool_multiplicity_bias.md) | VC pool connect-sum bias (thebox4 +28%): subpath-average normalization fix, replay winner's-curse residual |
 | [property-variant-casts.md](property-variant-casts.md) | `Get<float>` on API-written doubles threw bad_lexical_cast (exact-roundtrip check); lldb catch-vs-throw recipe |
 | [perf-ledger.md](perf-ledger.md) | Ranked bottleneck ledger: profile shares, hypotheses, constraints, A/B results, decisions |
+| [light-pass-channel-matrix.md](light-pass-channel-matrix.md) | LT/HBF suppression→deposit contract: per-engine channel/sampler matrix, PATHCPU InitFilm bug, TILEPATHCPU exclusion |
