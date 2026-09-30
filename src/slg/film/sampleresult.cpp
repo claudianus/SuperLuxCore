@@ -60,29 +60,53 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	objectID = 0;
 	cryptoObjectID = 0.f;
 	cryptoMaterialID = 0.f;
-	directDiffuseReflect = Spectrum();
-	directDiffuseTransmit = Spectrum();
-	directGlossyReflect = Spectrum();
-	directGlossyTransmit = Spectrum();
-	emission = Spectrum();
-	indirectDiffuseReflect = Spectrum();
-	indirectDiffuseTransmit = Spectrum();
-	indirectGlossyReflect = Spectrum();
-	indirectGlossyTransmit = Spectrum();
-	indirectSpecularReflect = Spectrum();
-	indirectSpecularTransmit = Spectrum();
-	directShadowMask = 1.f;
-	indirectShadowMask = 1.f;
-	uv = UV(numeric_limits<float>::infinity(),
-			numeric_limits<float>::infinity());
-	rayCount = 0.f;
-	irradiance = Spectrum();
+	// Field clears gated on channel presence - an unwritten field is
+	// dead memory anyway; only zero the slots the splat actually reads.
+	if (HasChannel(Film::DIRECT_DIFFUSE) || HasChannel(Film::DIRECT_DIFFUSE_REFLECT))
+		directDiffuseReflect = Spectrum();
+	if (HasChannel(Film::DIRECT_DIFFUSE) || HasChannel(Film::DIRECT_DIFFUSE_TRANSMIT))
+		directDiffuseTransmit = Spectrum();
+	if (HasChannel(Film::DIRECT_GLOSSY) || HasChannel(Film::DIRECT_GLOSSY_REFLECT))
+		directGlossyReflect = Spectrum();
+	if (HasChannel(Film::DIRECT_GLOSSY) || HasChannel(Film::DIRECT_GLOSSY_TRANSMIT))
+		directGlossyTransmit = Spectrum();
+	if (HasChannel(Film::EMISSION))
+		emission = Spectrum();
+	if (HasChannel(Film::INDIRECT_DIFFUSE) || HasChannel(Film::INDIRECT_DIFFUSE_REFLECT))
+		indirectDiffuseReflect = Spectrum();
+	if (HasChannel(Film::INDIRECT_DIFFUSE) || HasChannel(Film::INDIRECT_DIFFUSE_TRANSMIT))
+		indirectDiffuseTransmit = Spectrum();
+	if (HasChannel(Film::INDIRECT_GLOSSY) || HasChannel(Film::INDIRECT_GLOSSY_REFLECT))
+		indirectGlossyReflect = Spectrum();
+	if (HasChannel(Film::INDIRECT_GLOSSY) || HasChannel(Film::INDIRECT_GLOSSY_TRANSMIT))
+		indirectGlossyTransmit = Spectrum();
+	if (HasChannel(Film::INDIRECT_SPECULAR) || HasChannel(Film::INDIRECT_SPECULAR_REFLECT))
+		indirectSpecularReflect = Spectrum();
+	if (HasChannel(Film::INDIRECT_SPECULAR) || HasChannel(Film::INDIRECT_SPECULAR_TRANSMIT))
+		indirectSpecularTransmit = Spectrum();
+	if (HasChannel(Film::DIRECT_SHADOW_MASK))
+		directShadowMask = 1.f;
+	if (HasChannel(Film::INDIRECT_SHADOW_MASK))
+		indirectShadowMask = 1.f;
+	if (HasChannel(Film::UV))
+		uv = UV(numeric_limits<float>::infinity(),
+				numeric_limits<float>::infinity());
+	if (HasChannel(Film::RAYCOUNT))
+		rayCount = 0.f;
+	if (HasChannel(Film::IRRADIANCE))
+		irradiance = Spectrum();
+	// irradiancePathThroughput is written unconditionally by the eye path
+	// (it feeds the irradiance AOV even when the channel is not in the
+	// output set) - keep the clear unconditional.
 	irradiancePathThroughput = Spectrum();
-	albedo = Spectrum();
-	motionVector[0] = 0.f;
-	motionVector[1] = 0.f;
-	motionVector[2] = 0.f;
-	motionVector[3] = 0.f;
+	if (HasChannel(Film::ALBEDO))
+		albedo = Spectrum();
+	if (HasChannel(Film::MOTION_VECTOR)) {
+		motionVector[0] = 0.f;
+		motionVector[1] = 0.f;
+		motionVector[2] = 0.f;
+		motionVector[3] = 0.f;
+	}
 
 	for (u_int i = 0; i < SLG_LPE_MAX_EXPRESSIONS; ++i)
 		lpeRadiance[i] = Spectrum();
