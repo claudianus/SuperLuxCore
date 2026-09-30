@@ -985,3 +985,18 @@ No new wins landed. Moving to startup-time wins next.
   64 dispatches per pendingCB, so this removes hundreds of
   driver calls per batch.
 - Parity cornell + strands PASS.
+
+## wavefront auto-on: verified OFF is right (2026-10-01)
+
+- `wf_auto_bench.py` claims "auto → on for GPU" but the code reads
+  `(wavefrontMode == "on")` - `auto` actually resolves to OFF.
+  Comment in pathoclbaseoclthreadinit.cpp already says "AUTO
+  currently resolves to OFF".
+- Measured on prism-conservatory 720p PATHOCL haltspp=32:
+    off: 9.38s wall, ~4.15 Ms/s
+    on:  110.8s wall, ~4.9 Ms/s -> ~12x slower on divergent scenes
+- Conclusion: wavefront stays opt-in. On divergent scenes
+  (caustics, volume scatter, deep refraction chains) the per-state
+  task-queue compaction doesn't pay for its bookkeeping.
+- `pathocl.wavefront = on` remains available for bench scenes where
+  it might win (uniform transport).

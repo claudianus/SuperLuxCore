@@ -186,10 +186,12 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			// per-pixel statistic
 			const u_int eyeTaskCount = taskCount - engine->lightTaskCount;
 			double eyeSampleCount = 0.0, lightSampleCount = 0.0;
-			for (size_t i = 0; i < eyeTaskCount; ++i)
-				eyeSampleCount += gpuTaskStats[i].sampleCount;
-			for (size_t i = eyeTaskCount; i < taskCount; ++i)
-				lightSampleCount += gpuTaskStats[i].sampleCount;
+			for (size_t i = 0; i < taskCount; ++i) {
+				if (i < eyeTaskCount)
+					eyeSampleCount += gpuTaskStats[i].sampleCount;
+				else
+					lightSampleCount += gpuTaskStats[i].sampleCount;
+			}
 			threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
 					eyeSampleCount, lightSampleCount);
 
