@@ -274,21 +274,44 @@ float HomogeneousVolume::ScatterEquiangular(const Ray &ray, const float u,
 		const float thB = atan2f(ray.maxt - dlt, D);
 		return eqLightLuminances[i] * (thB - thA) / D;
 	};
-	float weightsSum = 0.f;
-	for (u_int i = 0; i < lightCount; ++i)
-		weightsSum += weightOf(i);
+	// Single-pass evaluation: the light count is typically small and
+	// weightOf(i) is pure - reusing the values saves a second sqrt +
+	// 2*atan2 per light (bit-identical, they were evaluated twice).
+	float weights[64];
 	u_int pick = lightCount - 1u;
-	if (weightsSum > 0.f) {
-		float acc = 0.f;
+	if (lightCount <= 64u) {
+		float weightsSum = 0.f;
 		for (u_int i = 0; i < lightCount; ++i) {
-			acc += weightOf(i);
-			if (acc >= u1 * weightsSum) {
-				pick = i;
-				break;
-			}
+			weights[i] = weightOf(i);
+			weightsSum += weights[i];
 		}
-	} else
-		pick = Min((u_int)(u1 * lightCount), lightCount - 1u);
+		if (weightsSum > 0.f) {
+			float acc = 0.f;
+			for (u_int i = 0; i < lightCount; ++i) {
+				acc += weights[i];
+				if (acc >= u1 * weightsSum) {
+					pick = i;
+					break;
+				}
+			}
+		} else
+			pick = Min((u_int)(u1 * lightCount), lightCount - 1u);
+	} else {
+		float weightsSum = 0.f;
+		for (u_int i = 0; i < lightCount; ++i)
+			weightsSum += weightOf(i);
+		if (weightsSum > 0.f) {
+			float acc = 0.f;
+			for (u_int i = 0; i < lightCount; ++i) {
+				acc += weightOf(i);
+				if (acc >= u1 * weightsSum) {
+					pick = i;
+					break;
+				}
+			}
+		} else
+			pick = Min((u_int)(u1 * lightCount), lightCount - 1u);
+	}
 	const Point &eqLightPos = eqLightPoints[pick];
 
 	// delta: projection of the light on the ray (absolute t domain);

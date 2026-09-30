@@ -606,3 +606,17 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   (sky2/infinite light NEE - bounded walk guards their spiky CDFs).
 - Sanity: cornell 160x90 PATHCPU @48spp mean 0.37672 - matches
   pre-change 0.37671 within FP-drift band.
+
+## ScatterEquiangular single-pass light weights — 2026-10-01 (cont.)
+
+- HomogeneousVolume::ScatterEquiangular: the contribution-aware light
+  selection evaluated weightOf(i) twice per eligible light (once for
+  weightsSum, once in the pick loop) - each eval costs sqrt + 2*atan2.
+  Now computes once into a stack array (lightCount <= 64 covers all
+  realistic scenes; a fallback keeps the old two-pass loop for larger
+  counts). Bit-identical: weightOf is pure, the values are reused.
+- Context: post-Sobol-LUT profile shows a ~34k-sample libm cluster
+  (sincosf_stret 14.5k + atan2f 14.0k + expf 5.5k) and
+  ScatterEquiangular top-stack 22k; this halves its per-light trig.
+- Sanity: cornell-vol-caustic 160x90 @32spp PATHCPU renders clean
+  (mean 0.4104, no NaN).
