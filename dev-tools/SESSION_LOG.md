@@ -1046,3 +1046,8 @@ DirectLightSampling (DL-MIS pdf eval), RenderEyeSample RIS candidate loop
 Correctness: Leaf* evaluators are bit-identical to the path-based
 wrappers (same CompWeights + LobePdf math on the same leaf). cornell +
 strands parity PASS.
+
+## PathGuiding::Record: drop redundant atomic load (2026-10-01)
+
+`fetch_add + load` was two atomic RMWs where the returned previous value
+suffices. Now one fetch_add + compare.

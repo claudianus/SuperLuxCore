@@ -326,8 +326,11 @@ void PathGuidingCache::Record(const Point &p, const Vector &wi, float flux) cons
 	// Swap cadence counts record *attempts*, not kept records: in dim
 	// scenes most arrivals carry ~0 local value and are dropped below, so
 	// counting only keeps would stall rounds forever.
-	writeRecords.fetch_add(1uLL, std::memory_order_relaxed);
-	if (writeRecords.load(std::memory_order_relaxed) > swapRecords)
+	// fetch_add returns the previous value; the +1 total crosses
+	// swapRecords iff prev >= swapRecords.
+	const unsigned long long prev =
+			writeRecords.fetch_add(1uLL, std::memory_order_relaxed);
+	if (prev >= swapRecords)
 		SwapTrees();
 	// Rebuild window: drop the record rather than descend a mutating
 	// tree. Bounded and rare (~ms per ~1M records); training tolerates it.
