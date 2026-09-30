@@ -314,6 +314,22 @@ void RenderConfig::ApplyAutoLightTracing() {
 		SDL_LOG("path.mnee.auto: enabled the MNEE solver"
 				" (caustic-capable scene signature)");
 	}
+	// PSR (path.regularization.auto, default on): on caustic-capable
+	// scenes the first passes are the expensive ones - SDS chains take
+	// thousands of samples to resolve unblurred. Seed a conservative
+	// sigma + a 64-spp halflife decay so early frames resolve caustics
+	// fast and the blur vanishes into the noise floor (Kaplanyan
+	// decaying schedule: asymptotically unbiased, sigma snaps to 0
+	// under 1e-5). Any explicit path.regularization.* property wins.
+	if (GetConfig().Get(Property("path.regularization.auto")(true)).Get<bool>()) {
+		if (!GetConfig().IsDefined("path.regularization.sigma") &&
+				!GetConfig().IsDefined("path.regularization.halflife")) {
+			GetConfig().Set(Property("path.regularization.sigma")(0.03f));
+			GetConfig().Set(Property("path.regularization.halflife")(64.0f));
+			SDL_LOG("path.regularization.auto: seeded PSR sigma=0.03 "
+					"halflife=64spp (caustic-capable scene signature)");
+		}
+	}
 }
 
 void RenderConfig::DeleteAllFilmImagePipelinesProperties() {
