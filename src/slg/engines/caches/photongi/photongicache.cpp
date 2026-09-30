@@ -366,10 +366,13 @@ void PhotonGICache::UpdateWorker() {
 
 		if (!ingestOnly) {
 			// Trace photons into the shadow copy (never touches the
-			// live cache, including the traced count)
+			// live cache, including the traced count). The pool is
+			// capped so the render threads keep a share of the machine
+			// while the retrace runs.
 			TracePhotons(false, params.caustic.enabled,
 					&updateCausticPhotons, &updateCausticBeams,
-					&updateCausticPhotonTracedCount);
+					&updateCausticPhotonTracedCount,
+					GetUpdateTraceThreadCount());
 		}
 
 		// Absorb device-side deposits (B1'): the drain thread fills the
@@ -491,9 +494,26 @@ void PhotonGICache::completion_t::operator()() noexcept {
 		cache->ApplyPendingUpdate();
 }
 
+size_t PhotonGICache::GetUpdateTraceThreadCount() const {
+	// Default 0 = full width (status-quo behavior). A reduced pool keeps
+	// render threads progressing during background retrace passes at the
+	// cost of a longer pass - which wins depends on interactive vs final
+	// rendering and is not yet measured (machine-load noise blocked the
+	// A/B round, see SESSION_LOG). LUX_PGIC_UPDATE_THREADS opts into a
+	// capped pool (0/negative = full width).
+	size_t threads = 0;
+	if (const char *updateThreadsEnv = getenv("LUX_PGIC_UPDATE_THREADS")) {
+		const int n = atoi(updateThreadsEnv);
+		if (n > 0)
+			threads = (size_t)n;
+	}
+
+	return threads;
+}
+
 void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticEnabled,
-		SpillableArray<Photon> *dstCausticPhotons, std::vector<PhotonBeam> *dstCausticBeams,
-		u_int *dstCausticTracedCount) {
+		luxrays::SpillableArray<Photon> *dstCausticPhotons, std::vector<PhotonBeam> *dstCausticBeams,
+		u_int *dstCausticTracedCount, const size_t maxTraceThreads) {
 	if (!dstCausticPhotons)
 		dstCausticPhotons = &causticPhotons;
 	if (!dstCausticBeams)
@@ -503,7 +523,15 @@ void PhotonGICache::TracePhotons(const bool indirectEnabled, const bool causticE
 	if (!dstCausticTracedCount)
 		dstCausticTracedCount = &causticPhotonTracedCount;
 
-	const size_t renderThreadCount = GetHardwareThreadCount();
+	// maxTraceThreads == 0 (synchronous Preprocess path, no render
+	// running yet) keeps all cores; the background-update worker passes
+	// GetUpdateTraceThreadCount() so the render threads keep making
+	// progress while the retrace runs (a full-core pool oversubscribes
+	// the machine ~2x and craters render progress for the whole pass -
+	// profile: the retrace worker is ~5.5% of all CPU samples, e53).
+	const size_t renderThreadCount = (maxTraceThreads > 0) ?
+			Min(GetHardwareThreadCount(), maxTraceThreads) :
+			GetHardwareThreadCount();
 
 	std::atomic<u_int> globalIndirectPhotonsTraced(0);
 	std::atomic<u_int> globalCausticPhotonsTraced(0);

@@ -403,7 +403,12 @@ private:
 	void TracePhotons(const bool indirectEnabled, const bool causticEnabled,
 		luxrays::SpillableArray<Photon> *dstCausticPhotons = nullptr,
 		std::vector<PhotonBeam> *dstCausticBeams = nullptr,
-		u_int *dstCausticTracedCount = nullptr);
+		u_int *dstCausticTracedCount = nullptr,
+		const size_t maxTraceThreads = 0);
+	// Thread cap for the background-update retrace pool (0 = full width).
+	// The synchronous Preprocess path keeps all cores; the background
+	// worker defaults to half so the render threads keep making progress.
+	size_t GetUpdateTraceThreadCount() const;
 	void BuildCausticBeamsIndex();
 	void BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
 			std::unique_ptr<PGICBeamIndex> &dst, const float radius);
