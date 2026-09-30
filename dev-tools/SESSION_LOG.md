@@ -719,3 +719,16 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   ledger r3 - remaining open items: hitpoint chain, PathVolumeInfo
   has-volumes gate, wavefront queue-totals stall root cause, GPU PGIC
   KD-tree update (big), GPU Sobol dimension LUT (needs GPU profile).
+
+## Lt-depth parity re-check + wavefront sanity — 2026-10-01 (cont.)
+
+- `lighttracing-depth-parity.sh` PASS 2/2 on d51df9036 (depth 2:
+  cpu 78.95 / gpu 81.08, ratio 1.027; depth 4: 89.11 / 89.84,
+  1.008). An earlier FAIL trace in this session was a mixed-source
+  intermediate build from stash-revert churn, not a repo regression.
+- Wavefront sanity: cornell PATHOCL 400spp, `LUXRAYS_WAVEFRONT_QUEUES=1`
+  -> 12.1s vs dense 12.9s (+6%). The stall-class collapse from the
+  09-30 A/B does not reproduce on the current tree; wavefront stays
+  opt-in (auto promotion still gated on a consistent multi-scene win).
+- e50 zero-config defaults + e51 auto-caustic routing ok in Blender 5.2.
+- cpu-gpu-parity.sh cornell 0.0009 reldiff PASS on the final binary.
