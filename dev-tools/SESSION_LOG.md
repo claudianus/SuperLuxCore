@@ -755,3 +755,15 @@ Docs: gpu_lighttracing.md, light-pass-channel-matrix.md corrected.
   renders 100% spp; full cpu-gpu-parity.sh now 6/6 PASS in 28s
   (cornell 0.0010, caustic_many 0.0004, mirror_maze 0.0673,
   vol_caustic 0.1745, spectral 0.0052, strands 0.0008).
+
+## e17 MNEE-seedcache fix (vacuity pin) — 2026-10-01 (cont.)
+
+- e17 T0 went vacuous after `path.regularization.auto` landed: PSR's
+  seeded sigma blur resolves the same caustic class the test uses to
+  prove MNEE activity, so mnee on/off was a wash ("scene does not
+  exercise MNEE"). Correct product behavior - the test's PINS now also
+  carry `path.regularization.auto = 0`. Re-run: 4/4 PASS,
+  T0 mnee=on 0.2681 vs mnee=off 0.0000.
+- e26_lightbvh_test.py: 10/10 PASS on the OpenCL-dup fix build
+  (T3 mesh cpu-gpu parity 0.171920 vs 0.171330, T4 unbiased
+  0.171920 vs ref 0.171714).

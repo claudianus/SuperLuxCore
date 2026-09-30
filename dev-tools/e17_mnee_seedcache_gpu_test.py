@@ -123,7 +123,10 @@ def main():
     # bright region collapses. If it does not, the scene is vacuous.
     # lt/hbf are pinned off: hybrid mode suppresses eye-side MNEE by
     # design, so leaving them to the auto gate would vacuously pass/fail.
-    PINS = "path.lighttracing.enable = 0\npath.hybridbackforward.enable = 0\n"
+    # regularization.auto must be pinned too: PSR's sigma blur resolves
+    # the same caustic class (by design) and would mask the MNEE diff.
+    PINS = ("path.lighttracing.enable = 0\npath.hybridbackforward.enable = 0\n"
+            "path.regularization.auto = 0\n")
     img_off_mnee = render(0, 0, extra=PINS)
     img_on_mnee = render(1, 1, extra=PINS)
     lum_off = img_off_mnee.mean(axis=2)
