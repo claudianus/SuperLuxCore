@@ -4057,18 +4057,29 @@ OPENCL_FORCE_INLINE void Mnee_SeedCacheStore(
 		const uint key, const float3 p, const float3 n,
 		const uint lightIndex, const uint meshIndex, const int mirrorMode,
 		const float fluxWeight) {
-	__global MneeSeedEntry *e = &mneeSeeds[key];
-	// Energy-aware retention (manifold path guiding): keep the
-	// historically brighter basin; seeds only select the Newton basin
-	if (e->valid && (e->fluxWeight > fluxWeight))
+	// Two-way linear probing {key, key+1}: colliding contexts would
+	// otherwise evict each other (CPU mneeseedcache.h parity).
+	for (uint k = key, i = 0; i < 2; ++i, k = (k + 1u) & (MNEE_SEED_CACHE_SIZE - 1u)) {
+		__global MneeSeedEntry *e = &mneeSeeds[k];
+		const int match = (e->lightIndex == lightIndex) &&
+				(e->meshIndex == meshIndex) &&
+				(e->mirrorMode == (unsigned int)(mirrorMode ? 1 : 0));
+		// Energy-aware retention (manifold path guiding): keep the
+		// historically brighter basin; seeds only select the Newton basin
+		if (e->valid && (e->fluxWeight > fluxWeight)) {
+			if (match)
+				return;
+			continue;
+		}
+		e->vx = p.x; e->vy = p.y; e->vz = p.z;
+		e->nx = n.x; e->ny = n.y; e->nz = n.z;
+		e->lightIndex = lightIndex;
+		e->meshIndex = meshIndex;
+		e->mirrorMode = (unsigned int)(mirrorMode ? 1 : 0);
+		e->fluxWeight = fluxWeight;
+		e->valid = 1u;
 		return;
-	e->vx = p.x; e->vy = p.y; e->vz = p.z;
-	e->nx = n.x; e->ny = n.y; e->nz = n.z;
-	e->lightIndex = lightIndex;
-	e->meshIndex = meshIndex;
-	e->mirrorMode = (unsigned int)(mirrorMode ? 1 : 0);
-	e->fluxWeight = fluxWeight;
-	e->valid = 1u;
+	}
 }
 
 // Returns true when a usable seed was found and stored into mnee->vtx.
@@ -4080,10 +4091,18 @@ OPENCL_FORCE_INLINE bool Mnee_SeedCacheLookup(
 		const uint key, const uint lightIndex, const uint meshIndex,
 		const int mirrorMode, const float eta,
 		__global MneeState *mnee) {
-	__global const MneeSeedEntry *e = &mneeSeeds[key];
-	if (!e->valid || (e->lightIndex != lightIndex) ||
-			(e->meshIndex != meshIndex) ||
-			(e->mirrorMode != (unsigned int)(mirrorMode ? 1 : 0)))
+	__global const MneeSeedEntry *e = NULL;
+	for (uint i = 0; i < 2; ++i) {
+		const uint k = (key + i) & (MNEE_SEED_CACHE_SIZE - 1u);
+		__global const MneeSeedEntry *cand = &mneeSeeds[k];
+		if (cand->valid && (cand->lightIndex == lightIndex) &&
+				(cand->meshIndex == meshIndex) &&
+				(cand->mirrorMode == (unsigned int)(mirrorMode ? 1 : 0))) {
+			e = cand;
+			break;
+		}
+	}
+	if (!e)
 		return false;
 
 	const float3 p = MAKE_FLOAT3(e->vx, e->vy, e->vz);

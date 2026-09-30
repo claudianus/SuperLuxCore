@@ -109,18 +109,27 @@ inline u_int MneeSeedKey(const u_int lightIndex, const u_int meshIndex,
 	return h & (MNEE_SEED_CACHE_SIZE_CPU - 1u);
 }
 
-inline void MneeSeedStore(MneeSeedEntry *cache,
-		const u_int key, const luxrays::Point &p, const luxrays::Normal &n,
+// Two-way linear probing: every key probes slots {key, key+1}. The table
+// is far smaller than the number of distinct (cell, endpoint, mesh)
+// contexts, so colliding contexts evicted each other at a measurable
+// rate; the second slot halves that churn. Probing is deterministic so
+// lookups see the same pair stores used.
+inline bool MneeSeedMatch(const MneeSeedEntry &e, const u_int lightIndex,
+		const u_int meshIndex, const bool mirrorMode) {
+	return (e.lightIndex.load(std::memory_order_relaxed) == lightIndex) &&
+			(e.meshIndex.load(std::memory_order_relaxed) == meshIndex) &&
+			(e.mirrorMode.load(std::memory_order_relaxed) ==
+				(mirrorMode ? 1u : 0u));
+}
+
+inline u_int MneeSeedSlot2(const u_int key) {
+	return (key + 1u) & (MNEE_SEED_CACHE_SIZE_CPU - 1u);
+}
+
+inline void MneeSeedStoreEntry(MneeSeedEntry &e,
+		const luxrays::Point &p, const luxrays::Normal &n,
 		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode,
 		const float fluxWeight) {
-	MneeSeedEntry &e = cache[key];
-	// Energy-aware retention (manifold path guiding, Fan et al. 2023): a
-	// converged basin that historically carried more flux keeps the slot;
-	// a fresher or brighter solve displaces it. Seeds only select the
-	// Newton basin — retention cannot bias the estimator.
-	if (e.valid.load(std::memory_order_relaxed) &&
-			(e.fluxWeight.load(std::memory_order_relaxed) > fluxWeight))
-		return;
 	e.vx.store(p.x, std::memory_order_relaxed);
 	e.vy.store(p.y, std::memory_order_relaxed);
 	e.vz.store(p.z, std::memory_order_relaxed);
@@ -135,6 +144,31 @@ inline void MneeSeedStore(MneeSeedEntry *cache,
 	e.valid.store(1u, std::memory_order_relaxed);
 }
 
+inline void MneeSeedStore(MneeSeedEntry *cache,
+		const u_int key, const luxrays::Point &p, const luxrays::Normal &n,
+		const u_int lightIndex, const u_int meshIndex, const bool mirrorMode,
+		const float fluxWeight) {
+	// Energy-aware retention (manifold path guiding, Fan et al. 2023): a
+	// converged basin that historically carried more flux keeps the slot;
+	// a fresher or brighter solve displaces it. Seeds only select the
+	// Newton basin — retention cannot bias the estimator.
+	for (u_int k = key, i = 0; i < 2; ++i, k = MneeSeedSlot2(k)) {
+		MneeSeedEntry &e = cache[k];
+		const bool match = MneeSeedMatch(e, lightIndex, meshIndex,
+				mirrorMode);
+		const bool valid = e.valid.load(std::memory_order_relaxed);
+		if (valid && (e.fluxWeight.load(std::memory_order_relaxed) >
+				fluxWeight)) {
+			if (match)
+				return;      // a brighter basin for our context stays
+			continue;        // brighter foreign context: probe the next slot
+		}
+		MneeSeedStoreEntry(e, p, n, lightIndex, meshIndex, mirrorMode,
+				fluxWeight);
+		return;
+	}
+}
+
 // Record a failed solve against this cell. Free slots are claimed as
 // poison (namespaced fields set, valid stays 0); slots holding a seed
 // for a different context are left alone; a seed for the same context
@@ -142,24 +176,32 @@ inline void MneeSeedStore(MneeSeedEntry *cache,
 inline void MneeSeedRecordFail(MneeSeedEntry *cache,
 		const u_int key, const u_int lightIndex, const u_int meshIndex,
 		const bool mirrorMode) {
-	MneeSeedEntry &e = cache[key];
-	const bool match = (e.lightIndex.load(std::memory_order_relaxed) ==
-			lightIndex) &&
-			(e.meshIndex.load(std::memory_order_relaxed) == meshIndex) &&
-			(e.mirrorMode.load(std::memory_order_relaxed) ==
-				(mirrorMode ? 1u : 0u));
-	if (e.valid.load(std::memory_order_relaxed)) {
-		if (match && (e.failCount.load(std::memory_order_relaxed) < 255u))
-			e.failCount.fetch_add(1u, std::memory_order_relaxed);
+	for (u_int k = key, i = 0; i < 2; ++i, k = MneeSeedSlot2(k)) {
+		MneeSeedEntry &e = cache[k];
+		const bool match = MneeSeedMatch(e, lightIndex, meshIndex,
+				mirrorMode);
+		if (e.valid.load(std::memory_order_relaxed)) {
+			if (match &&
+					(e.failCount.load(std::memory_order_relaxed) < 255u))
+				e.failCount.fetch_add(1u, std::memory_order_relaxed);
+			if (match)
+				return;
+			continue;
+		}
+		// Invalid slot: matching context accumulates evidence, foreign
+		// context claims the slot as fresh poison.
+		if (match) {
+			if (e.failCount.load(std::memory_order_relaxed) < 255u)
+				e.failCount.fetch_add(1u, std::memory_order_relaxed);
+		} else {
+			e.lightIndex.store(lightIndex, std::memory_order_relaxed);
+			e.meshIndex.store(meshIndex, std::memory_order_relaxed);
+			e.mirrorMode.store(mirrorMode ? 1u : 0u,
+					std::memory_order_relaxed);
+			e.failCount.store(1u, std::memory_order_relaxed);
+		}
 		return;
 	}
-	if (!match) {
-		e.lightIndex.store(lightIndex, std::memory_order_relaxed);
-		e.meshIndex.store(meshIndex, std::memory_order_relaxed);
-		e.mirrorMode.store(mirrorMode ? 1u : 0u, std::memory_order_relaxed);
-		e.failCount.store(1u, std::memory_order_relaxed);
-	} else if (e.failCount.load(std::memory_order_relaxed) < 255u)
-		e.failCount.fetch_add(1u, std::memory_order_relaxed);
 }
 
 inline void MneeSeedStore(MneeSeedEntry *cache, const MneeSeedRecord &r) {

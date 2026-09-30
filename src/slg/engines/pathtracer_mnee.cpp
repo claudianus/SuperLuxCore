@@ -664,24 +664,12 @@ void MneeDumpSessionStats() {
 				t, h, 100.0 * h / t);
 }
 
-// Returns true and fills *v when a usable seed was found (the flat tangent
-// frame fallback like the GPU Mnee_SeedCacheLookup; the first proposal
-// re-projects onto the real surface anyway).
-static bool MneeSeedLookup(const MneeSeedEntry *cache,
-		const u_int key, const u_int lightIndex, const u_int meshIndex,
-		const bool mirrorMode, const float eta, MneeVertex *v,
-		u_int *failEvidence = nullptr) {
-	if (g_seedStatsOn)
-		g_mneeSeedStats.tries.fetch_add(1, std::memory_order_relaxed);
-	if (failEvidence)
-		*failEvidence = 0u;
-	const MneeSeedEntry &e = cache[key];
-	if ((e.lightIndex.load(std::memory_order_relaxed) != lightIndex) ||
-			(e.meshIndex.load(std::memory_order_relaxed) != meshIndex) ||
-			(e.mirrorMode.load(std::memory_order_relaxed) !=
-				(mirrorMode ? 1u : 0u)))
-		return false;
-
+// Use a context-matched entry: fills failEvidence and (for a real seed)
+// the vertex (the flat tangent frame fallback like the GPU
+// Mnee_SeedCacheLookup; the first proposal re-projects onto the real
+// surface anyway).
+static bool MneeSeedEntryUse(const MneeSeedEntry &e, const float eta,
+		MneeVertex *v, u_int *failEvidence) {
 	// Poisoned entries carry no vertex: they mark cells whose solves
 	// repeatedly failed so the caller can run a capped probe instead.
 	if (failEvidence)
@@ -711,6 +699,27 @@ static bool MneeSeedLookup(const MneeSeedEntry *cache,
 	if (g_seedStatsOn)
 		g_mneeSeedStats.hits.fetch_add(1, std::memory_order_relaxed);
 	return true;
+}
+
+// Returns true and fills *v when a usable seed was found. Two-way
+// probing: stores may spill into key+1 on a context collision
+// (mneeseedcache.h).
+static bool MneeSeedLookup(const MneeSeedEntry *cache,
+		const u_int key, const u_int lightIndex, const u_int meshIndex,
+		const bool mirrorMode, const float eta, MneeVertex *v,
+		u_int *failEvidence = nullptr) {
+	if (g_seedStatsOn)
+		g_mneeSeedStats.tries.fetch_add(1, std::memory_order_relaxed);
+	if (failEvidence)
+		*failEvidence = 0u;
+	u_int kk = key;
+	for (u_int i = 0; i < 2; ++i, kk = MneeSeedSlot2(kk)) {
+		const MneeSeedEntry &e = cache[kk];
+		if (!MneeSeedMatch(e, lightIndex, meshIndex, mirrorMode))
+			continue;
+		return MneeSeedEntryUse(e, eta, v, failEvidence);
+	}
+	return false;
 }
 
 // Single-vertex Newton solve of the specular constraint between x0p and the
