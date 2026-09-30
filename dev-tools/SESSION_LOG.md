@@ -1253,3 +1253,12 @@ explicit instantiation (ODR still satisfied; cold functions like
 Allocate/SpillToFile stay out-of-line).
 
 cornell + strands parity PASS.
+
+## HitPoint::Init sceneObject overload - one NamedObjectVector::GetObj saved per hit (2026-10-01)
+
+BSDF::Init already fetched the SceneObject (rayHit.meshIndex); HitPoint::Init
+fetched it again to reach objectID + GetExtMesh. Added an overload taking
+SceneObjectConstRef; the meshIndex signature is now a delegating shim
+(used by the point-on-surface BSDF::Init variant).
+
+cornell + strands parity PASS.

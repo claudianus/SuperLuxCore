@@ -40,7 +40,7 @@ void BSDF::Init(
 	mesh.GetLocal2World(ray.time, hitPoint.localToWorld);
 
 	hitPoint.Init(fixedFromLight, throughShadowTransparency,
-			scene, rayHit.meshIndex, rayHit.triangleIndex,
+			scene, *sceneObject, rayHit.triangleIndex,
 			ray(rayHit.t), -ray.d,
 			rayHit.b1, rayHit.b2,
 			passThroughEvent);

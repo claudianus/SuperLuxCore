@@ -33,7 +33,8 @@ using namespace std;
 // Note: This is also _not_ initializing volume related information.
 
 void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
-		SceneConstRef scene, const u_int meshIndex, const u_int triIndex,
+		SceneConstRef scene, SceneObjectConstRef sceneObject,
+		const u_int triIndex,
 		const Point &pnt, const Vector &dir,
 		const float b1, const float b2,
 		const float passThroughEvnt) {
@@ -44,8 +45,7 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 	p = pnt;
 	fixedDir = dir;
 
-	// Get the scene object
-	auto& sceneObject = scene.GetObjects().GetSceneObject(meshIndex);
+	// scene object is already fetched by BSDF::Init
 	objectID = sceneObject.GetID();
 
 	// Mesh information
@@ -95,6 +95,17 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 
 	// The ray context is set later by Scene::Intersect()
 	SetRayContext(0, NONE, nullptr, 0.f);
+}
+
+void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
+		SceneConstRef scene, const u_int meshIndex,
+		const u_int triIndex,
+		const Point &pnt, const Vector &dir,
+		const float b1, const float b2,
+		const float passThroughEvnt) {
+	Init(fixedFromLight, throughShadowTransp, scene,
+			scene.GetObjects().GetSceneObject(meshIndex),
+			triIndex, pnt, dir, b1, b2, passThroughEvnt);
 }
 
 // Initialize all fields (i.e. the one missing a default constructor)
