@@ -102,20 +102,22 @@ void FilmSampleSplatter::AtomicSplatSample(FilmConstRef film, const SampleResult
 		const int y0 = Floor2Int(dImageY - filter->yWidth * .5f + .5f);
 		const int y1 = y0 + filterLUT->GetHeight();
 
-		for (int iy = y0; iy < y1; ++iy) {
-			if (iy < (int)subRegion[2]) {
-				lut += filterLUT->GetWidth();
-				continue;
-			} else if(iy > (int)subRegion[3])
-				break;
+		// Fast-out: the whole filter extent sits outside the active subRegion
+		// (sub-tile renders, lens borders). One comparison replaces the inner
+		// loop's per-pixel bounds test on every rejected splat.
+		const int xMin = Max(x0, (int)subRegion[0]);
+		const int xMax = Min(x1 - 1, (int)subRegion[1]);
+		const int yMin = Max(y0, (int)subRegion[2]);
+		const int yMax = Min(y1 - 1, (int)subRegion[3]);
+		if (xMin > xMax || yMin > yMax)
+			return;
 
-			for (int ix = x0; ix < x1; ++ix) {
-				const float filterWeight = *lut++;
+		for (int iy = yMin; iy <= yMax; ++iy) {
+			// Rewind lut to the first in-bounds row
+			auto rowLut = lut + (iy - y0) * filterLUT->GetWidth();
 
-				if (ix < (int)subRegion[0])
-					continue;
-				else if (ix > (int)subRegion[1])
-					break;
+			for (int ix = xMin; ix <= xMax; ++ix) {
+				const float filterWeight = rowLut[ix - x0];
 
 				const float filteredWeight = weight * filterWeight;
 				// A zero-weight splat carries no contribution; skip the
