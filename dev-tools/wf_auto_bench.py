@@ -88,7 +88,9 @@ def main():
     print(f"wavefront auto-on A/B ({SECS:.0f}s/render, PATHOCL Metal)\n")
     for tag, rel in SCENES:
         spp_off, sps_off = run(rel, {"pathocl.wavefront": "off"})
-        spp_auto, sps_auto = run(rel, {})  # auto -> on for GPU
+        # Explicit "on": the engine's "auto" resolves to OFF, so passing
+        # no property would compare off-vs-off and hide a regression.
+        spp_auto, sps_auto = run(rel, {"pathocl.wavefront": "on"})
         ratio = (sps_auto / sps_off) if (sps_off > 0 and sps_auto > 0) else float("nan")
         print(f"{tag}: off={spp_off}spp {sps_off/1e6:.2f}Ms/s  "
               f"auto={spp_auto}spp {sps_auto/1e6:.2f}Ms/s  "
