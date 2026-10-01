@@ -85,8 +85,11 @@ void BSDF::Init(
 		else
 			triangleLightSource = nullptr;
 
-		// Apply bump or normal mapping
-		material->Bump(&hitPoint);
+		// Apply bump or normal mapping. Materials that carry no bump
+		// texture return early - skip the virtual call entirely since
+		// Material::Bump is a null-test on 99% of hits.
+		if (material->GetBumpTexture())
+			material->Bump(&hitPoint);
 
 		// Build the local reference system
 		frame = hitPoint.GetFrame();
