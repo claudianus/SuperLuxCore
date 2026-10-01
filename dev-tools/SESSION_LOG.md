@@ -1415,3 +1415,29 @@ Per sample (~30 dims): ~300 int ops ≈ 32 cycles at 4GHz — acceptable when
 a full path trace is ~10μs. The real remaining splat cost is the CAS
 on `pixels[]` (now `ldadd` post-1a6450564) + `AddSampleResultData` writes.
 Next: deferred splat queue (backlog).
+
+---
+### r8 — CPU render thread floor reached
+
+Post-1a6450564 profile on luxball 640x360 PATHCPU, 20-core M5 Pro:
+
+| Path | % of render threads |
+|---|---|
+| Scene::Intersect (Embree BVH + BSDF::Init) | ~60 |
+| DirectLightSampling (SampleLights + shadow ray) | ~15 |
+| BSDF::Init non-Intersect part (volumes, material, bump) | ~4 |
+| NextSampleImpl / splat | ~3 |
+| AtomicAddSampleResultColor + data | ~3 |
+
+Per-bounce BSDF::Init now skips the two volume-getter virtuals via
+hasVolumeOverrides (only MixMaterial, GlossyCoating, TwoSided need
+hitPoint-aware lookup). AtomicAdd is single-instruction ldadd on ARM /
+lock xadd on x86 - no CAS retry loop under 18-thread contention.
+
+Norm==0 splats already gated by `if (norm > 0.f)` in Metropolis accept.
+filteredWeight==0 per-pixel skip already in place. subRegion fast-out
+in AtomicSplatSample rejects tile-border samples before the LUT walk.
+
+The remaining splat-side work is structural (deferred queue) - needs
+a bounded SPSC queue per render thread + flush on convergence-check
+boundary. Queued in ledger.
