@@ -30,6 +30,11 @@ namespace luxrays {
 //------------------------------------------------------------------------------
 
 inline float AtomicAdd(float *val, const float delta) {
+#if defined(__cpp_lib_atomic_float) || (defined(__GNUC__) && !defined(__clang__))
+	// C++20 atomic<float> - single instruction on ARM (ldadd) and
+	// x86 (lock xadd via SSE). Falls back to CAS on older toolchains.
+	return std::atomic_ref<float>(*val).fetch_add(delta);
+#else
 	union bits {
 		float f;
 		uint32_t i;
@@ -40,7 +45,7 @@ inline float AtomicAdd(float *val, const float delta) {
 
 	do {
 #if (defined(__i386__) || defined(__amd64__))
-		__asm__ __volatile__("pause\n");
+		__asm__ __volatile__(\"pause\\n\");
 #endif
 
 		oldVal.f = *val;
@@ -49,10 +54,16 @@ inline float AtomicAdd(float *val, const float delta) {
 			((uint32_t *) val), newVal.i, oldVal.i) != oldVal.i);
 
 	return oldVal.f;
+#endif
 }
 
 template<class T>
 inline double AtomicAdd(std::atomic<T> *val, const T delta) {
+#if defined(__cpp_lib_atomic_float) || (defined(__GNUC__) && !defined(__clang__))
+	// fetch_add emits single-instruction atomic on ARM (ldadd) and x86
+	// (lock add) - avoids the compare_exchange retry loop entirely.
+	return val->fetch_add(delta);
+#else
 	T oldVal = val->load();
 	T newVal = oldVal + delta;
 
@@ -61,6 +72,7 @@ inline double AtomicAdd(std::atomic<T> *val, const T delta) {
 	}
 
 	return newVal;
+#endif
 }
 
 inline unsigned int AtomicAdd(unsigned int *val, const unsigned int delta) {
