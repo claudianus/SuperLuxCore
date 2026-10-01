@@ -1406,3 +1406,12 @@ has no single instruction) — still CAS but one branch less per retry.
 `AtomicAddWeightedPixel` keeps it. The `pixels` array stays `float*` (not
 `atomic<float>`) — that's the boundary between GPU merge (untouched, uses
 OCL side) and CPU scatter.
+
+---
+### r7 — Sobol GetSample is lean
+
+`SobolSequence::GetSample` per-dim cost ~10 int ops + 1 mult + 1 floorf.
+Per sample (~30 dims): ~300 int ops ≈ 32 cycles at 4GHz — acceptable when
+a full path trace is ~10μs. The real remaining splat cost is the CAS
+on `pixels[]` (now `ldadd` post-1a6450564) + `AddSampleResultData` writes.
+Next: deferred splat queue (backlog).
