@@ -197,6 +197,17 @@ private:
 	u_int cacheTileWidthCountMagic, cacheOverlappingMagic;
 	bool filmCacheValid;
 	bool cacheHasNoiseChannel, cacheHasUserImportanceChannel;
+	// Per-bucket adaptive thresholds: the convergence gate reads the
+	// film NOISE channel, USER_IMPORTANCE and the pixel luma moments -
+	// all bounded-stale estimators already (the NOISE map refreshes on
+	// test steps, moments only matter past the min-samples bound).
+	// Evaluating them per candidate costs ~50-100 ops inside the
+	// re-pick loop; tabulating once per bucket keeps the accept/reject
+	// decision identical (same RNG draws, same order) with at most one
+	// bucket of extra estimator staleness.
+	void RebuildBucketThreshold();
+	std::vector<float> bucketThreshold;
+	bool adaptTableValid;
 	// log2 of the pow2 sizes (all RoundUpPow2'd at construction)
 	u_int bucketSizeLog2, tileSizeLog2;
 

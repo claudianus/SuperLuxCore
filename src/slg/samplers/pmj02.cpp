@@ -67,7 +67,9 @@ PMJ02Sampler::PMJ02Sampler(
 		overlapping(overlap),
 		bucketIndex(std::make_shared<u_int>(0)),
 		pixelPassRunLeft(0u),
-		pixelPassRunIdx(0u)
+		pixelPassRunIdx(0u),
+		adaptTableValid(false),
+		adaptTableSubRegion{0u, 0u, 0u, 0u}
 {
 	// Seed the per-pair generation (distinct deterministic seed per pair so
 	// pairs stay independent; renderengine.seed flows in through rnd).
@@ -114,6 +116,13 @@ void PMJ02Sampler::InitNewSample() {
 		tileHeightCount = (subRegionHeight + tileSize - 1) / tileSize;
 
 		bucketCount = overlapping * (tiletWidthCount * tileSize * tileHeightCount * tileSize + bucketSize - 1) / bucketSize;
+
+		// Thresholds were tabulated for a previous subregion
+		if (adaptTableSubRegion[0] != filmSubRegion[0] ||
+				adaptTableSubRegion[1] != filmSubRegion[1] ||
+				adaptTableSubRegion[2] != filmSubRegion[2] ||
+				adaptTableSubRegion[3] != filmSubRegion[3])
+			adaptTableValid = false;
 	} else
 		bucketCount = 0xffffffffu;
 
@@ -138,6 +147,10 @@ void PMJ02Sampler::InitNewSample() {
 
 				// Initialize the rng0, rng1 and rngPass generator
 				rngGenerator.init(newBucketSeed);
+
+				// Thresholds belong to the previous bucket - lazily
+				// rebuilt at the first gated candidate
+				adaptTableValid = false;
 			}
 		}
 
@@ -162,34 +175,15 @@ void PMJ02Sampler::InitNewSample() {
 			py = filmSubRegion[2] + subRegionPixelY;
 
 			const u_int pixelIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
-			// Run-batched pixel passes (see sobol.cpp): an active run
-			// pins the candidate - skip the adaptive gate entirely.
-			const bool runHit = (pixelPassRunLeft > 0u) &&
-					(pixelPassRunIdx == pixelIdx);
 
-			// Check if the current pixel is over or under the convergence threshold
-			auto& film = sharedData->GetEngineFilm();
-			if (!runHit && (adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
-				// Pixels are sampled in accordance with how far from convergence they are
-				const float noise = *(GetFilm().channel_NOISE->GetPixel(px, py));
+			// Check if the current pixel is over or under the
+			// convergence threshold via the per-bucket table (same
+			// bounded-stale contract as SobolSampler).
+			if ((adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
+				if (!adaptTableValid)
+					RebuildBucketThreshold();
 
-				// Factor user driven importance sampling too
-				float threshold;
-				if (GetFilm().HasChannel(Film::USER_IMPORTANCE)) {
-					const float userImportance = *(GetFilm().channel_USER_IMPORTANCE->GetPixel(px, py));
-
-					// Noise is initialized to INFINITY at start
-					if (isinf(noise))
-						threshold = userImportance;
-					else
-						threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
-				} else
-					threshold = noise;
-
-				// The floor for the pixel importance is given by the adaptiveness strength
-				threshold = Max(threshold, 1.f - adaptiveStrength);
-
-				if (rndGen->floatValue() > threshold) {
+				if (rndGen->floatValue() > bucketThreshold[pixelOffset]) {
 					// Skip this pixel and try the next one; after a full
 					// bucket sweep accept it anyway (bounded loop)
 					if (++skipAttempts < bucketSize * superSampling) {
@@ -203,14 +197,10 @@ void PMJ02Sampler::InitNewSample() {
 				}
 			}
 
-			if (runHit) {
-				++pass;
-				--pixelPassRunLeft;
-			} else {
-				pixelPassRunLeft = PASS_BATCH - 1u;
-				pixelPassRunIdx = pixelIdx;
-				pass = sharedData->GetNewPixelPassBatch(pixelIdx, PASS_BATCH);
-			}
+			// Per-sample claims again: with superSampling==1 the run
+			// could never hit anyway (every candidate is a new pixel)
+			// and the batch inflated passPerPixel 4x per visit.
+			pass = sharedData->GetNewPixelPass(pixelIdx);
 		} else {
 			px = 0;
 			py = 0;
@@ -248,6 +238,61 @@ void PMJ02Sampler::InitNewSample() {
 		sample1 = py + (fy0 >= 1.f ? fy0 - 1.f : fy0);
 		break;
 	}
+}
+
+void PMJ02Sampler::RebuildBucketThreshold() {
+	// Snapshot the adaptive thresholds for the current bucket (same
+	// bounded-stale contract as SobolSampler::RebuildBucketThreshold -
+	// NOISE refreshes on test steps, USER_IMPORTANCE is static).
+	bucketThreshold.resize(bucketSize);
+
+	const u_int *filmSubRegion = GetFilm().GetSubRegion();
+	adaptTableSubRegion[0] = filmSubRegion[0];
+	adaptTableSubRegion[1] = filmSubRegion[1];
+	adaptTableSubRegion[2] = filmSubRegion[2];
+	adaptTableSubRegion[3] = filmSubRegion[3];
+
+	const u_int subRegionWidth = filmSubRegion[1] - filmSubRegion[0] + 1;
+	const u_int subRegionHeight = filmSubRegion[3] - filmSubRegion[2] + 1;
+	const u_int tiletWidthCount = (subRegionWidth + tileSize - 1) / tileSize;
+
+	for (u_int j = 0; j < bucketSize; ++j) {
+		// Same pixel decode as the InitNewSample candidate loop
+		const u_int pixelBucketIndex = (*bucketIndex / overlapping) * bucketSize + j;
+		const u_int mortonCurveOffset = pixelBucketIndex % (tileSize * tileSize);
+		const u_int pixelTileIndex = pixelBucketIndex / (tileSize * tileSize);
+
+		const u_int subRegionPixelX = (pixelTileIndex % tiletWidthCount) * tileSize + DecodeMorton2X(mortonCurveOffset);
+		const u_int subRegionPixelY = (pixelTileIndex / tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
+		if ((subRegionPixelX >= subRegionWidth) ||
+				(subRegionPixelY >= subRegionHeight)) {
+			// Never read - the candidate loop bounds-checks first
+			bucketThreshold[j] = 0.f;
+			continue;
+		}
+
+		const u_int px = filmSubRegion[0] + subRegionPixelX;
+		const u_int py = filmSubRegion[2] + subRegionPixelY;
+
+		const float noise = *(GetFilm().channel_NOISE->GetPixel(px, py));
+
+		float threshold;
+		if (GetFilm().HasChannel(Film::USER_IMPORTANCE)) {
+			const float userImportance = *(GetFilm().channel_USER_IMPORTANCE->GetPixel(px, py));
+
+			// Noise is initialized to INFINITY at start
+			if (isinf(noise))
+				threshold = userImportance;
+			else
+				threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
+		} else
+			threshold = noise;
+
+		// The floor for the pixel importance is given by the adaptiveness strength
+		bucketThreshold[j] = Max(threshold, 1.f - adaptiveStrength);
+	}
+
+	adaptTableValid = true;
 }
 
 void PMJ02Sampler::EnsurePairs(const u_int count) {

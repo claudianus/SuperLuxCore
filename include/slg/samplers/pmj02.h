@@ -170,12 +170,23 @@ private:
 
 	std::shared_ptr<u_int> bucketIndex;
 	u_int pixelOffset, passOffset, pass;
-	// Pixel-pass run batching, same contract as SobolSampler:
-	// GetNewPixelPassBatch claims PASS_BATCH consecutive passes per
-	// pixel; the adaptive gate evaluates once per run.
+	// Pixel-pass run batching is kept for the filmless single-counter
+	// path only; the image path claims per-sample again (see sobol.cpp -
+	// with superSampling==1 every candidate is a different pixel so the
+	// run could never hit, and the stale batch inflated passPerPixel).
 	static const u_int PASS_BATCH = 4;
 	u_int pixelPassRunLeft, pixelPassRunIdx;
 	u_int pixelX, pixelY;
+	// Per-bucket adaptive thresholds (same bounded-stale contract as
+	// SobolSampler::RebuildBucketThreshold): NOISE + USER_IMPORTANCE
+	// feed the gate and are refreshed outside this function, so
+	// tabulating once per bucket changes no decision semantics.
+	void RebuildBucketThreshold();
+	std::vector<float> bucketThreshold;
+	bool adaptTableValid;
+	// InitNewSample snapshots the subregion each call (no film cache
+	// like SobolSampler); track the bounds the table was built for.
+	u_int adaptTableSubRegion[4];
 	luxrays::TauswortheRandomGenerator rngGenerator;
 
 	float sample0, sample1;
