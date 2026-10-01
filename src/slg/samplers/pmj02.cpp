@@ -183,7 +183,10 @@ void PMJ02Sampler::InitNewSample() {
 				if (!adaptTableValid)
 					RebuildBucketThreshold();
 
-				if (rndGen->floatValue() > bucketThreshold[pixelOffset]) {
+				// thr >= 1 guarantees acceptance - skip the draw (see
+				// sobol.cpp: rndGen feeds only this compare)
+				const float thr = bucketThreshold[pixelOffset];
+				if ((thr < 1.f) && (rndGen->floatValue() > thr)) {
 					// Skip this pixel and try the next one; after a full
 					// bucket sweep accept it anyway (bounded loop)
 					if (++skipAttempts < bucketSize * superSampling) {
