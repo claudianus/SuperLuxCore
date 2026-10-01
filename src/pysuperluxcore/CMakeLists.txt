@@ -74,6 +74,40 @@ install(FILES "${PROJECT_SOURCE_DIR}/src/slg/utils/cl2msl.py"
   COMPONENT pysuperluxcore
 )
 
+# Vulkan kernel compilation needs an external toolchain (clspv, opt,
+# llvm-dis, glslangValidator, plus MoltenVK on macOS). The engine looks
+# for it next to the installed module (vkdevice.cpp, dladdr) so a wheel
+# that carries it works with no environment setup.
+#
+# Off by default: the set is ~168 MB and it only serves the opt-in
+# Vulkan backend. Turn it on when the toolchain has been staged (see
+# dev-tools/vulkan-tools-install.sh and VKTOOLS_DIR).
+option(PYSUPERLUXCORE_BUNDLE_VKTOOLS
+  "Bundle the Vulkan toolchain into the wheel (needs VKTOOLS_DIR)" OFF)
+set(VKTOOLS_DIR "" CACHE PATH
+  "Vulkan toolchain root to bundle (the directory holding bin/, lib/ and third_party/)")
+
+if(PYSUPERLUXCORE_BUNDLE_VKTOOLS)
+  if(NOT VKTOOLS_DIR)
+    if(DEFINED ENV{LUX_VKTOOLS})
+      set(VKTOOLS_DIR "$ENV{LUX_VKTOOLS}")
+    else()
+      set(VKTOOLS_DIR "$ENV{HOME}/.luxcore/vktools")
+    endif()
+  endif()
+  if(NOT EXISTS "${VKTOOLS_DIR}/bin/clspv")
+    message(FATAL_ERROR
+      "PYSUPERLUXCORE_BUNDLE_VKTOOLS=ON but no clspv under "
+      "'${VKTOOLS_DIR}/bin'. Run dev-tools/vulkan-tools-install.sh "
+      "(LUX_VKTOOLS=${VKTOOLS_DIR}) or set VKTOOLS_DIR.")
+  endif()
+  message(STATUS "Bundling the Vulkan toolchain from ${VKTOOLS_DIR}")
+  install(DIRECTORY "${VKTOOLS_DIR}/"
+    DESTINATION pysuperluxcore/vktools
+    COMPONENT pysuperluxcore
+    USE_SOURCE_PERMISSIONS)
+endif()
+
 # Install pdb file (if msvc and debug)
 if(MSVC)
   install(FILES "$<$<CONFIG:Debug>:$<TARGET_PDB_FILE:pysuperluxcore>>"
