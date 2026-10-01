@@ -1384,3 +1384,11 @@ scene::Intersect pinned accel.
 
 CPU micro floor confirmed. Structural next: per-thread splat
 accumulation + merge, or SampleResult size cut.
+
+---
+### 이후 후보 (backlog)
+
+- PATHCPU deferred splat queue: `FilmSampleSplatter::AtomicSplatSample` -> per-thread `(x,y,weight,SampleResult)` queue, flush at convergence-check boundary. 데이터 채널(last-write-wins)은 즉시 splat 유지, 색 채널만 지연. 메모리 ~16B×depth×in-flight samples. TilePathCPU 스타일이지만 큰 film이 아니라 queue를 쓰는 이유 = full-film 복사 비용 회피. **실구현 복잡도 M-H.** queue 크기 상한 = filterWidth²×예상 SPP, flush 시 subRegion 클램핑 포함.
+- SpectrumGroup packed bools: `firstPathVertex` 등 bool 필드 → 1B bitmask로 합쳐 `SampleResult` 크기 추가 감소.
+- SampleResult 성장 패턴: `maxPathDepth.depth + 2` 고정 cap인데 실제 경로가 이보다 깊으면 realloc — `used`는 쓰인 슬롯 카운터지만 capacity는 한 번 확장되면 그대로니, `sampleResults.reserve()`를 엔진 init에서 한번.
+- `channel_LPEs[i]` 접근: `lpeRadiance`가 `nullptr`일 때 안전하게 early-out 하는지 Film 측 검증 — 현재는 `HasChannel(Film::LPE)`가 gate하니 ok.
