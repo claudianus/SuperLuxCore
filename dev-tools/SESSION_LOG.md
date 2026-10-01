@@ -1441,3 +1441,27 @@ in AtomicSplatSample rejects tile-border samples before the LUT walk.
 The remaining splat-side work is structural (deferred queue) - needs
 a bounded SPSC queue per render thread + flush on convergence-check
 boundary. Queued in ledger.
+
+---
+### r9 — PATHCPU splat/init loop exhausted
+
+Every atom on the splat hot path is now single-instruction:
+
+- `AtomicAdd` -> `std::atomic_ref<float>::fetch_add` (ldadd on ARM,
+  lock xadd on x86)
+- `AtomicMax` -> `atomic_ref` compare_exchange_weak (still CAS but one
+  less branch per retry)
+- `Film::AtomicAddSampleResultColor` writes stay `AtomicAddIfValidWeightedPixel`
+  (NaN/Inf pre-filtered before the atomic)
+- `Norm > 0` gates the splat call in Metropolis accept/reject
+- `filteredWeight == 0` per-pixel skip inside the LUT loop
+- subRegion fast-out before any raster extent math
+
+The remaining 3% splat share is intrinsic (sample -> pixel mapping) and
+would need a deferred queue to amortize - needs a design pass on queue
+bounds and flush triggers. Queued in ledger.
+
+Micro-bench note: `BSDF::Init` still calls `GetLocal2World` (virtual,
+64B matrix copy) + `GetGeometryNormal` (virtual + cross product) +
+`HitPoint::Init` (which repeats `GetGeometryNormal` for `geometryN`).
+That's the per-bounce material setup cost - intrinsic, not overhead.
