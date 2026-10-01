@@ -41,6 +41,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+// dladdr() to find cl2msl.py next to this loaded module
+#include <dlfcn.h>
 
 using namespace std;
 
@@ -219,18 +221,39 @@ static bool RunCL2MSL(const Context &ctx,
 
 	// The translator path resolution order:
 	// 1. LUXCORE_CL2MSL_PATH env (relocated installs)
-	// 2. the compile-time source root (LUXCORE_SOURCE_DIR, set by CMake)
-	// 3. cwd fallback
+	// 2. next to this loaded module - released installs ship cl2msl.py
+	//    inside the pysuperluxcore package, next to the extension module
+	// 3. the compile-time source root (LUXCORE_SOURCE_DIR, set by CMake;
+	//    only meaningful in a build tree)
+	// 4. cwd fallback
+	//
+	// Step 2 is what makes a released wheel work: LUXCORE_SOURCE_DIR is
+	// baked in by the build machine and does not exist on a user's
+	// machine, so without it every installed extension failed kernel
+	// translation ("python3: can't open file '<runner path>/cl2msl.py'").
 	const char *envPath = getenv("LUXCORE_CL2MSL_PATH");
 	string translatorPath;
 	if (envPath)
 		translatorPath = envPath;
 	else {
+		struct stat st;
+		Dl_info info;
+		if (dladdr((const void *)&RunCL2MSL, &info) && info.dli_fname) {
+			const string selfPath(info.dli_fname);
+			const string moduleDir = selfPath.substr(0,
+					selfPath.find_last_of('/'));
+			const string bundled = moduleDir + "/cl2msl.py";
+			if (stat(bundled.c_str(), &st) == 0)
+				translatorPath = bundled;
+		}
+
+		if (translatorPath.empty()) {
 #ifdef LUXCORE_SOURCE_DIR
-		translatorPath = string(LUXCORE_SOURCE_DIR) + "/src/slg/utils/cl2msl.py";
+			translatorPath = string(LUXCORE_SOURCE_DIR) + "/src/slg/utils/cl2msl.py";
 #else
-		translatorPath = "../src/slg/utils/cl2msl.py";
+			translatorPath = "../src/slg/utils/cl2msl.py";
 #endif
+		}
 	}
 
 	// ---- persistent translation cache ----

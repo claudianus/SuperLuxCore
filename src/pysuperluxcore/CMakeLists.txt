@@ -64,6 +64,16 @@ INSTALL(
     WORLD_READ WORLD_EXECUTE
 )
 
+# The OpenCL -> Metal kernel translator is a runtime dependency of the
+# Metal backend (src/luxrays/devices/metaldevice.mm runs it to build the
+# MSL programs). It has to ship inside the wheel, next to the extension
+# module, because the compile-time source root it used to fall back on
+# only exists in a build tree.
+install(FILES "${PROJECT_SOURCE_DIR}/src/slg/utils/cl2msl.py"
+  DESTINATION pysuperluxcore
+  COMPONENT pysuperluxcore
+)
+
 # Install pdb file (if msvc and debug)
 if(MSVC)
   install(FILES "$<$<CONFIG:Debug>:$<TARGET_PDB_FILE:pysuperluxcore>>"
