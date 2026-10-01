@@ -40,6 +40,9 @@ MixMaterial::MixMaterial(
 	matB(&mB),
 	mixFactor(mix)
 {
+	// GetInteriorVolume/GetExteriorVolume read hitPoint - flag it so
+	// BSDF::Init keeps the virtual calls only for the override materials.
+	hasVolumeOverrides = true;
 	Preprocess();
 }
 

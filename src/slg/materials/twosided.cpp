@@ -31,6 +31,9 @@ TwoSidedMaterial::TwoSidedMaterial(TextureConstPtr frontTransp, TextureConstPtr 
 		MaterialConstRef frontMat, MaterialConstRef backMat) :
 			Material(frontTransp, backTransp, emitted, bump),
 			frontMat(&frontMat), backMat(&backMat) {
+	// GetInteriorVolume/GetExteriorVolume read hitPoint - flag it so
+	// BSDF::Init keeps the virtual calls only for the override materials.
+	hasVolumeOverrides = true;
 	Preprocess();
 }
 

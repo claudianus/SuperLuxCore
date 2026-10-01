@@ -114,6 +114,9 @@ public:
 	// are materials here (Volume : Material) and BSDF::IsVolume() runs on
 	// every path event; a plain flag avoids a dynamic_cast in hot loops.
 	bool IsVolume() const { return isVolume; }
+	// True when GetInteriorVolume/GetExteriorVolume read hitPoint (mix,
+	// coating, two-sided) - BSDF::Init skips the virtual call otherwise.
+	bool HasVolumeOverrides() const { return hasVolumeOverrides; }
 
 	void SetDirectLightSamplingType(const MaterialEmissionDLSType type) { directLightSamplingType = type; }
 	MaterialEmissionDLSType GetDirectLightSamplingType() const { return directLightSamplingType; }
@@ -299,6 +302,11 @@ protected:
 	SampleableSphericalFunctionUPtr emissionFunc;
 
 	VolumeConstPtr interiorVolume, exteriorVolume;
+	// True only for the three materials that actually read hitPoint in
+	// GetInteriorVolume/GetExteriorVolume (MixMaterial, GlossyCoating,
+	// TwoSided). BSDF::Init checks this flag to skip the two virtual
+	// calls on the common path.
+	bool hasVolumeOverrides = false;
 
 	float glossiness, avgPassThroughTransparency;
 

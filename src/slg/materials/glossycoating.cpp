@@ -39,6 +39,9 @@ GlossyCoatingMaterial::GlossyCoatingMaterial(
 const bool mbounce, const bool useGgx) :
 			Material(frontTransp, backTransp, emitted, bump), matBase(mB), Ks(ks), nu(u), nv(v),
 			Ka(ka), depth(d), index(i), multibounce(mbounce), useGgx(useGgx) {
+	// GetInteriorVolume/GetExteriorVolume read hitPoint - flag it so
+	// BSDF::Init keeps the virtual calls only for the override materials.
+	hasVolumeOverrides = true;
 	glossiness = Min(ComputeGlossiness(nu, nv), matBase->GetGlossiness());
 }
 

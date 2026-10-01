@@ -110,14 +110,27 @@ void BSDF::Init(
 	// Get the material
 	material = &sceneObject->GetMaterial();
 
-	// Set interior and exterior volumes
-	volInfo->SetHitPointVolumes(hitPoint,
-			material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
-			material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
-			scene.HasDefaultWorldVolume() ?
-				VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-				VolumeConstPtr()
-	);
+	// Set interior and exterior volumes. Materials that override the
+	// volume getters (MixMaterial, GlossyCoatingMaterial, TwoSidedMaterial)
+	// need the hitPoint-aware virtual call; the rest return the stored
+	// pointers directly so the hot path skips two vtable dispatches.
+	if (material->HasVolumeOverrides()) {
+		volInfo->SetHitPointVolumes(hitPoint,
+				material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
+				material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
+				scene.HasDefaultWorldVolume() ?
+					VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+					VolumeConstPtr()
+		);
+	} else {
+		volInfo->SetHitPointVolumes(hitPoint,
+				material->GetInteriorVolume(),
+				material->GetExteriorVolume(),
+				scene.HasDefaultWorldVolume() ?
+					VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+					VolumeConstPtr()
+		);
+	}
 
 	// Check if it is a light source
 	if (material->IsLightSource())
