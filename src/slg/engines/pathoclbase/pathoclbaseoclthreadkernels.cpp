@@ -384,13 +384,17 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_SPLAT_SAMPLE, nullptr, true, "AdvancePaths_MK_SPLAT_SAMPLE"},
 		{&advancePathsKernel_MK_NEXT_SAMPLE, nullptr, true, "AdvancePaths_MK_NEXT_SAMPLE"},
 		{&advancePathsKernel_MK_GENERATE_CAMERA_RAY, nullptr, true, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
-		// Wavefront per-state queue builder (B2/E3): refills the queues
-		// from taskState->state once per iteration; the histogram kernel
-		// counts the per-(state, lambda) population for the host prefix.
-		{&advancePathsKernel_BuildQueues, nullptr, true, "AdvancePaths_BuildQueues"},
-		{&advancePathsKernel_BucketHistogram, nullptr, true, "AdvancePaths_BucketHistogram"},
-		{&advancePathsKernel_QueuePrefix, nullptr, true, "AdvancePaths_QueuePrefix"},
 	};
+	// Wavefront per-state queue builder (B2/E3): refills the queues
+	// from taskState->state once per iteration; the histogram kernel
+	// counts the per-(state, lambda) population for the host prefix.
+	// Wavefront is off by default (measured regression on Metal) so
+	// these three must not compile unconditionally.
+	if (wavefrontQueues) {
+		jobs.push_back({&advancePathsKernel_BuildQueues, nullptr, true, "AdvancePaths_BuildQueues"});
+		jobs.push_back({&advancePathsKernel_BucketHistogram, nullptr, true, "AdvancePaths_BucketHistogram"});
+		jobs.push_back({&advancePathsKernel_QueuePrefix, nullptr, true, "AdvancePaths_QueuePrefix"});
+	}
 
 	// GPU light tracing state machine (MK_LIGHT_INIT <->
 	// MK_LIGHT_VERTEX). Compiled only when a light-task population
