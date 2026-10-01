@@ -153,6 +153,28 @@ static py::list GetOpenCLDeviceList() {
   return l;
 }
 
+static py::list GetDeviceList() {
+  // Every compute device the runtime exposes, whatever the backend.
+  // GetOpenCLDeviceList() filters down to OpenCL/CUDA, so on a Metal-only
+  // machine (Apple silicon without an OpenCL ICD) it reports nothing while
+  // the engine is perfectly able to render on the GPU.
+  luxrays::Context ctx;
+  auto deviceDescriptions = ctx.GetAvailableDeviceDescriptions();
+
+  py::list l;
+  for (luxrays::DeviceDescriptionRef desc : deviceDescriptions) {
+    l.append(py::make_tuple(
+        desc.GetName(),
+        luxrays::DeviceDescription::GetDeviceType(desc.GetType()),
+        desc.GetComputeUnits(),
+        desc.GetNativeVectorWidthFloat(),
+        desc.GetMaxMemory(),
+        desc.GetMaxMemoryAllocSize()));
+  }
+
+  return l;
+}
+
 static void LuxCore_KernelCacheFill1() {
   KernelCacheFill(std::make_unique<Properties>());
 }
@@ -2456,6 +2478,7 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 
   // Deprecated, use GetOpenCLDeviceDescs instead
   m.def("GetOpenCLDeviceList", &GetOpenCLDeviceList);
+  m.def("GetDeviceList", &GetDeviceList);
 
   m.def("ClearFileNameResolverPaths", &ClearFileNameResolverPaths);
   m.def("AddFileNameResolverPath", &AddFileNameResolverPath);

@@ -230,6 +230,106 @@ def SimpleRender():
     print("Done.", flush=True)
 
 
+
+def PackagedTranslatorCheck():
+    """CI gate: the installed wheel must ship a working Metal translator.
+
+    The engine resolves cl2msl.py next to its own loaded module, so a
+    wheel that does not carry it (or carries a broken one) leaves every
+    GPU install unable to build a single kernel. This is a pure
+    filesystem + subprocess check: it needs no GPU, which is what makes
+    it usable on the wheel-builder runners.
+    """
+    print("Packaged Metal translator check......", flush=True)
+    pkg_dir = os.path.dirname(os.path.abspath(pysuperluxcore.__file__))
+    translator = os.path.join(pkg_dir, "cl2msl.py")
+
+    if not os.path.isfile(translator):
+        raise RuntimeError(
+            f"pysuperluxcore/cl2msl.py is missing from the installed wheel "
+            f"(looked in {pkg_dir}) - GPU rendering cannot work"
+        )
+
+    kernel = (
+        b"__kernel void wheel_smoke(float *out) {\n"
+        b"    int i = get_global_id(0);\n"
+        b"    out[i] = (float)i;\n"
+        b"}\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        msl = os.path.join(tmp, "out.msl")
+        layout = os.path.join(tmp, "out.json")
+        proc = subprocess.run(
+            [sys.executable, translator, msl, layout],
+            input=kernel,
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"packaged cl2msl.py failed on a trivial kernel "
+                f"(rc={proc.returncode}): "
+                f"{proc.stderr.decode(errors='replace')[:400]}"
+            )
+        msl_size = os.path.getsize(msl) if os.path.isfile(msl) else 0
+        layout_size = os.path.getsize(layout) if os.path.isfile(layout) else 0
+        if msl_size == 0 or layout_size == 0:
+            raise RuntimeError(
+                f"packaged cl2msl.py produced no output "
+                f"(msl={msl_size}B, layout={layout_size}B)"
+            )
+        print(
+            f"  translator OK ({translator}, msl={msl_size}B, "
+            f"layout={layout_size}B)",
+            flush=True,
+        )
+
+
+def GpuRenderSmoke():
+    """CI gate: render the reference scene through the GPU path.
+
+    Skips (without failing) where no GPU is exposed to the runner, which
+    is the case for the macos-15-intel image. Once a device is present a
+    failure is real: it is how a packaged wheel with a broken kernel
+    translation path (or a broken Metal pipeline) is caught before it
+    reaches users - the PATHCPU render above never touches either.
+    """
+    print("GPU render smoke......", flush=True)
+    try:
+        devices = pysuperluxcore.GetDeviceList()
+    except AttributeError:
+        # Engine built without GetDeviceList: fall back to the
+        # OpenCL/CUDA-only list, which is empty on a Metal-only machine.
+        devices = pysuperluxcore.GetOpenCLDeviceList()
+    except RuntimeError as err:
+        print(f"  SKIP: no GPU device available ({err})", flush=True)
+        return
+
+    if not devices:
+        print("  SKIP: no compute device exposed by the runtime", flush=True)
+        return
+    print(f"  device list: {devices}", flush=True)
+
+    props = pysuperluxcore.Properties(
+        os.path.join(PATH_TO_SCENE, "luxball-hdr.cfg")
+    )
+    props.Set(pysuperluxcore.Property("renderengine.type", ["PATHOCL"]))
+    # Keep it short: this is a smoke gate, not a quality run.
+    props.Set(pysuperluxcore.Property("renderengine.tileSize", [32]))
+    props.Set(pysuperluxcore.Property("path.cl.maxdepth", [3]))
+
+    session = pysuperluxcore.RenderSession(pysuperluxcore.RenderConfig(props))
+    try:
+        session.Start()
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            time.sleep(1)
+            session.UpdateStats()
+    finally:
+        session.Stop()
+
+    AssertFilmSane(session, "GpuRenderSmoke")
+    print("  GPU render OK", flush=True)
+
 def AssertFilmSane(session, tag):
     """CI regression gate: every film pixel must be finite and the mean
     luminance non-degenerate. Catches NaN/Inf collapses and black frames
@@ -904,6 +1004,8 @@ def main():
         if devices is None:
             return
         SimpleRender()
+        PackagedTranslatorCheck()
+        GpuRenderSmoke()
         GetOutputTest()
         ExtractConfiguration()
         StrandsRender()
