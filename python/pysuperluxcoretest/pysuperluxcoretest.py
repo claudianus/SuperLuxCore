@@ -1005,9 +1005,7 @@ def main():
         # os.chdir(os.path.dirname(__file__))
 
         PropertiesTests()
-        devices = LuxRaysDeviceTests()
-        if devices is None:
-            return
+        LuxRaysDeviceTests()
         SimpleRender()
         PackagedTranslatorCheck()
         GpuRenderSmoke()
