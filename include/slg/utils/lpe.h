@@ -26,9 +26,6 @@
 
 #include <string>
 #include <vector>
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
 
 #include <boost/serialization/array_wrapper.hpp>
 #include <boost/serialization/string.hpp>
@@ -93,15 +90,10 @@ struct LPEExpression {
 	}
 };
 
-// Count trailing zeros of a nonzero mask (MSVC has no __builtin_ctz).
+// Count trailing zeros of a nonzero mask: luxrays::CountTrailingZeros
+// (shared MSVC _BitScanForward / __builtin_ctz portability helper).
 inline u_int LPECtz(u_int m) {
-#if defined(_MSC_VER)
-	unsigned long idx;
-	_BitScanForward(&idx, m);
-	return (u_int)idx;
-#else
-	return (u_int)__builtin_ctz(m);
-#endif
+	return luxrays::CountTrailingZeros(m);
 }
 
 // NFA state-set step: OR the delta rows of every live state.

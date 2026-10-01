@@ -103,7 +103,7 @@ u_int SobolSequence::SobolDimension(const u_int index, const u_int dimension,
 	u_int i = index;
 
 	while (i) {
-		const u_int j = __builtin_ctz(i);
+		const u_int j = CountTrailingZeros(i);
 		result ^= table[offset + j];
 		i &= i - 1;
 	}

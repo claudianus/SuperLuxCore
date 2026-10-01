@@ -41,6 +41,9 @@
 #if defined(WIN32)
 #define isnanf(a) _isnan(a)
 #endif
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 #if (defined(__GNUC__) && (__GNUC__ > 5))
 template <class T>
@@ -135,6 +138,17 @@ inline double WallClockTime() {
 template<class T> inline T Lerp(float t, T v1, T v2) {
 	// Linear interpolation
 	return v1 + t * (v2 - v1);
+}
+
+// Count trailing zeros of a nonzero value (MSVC has no __builtin_ctz).
+inline u_int CountTrailingZeros(u_int v) {
+#if defined(_MSC_VER)
+	unsigned long idx;
+	_BitScanForward(&idx, v);
+	return (u_int)idx;
+#else
+	return (u_int)__builtin_ctz(v);
+#endif
 }
 
 template<class T> inline T LerpWithStep(float t, T v1, T v2, float step) {
