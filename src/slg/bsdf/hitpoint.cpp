@@ -140,3 +140,52 @@ void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
 			depthInfo->regularization : 0.f;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
+
+void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
+	SceneConstRef scene, SceneObjectConstRef sceneObject,
+	const u_int triIndex,
+	const luxrays::Point &pnt, const luxrays::Vector &dir,
+	const luxrays::Normal &geoN,
+	const float b1, const float b2,
+	const float passThroughEvnt) {
+	fromLight = fixedFromLight;
+	throughShadowTransparency = throughShadowTransp;
+	passThroughEvent = passThroughEvnt;
+
+	p = pnt;
+	fixedDir = dir;
+
+	objectID = sceneObject.GetID();
+	mesh = &sceneObject.GetExtMesh();
+	triangleIndex = triIndex;
+	triangleBariCoord1 = b1;
+	triangleBariCoord2 = b2;
+
+	// Caller already fetched the geometric normal (for fixedDir) - reuse it.
+	geometryN = geoN;
+	interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
+	const float gnl2 = Dot(geometryN, geometryN);
+	if (!isfinite(gnl2) || (gnl2 < 1e-20f))
+		geometryN = Normal(-fixedDir.x, -fixedDir.y, -fixedDir.z);
+	const float inl2 = Dot(interpolatedN, interpolatedN);
+	if (!isfinite(inl2) || (inl2 < 1e-20f))
+		interpolatedN = geometryN;
+	shadeN = interpolatedN;
+	intoObject = (Dot(-fixedDir, geometryN) < 0.f);
+
+	if (throughShadowTransparency) {
+		defaultUV = mesh->InterpolateTriUV(triangleIndex, b1, b2, 0);
+		CoordinateSystem(Vector(shadeN), &dpdu, &dpdv);
+		dndu = Normal();
+		dndv = Normal();
+	} else {
+		mesh->GetDifferentials(localToWorld,
+				triangleIndex, shadeN,
+				0, &dpdu, &dpdv, &dndu, &dndv,
+				b1, b2, &defaultUV);
+	}
+
+	interiorVolume = nullptr;
+	exteriorVolume = nullptr;
+	SetRayContext(0, NONE, nullptr, 0.f);
+}

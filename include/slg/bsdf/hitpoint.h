@@ -128,7 +128,16 @@ typedef struct HitPoint_t {
 		const luxrays::Point &p, const luxrays::Vector &d,
 		const float b1, const float b2,
 		const float passThroughEvent);
-
+	// Surface-init variant that takes the caller-computed geometry normal
+	// (avoids re-running GetGeometryNormal inside Init when the caller
+	// already needed the face normal for fixedDir).
+	void Init(const bool fixedFromLight, const bool throughShadowTransparency,
+		SceneConstRef scene, SceneObjectConstRef sceneObject,
+		const u_int triangleIndex,
+		const luxrays::Point &p, const luxrays::Vector &d,
+		const luxrays::Normal &geometryN,
+		const float b1, const float b2,
+		const float passThroughEvent);
 	// Initialize all fields (without a constructor)
 	void Init();
 

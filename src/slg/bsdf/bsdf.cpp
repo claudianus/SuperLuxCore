@@ -97,14 +97,13 @@ void BSDF::Init(
 	// Get the scene object
 	sceneObject = &scene.GetObjects().GetSceneObject(meshIndex);
 
-	// Get the mesh
 	auto& mesh = sceneObject->GetExtMesh();
 	mesh.GetLocal2World(time, hitPoint.localToWorld);
 
-	const Vector fixedDir = Vector(mesh.GetGeometryNormal(hitPoint.localToWorld, triangleIndex));
+	const Normal geoN = mesh.GetGeometryNormal(hitPoint.localToWorld, triangleIndex);
 	hitPoint.Init(false, false,
-			scene, meshIndex, triangleIndex,
-			surfacePoint, fixedDir,
+			scene, *sceneObject, triangleIndex,
+			surfacePoint, Vector(geoN), geoN,
 			surfacePointBary1, surfacePointBary2, passThroughEvent);
 
 	// Get the material
