@@ -37,6 +37,7 @@
 
 #include "luxrays/core/hardwaredevice.h"
 #include "luxrays/utils/properties.h"
+#include "luxrays/utils/memory.h"
 #include "luxrays/utils/serializationutils.h"
 #include "slg/slg.h"
 #include "slg/film/framebuffer.h"
@@ -110,9 +111,10 @@ private:
 	static constexpr double SAMPLE_COUNT_BATCH = 64.0;
 	// vector<>::data is only guaranteed element-aligned; the per-thread
 	// slots must sit on their own line or neighbouring threads ping-pong
-	// it. aligned_alloc gives 64B bases; vector-with-default-alloc on
-	// macOS was still packing two slots per line.
-	struct CountsDeleter { void operator()(PerThreadCounts *p) const { std::free(p); } };
+	// it. AllocAligned gives 64B bases (MSVC has no std::aligned_alloc);
+	// vector-with-default-alloc on macOS was still packing two slots per
+	// line.
+	struct CountsDeleter { void operator()(PerThreadCounts *p) const { luxrays::FreeAligned(p); } };
 	std::unique_ptr<PerThreadCounts[], CountsDeleter> perThread;
 	// Atomic fast-path total: AddSampleCount accumulates here too so
 	// GetSampleCount (called once per splat during warmup checks) is

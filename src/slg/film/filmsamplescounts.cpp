@@ -37,8 +37,7 @@ void FilmSamplesCounts::Init(const u_int count) {
 	assert (count > 0);
 
 	threadCount = count;
-	perThread.reset(static_cast<PerThreadCounts *>(
-			std::aligned_alloc(64, threadCount * sizeof(PerThreadCounts))));
+	perThread.reset(luxrays::AllocAligned<PerThreadCounts>(threadCount));
 	for (u_int i = 0; i < threadCount; ++i) {
 		perThread[i].total = 0.0;
 		perThread[i].pixelNorm = 0.0;
