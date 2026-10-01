@@ -197,16 +197,18 @@ private:
 	u_int cacheTileWidthCountMagic, cacheOverlappingMagic;
 	bool filmCacheValid;
 	bool cacheHasNoiseChannel, cacheHasUserImportanceChannel;
-	// Per-bucket adaptive thresholds: the convergence gate reads the
-	// film NOISE channel, USER_IMPORTANCE and the pixel luma moments -
-	// all bounded-stale estimators already (the NOISE map refreshes on
-	// test steps, moments only matter past the min-samples bound).
-	// Evaluating them per candidate costs ~50-100 ops inside the
-	// re-pick loop; tabulating once per bucket keeps the accept/reject
-	// decision identical (same RNG draws, same order) with at most one
-	// bucket of extra estimator staleness.
+	// Per-bucket candidate table: pixel coords + adaptive threshold +
+	// OOB sentinel, built once per bucket fetch. The estimators feeding
+	// the threshold (NOISE map, USER_IMPORTANCE, luma moments) are
+	// bounded-stale by construction, and the morton decode itself is
+	// identical per bucket - so the per-candidate loop collapses to a
+	// single table load for both rejected and accepted pixels.
+	struct BucketSample {
+		u_int pixelX, pixelY;  // pixelX == 0xFFFFFFFFu = OOB sentinel
+		float threshold;
+	};
 	void RebuildBucketThreshold();
-	std::vector<float> bucketThreshold;
+	std::vector<BucketSample> bucketSamples;
 	bool adaptTableValid;
 	// log2 of the pow2 sizes (all RoundUpPow2'd at construction)
 	u_int bucketSizeLog2, tileSizeLog2;

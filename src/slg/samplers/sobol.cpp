@@ -302,56 +302,48 @@ void SobolSampler::InitNewSample() {
 
 		u_int pixelX, pixelY;
 		if (doImageSamples) {
-			// Transform the bucket index in a pixel coordinate
+			// The candidate table (coords + threshold + OOB flag) is
+			// identical per bucket - rebuilt on fetch, on film-cache
+			// change, or at first use.
+			if (!adaptTableValid)
+				RebuildBucketThreshold();
 
-			const u_int pixelBucketIndex = FastDivByCached(*bucketIndex,
-					overlapping, cacheOverlappingMagic) * bucketSize + pixelOffset;
-			const u_int mortonCurveOffset = pixelBucketIndex & (tileSize * tileSize - 1);
-			const u_int pixelTileIndex = pixelBucketIndex >> (tileSizeLog2 * 2);
-
-			const u_int pixelTileIndexY = FastDivByCached(pixelTileIndex,
-					tiletWidthCount, cacheTileWidthCountMagic);
-			// Row-major tile ordering: X = index % tilesX, Y = index / tilesX
-			// (commit 537a48c6 swapped them when converting to magic-div,
-			// clamping the sweep to the first few tile columns).
-			const u_int subRegionPixelX = (pixelTileIndex - pixelTileIndexY * tiletWidthCount) * tileSize + DecodeMorton2X(mortonCurveOffset);
-			const u_int subRegionPixelY = pixelTileIndexY * tileSize + DecodeMorton2Y(mortonCurveOffset);
-			if ((subRegionPixelX >= subRegionWidth) || (subRegionPixelY >= subRegionHeight)) {
+			const BucketSample &cand = bucketSamples[pixelOffset];
+			if (cand.pixelX == 0xFFFFFFFFu) {
 				// Skip the pixels out of the film sub region
 				continue;
 			}
 
-			pixelX = filmSubRegion[0] + subRegionPixelX;
-			pixelY = filmSubRegion[2] + subRegionPixelY;
-
-			const u_int pixelIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+			pixelX = cand.pixelX;
+			pixelY = cand.pixelY;
+			const u_int pixelIdx = (pixelX - filmSubRegion[0]) +
+					(pixelY - filmSubRegion[2]) * subRegionWidth;
 
 			// Check if the current pixel is over or under the convergence
-			// threshold. All three estimators feeding it (NOISE map,
-			// USER_IMPORTANCE, luma moments) are bounded-stale already -
-			// the map refreshes on test steps, moments only engage past
-			// the min-sample bound - so tabulating once per bucket
-			// (RebuildBucketThreshold) changes no decision semantics
-			// while shrinking the per-candidate gate to one table read.
+			// threshold (estimators frozen at bucket granularity - see
+			// RebuildBucketThreshold).
 			if ((adaptiveStrength > 0.f) &&
 					(cacheHasNoiseChannel || sobolAdaptiveMomentsEnable)) {
-				if (!adaptTableValid)
-					RebuildBucketThreshold();
-
 				// thr >= 1 guarantees acceptance (rndGen returns <1;
 				// covers INF on fresh frames) - skip the draw. This
 				// changes rndGen stream consumption vs a per-candidate
 				// draw, but rndGen feeds only this compare so the
 				// accept/reject distribution is identical.
-				const float thr = bucketThreshold[pixelOffset];
+				const float thr = cand.threshold;
 				if ((thr < 1.f) && (rndGen->floatValue() > thr)) {
 					// Skip this pixel and try the next one; after a full
 					// bucket sweep accept it anyway (bounded loop)
 					if (++skipAttempts < bucketSize * superSampling) {
-						// Workaround for preserving random number distribution behavior
-						rngGenerator.floatValue();
-						rngGenerator.floatValue();
-						rngGenerator.uintValue();
+						// The three burn draws kept the legacy RNG pattern
+						// for the plain-Sobol tail below (rngPass/rng0/rng1
+						// come from rngGenerator there); under Owen or
+						// blue-noise scrambling rngGenerator is never
+						// consulted, so the draws are dead work.
+						if (!sobolOwenEnable && !sobolBlueNoiseEnable) {
+							rngGenerator.floatValue();
+							rngGenerator.floatValue();
+							rngGenerator.uintValue();
+						}
 
 						continue;
 					}
@@ -418,14 +410,14 @@ void SobolSampler::InitNewSample() {
 }
 
 void SobolSampler::RebuildBucketThreshold() {
-	// Snapshot the adaptive thresholds for the current bucket. All the
-	// estimators consulted here are bounded-stale by construction (the
-	// NOISE map updates only on noise-test steps, the moments estimate
-	// is only consulted past SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES), so
-	// freezing them at bucket granularity adds at most one bucket of
-	// lag - and a bucket hold is bounded because a bucket revisits its
-	// pixels only on wrap.
-	bucketThreshold.resize(bucketSize);
+	// Snapshot the candidate table for the current bucket: pixel
+	// coordinates + adaptive thresholds. All the estimators consulted
+	// here are bounded-stale by construction (the NOISE map updates
+	// only on noise-test steps, the moments estimate is only consulted
+	// past SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES), so freezing them at
+	// bucket granularity adds at most one bucket of lag - and a bucket
+	// hold is bounded because a bucket revisits its pixels only on wrap.
+	bucketSamples.resize(bucketSize);
 
 	// Hoist the shared derefs - each iteration re-fetched GetFilm()
 	// (indirect through the FilmPtr), the moments vector bounds and
@@ -451,13 +443,16 @@ void SobolSampler::RebuildBucketThreshold() {
 		const u_int subRegionPixelY = pixelTileIndexY * tileSize + DecodeMorton2Y(mortonCurveOffset);
 		if ((subRegionPixelX >= cacheSubRegionWidth) ||
 				(subRegionPixelY >= cacheSubRegionHeight)) {
-			// Never read - the candidate loop bounds-checks first
-			bucketThreshold[j] = 0.f;
+			bucketSamples[j].pixelX = 0xFFFFFFFFu;
+			bucketSamples[j].pixelY = 0;
+			bucketSamples[j].threshold = 1.f;
 			continue;
 		}
 
 		const u_int pixelX = filmCacheSubRegion[0] + subRegionPixelX;
 		const u_int pixelY = filmCacheSubRegion[2] + subRegionPixelY;
+		bucketSamples[j].pixelX = pixelX;
+		bucketSamples[j].pixelY = pixelY;
 
 		float noise = std::numeric_limits<float>::infinity();
 		bool noiseValid = false;
@@ -516,7 +511,7 @@ void SobolSampler::RebuildBucketThreshold() {
 			threshold = noise;
 
 		// The floor for the pixel importance is given by the adaptiveness strength
-		bucketThreshold[j] = Max(threshold, 1.f - adaptiveStrength);
+		bucketSamples[j].threshold = Max(threshold, 1.f - adaptiveStrength);
 	}
 
 	adaptTableValid = true;
