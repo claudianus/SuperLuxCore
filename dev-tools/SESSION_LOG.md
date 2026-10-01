@@ -1487,3 +1487,17 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   rngGenerator for rngPass/rng0/rng1.
 - CPU/GPU parity: GPU samplers don't share this path (device sampler
   is a different kernel); CPU-side adaptive gate unchanged.
+
+## 2026-10-02 (cont.) - wavefront verdict + Cycles-settings import
+- Wavefront re-measure (clean GPU, M5 Pro Metal, classroom-hdr 720p,
+  off=9.52Ms/s vs on=3.89Ms/s): wavefront is 2.4x SLOWER. The 9/25
+  ~2.5x claim was benchmark contamination; auto->off confirmed. Also
+  fixed wf_auto_bench.py which compared off-vs-off because auto
+  resolves to off inside the engine - it never exercised wavefront.
+- PATHOCL kernel compile: 22 -> 19 by gating BuildQueues/
+  BucketHistogram/QueuePrefix behind wavefrontQueues (enqueues were
+  already gated; compile was not).
+- P0-4 residual closed: superluxcore.import_cycles_settings operator
+  + panel button copies scene.cycles.{samples, max_bounces,
+  diffuse/glossy/transparent/transmission bounces, film_transparent,
+  use_denoising} and per-view-layer samples into SuperLuxCore props.
