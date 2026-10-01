@@ -587,6 +587,12 @@ public:
 	friend class FilmDenoiser;
 	friend class boost::serialization::access;
 
+	// Bumped on every write to channel_NOISE / channel_USER_IMPORTANCE
+	// (noise test, adaptive-error test, film merge). CPU samplers key
+	// their per-pixel adaptive-threshold memo on this so the estimator
+	// chain is re-read only when the map actually changed.
+	std::atomic<u_int> adaptiveMapEpoch;
+
 private:
 	// Used by serialization
 	Film();
@@ -638,6 +644,8 @@ private:
 	double statsStartSampleTime, statsConvergence;
 	FilmSamplesCounts samplesCounts;
 
+
+
 	std::vector<ImagePipeline *> imagePipelines;
 	luxrays::JThreadUPtr imagePipelineThread;
 	std::atomic<bool> isAsyncImagePipelineRunning;
@@ -654,7 +662,6 @@ private:
 	// Adaptive sampling
 	FilmNoiseEstimation *noiseEstimation;
 	FilmAdaptiveError *adaptiveError;
-
 	u_int noiseEstimationWarmUp, noiseEstimationTestStep;
 	u_int noiseEstimationFilterScale;
 	u_int noiseEstimationImagePipelineIndex;

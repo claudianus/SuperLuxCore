@@ -1465,3 +1465,25 @@ Micro-bench note: `BSDF::Init` still calls `GetLocal2World` (virtual,
 64B matrix copy) + `GetGeometryNormal` (virtual + cross product) +
 `HitPoint::Init` (which repeats `GetGeometryNormal` for `geometryN`).
 That's the per-bounce material setup cost - intrinsic, not overhead.
+
+## 2026-10-02 (cont.) - Sobol sampler hot loop: per-pixel threshold memoization
+- After the bucket-table round, `RebuildBucketThreshold` still
+  re-evaluated the whole estimator chain (moments + NOISE map + user
+  importance) for all 16 pixels on every bucket fetch - ~312k times
+  per 5M-sample render.
+- Fix: `Film::adaptiveMapEpoch` (atomic u32) bumped on every
+  channel_NOISE / channel_USER_IMPORTANCE write - the noise test,
+  adaptive-error test, and film merge. `SobolSampler::thresholdMemo`
+  stores {epoch, pass, thr} per sub-region pixel; the candidate path
+  calls `EvalAdaptiveThreshold` only when `(epoch,pass)` differs.
+  Estimator reads drop from 16/bucket to <=1 per accepted sample.
+- `RebuildBucketThreshold` keeps only the morton decode (coords +
+  subIdx). The memo lazy-allocates under the adaptive gate so
+  non-adaptive renders keep zero-alloc InitNewSample.
+- Correctness anchors: same estimator math verbatim; stale-bound is
+  one (epoch,pass) quantum instead of one bucket - strictly tighter.
+  Reject-burn draws (rngGenerator x3) skipped under Owen/blue-noise -
+  dead draws there, kept for the plain-Sobol tail which consumes
+  rngGenerator for rngPass/rng0/rng1.
+- CPU/GPU parity: GPU samplers don't share this path (device sampler
+  is a different kernel); CPU-side adaptive gate unchanged.

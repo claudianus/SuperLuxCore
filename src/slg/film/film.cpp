@@ -107,6 +107,7 @@ Film::Film() {
 	convTest = nullptr;
 	noiseEstimation = nullptr;
 	adaptiveError = nullptr;
+	adaptiveMapEpoch.store(0, std::memory_order_relaxed);
 	haltTime = 0.0;
 	haltSPP = 0;
 	haltSPP_PixelNormalized = 0;
@@ -185,6 +186,7 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 	convTest = nullptr;
 	noiseEstimation = nullptr;
 	adaptiveError = nullptr;
+	adaptiveMapEpoch.store(0, std::memory_order_relaxed);
 	haltTime = 0.0;
 
 	haltSPP = 0;
@@ -284,6 +286,8 @@ void Film::CopyHaltSettings(const Film &film) {
 	noiseEstimationTestStep = film.noiseEstimationTestStep;
 	noiseEstimationFilterScale = film.noiseEstimationFilterScale;
 	noiseEstimationImagePipelineIndex = film.noiseEstimationImagePipelineIndex;
+	adaptiveMapEpoch.store(film.adaptiveMapEpoch.load(std::memory_order_relaxed),
+			std::memory_order_relaxed);
 
 	if (film.convTest) {
 		delete convTest;
@@ -1468,6 +1472,8 @@ void Film::AddFilmImpl(const Film &film,
 	}
 
 	if (overwrite) {
+		if (HasChannel(NOISE) && film.HasChannel(NOISE))
+			adaptiveMapEpoch.fetch_add(1, std::memory_order_relaxed);
 		if (HasChannel(NOISE) && film.HasChannel(NOISE)) {
 			parallelRows([&](const u_int y) {
 				for (u_int x = 0; x < srcWidth; ++x) {
@@ -1481,6 +1487,8 @@ void Film::AddFilmImpl(const Film &film,
 	}
 
 	if (overwrite) {
+		if (HasChannel(USER_IMPORTANCE) && film.HasChannel(USER_IMPORTANCE))
+			adaptiveMapEpoch.fetch_add(1, std::memory_order_relaxed);
 		if (HasChannel(USER_IMPORTANCE) && film.HasChannel(USER_IMPORTANCE)) {
 			parallelRows([&](const u_int y) {
 				for (u_int x = 0; x < srcWidth; ++x) {
@@ -1620,6 +1628,11 @@ void Film::RunTests() {
 		ExecuteImagePipeline(noiseEstimationImagePipelineIndex);
 		// Run the noise estimation test
 		noiseEstimation->Test();
+		// The NOISE channel is the adaptive-importance map consumed by
+		// the CPU samplers - bump the epoch so per-pixel threshold
+		// memos re-evaluate against the fresh map.
+		if (HasChannel(NOISE))
+			adaptiveMapEpoch.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	// Statistical adaptive error test: reads raw film channels (no image
@@ -1628,6 +1641,10 @@ void Film::RunTests() {
 	// superseding the image-diff heuristic map for the samplers.
 	if (adaptiveError && adaptiveError->IsTestUpdateRequired()) {
 		adaptiveError->Test();
+		// Same epoch as above - adaptiveError::Test() rewrites the
+		// NOISE channel when enabled.
+		if (HasChannel(NOISE))
+			adaptiveMapEpoch.fetch_add(1, std::memory_order_relaxed);
 
 		if (adaptiveErrorHaltEnable) {
 			// Global noise level (95th pct of the dilated rel-error map)

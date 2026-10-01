@@ -28,10 +28,15 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGroupCount, const u_int lpeCount) {
-	channels = chnls;
-	channelsMask = 0;
-	for (auto const c : *chnls)
-		channelsMask |= (1ull << (u_int)c);
+	// The channel set is frozen for the session; only rebuild the mask
+	// when a different set pointer arrives instead of walking the
+	// unordered_set on every splat.
+	if (channels != chnls) {
+		channels = chnls;
+		channelsMask = 0;
+		for (auto const c : *chnls)
+			channelsMask |= (1ull << (u_int)c);
+	}
 
 	if (HasChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED) && HasChannel(Film::RADIANCE_PER_SCREEN_NORMALIZED))
 		throw runtime_error("RADIANCE_PER_PIXEL_NORMALIZED and RADIANCE_PER_SCREEN_NORMALIZED, both used in SampleResult");
@@ -112,8 +117,18 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	// lpeCount is 0 for scenes that never request an LPE output so the
 	// allocation drops to a no-op on the common path.
 	lpeSlotsUsed = Min(lpeCount, (u_int)SLG_LPE_MAX_EXPRESSIONS);
-	delete[] lpeRadiance;
-	lpeRadiance = (lpeSlotsUsed > 0) ? new Spectrum[lpeSlotsUsed]() : nullptr;
+	// Reuse the buffer when it is already allocated - lpeCount is
+	// session-constant, so the delete+new pair burned a malloc/free on
+	// every light-path vertex. Shrinking stays lazy: only the live
+	// prefix is read, extra capacity is free.
+	if (lpeSlotsUsed > 0) {
+		if (!lpeRadiance)
+			lpeRadiance = new Spectrum[lpeSlotsUsed];
+		std::fill_n(lpeRadiance, lpeSlotsUsed, Spectrum());
+	} else if (lpeRadiance) {
+		delete[] lpeRadiance;
+		lpeRadiance = nullptr;
+	}
 
 	firstPathVertexEvent = NONE;
 	firstPathVertex = true;

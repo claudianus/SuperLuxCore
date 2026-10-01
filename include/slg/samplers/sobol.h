@@ -205,10 +205,20 @@ private:
 	// single table load for both rejected and accepted pixels.
 	struct BucketSample {
 		u_int pixelX, pixelY;  // pixelX == 0xFFFFFFFFu = OOB sentinel
-		float threshold;
+		u_int subIdx;          // index into passPerPixel / thresholdMemo
 	};
+	// Per-pixel adaptive threshold memo: thr(pixel) is re-evaluated
+	// only when the pixel's pass count or the film adaptive-map epoch
+	// advanced since the last visit. Between noise-test steps a pixel
+	// sampled N times evaluates its estimator chain once, not N times.
+	struct ThrMemo {
+		u_int epoch, pass;
+		float thr;
+	};
+	float EvalAdaptiveThreshold(u_int pixelX, u_int pixelY, u_int subIdx);
 	void RebuildBucketThreshold();
 	std::vector<BucketSample> bucketSamples;
+	std::vector<ThrMemo> thresholdMemo;
 	bool adaptTableValid;
 	// log2 of the pow2 sizes (all RoundUpPow2'd at construction)
 	u_int bucketSizeLog2, tileSizeLog2;

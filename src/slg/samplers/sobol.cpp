@@ -316,20 +316,27 @@ void SobolSampler::InitNewSample() {
 
 			pixelX = cand.pixelX;
 			pixelY = cand.pixelY;
-			const u_int pixelIdx = (pixelX - filmSubRegion[0]) +
-					(pixelY - filmSubRegion[2]) * subRegionWidth;
+			const u_int pixelIdx = cand.subIdx;
 
 			// Check if the current pixel is over or under the convergence
-			// threshold (estimators frozen at bucket granularity - see
-			// RebuildBucketThreshold).
+			// threshold. The estimator chain is memoized per-pixel -
+			// EvalAdaptiveThreshold only runs when the (epoch, pass) key
+			// advanced since the last visit to this pixel.
 			if ((adaptiveStrength > 0.f) &&
 					(cacheHasNoiseChannel || sobolAdaptiveMomentsEnable)) {
+				const ThrMemo &memo = thresholdMemo[pixelIdx];
 				// thr >= 1 guarantees acceptance (rndGen returns <1;
 				// covers INF on fresh frames) - skip the draw. This
 				// changes rndGen stream consumption vs a per-candidate
 				// draw, but rndGen feeds only this compare so the
 				// accept/reject distribution is identical.
-				const float thr = cand.threshold;
+				const u_int epochNow = GetFilm().adaptiveMapEpoch.load(
+						std::memory_order_relaxed);
+				const u_int passNow = sharedData->PeekPixelPass(pixelIdx);
+				const float thr = ((memo.epoch == epochNow) &&
+						(memo.pass == passNow)) ?
+						memo.thr :
+						EvalAdaptiveThreshold(pixelX, pixelY, pixelIdx);
 				if ((thr < 1.f) && (rndGen->floatValue() > thr)) {
 					// Skip this pixel and try the next one; after a full
 					// bucket sweep accept it anyway (bounded loop)
@@ -410,28 +417,25 @@ void SobolSampler::InitNewSample() {
 }
 
 void SobolSampler::RebuildBucketThreshold() {
-	// Snapshot the candidate table for the current bucket: pixel
-	// coordinates + adaptive thresholds. All the estimators consulted
-	// here are bounded-stale by construction (the NOISE map updates
-	// only on noise-test steps, the moments estimate is only consulted
-	// past SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES), so freezing them at
-	// bucket granularity adds at most one bucket of lag - and a bucket
-	// hold is bounded because a bucket revisits its pixels only on wrap.
+	// Rebuild the candidate table for the current bucket: pixel
+	// coordinates + sub-region index. Adaptive thresholds are NOT part
+	// of the table - they are memoized per-pixel (thresholdMemo) and
+	// re-evaluated lazily on (epoch, pass) key changes, which drops the
+	// estimator reads from 16-per-bucket to at most 1-per-visit.
 	bucketSamples.resize(bucketSize);
 
-	// Hoist the shared derefs - each iteration re-fetched GetFilm()
-	// (indirect through the FilmPtr), the moments vector bounds and
-	// both channel pointers.
-	FilmRef flm = GetFilm();
-	const float *lumaMoments = flm.pixelLumaMoments.empty() ?
-			nullptr : flm.pixelLumaMoments.data();
-	const GenericFrameBuffer<1, 0, float> *noiseChan = cacheHasNoiseChannel ?
-			flm.channel_NOISE.get() : nullptr;
-	const GenericFrameBuffer<1, 0, float> *userChan = cacheHasUserImportanceChannel ?
-			flm.channel_USER_IMPORTANCE.get() : nullptr;
+	// The memo is only ever consulted under the adaptive gate below -
+	// allocate it lazily so non-adaptive renders keep the zero-alloc
+	// per-sample invariant.
+	const bool adaptiveActive = (adaptiveStrength > 0.f) &&
+			(cacheHasNoiseChannel || sobolAdaptiveMomentsEnable);
+	const u_int subPixelCount = cacheSubRegionWidth * cacheSubRegionHeight;
+	if (adaptiveActive && (thresholdMemo.size() != subPixelCount)) {
+		thresholdMemo.assign(subPixelCount,
+				{0u, 0xFFFFFFFFu, 1.f});
+	}
 
 	for (u_int j = 0; j < bucketSize; ++j) {
-		// Same pixel decode as the InitNewSample candidate loop
 		const u_int pixelBucketIndex = FastDivByCached(*bucketIndex,
 				overlapping, cacheOverlappingMagic) * bucketSize + j;
 		const u_int mortonCurveOffset = pixelBucketIndex & (tileSize * tileSize - 1);
@@ -445,7 +449,7 @@ void SobolSampler::RebuildBucketThreshold() {
 				(subRegionPixelY >= cacheSubRegionHeight)) {
 			bucketSamples[j].pixelX = 0xFFFFFFFFu;
 			bucketSamples[j].pixelY = 0;
-			bucketSamples[j].threshold = 1.f;
+			bucketSamples[j].subIdx = 0;
 			continue;
 		}
 
@@ -453,68 +457,91 @@ void SobolSampler::RebuildBucketThreshold() {
 		const u_int pixelY = filmCacheSubRegion[2] + subRegionPixelY;
 		bucketSamples[j].pixelX = pixelX;
 		bucketSamples[j].pixelY = pixelY;
-
-		float noise = std::numeric_limits<float>::infinity();
-		bool noiseValid = false;
-
-		// Second-moment estimate: the relative standard error of the
-		// pixel mean is a per-pixel absolute convergence measure
-		// (unlike the film NOISE channel which is a min-max normalized
-		// image-difference heuristic updated only every test step)
-		if (sobolAdaptiveMomentsEnable && lumaMoments) {
-			const u_int subIdx = subRegionPixelX + subRegionPixelY * cacheSubRegionWidth;
-			const u_int curPass = sharedData->PeekPixelPass(subIdx);
-			if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
-				const float n = (float)(curPass - SOBOL_STARTOFFSET);
-				const float *mom = &lumaMoments[(pixelX + pixelY * filmCacheWidth) * 2];
-				// NaN/Inf accumulators (a corrupt sample reached the
-				// moments) collapse to relErr=0 and would starve the
-				// pixel - leave noiseValid false so the film map, or
-				// full sampling, takes over.
-				if (isfinite(mom[0]) && isfinite(mom[1])) {
-					const float mean = mom[0] / n;
-					const float var = Max(mom[1] / n - mean * mean, 0.f);
-					// std. error of the mean, relative to the mean
-					const float relErr = sqrtf(var / n) / (fabs(mean) + 1e-6f);
-					noise = Min(relErr / sobolAdaptiveRelErrTarget, 1.f);
-					noiseValid = true;
-				}
-			}
-		}
-
-		if (noiseChan) {
-			const float chNoise = *(noiseChan->GetPixel(pixelX, pixelY));
-			// Max-combine the two estimators: a pixel is only considered
-			// converged when both agree. The dilated film map sees
-			// sub-pixel neighborhood error the per-pixel moments miss;
-			// the moments estimate refreshes every pass while the map
-			// updates only every test step, so each covers the other's
-			// blind spot (keeps hard caustic/volume tails sampled). A
-			// still-infinite map (first test not run yet) must not veto
-			// the fresh moments estimate.
-			noise = noiseValid ?
-				(isfinite(chNoise) ? Max(noise, chNoise) : noise) :
-				chNoise;
-		}
-
-		// Factor user driven importance sampling too
-		float threshold;
-		if (userChan) {
-			const float userImportance = *(userChan->GetPixel(pixelX, pixelY));
-
-			// Noise is initialized to INFINITY at start
-			if (isinf(noise))
-				threshold = userImportance;
-			else
-				threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
-		} else
-			threshold = noise;
-
-		// The floor for the pixel importance is given by the adaptiveness strength
-		bucketSamples[j].threshold = Max(threshold, 1.f - adaptiveStrength);
+		bucketSamples[j].subIdx = subRegionPixelX +
+				subRegionPixelY * cacheSubRegionWidth;
 	}
 
 	adaptTableValid = true;
+}
+
+float SobolSampler::EvalAdaptiveThreshold(const u_int pixelX,
+		const u_int pixelY, const u_int subIdx) {
+	// Re-evaluate the estimator chain for one pixel and update the
+	// memo. All the inputs are bounded-stale by construction (the NOISE
+	// map updates only on noise-test steps, the moments estimate is
+	// only consulted past SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES); the
+	// (epoch, pass) key means the chain runs at most once per
+	// pass-per-pixel advance instead of once per candidate visit.
+	FilmRef flm = GetFilm();
+	const float *lumaMoments = flm.pixelLumaMoments.empty() ?
+			nullptr : flm.pixelLumaMoments.data();
+	const GenericFrameBuffer<1, 0, float> *noiseChan = cacheHasNoiseChannel ?
+			flm.channel_NOISE.get() : nullptr;
+	const GenericFrameBuffer<1, 0, float> *userChan = cacheHasUserImportanceChannel ?
+			flm.channel_USER_IMPORTANCE.get() : nullptr;
+
+	const u_int curPass = sharedData->PeekPixelPass(subIdx);
+	float noise = std::numeric_limits<float>::infinity();
+	bool noiseValid = false;
+
+	// Second-moment estimate: the relative standard error of the
+	// pixel mean is a per-pixel absolute convergence measure
+	// (unlike the film NOISE channel which is a min-max normalized
+	// image-difference heuristic updated only every test step)
+	if (sobolAdaptiveMomentsEnable && lumaMoments) {
+		if (curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) {
+			const float n = (float)(curPass - SOBOL_STARTOFFSET);
+			const float *mom = &lumaMoments[(pixelX + pixelY * filmCacheWidth) * 2];
+			// NaN/Inf accumulators (a corrupt sample reached the
+			// moments) collapse to relErr=0 and would starve the
+			// pixel - leave noiseValid false so the film map, or
+			// full sampling, takes over.
+			if (isfinite(mom[0]) && isfinite(mom[1])) {
+				const float mean = mom[0] / n;
+				const float var = Max(mom[1] / n - mean * mean, 0.f);
+				// std. error of the mean, relative to the mean
+				const float relErr = sqrtf(var / n) / (fabs(mean) + 1e-6f);
+				noise = Min(relErr / sobolAdaptiveRelErrTarget, 1.f);
+				noiseValid = true;
+			}
+		}
+	}
+
+	if (noiseChan) {
+		const float chNoise = *(noiseChan->GetPixel(pixelX, pixelY));
+		// Max-combine the two estimators: a pixel is only considered
+		// converged when both agree. The dilated film map sees
+		// sub-pixel neighborhood error the per-pixel moments miss;
+		// the moments estimate refreshes every pass while the map
+		// updates only every test step, so each covers the other's
+		// blind spot (keeps hard caustic/volume tails sampled). A
+		// still-infinite map (first test not run yet) must not veto
+		// the fresh moments estimate.
+		noise = noiseValid ?
+			(isfinite(chNoise) ? Max(noise, chNoise) : noise) :
+			chNoise;
+	}
+
+	// Factor user driven importance sampling too
+	float threshold;
+	if (userChan) {
+		const float userImportance = *(userChan->GetPixel(pixelX, pixelY));
+
+		// Noise is initialized to INFINITY at start
+		if (isinf(noise))
+			threshold = userImportance;
+		else
+			threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
+	} else
+		threshold = noise;
+
+	// The floor for the pixel importance is given by the adaptiveness strength
+	const float thr = Max(threshold, 1.f - adaptiveStrength);
+	ThrMemo &m = thresholdMemo[subIdx];
+	m.epoch = flm.adaptiveMapEpoch.load(std::memory_order_relaxed);
+	m.pass = curPass;
+	m.thr = thr;
+	return thr;
 }
 
 void SobolSampler::RequestSamples(const SampleType smplType, const u_int size) {

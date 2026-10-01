@@ -177,12 +177,24 @@ private:
 	static const u_int PASS_BATCH = 4;
 	u_int pixelPassRunLeft, pixelPassRunIdx;
 	u_int pixelX, pixelY;
-	// Per-bucket adaptive thresholds (same bounded-stale contract as
-	// SobolSampler::RebuildBucketThreshold): NOISE + USER_IMPORTANCE
-	// feed the gate and are refreshed outside this function, so
-	// tabulating once per bucket changes no decision semantics.
+	// Per-bucket candidate table (same contract as
+	// SobolSampler::RebuildBucketThreshold): coords + OOB sentinel are
+	// computed once per bucket so the candidate loop is a single table
+	// load. Adaptive thresholds live in a per-pixel memo keyed on
+	// (film adaptive-map epoch, pass) - the estimator chain runs once
+	// per pixel advance, not once per candidate visit.
+	struct BucketSample {
+		u_int pixelX, pixelY;  // pixelX == 0xFFFFFFFFu = OOB sentinel
+		u_int subIdx;
+	};
+	struct ThrMemo {
+		u_int epoch, pass;
+		float thr;
+	};
+	float EvalAdaptiveThreshold(u_int pixelX, u_int pixelY, u_int subIdx);
 	void RebuildBucketThreshold();
-	std::vector<float> bucketThreshold;
+	std::vector<BucketSample> bucketSamples;
+	std::vector<ThrMemo> thresholdMemo;
 	bool adaptTableValid;
 	// InitNewSample snapshots the subregion each call (no film cache
 	// like SobolSampler); track the bounds the table was built for.

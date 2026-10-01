@@ -158,34 +158,37 @@ void PMJ02Sampler::InitNewSample() {
 
 		u_int px, py;
 		if (doImageSamples) {
-			// Transform the bucket index in a pixel coordinate
+			// The candidate table (coords + OOB flag) is identical per
+			// bucket - rebuilt on fetch, on subregion change, or at
+			// first use.
+			if (!adaptTableValid)
+				RebuildBucketThreshold();
 
-			const u_int pixelBucketIndex = (*bucketIndex / overlapping) * bucketSize + pixelOffset;
-			const u_int mortonCurveOffset = pixelBucketIndex % (tileSize * tileSize);
-			const u_int pixelTileIndex = pixelBucketIndex / (tileSize * tileSize);
-
-			const u_int subRegionPixelX = (pixelTileIndex % tiletWidthCount) * tileSize + DecodeMorton2X(mortonCurveOffset);
-			const u_int subRegionPixelY = (pixelTileIndex / tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
-			if ((subRegionPixelX >= subRegionWidth) || (subRegionPixelY >= subRegionHeight)) {
+			const BucketSample &cand = bucketSamples[pixelOffset];
+			if (cand.pixelX == 0xFFFFFFFFu) {
 				// Skip the pixels out of the film sub region
 				continue;
 			}
 
-			px = filmSubRegion[0] + subRegionPixelX;
-			py = filmSubRegion[2] + subRegionPixelY;
-
-			const u_int pixelIdx = subRegionPixelX + subRegionPixelY * subRegionWidth;
+			px = cand.pixelX;
+			py = cand.pixelY;
+			const u_int pixelIdx = cand.subIdx;
 
 			// Check if the current pixel is over or under the
-			// convergence threshold via the per-bucket table (same
-			// bounded-stale contract as SobolSampler).
+			// convergence threshold. The estimator chain is memoized
+			// per-pixel - EvalAdaptiveThreshold only runs when the
+			// (epoch, pass) key advanced since the last visit.
 			if ((adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) {
-				if (!adaptTableValid)
-					RebuildBucketThreshold();
-
+				const ThrMemo &memo = thresholdMemo[pixelIdx];
 				// thr >= 1 guarantees acceptance - skip the draw (see
 				// sobol.cpp: rndGen feeds only this compare)
-				const float thr = bucketThreshold[pixelOffset];
+				const u_int epochNow = GetFilm().adaptiveMapEpoch.load(
+						std::memory_order_relaxed);
+				const u_int passNow = sharedData->PeekPixelPass(pixelIdx);
+				const float thr = ((memo.epoch == epochNow) &&
+						(memo.pass == passNow)) ?
+						memo.thr :
+						EvalAdaptiveThreshold(px, py, pixelIdx);
 				if ((thr < 1.f) && (rndGen->floatValue() > thr)) {
 					// Skip this pixel and try the next one; after a full
 					// bucket sweep accept it anyway (bounded loop)
@@ -244,10 +247,11 @@ void PMJ02Sampler::InitNewSample() {
 }
 
 void PMJ02Sampler::RebuildBucketThreshold() {
-	// Snapshot the adaptive thresholds for the current bucket (same
-	// bounded-stale contract as SobolSampler::RebuildBucketThreshold -
-	// NOISE refreshes on test steps, USER_IMPORTANCE is static).
-	bucketThreshold.resize(bucketSize);
+	// Rebuild the candidate table for the current bucket: pixel
+	// coordinates + sub-region index. Adaptive thresholds are NOT part
+	// of the table - they are memoized per-pixel (thresholdMemo) and
+	// re-evaluated lazily on (epoch, pass) key changes.
+	bucketSamples.resize(bucketSize);
 
 	const u_int *filmSubRegion = GetFilm().GetSubRegion();
 	adaptTableSubRegion[0] = filmSubRegion[0];
@@ -259,8 +263,16 @@ void PMJ02Sampler::RebuildBucketThreshold() {
 	const u_int subRegionHeight = filmSubRegion[3] - filmSubRegion[2] + 1;
 	const u_int tiletWidthCount = (subRegionWidth + tileSize - 1) / tileSize;
 
+	// Lazy-allocate the memo only under the adaptive gate (non-adaptive
+	// renders keep the zero-alloc per-sample invariant).
+	const u_int subPixelCount = subRegionWidth * subRegionHeight;
+	if (((adaptiveStrength > 0.f) && GetFilm().HasChannel(Film::NOISE)) &&
+			(thresholdMemo.size() != subPixelCount)) {
+		thresholdMemo.assign(subPixelCount,
+				{0u, 0xFFFFFFFFu, 1.f});
+	}
+
 	for (u_int j = 0; j < bucketSize; ++j) {
-		// Same pixel decode as the InitNewSample candidate loop
 		const u_int pixelBucketIndex = (*bucketIndex / overlapping) * bucketSize + j;
 		const u_int mortonCurveOffset = pixelBucketIndex % (tileSize * tileSize);
 		const u_int pixelTileIndex = pixelBucketIndex / (tileSize * tileSize);
@@ -269,33 +281,47 @@ void PMJ02Sampler::RebuildBucketThreshold() {
 		const u_int subRegionPixelY = (pixelTileIndex / tiletWidthCount) * tileSize + DecodeMorton2Y(mortonCurveOffset);
 		if ((subRegionPixelX >= subRegionWidth) ||
 				(subRegionPixelY >= subRegionHeight)) {
-			// Never read - the candidate loop bounds-checks first
-			bucketThreshold[j] = 0.f;
+			bucketSamples[j].pixelX = 0xFFFFFFFFu;
+			bucketSamples[j].pixelY = 0;
+			bucketSamples[j].subIdx = 0;
 			continue;
 		}
 
-		const u_int px = filmSubRegion[0] + subRegionPixelX;
-		const u_int py = filmSubRegion[2] + subRegionPixelY;
-
-		const float noise = *(GetFilm().channel_NOISE->GetPixel(px, py));
-
-		float threshold;
-		if (GetFilm().HasChannel(Film::USER_IMPORTANCE)) {
-			const float userImportance = *(GetFilm().channel_USER_IMPORTANCE->GetPixel(px, py));
-
-			// Noise is initialized to INFINITY at start
-			if (isinf(noise))
-				threshold = userImportance;
-			else
-				threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
-		} else
-			threshold = noise;
-
-		// The floor for the pixel importance is given by the adaptiveness strength
-		bucketThreshold[j] = Max(threshold, 1.f - adaptiveStrength);
+		bucketSamples[j].pixelX = filmSubRegion[0] + subRegionPixelX;
+		bucketSamples[j].pixelY = filmSubRegion[2] + subRegionPixelY;
+		bucketSamples[j].subIdx = subRegionPixelX +
+				subRegionPixelY * subRegionWidth;
 	}
 
 	adaptTableValid = true;
+}
+
+float PMJ02Sampler::EvalAdaptiveThreshold(const u_int pixelX,
+		const u_int pixelY, const u_int subIdx) {
+	// Re-evaluate the estimator chain for one pixel and update the
+	// memo (same bounded-stale contract as SobolSampler - NOISE
+	// refreshes on test steps, USER_IMPORTANCE is static).
+	const float noise = *(GetFilm().channel_NOISE->GetPixel(pixelX, pixelY));
+
+	float threshold;
+	if (GetFilm().HasChannel(Film::USER_IMPORTANCE)) {
+		const float userImportance = *(GetFilm().channel_USER_IMPORTANCE->GetPixel(pixelX, pixelY));
+
+		// Noise is initialized to INFINITY at start
+		if (isinf(noise))
+			threshold = userImportance;
+		else
+			threshold = (userImportance > 0.f) ? Lerp(adaptiveUserImportanceWeight, noise, userImportance) : 0.f;
+	} else
+		threshold = noise;
+
+	// The floor for the pixel importance is given by the adaptiveness strength
+	const float thr = Max(threshold, 1.f - adaptiveStrength);
+	ThrMemo &m = thresholdMemo[subIdx];
+	m.epoch = GetFilm().adaptiveMapEpoch.load(std::memory_order_relaxed);
+	m.pass = sharedData->PeekPixelPass(subIdx);
+	m.thr = thr;
+	return thr;
 }
 
 void PMJ02Sampler::EnsurePairs(const u_int count) {
