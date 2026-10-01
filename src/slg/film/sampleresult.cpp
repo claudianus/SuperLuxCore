@@ -108,9 +108,12 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 		motionVector[3] = 0.f;
 	}
 
+	// LPE radiance only lives while a path is under an lpe automaton;
+	// lpeCount is 0 for scenes that never request an LPE output so the
+	// allocation drops to a no-op on the common path.
 	lpeSlotsUsed = Min(lpeCount, (u_int)SLG_LPE_MAX_EXPRESSIONS);
-	for (u_int i = 0; i < lpeSlotsUsed; ++i)
-		lpeRadiance[i] = Spectrum();
+	delete[] lpeRadiance;
+	lpeRadiance = (lpeSlotsUsed > 0) ? new Spectrum[lpeSlotsUsed]() : nullptr;
 
 	firstPathVertexEvent = NONE;
 	firstPathVertex = true;
@@ -213,3 +216,103 @@ bool SampleResult::IsAllValid(const vector<SampleResult> &sampleResults) {
 	return true;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
+
+void SampleResult::CopyFrom(const SampleResult &o) {
+	if (this == &o) return;
+	channels = o.channels;
+	channelsMask = o.channelsMask;
+	lpeSlotsUsed = o.lpeSlotsUsed;
+	radiance = o.radiance;
+	pixelX = o.pixelX; pixelY = o.pixelY;
+	filmX = o.filmX; filmY = o.filmY;
+	alpha = o.alpha; depth = o.depth;
+	position = o.position;
+	geometryNormal = o.geometryNormal;
+	shadingNormal = o.shadingNormal;
+	materialID = o.materialID; objectID = o.objectID;
+	cryptoObjectID = o.cryptoObjectID;
+	cryptoMaterialID = o.cryptoMaterialID;
+	directDiffuseReflect = o.directDiffuseReflect;
+	directDiffuseTransmit = o.directDiffuseTransmit;
+	directGlossyReflect = o.directGlossyReflect;
+	directGlossyTransmit = o.directGlossyTransmit;
+	emission = o.emission;
+	indirectDiffuseReflect = o.indirectDiffuseReflect;
+	indirectDiffuseTransmit = o.indirectDiffuseTransmit;
+	indirectGlossyReflect = o.indirectGlossyReflect;
+	indirectGlossyTransmit = o.indirectGlossyTransmit;
+	indirectSpecularReflect = o.indirectSpecularReflect;
+	indirectSpecularTransmit = o.indirectSpecularTransmit;
+	directShadowMask = o.directShadowMask;
+	indirectShadowMask = o.indirectShadowMask;
+	uv = o.uv;
+	rayCount = o.rayCount;
+	irradiance = o.irradiance;
+	irradiancePathThroughput = o.irradiancePathThroughput;
+	albedo = o.albedo;
+	for (u_int i = 0; i < 4; ++i) motionVector[i] = o.motionVector[i];
+	firstPathVertexEvent = o.firstPathVertexEvent;
+	isHoldout = o.isHoldout; isCaustic = o.isCaustic;
+	firstPathVertex = o.firstPathVertex;
+	lastPathVertex = o.lastPathVertex;
+	useFilmSplat = o.useFilmSplat;
+
+	// Deep-copy the owned LPE buffer - reuse the allocation when the
+	// size matches so repeat copies don't churn the heap.
+	if (o.lpeRadiance) {
+		if (!lpeRadiance || lpeSlotsUsed != o.lpeSlotsUsed) {
+			delete[] lpeRadiance;
+			lpeRadiance = new Spectrum[o.lpeSlotsUsed];
+		}
+		for (u_int i = 0; i < lpeSlotsUsed; ++i)
+			lpeRadiance[i] = o.lpeRadiance[i];
+	} else {
+		delete[] lpeRadiance;
+		lpeRadiance = nullptr;
+	}
+}
+
+void SampleResult::MoveFrom(SampleResult &&o) {
+	// Scalar copy + steal lpeRadiance
+	channels = o.channels;
+	channelsMask = o.channelsMask;
+	lpeSlotsUsed = o.lpeSlotsUsed;
+	radiance = std::move(o.radiance);
+	pixelX = o.pixelX; pixelY = o.pixelY;
+	filmX = o.filmX; filmY = o.filmY;
+	alpha = o.alpha; depth = o.depth;
+	position = o.position;
+	geometryNormal = o.geometryNormal;
+	shadingNormal = o.shadingNormal;
+	materialID = o.materialID; objectID = o.objectID;
+	cryptoObjectID = o.cryptoObjectID;
+	cryptoMaterialID = o.cryptoMaterialID;
+	directDiffuseReflect = o.directDiffuseReflect;
+	directDiffuseTransmit = o.directDiffuseTransmit;
+	directGlossyReflect = o.directGlossyReflect;
+	directGlossyTransmit = o.directGlossyTransmit;
+	emission = o.emission;
+	indirectDiffuseReflect = o.indirectDiffuseReflect;
+	indirectDiffuseTransmit = o.indirectDiffuseTransmit;
+	indirectGlossyReflect = o.indirectGlossyReflect;
+	indirectGlossyTransmit = o.indirectGlossyTransmit;
+	indirectSpecularReflect = o.indirectSpecularReflect;
+	indirectSpecularTransmit = o.indirectSpecularTransmit;
+	directShadowMask = o.directShadowMask;
+	indirectShadowMask = o.indirectShadowMask;
+	uv = o.uv;
+	rayCount = o.rayCount;
+	irradiance = o.irradiance;
+	irradiancePathThroughput = o.irradiancePathThroughput;
+	albedo = o.albedo;
+	for (u_int i = 0; i < 4; ++i) motionVector[i] = o.motionVector[i];
+	firstPathVertexEvent = o.firstPathVertexEvent;
+	isHoldout = o.isHoldout; isCaustic = o.isCaustic;
+	firstPathVertex = o.firstPathVertex;
+	lastPathVertex = o.lastPathVertex;
+	useFilmSplat = o.useFilmSplat;
+
+	lpeRadiance = o.lpeRadiance;
+	o.lpeRadiance = nullptr;
+	o.lpeSlotsUsed = 0;
+}

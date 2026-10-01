@@ -41,11 +41,35 @@ using luxrays::ocl::Spectrum;
 
 class SampleResult {
 public:
-	SampleResult() : useFilmSplat(true), channels(nullptr) { }
-	SampleResult(const Film::FilmChannels *channels, const u_int radianceGroupCount) {
+	SampleResult() : useFilmSplat(true), channels(nullptr), lpeRadiance(nullptr) { }
+	SampleResult(const Film::FilmChannels *channels, const u_int radianceGroupCount) :
+			lpeRadiance(nullptr) {
 		Init(channels, radianceGroupCount);
 	}
-	~SampleResult() { }
+	// 3-arg form used at LPE-aware init sites - lpeRadiance nullptr is
+	// preserved through Init.
+	SampleResult(const Film::FilmChannels *channels, const u_int radianceGroupCount,
+			const u_int lpeCount) : lpeRadiance(nullptr) {
+		Init(channels, radianceGroupCount, lpeCount);
+	}
+	// Deep copy - lpeRadiance owns its Spectrum slots; a bit-copy would
+	// double-free on destruction. Every other field is scalar/vector-free.
+	SampleResult(const SampleResult &o) { CopyFrom(o); }
+	SampleResult &operator=(const SampleResult &o) {
+		if (this != &o) CopyFrom(o);
+		return *this;
+	}
+	// Move: steal lpeRadiance, leave source with nullptr so a bit-move
+	// can't double-free on destruction.
+	SampleResult(SampleResult &&o) noexcept { MoveFrom(std::move(o)); }
+	SampleResult &operator=(SampleResult &&o) noexcept {
+		if (this != &o) MoveFrom(std::move(o));
+		return *this;
+	}
+	// Copy helper: scalar fields + deep-copy the owned lpeRadiance buffer.
+	void CopyFrom(const SampleResult &o);
+	// Move helper: scalar fields + steal lpeRadiance.
+	void MoveFrom(SampleResult &&o);
 
 	void Init(const Film::FilmChannels *channels, const u_int radianceGroupCount,
 			const u_int lpeCount = 0);
@@ -110,10 +134,9 @@ public:
 	// Irradiance requires to store some additional information to be computed
 	luxrays::Spectrum irradiancePathThroughput;
 	luxrays::Spectrum albedo;
-	// LPE: radiance accumulated on the terminal evaluation of every
-	// film.lpe.N.expression NFA that accepted this path (fixed-size,
-	// zeroed in Init; only the first GetLPECount() slots are used)
-	luxrays::Spectrum lpeRadiance[SLG_LPE_MAX_EXPRESSIONS];
+	// LPE: owned array, allocated in Init only when lpeCount>0 (nullptr
+	// otherwise) - cuts 96B of dead weight off SampleResult.
+	luxrays::Spectrum *lpeRadiance;
 
 	// MOTION_VECTOR channel payload: screen-space velocity of the first
 	// camera-visible surface point in pixels per scene time unit
