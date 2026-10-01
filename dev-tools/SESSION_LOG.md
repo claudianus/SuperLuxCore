@@ -1392,3 +1392,17 @@ accumulation + merge, or SampleResult size cut.
 - SpectrumGroup packed bools: `firstPathVertex` 등 bool 필드 → 1B bitmask로 합쳐 `SampleResult` 크기 추가 감소.
 - SampleResult 성장 패턴: `maxPathDepth.depth + 2` 고정 cap인데 실제 경로가 이보다 깊으면 realloc — `used`는 쓰인 슬롯 카운터지만 capacity는 한 번 확장되면 그대로니, `sampleResults.reserve()`를 엔진 init에서 한번.
 - `channel_LPEs[i]` 접근: `lpeRadiance`가 `nullptr`일 때 안전하게 early-out 하는지 Film 측 검증 — 현재는 `HasChannel(Film::LPE)`가 gate하니 ok.
+
+---
+### r6 — atomic fetch_add (1a6450564, 82dd150e9)
+
+`AtomicAdd(float*)` was a `boost::interprocess` CAS loop — retry storm when
+18 threads splat the same texel. Replaced with `std::atomic_ref<float>::fetch_add`
+(ARM `ldadd`, x86 `lock xadd`) via `__cpp_lib_atomic_float`. `AtomicAdd(T*)`
+same treatment. `AtomicMax(float)` swapped to `compare_exchange_weak` (max
+has no single instruction) — still CAS but one branch less per retry.
+
+`AtomicAddIfValidWeightedPixel` already had NaN/Inf pre-filtering;
+`AtomicAddWeightedPixel` keeps it. The `pixels` array stays `float*` (not
+`atomic<float>`) — that's the boundary between GPU merge (untouched, uses
+OCL side) and CPU scatter.
