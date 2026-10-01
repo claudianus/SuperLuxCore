@@ -665,7 +665,7 @@ typedef struct {
 
 OPENCL_FORCE_INLINE void Spectral_PrepareRGBProjection(
 		__global const float *w, const uint heroAlive,
-		thread SpectralRGBProjector *p) {
+		__private SpectralRGBProjector *p) {
 	p->aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
 	float cx[SLG_SPECTRAL_BINS], cy[SLG_SPECTRAL_BINS], cz[SLG_SPECTRAL_BINS];
 	float nX = 0.f, nY = 0.f, nZ = 0.f;
@@ -702,7 +702,7 @@ OPENCL_FORCE_INLINE void Spectral_PrepareRGBProjection(
 }
 
 OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGBWith(const float3 bins,
-		const thread SpectralRGBProjector *p) {
+		const __private SpectralRGBProjector *p) {
 	if (!p->valid || (bins.x == 0.f && bins.y == 0.f && bins.z == 0.f))
 		return BLACK;
 	float r = 0.f, g = 0.f, b = 0.f;

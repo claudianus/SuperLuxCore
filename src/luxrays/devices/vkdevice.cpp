@@ -87,6 +87,23 @@ vector<string> GetVulkanLuxCoreDirs() {
 		if (real != dirs.back())
 			dirs.push_back(real);
 	}
+
+	// Inside an installed wheel the toolchain can ship next to the
+	// extension module: <package>/vktools/{bin,third_party/llvm/bin,lib}.
+	// dladdr is the same trick metaldevice.mm uses for cl2msl. Without
+	// this a released install has no Vulkan toolchain at all - the
+	// per-user ~/.luxcore tree only exists on a developer machine.
+	Dl_info info;
+	if (dladdr((const void *)&GetVulkanLuxCoreDirs, &info) && info.dli_fname) {
+		const string selfPath(info.dli_fname);
+		const string moduleDir = selfPath.substr(0,
+				selfPath.find_last_of('/'));
+		// Same convention as the ~/.luxcore root: callers append
+		// "/vktools/...", so push the package dir itself.
+		struct stat st;
+		if (stat((moduleDir + "/vktools").c_str(), &st) == 0)
+			dirs.push_back(moduleDir);
+	}
 	return dirs;
 }
 
@@ -977,6 +994,28 @@ HardwareDeviceProgramUPtr VulkanDevice::CompileProgram(
 		const string &programSource,
 		const string &programName) {
 
+
+	// Actionable toolchain diagnostic: a released install has no
+	// ~/.luxcore tree, and without this the failure surfaces much later
+	// as a bare "clspv bitcode compile failed".
+	{
+		const string clspv = GetClspvPath();
+		struct stat cst;
+		if (clspv.find('/') != string::npos && stat(clspv.c_str(), &cst) != 0) {
+			ostringstream searched;
+			for (const string &r : GetVulkanLuxCoreDirs())
+				searched << "\n    " << r << "/vktools/bin/clspv";
+			LR_LOG(deviceContext,
+					"[Vulkan] clspv not found at '" << clspv << "'. Looked in:"
+					<< searched.str()
+					<< "\n[Vulkan] Install the Vulkan toolchain with "
+					"dev-tools/vulkan-tools-install.sh (set LUX_VKTOOLS to the "
+					"pysuperluxcore package directory to bundle it into an "
+					"install), or point LUXRAYS_CLSPV at a clspv binary.");
+			throw runtime_error(programName +
+					": Vulkan clspv toolchain not found");
+		}
+	}
 	// Same device-level contract as OpenCLDevice::CompileProgram:
 	// LUXRAYS_OPENCL_DEVICE selects the OpenCL branch in the shared kernel
 	// sources (atomics, ImageMap layout, ...); ocldevice_funcs provides
