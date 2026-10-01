@@ -103,6 +103,12 @@ inline unsigned int AtomicDec(unsigned int *val) {
 }
 
 inline bool AtomicMax(float *val, const float a) {
+#if defined(__cpp_lib_atomic_float) || (defined(__GNUC__) && !defined(__clang__))
+	std::atomic_ref<float> ref(*val);
+	float oldVal = ref.load();
+	while (a > oldVal && !ref.compare_exchange_weak(oldVal, a)) { }
+	return a > oldVal;
+#else
 	union bits {
 		float f;
 		uint32_t i;
@@ -113,7 +119,7 @@ inline bool AtomicMax(float *val, const float a) {
 
 	do {
 #if (defined(__i386__) || defined(__amd64__))
-		__asm__ __volatile__("pause\n");
+		__asm__ __volatile__(\"pause\\n\");
 #endif
 
 		oldVal.f = *val;
@@ -125,6 +131,7 @@ inline bool AtomicMax(float *val, const float a) {
 			((uint32_t *) val), newVal.i, oldVal.i) != oldVal.i);
 
 	return true;
+#endif
 }
 
 inline bool AtomicMax(unsigned int *val, const unsigned int a) {
