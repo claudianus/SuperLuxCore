@@ -304,8 +304,13 @@ def GpuRenderSmoke():
         print(f"  SKIP: no GPU device available ({err})", flush=True)
         return
 
-    if not devices:
-        print("  SKIP: no compute device exposed by the runtime", flush=True)
+    # NATIVE_THREAD is always listed and cannot compile kernels through
+    # the device backend, so it does not count: the Linux and Windows
+    # wheel-builder runners expose nothing else (no OpenCL ICD, no CUDA)
+    # and must skip instead of failing.
+    usable = [d for d in devices if "NATIVE_THREAD" not in str(d[1]).upper()]
+    if not usable:
+        print(f"  SKIP: no OpenCL/CUDA/Vulkan/Metal device (only {devices})")
         return
     print(f"  device list: {devices}", flush=True)
 
