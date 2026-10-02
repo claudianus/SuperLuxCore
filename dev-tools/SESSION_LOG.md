@@ -1580,3 +1580,14 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
 - Manual: docs/manual/engines.html engine table now lists the full
   registry (PATHCPU/OCL, BIDIRCPU/BIDIRVMCPU, TILEPATH*/RTPATH*,
   FILESAVER) instead of generic PATH/BIDIR rows (commit aeea1d68).
+
+## 2026-10-02 (cont4) — restir.gi + vc keep-opt-in; luxcoreconsole --help
+
+- restir.gi A/B on manylights (PATHCPU, 48spp): BASE 0.20991 / GI
+  0.2099 - identical to 4th decimal, 0 NaN. At this budget the GI
+  reservoir contributes nothing measurable; e19's -37% was at higher
+  spp on a different config. Keep opt-in.
+- vertexconnection A/B on caustic-stress-many: identical (mergeradius=0
+  default means VC adds only the bidirectional connects the auto
+  MNEE+LT stack already covers). Keep opt-in.
+- luxcoreconsole: --help alias added (was 'Invalid option'). -h kept.
