@@ -3066,7 +3066,8 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 						flux = VLOAD3F(light->notIntersectable.spot.emittedFactor.c) *
 								(SpotLight_LocalFalloff(localDir,
 								light->notIntersectable.spot.cosTotalWidth,
-								light->notIntersectable.spot.cosFalloffStart) /
+								light->notIntersectable.spot.cosFalloffStart,
+								light->notIntersectable.spot.falloffMode) /
 								fabs(CosTheta(localDir)));
 					} else {
 						// Cosine-hemisphere area emitter: emittedRad *

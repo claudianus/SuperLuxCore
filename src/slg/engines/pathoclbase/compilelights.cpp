@@ -657,6 +657,8 @@ void CompiledScene::CompileLights() {
 					&oclLight->notIntersectable.spot.cosFalloffStart,
 					&alignedWorld2Light);
 
+				oclLight->notIntersectable.spot.falloffMode = (unsigned int)sl.falloffMode;
+
 				memcpy(&oclLight->notIntersectable.light2World.m, &alignedWorld2Light->m, sizeof(float[4][4]));
 				memcpy(&oclLight->notIntersectable.light2World.mInv, &alignedWorld2Light->mInv, sizeof(float[4][4]));
 				break;

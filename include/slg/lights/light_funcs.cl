@@ -1038,7 +1038,17 @@ OPENCL_FORCE_INLINE float3 MapSphereLight_Emit(
 // SpotLight
 //------------------------------------------------------------------------------
 
-OPENCL_FORCE_INLINE float SpotLight_LocalFalloff(const float3 w, const float cosTotalWidth, const float cosFalloffStart) {
+OPENCL_FORCE_INLINE float SpotLight_FalloffShape(const float delta, const unsigned int mode) {
+	if (mode == 1u) {
+		// Cycles-style smoothstep on the penumbra band.
+		const float t = clamp(delta, 0.f, 1.f);
+		return t * t * (3.f - 2.f * t);
+	}
+	return pow(delta, 4.f);
+}
+
+OPENCL_FORCE_INLINE float SpotLight_LocalFalloff(const float3 w, const float cosTotalWidth, const float cosFalloffStart,
+		const unsigned int mode) {
 	if (CosTheta(w) < cosTotalWidth)
 		return 0.f;
  	if (CosTheta(w) > cosFalloffStart)
@@ -1046,7 +1056,7 @@ OPENCL_FORCE_INLINE float SpotLight_LocalFalloff(const float3 w, const float cos
 
 	// Compute falloff inside spotlight cone
 	const float delta = (CosTheta(w) - cosTotalWidth) / (cosFalloffStart - cosTotalWidth);
-	return pow(delta, 4.f);
+	return SpotLight_FalloffShape(delta, mode);
 }
 
 OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spotLight,
@@ -1065,7 +1075,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spot
 			&spotLight->notIntersectable.light2World, -shadowRayDir));
 	const float falloff = SpotLight_LocalFalloff(localFromLight,
 			spotLight->notIntersectable.spot.cosTotalWidth,
-			spotLight->notIntersectable.spot.cosFalloffStart);
+			spotLight->notIntersectable.spot.cosFalloffStart,
+			spotLight->notIntersectable.spot.falloffMode);
 	if (falloff == 0.f)
 		return BLACK;
 
@@ -1786,7 +1797,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Emit(
 	Ray_Init2(ray, rayOrig, rayDir, time);
 
 	return VLOAD3F(spotLight->notIntersectable.spot.emittedFactor.c) *
-			(SpotLight_LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart) /
+			(SpotLight_LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart,
+			spotLight->notIntersectable.spot.falloffMode) /
 			fabs(CosTheta(localFromLight)));
 }
 

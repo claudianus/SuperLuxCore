@@ -65,6 +65,10 @@ public:
 
 	luxrays::Point localPos, localTarget;
 	float coneAngle, coneDeltaAngle;
+	// Falloff shape across the cone's penumbra band.
+	//   0 = pow(delta, 4)           (LuxCore legacy)
+	//   1 = smoothstep in cos-space (Cycles-compatible curve)
+	int falloffMode;
 
 protected:
 	luxrays::Spectrum emittedFactor;

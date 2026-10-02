@@ -73,6 +73,9 @@ typedef struct {
 	Vector absolutePos;
 	Spectrum emittedFactor;
 	float cosTotalWidth, cosFalloffStart;
+	// Falloff curve selector (SpotLight::falloffMode): 0 = power4 legacy,
+	// 1 = smoothstep in cos-space (Cycles-compatible).
+	unsigned int falloffMode;
 } SpotLightParam;
 
 typedef struct {

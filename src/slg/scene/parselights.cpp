@@ -380,6 +380,12 @@ LightSourceUPtr Scene::CreateLightSource(const string &name, const luxrays::Prop
 		sl->localTarget = props.Get(Property(propName + ".target")(Point(0.f, 0.f, 1.f))).Get<Point>();
 		sl->coneAngle = Max(0.0, props.Get(Property(propName + ".coneangle")(30.0)).Get<double>());
 		sl->coneDeltaAngle = Max(0.0, props.Get(Property(propName + ".conedeltaangle")(5.0)).Get<double>());
+		{
+			const string m = props.Get(Property(propName + ".falloff")("power4")).Get<string>();
+			if (m == "power4") sl->falloffMode = 0;
+			else if (m == "smoothstep") sl->falloffMode = 1;
+			else throw runtime_error("Unknown spot falloff mode: " + m);
+		}
 		sl->color = GetColor(props.Get(Property(propName + ".color")(Spectrum(1.f))));
 		sl->power = Max(0.0, props.Get(Property(propName + ".power")(0.0)).Get<double>());
 		sl->emittedPowerNormalize = props.Get(Property(propName + ".normalizebycolor")(true)).Get<bool>();

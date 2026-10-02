@@ -30,7 +30,7 @@ using namespace slg;
 SpotLight::SpotLight() :
 	color(1.f), power(0.f), efficiency(0.f), emittedPowerNormalize(true),
 	localPos(Point()), localTarget(Point(0.f, 0.f, 1.f)),
-	coneAngle(30.f), coneDeltaAngle(5.f) {
+	coneAngle(30.f), coneDeltaAngle(5.f), falloffMode(0) {
 }
 
 SpotLight::~SpotLight() {
@@ -93,7 +93,19 @@ float SpotLight::GetPower(SceneConstRef scene) const {
 	return emittedFactor.Y() * 2.f * M_PI * (1.f - .5f * (cosFalloffStart + cosTotalWidth));
 }
 
-static float LocalFalloff(const Vector &w, const float cosTotalWidth, const float cosFalloffStart) {
+static float SpotFalloffShape(const float delta, const int mode) {
+	if (mode == 1) {
+		// Cycles-style smoothstep on the penumbra band:
+		//   t in [0,1] -> 3t^2 - 2t^3
+		const float t = Clamp(delta, 0.f, 1.f);
+		return t * t * (3.f - 2.f * t);
+	}
+	// Legacy LuxCore curve
+	return powf(delta, 4);
+}
+
+static float LocalFalloff(const Vector &w, const float cosTotalWidth, const float cosFalloffStart,
+		const int mode) {
 	if (CosTheta(w) < cosTotalWidth)
 		return 0.f;
  	if (CosTheta(w) > cosFalloffStart)
@@ -101,7 +113,7 @@ static float LocalFalloff(const Vector &w, const float cosTotalWidth, const floa
 
 	// Compute falloff inside spotlight cone
 	const float delta = (CosTheta(w) - cosTotalWidth) / (cosFalloffStart - cosTotalWidth);
-	return powf(delta, 4);
+	return SpotFalloffShape(delta, mode);
 }
 
 Spectrum SpotLight::Emit(SceneConstRef scene,
@@ -121,7 +133,7 @@ Spectrum SpotLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return Spectral::Emission(emittedFactor) * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart) / fabsf(CosTheta(localFromLight)));
+	return Spectral::Emission(emittedFactor) * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart, falloffMode) / fabsf(CosTheta(localFromLight)));
 }
 
 Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -135,7 +147,7 @@ Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	const Vector shadowRayDir = toLight / shadowRayDistance;
 
 	const Vector localFromLight = Normalize(alignedWorldToLight * (-shadowRayDir));
-	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart);
+	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart, falloffMode);
 	if (falloff == 0.f)
 		return Spectrum();
 
@@ -159,7 +171,7 @@ bool SpotLight::IsAlwaysInShadow(SceneConstRef scene,
 	const Vector dir = toLight / distance;
 
 	const Vector localFromLight = Normalize(alignedWorldToLight * (-dir));
-	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart);
+	const float falloff = LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart, falloffMode);
 
 	return (falloff == 0.f);
 }
@@ -177,6 +189,7 @@ PropertiesUPtr SpotLight::ToProperties(const ImageMapCache &imgMapCache, const b
 	props->Set(Property(prefix + ".target")(localTarget));
 	props->Set(Property(prefix + ".coneangle")(coneAngle));
 	props->Set(Property(prefix + ".conedeltaangle")(coneDeltaAngle));
+	props->Set(Property(prefix + ".falloff")(falloffMode == 1 ? "smoothstep" : "power4"));
 
 	return props;
 }
