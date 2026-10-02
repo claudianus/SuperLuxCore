@@ -23,3 +23,24 @@ boundary, `PathVolumeInfo_Update`/`SetHitPointVolumes` resolve
 case. `archglass` uses the same hit plumbing but a different event path.
 Next probe: printf-instrument `Scene_Intersect` `rayVolumeIndex` for the
 first hit of a camera ray inside a glass-shelled box; compare to CPU.
+
+## Additional data (2026-10-03, trace continued)
+
+- `archglass` and `roughglass` (uroughness=0.001) shells both render
+  fog correctly on GPU; only `glass` (delta specular transmit + reflect
+  choice) diverges.
+- `null` shell with explicit `vol_air` exterior volume also works on GPU
+  (dv-nullext: lit% 68.4 ~ CPU 52.4, comparable beam).
+- Strong absorption (sigma_a=50) is equally dark on GPU and CPU,
+  confirming Volume_Scatter runs and transmittance is applied. The
+  divergence is specific to *scattering contribution* under a `glass`
+  delta-transmit shell - likely a stochastic difference in
+  `PathVolumeInfo_Update` timing (the glass transmit branch orders
+  `PathDepthInfo_IncDepths`/`PathVolumeInfo_Update` differently from
+  CPU's PathInfo::AddVertex) or `passThroughEvent`-derived seed state
+  consumed differently after a delta boundary.
+- `BSDF_GetMaterialInteriorVolume` resolves via evalOp; `glass`
+  material's `evalGetInteriorVolumeOpLength` may be >1 even when
+  static (has both interior AND exterior volume evals in one op
+  program). Worth checking whether the op result consumes a stale
+  `passThroughEvent` on the eval stack on GPU.
