@@ -16,6 +16,7 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include <cstring>
 #include <iostream>
 #include <filesystem>
 #include <boost/lexical_cast.hpp>
@@ -87,7 +88,8 @@ int main(int argc, char *argv[]) {
       if (argv[i][0] == '-') {
         // I should check for out of range array index...
 
-        if (argv[i][1] == 'h') {
+        // Accept both -h and --help (long form is what users type first).
+        if (argv[i][1] == 'h' || strcmp(argv[i], "--help") == 0) {
           LA_LOG("Usage: " << argv[0] << " [options] [configuration file]" << endl <<
               " -o [configuration file]" << endl <<
               " -f [scene file]" << endl <<
