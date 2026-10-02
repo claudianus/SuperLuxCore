@@ -1608,6 +1608,6 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
 | `path.vertexconnection` | caustic-stress-many | keep opt-in (identical) |
 | `path.restir.gi` | manylights | keep opt-in (identical) |
 
-**Blocked (environmental, not code):** `out/build` ninja can't regen `luxparse.cpp` — conan bison 3.8.2 exits SIGPIPE (code 141) on `-d` output inside the session sandbox; `--version`/`--help` work fine. System bison is 2.3 (too old). Pre-existing; lands on next clean configure outside the sandbox or after a conan re-install.
+**Resolved (env):** bison `code=141` was conan's `M4` env var not being exported — `cmake --build` skips `out/build/generators/conanbuildenv-release-armv8.sh`. Sourcing that script first makes `-d` write work; `luxcoreui`/`pysuperluxcore` rebuild clean, `__version__` + banner report `2.11.7`.
 
 **Remaining (needs idle machine / multi-session):** gauntlet wall A/B on a quiet box; `Ray` differentials for specular AA + glints (shared-struct change across all kernels); N-layer thin film; VK-M4 native drivers.
