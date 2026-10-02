@@ -1664,3 +1664,18 @@ A/B pre-fix (0.2232) vs fixed (0.1852) .so are noise-equivalent; at
 384spp relmean drops to 0.107. The 64spp threshold is marginal and
 flaky - pre-existing test fragility, unrelated to the fix. Left
 unresolved; the gate wants a higher SPP or a tolerance floor bump.
+
+## 2026-10-02 — OpenPBR lobes CPU/GPU parity + format-string fix + docs
+
+- OpenPBR-lobes scene, 640x360, 12s: PATHCPU 0.3428 / PATHOCL 0.3482,
+  relmean 0.042, p95 0.158, 0 NaN both - parity holds across the EON
+  NaN chain fix and the VNDF below-horizon fix.
+- pathtracer -Wformat-insufficient-args fixed (7d987f420): the
+  LUX_PG_HITDUMP finite-light fprintf had 8 specifiers, 7 args -
+  added the missing contribution term (was UB).
+- Docs (SuperBlendLuxCore 067a3184): caustics manual gained the PSR
+  auto-seed block; ex_caustic.png re-rendered on the fixed engine
+  (old asset predated the VNDF fix and showed the blackout).
+- Audit: LightBVH NodeImportance is already the dot-space rewrite
+  (cos(acos(a)-b) -> dot compare, GPU twin in lightbvh_funcs.cl) -
+  the earlier "deferred" note predated the code.
