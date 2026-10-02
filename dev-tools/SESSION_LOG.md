@@ -1556,3 +1556,16 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   re-instantiated per access - must compare data blocks with ==).
   Commits 32dbbc71 (site docs) + 259a804a (the fix). e45 16/16 +
   e49 155/155 pass under the synced addon.
+
+## 2026-10-02 (cont2) — path.guiding: measured "keep opt-in"
+
+- portal-interior A/B #2 (identical run): BASE 0.312 / GUIDING 0.307 —
+  the +8.9% in run #1 was run-to-run noise, not signal. At 48spp the
+  vMF table is too warm-up-limited to steer.
+- classroom A/B (diffuse interior): BASE 0.14688 / GUIDING 0.14696 —
+  within noise (rel diff 1.7%, 0 NaN). No diffuse-side overhead damage,
+  but also no measurable benefit at short renders.
+- Verdict: path.guiding.enable stays opt-in. The megaplan's
+  indirect-dominant promotion condition is NOT demonstrated at production
+  budgets; an auto gate would buy nothing and cost a scene-signature
+  mispredict. Negative result recorded to close the promotion question.
