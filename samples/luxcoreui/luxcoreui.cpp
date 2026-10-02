@@ -88,7 +88,13 @@ int main(int argc, char *argv[]) {
       if (argv[i][0] == '-') {
         // I should check for out of range array index...
 
-        // Accept both -h and --help (long form is what users type first).
+        // Accept -v / --version as the mirror of --help.
+        if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+          LA_LOG(LUXCORE_VERSION << endl);
+          exit(EXIT_SUCCESS);
+        }
+
+         // Accept both -h and --help (long form is what users type first).
         if (argv[i][1] == 'h' || strcmp(argv[i], "--help") == 0) {
           LA_LOG("Usage: " << argv[0] << " [options] [configuration file]" << endl <<
               " -o [configuration file]" << endl <<
