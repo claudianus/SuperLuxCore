@@ -1679,3 +1679,20 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
 - Audit: LightBVH NodeImportance is already the dot-space rewrite
   (cos(acos(a)-b) -> dot compare, GPU twin in lightbvh_funcs.cl) -
   the earlier "deferred" note predated the code.
+
+## 2026-10-02 — e33 gate de-flaked; backlog audit closed
+
+- e33_glossy2_ggx_parity.py: SPP 64 -> 384 (97e53c6a4). The 0.15
+  mean-relerr gate sat below the 64spp per-pixel noise floor (~0.19)
+  for a converged scene on mismatched CPU/GPU Sobol sequences; at
+  384spp the floor is ~0.10. Now a deterministic PASS:
+  mean-relerr 0.1008/0.1030/0.0877, furnace ggx mb=0 0.984 / mb=1
+  1.001, metal2-ggx mb=1 0.998 - all inside the <= ~1.0 bounds.
+- Backlog audit: sampleResults is already a persistent per-thread
+  vector with a `used` prefix counter (pathtracer.cpp:2670-72 keeps
+  size, no clear()) - the 1393 "reserve at init" item was already
+  done; deeper-than-capacity paths can't realloc since capacity only
+  grows. EFonExact is uncalled reference code (CPU+GPU both call
+  EFonApprox). LightBVH NodeImportance is already the dot-space
+  rewrite. Remaining real work: deferred splat queue (M-H), GPU PGIC
+  KD-tree, ray-differential transport (S6 enabler), displacement space.
