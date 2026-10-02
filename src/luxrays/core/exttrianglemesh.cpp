@@ -53,16 +53,23 @@ void ExtMesh::GetDifferentials(const Transform &local2World,
 	const u_int v0Index = tri.v[0];
 	const u_int v1Index = tri.v[1];
 	const u_int v2Index = tri.v[2];
-
     UV uv0, uv1, uv2;
     if (HasUVs(dataIndex)) {
         uv0 = GetUV(v0Index, dataIndex);
         uv1 = GetUV(v1Index, dataIndex);
         uv2 = GetUV(v2Index, dataIndex);
     } else {
-		uv0 = UV(.5f, .5f);
-		uv1 = UV(.5f, .5f);
-		uv2 = UV(.5f, .5f);
+		// No UV layer: every determinant below is 0 so the only outputs
+		// are the CoordinateSystem fallback and zeroed dnd*/hitUV. Skip
+		// the vertex fetches and UV math entirely - plain-coordinate
+		// meshes hit this path once per bounce and the loads were the
+		// whole cost.
+		if (hitUV)
+			*hitUV = UV(0.f, 0.f);
+		CoordinateSystem(Vector(shadeNormal), dpdu, dpdv);
+		*dndu = Normal();
+		*dndv = Normal();
+		return;
 	}
 
 	if (hitUV) {
