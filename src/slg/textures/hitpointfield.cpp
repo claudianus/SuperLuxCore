@@ -82,6 +82,8 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			const float rz = (bb.pMax.z - bb.pMin.z > 1e-9f) ? (pObj.z - bb.pMin.z) / (bb.pMax.z - bb.pMin.z) : 0.f;
 			return Spectrum(rx, ry, rz);
 		}
+		case HITPOINT_WORLDPOS:
+			return Spectrum(hitPoint.p.x, hitPoint.p.y, hitPoint.p.z);
 		case HITPOINT_REFLECTION: {
 			// r = d - 2(d.n)n where d = -fixedDir is the direction of travel;
 			// fixedDir points back to the camera, so -fixedDir is "into" the scene.
@@ -102,9 +104,8 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 
 PropertiesUPtr HitPointFieldTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
 	auto props = std::make_unique<Properties>();
-
 	static const char *channelNames[] = {
-		"geometrynormal", "backfacing", "incoming", "parametric", "reflection", "radial", "objectspace", "generated"
+		"geometrynormal", "backfacing", "incoming", "parametric", "reflection", "radial", "objectspace", "generated", "worldpos"
 	};
 
 	const string name = GetName();

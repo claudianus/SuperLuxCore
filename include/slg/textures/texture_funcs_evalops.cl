@@ -2068,6 +2068,9 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 						ext.z > 1e-9f ? (pz - bmin.z) / ext.z : 0.f);
 					break;
 				}
+				case HITPOINT_WORLDPOS:
+					f3val = VLOAD3F(&hitPoint->p.x);
+					break;
 				case HITPOINT_BACKFACING:
 					fval = ((hitPoint->fixedDir.x * hitPoint->geometryN.x + hitPoint->fixedDir.y * hitPoint->geometryN.y + hitPoint->fixedDir.z * hitPoint->geometryN.z) < 0.f) ? 1.f : 0.f;
 					f3val = MAKE_FLOAT3(fval, fval, fval);
