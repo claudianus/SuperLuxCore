@@ -2464,6 +2464,7 @@ PYBIND11_MODULE(pysuperluxcore, m) {
   m.attr("__package__") = "pysuperluxcore";
   m.attr("__doc__") = "LuxCoreRender Python bindings\n\n"
       "Provides access to the LuxCoreRender API in python\n\n";
+  m.attr("__version__") = LUXCORE_VERSION;
 
   m.def("Version", LuxCoreVersion, "Returns the LuxCore version");
 
