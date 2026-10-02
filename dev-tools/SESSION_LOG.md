@@ -1655,3 +1655,12 @@ on ior=1.5 glass+env renders 0.5113 vs CPU 0.5121 (cl2msl propagates
 the .cl fix). Lesson: any "auto-stack worse" reading before the
 Release .so refresh was a stale-binary artifact; always rebuild the
 python module before A/B numbers.
+
+**Cross-check (same session)**: e33 glossy2-ggx parity test FAILs at its
+0.15 mean-relerr gate (observed 0.17-0.22) at SPP=64 - but this is
+sampler noise on a converged-scene gate, not the VNDF change: the
+scene is matte+glossy2 reflection only (no wo.z<0 path exists), and
+A/B pre-fix (0.2232) vs fixed (0.1852) .so are noise-equivalent; at
+384spp relmean drops to 0.107. The 64spp threshold is marginal and
+flaky - pre-existing test fragility, unrelated to the fix. Left
+unresolved; the gate wants a higher SPP or a tolerance floor bump.
