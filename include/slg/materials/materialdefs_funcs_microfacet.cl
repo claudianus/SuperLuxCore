@@ -520,8 +520,12 @@ OPENCL_FORCE_INLINE float3 EON_DirAlbedo(const float3 rho, const float r,
 }
 
 // LTC coefficient fit for the CLTC sampling lobe.
-OPENCL_FORCE_INLINE void EON_LtcCoeffs(const float mu, const float r,
+OPENCL_FORCE_INLINE void EON_LtcCoeffs(const float muIn, const float r,
 		__private float *a, __private float *b, __private float *c, __private float *d) {
+	// The b/d denominators have a pole at mu^2 + 0.0725628*mu - 1.0743 = 0
+	// (mu ~ 1.0004): at near-normal wo.z the fit diverges and normalize()
+	// yields NaN wi. Keep the pole outside the clamped domain.
+	const float mu = fmin(muIn, 0.9995f);
 	*a = 1.f + r * (0.303392f + (-0.518982f + 0.111709f * mu) * mu + (-0.276266f + 0.335918f * mu) * r);
 	*b = r * (-1.16407f + 1.15859f * mu + (0.150815f - 0.150105f * mu) * r) / (mu * mu * mu - 1.43545f);
 	*c = 1.f + r * (0.20013f + (-0.506373f + 0.261777f * mu) * mu);
@@ -552,7 +556,10 @@ OPENCL_FORCE_INLINE float EON_Pdf(const float3 wo, const float3 wi,
 	const float s = 0.5f * (1.f + vz);
 	const float pdfC = detM * detM / (lensq * lensq) * fmax(wh.z, 0.f) / (M_PI_F * s);
 
-	return Pu * (0.5f * M_1_PI_F) + Pc * pdfC;
+	const float result = Pu * (0.5f * M_1_PI_F) + Pc * pdfC;
+	// pdfC=0 at wh.z<=0; at r~0 the whole mixture collapses to zero
+	// pdf and f*cos/pdf = NaN at the path-throughput multiply.
+	return fmax(result, 1e-6f);
 }
 
 // Sample EON: uniform + CLTC lobes mixed by fitted probability.
@@ -563,9 +570,15 @@ OPENCL_FORCE_INLINE float3 EON_Sample(const float3 wo, const float r,
 	const float Pc = 1.f - Pu;
 
 	float3 wi;
-	if (u0 <= Pu) {
+	// At r=0 the fits collapse: Pu->0 makes the uniform lobe unreachable
+	// except exactly at u0=0 (0/0 = NaN). Guard both lobes with a
+	// minimum-mass epsilon; clamp u so out-of-range variates cannot
+	// drive sqrt(1-u*u) below zero.
+	const float PuSafe = fmax(Pu, 1e-7f);
+	const float PcSafe = fmax(Pc, 1e-7f);
+	if (u0 <= PuSafe) {
 		// Uniform hemisphere lobe
-		const float u = u0 / Pu;
+		const float u = clamp(u0 / PuSafe, 0.f, 1.f);
 		const float sinTheta = sqrt(1.f - u * u);
 		const float phi = 2.f * M_PI_F * u1;
 		wi = MAKE_FLOAT3(sinTheta * cos(phi), sinTheta * sin(phi), u);
@@ -573,8 +586,8 @@ OPENCL_FORCE_INLINE float3 EON_Sample(const float3 wo, const float r,
 		return wi;
 	}
 
-	// CLTC lobe
-	const float u = (u0 - Pu) / Pc;
+	// CLTC lobe - same out-of-range variate guard as the uniform lobe.
+	const float u = clamp((u0 - PuSafe) / PcSafe, 0.f, 1.f);
 	float a, b, c, d;
 	EON_LtcCoeffs(mu, r, &a, &b, &c, &d);
 	const float R = sqrt(u);
@@ -596,7 +609,7 @@ OPENCL_FORCE_INLINE float3 EON_Sample(const float3 wo, const float r,
 			MAKE_FLOAT3(1.f, 0.f, 0.f);
 	const float3 Y = MAKE_FLOAT3(-X.y, X.x, 0.f);
 	wi = normalize(X * wl.x + Y * wl.y + MAKE_FLOAT3(0.f, 0.f, wl.z));
-	*pdf = Pu * (0.5f * M_1_PI_F) + Pc * pdfC;
+	*pdf = fmax(Pu * (0.5f * M_1_PI_F) + Pc * pdfC, 1e-6f);
 	return wi;
 }
 

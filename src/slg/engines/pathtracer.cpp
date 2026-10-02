@@ -1898,6 +1898,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			}
 		}
 
+		// Diagnose the upstream material when the sampler emits a degenerate
+		// spectrum: the assert below catches it, but names nothing.
+		if (bsdfSample.IsNaN() || bsdfSample.IsInf() || bsdfSample.IsNeg())
+			SLG_LOG("bsdfSample degenerate: mat=" << bsdf.GetMaterial()->GetName()
+					<< " bsdfEvent=" << bsdfEvent
+					<< " pdfW=" << bsdfPdfW
+					<< " sample=" << bsdfSample);
 		verify (!bsdfSample.IsNaN() && !bsdfSample.IsInf() && !bsdfSample.IsNeg());
 		if (bsdfSample.Black())
 			break;

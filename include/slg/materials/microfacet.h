@@ -543,8 +543,13 @@ inline luxrays::Spectrum DirAlbedo(const luxrays::Spectrum &rho, const float r,
 }
 
 // LTC coefficient fit for the CLTC sampling lobe.
-inline void LtcCoeffs(const float mu, const float r,
+inline void LtcCoeffs(const float muIn, const float r,
 		float &a, float &b, float &c, float &d) {
+	// The b/d denominators have a pole at mu^2 + 0.0725628*mu - 1.0743 = 0
+	// (mu ~ 1.0004): as wo.z approaches 1 (near-normal incidence) the fit
+	// diverges, wl.z -> +/-inf and Normalize() yields NaN wi. The fit is
+	// only valid for mu < ~0.9995 anyway - clamp keeps the pole outside.
+	const float mu = luxrays::Min(muIn, 0.9995f);
 	a = 1.f + r * (0.303392f + (-0.518982f + 0.111709f * mu) * mu + (-0.276266f + 0.335918f * mu) * r);
 	b = r * (-1.16407f + 1.15859f * mu + (0.150815f - 0.150105f * mu) * r) / (mu * mu * mu - 1.43545f);
 	c = 1.f + r * (0.20013f + (-0.506373f + 0.261777f * mu) * mu);
@@ -575,7 +580,12 @@ inline float Pdf(const luxrays::Vector &wo, const luxrays::Vector &wi, const flo
 	const float pdfC = detM * detM / (lensq * lensq) * luxrays::Max(wh.z, 0.f) / (M_PI * s);
 
 	const float pdfU = 1.f / (2.f * M_PI);
-	return Pu * pdfU + Pc * pdfC;
+	const float result = Pu * pdfU + Pc * pdfC;
+	// Below-hemisphere LTC samples (wh.z<=0) yield pdfC=0; at r=0 (Pu=0)
+	// the mixture collapses to zero pdf and f*cos/pdf = 0/0 = NaN at
+	// the path-throughput multiply. Floor it at a small positive value
+	// so such paths carry finite (tiny) weight instead of NaN.
+	return luxrays::Max(result, 1e-6f);
 }
 
 // Sample EON: uniform lobe + CLTC lobe mixed by fitted probability.
@@ -587,9 +597,18 @@ inline luxrays::Vector Sample(const luxrays::Vector &wo, const float r,
 	const float Pc = 1.f - Pu;
 
 	luxrays::Vector wi;
-	if (u0 <= Pu) {
-		// Uniform hemisphere lobe
-		const float u = u0 / Pu;
+	// At r=0 the fits collapse: Pu->0 makes the uniform lobe unreachable
+	// except exactly at u0=0 (u = u0/Pu = 0/0 = NaN). Guard both lobes
+	// with a minimum-mass epsilon so the selection stays finite and
+	// deterministic in the degenerate limit.
+	const float PuSafe = luxrays::Max(Pu, 1e-7f);
+	const float PcSafe = luxrays::Max(Pc, 1e-7f);
+	if (u0 <= PuSafe) {
+		// Uniform hemisphere lobe. u0 can drift slightly out of range
+		// (e.g. Metropolis perturbations emit negative variates): without
+		// the clamp, u<-1 yields sinTheta=sqrt(1-u*u)=NaN and the path
+		// flux goes NaN downstream.
+		const float u = luxrays::Clamp(u0 / PuSafe, 0.f, 1.f);
 		const float sinTheta = sqrtf(1.f - u * u);
 		const float phi = 2.f * M_PI * u1;
 		wi = luxrays::Vector(sinTheta * cosf(phi), sinTheta * sinf(phi), u);
@@ -597,8 +616,8 @@ inline luxrays::Vector Sample(const luxrays::Vector &wo, const float r,
 		return wi;
 	}
 
-	// CLTC lobe
-	const float u = (u0 - Pu) / Pc;
+	// CLTC lobe - same out-of-range variate guard as the uniform lobe.
+	const float u = luxrays::Clamp((u0 - PuSafe) / PcSafe, 0.f, 1.f);
 	float a, b, c, d;
 	LtcCoeffs(mu, r, a, b, c, d);
 	const float R = sqrtf(u);
@@ -622,6 +641,9 @@ inline luxrays::Vector Sample(const luxrays::Vector &wo, const float r,
 	luxrays::Vector Y(-X.y, X.x, 0.f);
 	wi = luxrays::Normalize(X * wl.x + Y * wl.y + luxrays::Vector(0.f, 0.f, wl.z));
 	pdf = Pu * (1.f / (2.f * M_PI)) + Pc * pdfC;
+	// Same floor as Pdf(): a below-hemisphere CLTC draw at r~0 yields
+	// pdf=0 and the caller's f*cos/pdf becomes NaN.
+	pdf = luxrays::Max(pdf, 1e-6f);
 	return wi;
 }
 
