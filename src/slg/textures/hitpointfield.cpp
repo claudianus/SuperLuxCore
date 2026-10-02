@@ -47,6 +47,19 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			return Spectrum(hitPoint.fixedDir.x, hitPoint.fixedDir.y, hitPoint.fixedDir.z);
 		case HITPOINT_PARAMETRIC:
 			return Spectrum(hitPoint.triangleBariCoord1, hitPoint.triangleBariCoord2, 0.f);
+		case HITPOINT_RADIAL: {
+			// Polar coordinates of the default UV map: (theta/2pi, r, 0)
+			// centered at the UV square's midpoint. The "theta" texture in
+			// pathoclbase already uses a 0..1 angular wedge for Voronoi;
+			// here the whole disk maps to theta in [0,1) via fract().
+			const float du = hitPoint.defaultUV.u - 0.5f;
+			const float dv = hitPoint.defaultUV.v - 0.5f;
+			const float r = sqrtf(du * du + dv * dv);
+			// atan2 in [-pi,pi] -> wrap to [0,1)
+			float theta = atan2f(dv, du) * (1.f / (2.f * 3.14159265f));
+			theta -= floorf(theta);
+			return Spectrum(theta, r, 0.f);
+		}
 		case HITPOINT_REFLECTION: {
 			// r = d - 2(d.n)n where d = -fixedDir is the direction of travel;
 			// fixedDir points back to the camera, so -fixedDir is "into" the scene.
@@ -69,7 +82,7 @@ PropertiesUPtr HitPointFieldTexture::ToProperties(const ImageMapCache &imgMapCac
 	auto props = std::make_unique<Properties>();
 
 	static const char *channelNames[] = {
-		"geometrynormal", "backfacing", "incoming", "parametric", "reflection"
+		"geometrynormal", "backfacing", "incoming", "parametric", "reflection", "radial"
 	};
 
 	const string name = GetName();

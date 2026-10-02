@@ -671,6 +671,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				channelStr == "incoming" ? HITPOINT_INCOMING :
 				channelStr == "parametric" ? HITPOINT_PARAMETRIC :
 				channelStr == "reflection" ? HITPOINT_REFLECTION :
+				channelStr == "radial" ? HITPOINT_RADIAL :
 				throw runtime_error("Unknown hitpoint texture channel: " + channelStr);
 		tex = std::make_unique<HitPointFieldTexture>(channel);
 	} else if (texType == "splitfloat3") {

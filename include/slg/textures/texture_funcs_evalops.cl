@@ -2032,6 +2032,15 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 										d.z - nd * hitPoint->shadeN.z);
 					break;
 				}
+				case HITPOINT_RADIAL: {
+					const float du = hitPoint->defaultUV.u - 0.5f;
+					const float dv = hitPoint->defaultUV.v - 0.5f;
+					const float r = sqrt(du * du + dv * dv);
+					float theta = atan2(dv, du) * (1.f / (2.f * 3.14159265f));
+					theta -= floor(theta);
+					f3val = MAKE_FLOAT3(theta, r, 0.f);
+					break;
+				}
 				case HITPOINT_BACKFACING:
 					fval = ((hitPoint->fixedDir.x * hitPoint->geometryN.x + hitPoint->fixedDir.y * hitPoint->geometryN.y + hitPoint->fixedDir.z * hitPoint->geometryN.z) < 0.f) ? 1.f : 0.f;
 					f3val = MAKE_FLOAT3(fval, fval, fval);

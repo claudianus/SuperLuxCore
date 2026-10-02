@@ -38,6 +38,7 @@ typedef enum {
 	HITPOINT_INCOMING,     // float3(hitPoint->fixedDir) - ray direction
 	HITPOINT_PARAMETRIC,   // float3(b1, b2, 0) - triangle barycentrics
 	HITPOINT_REFLECTION,   // reflect(-fixedDir, shadeN) - view reflection dir
+	HITPOINT_RADIAL,       // float3(theta/2pi, r, 0) - polar of default UV
 	HITPOINT_CHANNEL_COUNT
 } HitPointChannel;
 
