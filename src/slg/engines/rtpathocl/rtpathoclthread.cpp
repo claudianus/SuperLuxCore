@@ -201,6 +201,12 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
         u_int appliedReductionOverride = engine->runtimeResolutionReduction.load();
 
         while (!stop_token.stop_requested()) {
+                // The film's halt tests (batch.halttime/haltspp, adaptive
+                // noise) set statsConvergence=1 - stop generating frames
+                // so WaitForDone()/HasDone() can observe the exit via
+                // threadDone instead of running until external Stop().
+                if (engine->GetFilm().GetConvergence() >= 1.f)
+                        break;
                 //------------------------------------------------------------------
                 // Render the tile (there is only one tile for each device
                 // in RTPATHOCL)

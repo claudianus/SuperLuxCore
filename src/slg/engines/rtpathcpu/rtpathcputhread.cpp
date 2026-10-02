@@ -116,6 +116,11 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 	SspTail sspTail;
 
 	for (u_int steps = 0; !stop_token.stop_requested(); ++steps) {
+		// batch.halttime/haltspp/adaptive-noise set statsConvergence=1;
+		// break here so WaitForDone()/HasDone() see threadDone instead
+		// of looping until an external Stop().
+		if (engine->GetFilm().GetConvergence() >= 1.f)
+			break;
 		// Check if we are in pause or edit mode
 		if (engine->threadsPauseMode) {
 			// Synchronize all threads -> This waits for RTPathCPURenderEngine::PauseThreads()
