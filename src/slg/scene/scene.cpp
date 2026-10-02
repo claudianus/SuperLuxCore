@@ -1018,8 +1018,10 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			bool continueToTrace =
 					// Check if was a false hit because of a bevel triangle edge
 					bevelContinueToTrace ||
-					// Check if the volume priority system tells me to continue to trace the ray
-					volInfo->ContinueToTrace(*bsdf) ||
+					// Check if the volume priority system tells me to continue to
+					// trace the ray (it can only do so while a current volume is
+					// tracked - skip the call otherwise)
+					(volInfo->HasCurrentVolume() && volInfo->ContinueToTrace(*bsdf)) ||
 					// Check if it is a camera invisible object and we are a tracing a camera ray
 					(cameraRay && sceneObjPtr->IsCameraInvisible());
 
@@ -1050,8 +1052,13 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			}
 
 			if (continueToTrace) {
-				// Update volume information
-				volInfo->Update(bsdf->GetEventTypes(), *bsdf);
+				// Update volume information. With an idle volume state
+				// (no current volume, no pending scatter) and a material
+				// whose interior volume can never resolve non-NULL the
+				// call is provably a no-op - skip it.
+				if (!volInfo->IsIdle() ||
+						bsdf->GetMaterial()->CanHaveInteriorVolume())
+					volInfo->Update(bsdf->GetEventTypes(), *bsdf);
 
 				// It is a transparent material, continue to trace the ray
 				ray->mint = rayHit->t + MachineEpsilon::E(rayHit->t);

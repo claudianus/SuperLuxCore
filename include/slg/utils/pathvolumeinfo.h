@@ -65,6 +65,12 @@ public:
 	void SetScatteredStart(const bool v) { scatteredStart = v; }
 	bool IsScatteredStart() const { return scatteredStart; }
 
+	// Idle = no current volume and no pending scatter flag: the volume
+	// state machine has nothing to track, so Update() can only write
+	// scatteredStart=false (already false) or, for a TRANSMIT event, add
+	// the material interior volume. Callers use IsIdle() +
+	// Material::CanHaveInteriorVolume() to skip the whole call.
+	bool IsIdle() const { return !currentVolume && !scatteredStart; }
 	void Update(const BSDFEvent eventType, const BSDF &bsdf);
 	bool ContinueToTrace(const BSDF &bsdf) const;
 

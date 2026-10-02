@@ -117,6 +117,17 @@ public:
 	// True when GetInteriorVolume/GetExteriorVolume read hitPoint (mix,
 	// coating, two-sided) - BSDF::Init skips the virtual call otherwise.
 	bool HasVolumeOverrides() const { return hasVolumeOverrides; }
+	// True when GetMaterialInteriorVolume can resolve to a non-NULL
+	// volume: the stored pointer or a per-hit override (which may pick a
+	// non-NULL sub-material volume even with a NULL stored pointer).
+	bool CanHaveInteriorVolume() const { return interiorVolume || hasVolumeOverrides; }
+	// True when the material can resolve any non-NULL interior/exterior
+	// volume (stored or per-hit override). Lets BSDF::Init and
+	// Scene::Intersect skip the whole volume state machine when the
+	// material cannot contribute a volume.
+	bool HasAnyVolume() const {
+		return interiorVolume || exteriorVolume || hasVolumeOverrides;
+	}
 
 	void SetDirectLightSamplingType(const MaterialEmissionDLSType type) { directLightSamplingType = type; }
 	MaterialEmissionDLSType GetDirectLightSamplingType() const { return directLightSamplingType; }
@@ -194,8 +205,10 @@ public:
 		const float passThroughEvent
 	) const;
 
-	VolumeConstPtr GetInteriorVolume() const;
-	VolumeConstPtr GetExteriorVolume() const;
+	// Non-virtual hot-path getters (no hitPoint). Inline: BSDF::Init
+	// and PathVolumeInfo call these per hit.
+	VolumeConstPtr GetInteriorVolume() const { return interiorVolume; }
+	VolumeConstPtr GetExteriorVolume() const { return exteriorVolume; }
 
 	virtual void Bump(HitPoint *hitPoint) const;
 

@@ -143,12 +143,16 @@ OPENCL_FORCE_INLINE void PathVolumeInfo_Update(__global PathVolumeInfo *pvi, con
 			const uint volIndex = BSDF_GetMaterialInteriorVolume(bsdf
 					MATERIALS_PARAM);
 
-			if (bsdf->hitPoint.intoObject)
-				PathVolumeInfo_AddVolume(pvi, volIndex
-						MATERIALS_PARAM);
-			else
-				PathVolumeInfo_RemoveVolume(pvi, volIndex
-						MATERIALS_PARAM);
+			// Materials with no interior volume: Add/RemoveVolume on
+			// NULL_INDEX are both no-ops - skip the state mutation.
+			if (volIndex != NULL_INDEX) {
+				if (bsdf->hitPoint.intoObject)
+					PathVolumeInfo_AddVolume(pvi, volIndex
+							MATERIALS_PARAM);
+				else
+					PathVolumeInfo_RemoveVolume(pvi, volIndex
+							MATERIALS_PARAM);
+			}
 		}
 	}
 }
@@ -173,6 +177,11 @@ OPENCL_FORCE_INLINE bool PathVolumeInfo_CompareVolumePriorities(const uint vol1I
 OPENCL_FORCE_INLINE bool PathVolumeInfo_ContinueToTrace(__global PathVolumeInfo *pvi,
 		__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
+	// Both priority-system conditions below require a current volume;
+	// without one the answer is always "stop here" (CPU parity).
+	if (pvi->currentVolumeIndex == NULL_INDEX)
+		return false;
+
 	// Check if the volume priority system has to be applied
 	if (BSDF_GetEventTypes(bsdf
 			MATERIALS_PARAM) & TRANSMIT) {
@@ -198,8 +207,10 @@ OPENCL_FORCE_INLINE bool PathVolumeInfo_ContinueToTrace(__global PathVolumeInfo 
 		// Condition #2
 		//
 		// I have to calculate the potentially new currentVolume in order
-		// to check if I'm leaving the current one
-		if ((!intoObject) && (pvi->currentVolumeIndex != NULL_INDEX) &&
+		// to check if I'm leaving the current one. The NULLMAT material
+		// requirement mirrors the CPU twin (only a NULL transparent
+		// surface can exit a volume without scattering).
+		if ((!intoObject) && (mats[bsdf->materialIndex].type == NULLMAT) &&
 				(PathVolumeInfo_SimulateRemoveVolume(pvi, bsdfInteriorVolIndex
 					MATERIALS_PARAM) == pvi->currentVolumeIndex))
 			return true;

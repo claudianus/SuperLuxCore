@@ -184,7 +184,10 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 
 	if (hit) {
 		bool continueToTrace =
-			// Check if the volume priority system tells me to continue to trace the ray
+			// Check if the volume priority system tells me to continue to
+			// trace the ray (it can only do so while a current volume is
+			// tracked - the callee also early-outs on NULL_INDEX)
+			(volInfo->currentVolumeIndex != NULL_INDEX) &&
 			PathVolumeInfo_ContinueToTrace(volInfo, bsdf
 				MATERIALS_PARAM) ||
 			// Check if it is a camera invisible object and we are a tracing a camera ray

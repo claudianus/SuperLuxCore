@@ -56,16 +56,35 @@ OPENCL_FORCE_INLINE void BSDF_Init(
 	// Set interior and exterior volumes
 	//--------------------------------------------------------------------------
 
-	PathVolumeInfo_SetHitPointVolumes(
-			volInfo,
-			&bsdf->hitPoint,
-			Material_GetInteriorVolume(matIndex, &bsdf->hitPoint,
-				passThroughEvent
-				MATERIALS_PARAM),
-			Material_GetExteriorVolume(matIndex, &bsdf->hitPoint,
-				passThroughEvent
-				MATERIALS_PARAM)
-			MATERIALS_PARAM);
+	// Fast path (CPU parity: BSDF::Init in bsdf.cpp): skip the volume
+	// resolution when the material can contribute none (no stored index
+	// and no dynamic eval-op program), the path tracks no current volume
+	// and there is no default world volume. GPU HitPoint_Init does NOT
+	// touch the volume fields - they must be nulled here explicitly.
+	__global const Material* restrict mat = &mats[matIndex];
+	const bool canHaveVol =
+			(mat->interiorVolumeIndex != NULL_INDEX) ||
+			(mat->exteriorVolumeIndex != NULL_INDEX) ||
+			(mat->evalGetInteriorVolumeOpLength > 1) ||
+			(mat->evalGetExteriorVolumeOpLength > 1);
+	if (canHaveVol || (volInfo->currentVolumeIndex != NULL_INDEX) ||
+			(scene->defaultVolumeIndex != NULL_INDEX)) {
+		PathVolumeInfo_SetHitPointVolumes(
+				volInfo,
+				&bsdf->hitPoint,
+				Material_GetInteriorVolume(matIndex, &bsdf->hitPoint,
+					passThroughEvent
+					MATERIALS_PARAM),
+				Material_GetExteriorVolume(matIndex, &bsdf->hitPoint,
+					passThroughEvent
+					MATERIALS_PARAM)
+				MATERIALS_PARAM);
+	} else {
+		bsdf->hitPoint.interiorVolumeIndex = NULL_INDEX;
+		bsdf->hitPoint.exteriorVolumeIndex = NULL_INDEX;
+		bsdf->hitPoint.interiorIorTexIndex = NULL_INDEX;
+		bsdf->hitPoint.exteriorIorTexIndex = NULL_INDEX;
+	}
 
 	//--------------------------------------------------------------------------
 

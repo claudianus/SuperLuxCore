@@ -162,11 +162,17 @@ void PathVolumeInfo::Update(const BSDFEvent eventType, const BSDF &bsdf) {
 	else {
 		scatteredStart = false;
 
-		if(eventType & TRANSMIT) {
-			if (bsdf.hitPoint.intoObject)
-				AddVolume(bsdf.GetMaterialInteriorVolume());
-			else
-				RemoveVolume(bsdf.GetMaterialInteriorVolume());
+		if (eventType & TRANSMIT) {
+			// The material has no interior volume: Add/RemoveVolume on a
+			// NULL pointer are both no-ops, so the getter result can be
+			// checked without changing semantics.
+			const VolumeConstPtr intVol = bsdf.GetMaterialInteriorVolume();
+			if (intVol) {
+				if (bsdf.hitPoint.intoObject)
+					AddVolume(intVol);
+				else
+					RemoveVolume(intVol);
+			}
 		}
 	}
 }
@@ -187,6 +193,11 @@ bool PathVolumeInfo::CompareVolumePriorities(
 }
 
 bool PathVolumeInfo::ContinueToTrace(const BSDF &bsdf) const {
+	// Both conditions below require a current volume; with none the
+	// priority system cannot ask to continue tracing.
+	if (!currentVolume)
+		return false;
+
 	// Check if the volume priority system has to be applied
 	if (bsdf.GetEventTypes() & TRANSMIT) {
 		// Ok, the surface can transmit so check if volume priority
@@ -223,7 +234,16 @@ void  PathVolumeInfo::SetHitPointVolumes(HitPoint &hitPoint,
 		VolumeConstPtr matInteriorVolume,
 		VolumeConstPtr matExteriorVolume,
 		VolumeConstPtr defaultWorldVolume) const {
-	// Set interior and exterior volumes
+	// Fast path: no volume can be resolved (both material volumes NULL,
+	// the path carries no current volume and there is no default world
+	// volume). Every branch below would write NULL anyway; HitPoint::Init
+	// already nulls both fields, the explicit writes keep that guarantee.
+	if (!matInteriorVolume && !matExteriorVolume && !currentVolume &&
+			!defaultWorldVolume) {
+		hitPoint.interiorVolume = nullptr;
+		hitPoint.exteriorVolume = nullptr;
+		return;
+	}
 
 	if (hitPoint.intoObject) {
 		// From outside to inside the object

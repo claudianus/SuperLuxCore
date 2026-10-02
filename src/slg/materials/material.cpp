@@ -84,7 +84,6 @@ void Material::SetEmissionMap(ImageMapConstRef map) {
 // Interior volume
 VolumeConstPtr Material::GetInteriorVolume(const HitPoint &hitPoint,
 	const float passThroughEvent) const { return interiorVolume; }
-VolumeConstPtr Material::GetInteriorVolume() const { return interiorVolume; }
 void Material::SetInteriorVolume(VolumeConstPtr vol) { interiorVolume = vol; }
 void Material::SetInteriorVolume(VolumeConstRef vol) {
 	interiorVolume = std::addressof(vol);
@@ -93,7 +92,6 @@ void Material::SetInteriorVolume(VolumeConstRef vol) {
 // Exterior Volume
 VolumeConstPtr Material::GetExteriorVolume(const HitPoint &hitPoint,
 	const float passThroughEvent) const { return exteriorVolume; }
-VolumeConstPtr Material::GetExteriorVolume() const { return exteriorVolume; }
 void Material::SetExteriorVolume(VolumeConstPtr vol) { exteriorVolume = vol; }
 void Material::SetExteriorVolume(VolumeConstRef vol) {
 	exteriorVolume = std::addressof(vol);

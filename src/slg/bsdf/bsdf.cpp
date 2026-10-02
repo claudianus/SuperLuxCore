@@ -47,27 +47,34 @@ void BSDF::Init(
 
 	// Get the material
 	material = &sceneObject->GetMaterial();
-
-	// Set interior and exterior volumes. Materials that override the
-	// volume getters (MixMaterial, GlossyCoatingMaterial, TwoSidedMaterial)
-	// need the hitPoint-aware virtual call; the rest return the stored
-	// pointers directly so the hot path skips two vtable dispatches.
-	if (material->HasVolumeOverrides()) {
-		volInfo->SetHitPointVolumes(hitPoint,
-			material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
-			material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
-			scene.HasDefaultWorldVolume() ?
-			VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-			VolumeConstPtr(nullptr)
-		);
-	} else {
-		volInfo->SetHitPointVolumes(hitPoint,
-			material->GetInteriorVolume(),
-			material->GetExteriorVolume(),
-			scene.HasDefaultWorldVolume() ?
-			VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-			VolumeConstPtr(nullptr)
-		);
+	// Set interior and exterior volumes. The whole resolution is skipped
+	// when no volume can result: the material carries none (stored or
+	// per-hit override), the path has no current volume and the scene has
+	// no default world volume. HitPoint::Init() already nulls both fields.
+	// Materials that override the volume getters (MixMaterial,
+	// GlossyCoatingMaterial, TwoSidedMaterial) need the hitPoint-aware
+	// virtual call; the rest return the stored pointers directly so the
+	// hot path skips two vtable dispatches.
+	const bool needsVolumes = material->HasAnyVolume() ||
+		volInfo->HasCurrentVolume() || scene.HasDefaultWorldVolume();
+	if (needsVolumes) {
+		if (material->HasVolumeOverrides()) {
+			volInfo->SetHitPointVolumes(hitPoint,
+				material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
+				material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
+				scene.HasDefaultWorldVolume() ?
+				VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+				VolumeConstPtr(nullptr)
+			);
+		} else {
+			volInfo->SetHitPointVolumes(hitPoint,
+				material->GetInteriorVolume(),
+				material->GetExteriorVolume(),
+				scene.HasDefaultWorldVolume() ?
+				VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+				VolumeConstPtr(nullptr)
+			);
+		}
 	}
 
 	// For a transparent shadow hit we need only `material` and the
@@ -125,26 +132,32 @@ void BSDF::Init(
 	// Get the material
 	material = &sceneObject->GetMaterial();
 
-	// Set interior and exterior volumes. Materials that override the
-	// volume getters (MixMaterial, GlossyCoatingMaterial, TwoSidedMaterial)
-	// need the hitPoint-aware virtual call; the rest return the stored
-	// pointers directly so the hot path skips two vtable dispatches.
-	if (material->HasVolumeOverrides()) {
-		volInfo->SetHitPointVolumes(hitPoint,
-				material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
-				material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
-				scene.HasDefaultWorldVolume() ?
-					VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-					VolumeConstPtr()
-		);
-	} else {
-		volInfo->SetHitPointVolumes(hitPoint,
-				material->GetInteriorVolume(),
-				material->GetExteriorVolume(),
-				scene.HasDefaultWorldVolume() ?
-					VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-					VolumeConstPtr()
-		);
+	// Set interior and exterior volumes. Same fast-path as the ray-hit
+	// Init(): skip when the material carries no volume (stored or
+	// override), the path has no current volume and there is no default
+	// world volume. Materials that override the volume getters
+	// (MixMaterial, GlossyCoatingMaterial, TwoSidedMaterial) need the
+	// hitPoint-aware virtual call; the rest return the stored pointers.
+	const bool needsVolumes = material->HasAnyVolume() ||
+		volInfo->HasCurrentVolume() || scene.HasDefaultWorldVolume();
+	if (needsVolumes) {
+		if (material->HasVolumeOverrides()) {
+			volInfo->SetHitPointVolumes(hitPoint,
+					material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent),
+					material->GetExteriorVolume(hitPoint, hitPoint.passThroughEvent),
+					scene.HasDefaultWorldVolume() ?
+						VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+						VolumeConstPtr()
+			);
+		} else {
+			volInfo->SetHitPointVolumes(hitPoint,
+					material->GetInteriorVolume(),
+					material->GetExteriorVolume(),
+					scene.HasDefaultWorldVolume() ?
+						VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
+						VolumeConstPtr()
+			);
+		}
 	}
 
 	// Check if it is a light source

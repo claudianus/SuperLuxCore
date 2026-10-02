@@ -330,6 +330,13 @@ OPENCL_FORCE_NOT_INLINE uint Material_GetInteriorVolume(const uint matIndex,
 	const uint evalOpStartIndex = startMat->evalGetInteriorVolumeOpStartIndex;
 	const uint evalOpLength = startMat->evalGetInteriorVolumeOpLength;
 
+	// Single-op programs are always the default op, whose result is just
+	// the stored volume index (mix/coating/twosided only emit extra ops
+	// when their own interiorVolumeIndex is NULL_INDEX). Skip the eval
+	// stack round-trip on the near-universal static path.
+	if (evalOpLength == 1)
+		return startMat->interiorVolumeIndex;
+
 #if defined(DEBUG_PRINTF_MATERIAL_EVAL)
 	printf("matIndex=%d evalOpStartIndex=%d evalOpLength=%d\n", matIndex, evalOpStartIndex, evalOpLength);
 #endif
@@ -382,6 +389,12 @@ OPENCL_FORCE_NOT_INLINE uint Material_GetExteriorVolume(const uint matIndex,
 
 	const uint evalOpStartIndex = startMat->evalGetExteriorVolumeOpStartIndex;
 	const uint evalOpLength = startMat->evalGetExteriorVolumeOpLength;
+	// Single-op programs are always the default op, whose result is just
+	// the stored volume index (mix/coating/twosided only emit extra ops
+	// when their own exteriorVolumeIndex is NULL_INDEX). Skip the eval
+	// stack round-trip on the near-universal static path.
+	if (evalOpLength == 1)
+		return startMat->exteriorVolumeIndex;
 
 #if defined(DEBUG_PRINTF_MATERIAL_EVAL)
 	printf("matIndex=%d evalOpStartIndex=%d evalOpLength=%d\n", matIndex, evalOpStartIndex, evalOpLength);
