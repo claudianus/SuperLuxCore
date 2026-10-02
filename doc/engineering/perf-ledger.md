@@ -56,8 +56,36 @@ top-of-stack on render threads (35s `sample`, idle cvwait excluded).
 | 4 | `HomogeneousVolume::Scatter*` HitPoint+virtual tex evals | ~6% | **landed** (const-param fast path) | `242ec2765` |
 | 5 | HitPoint attr chain | ~10% | open (as r2) | — |
 | 6 | libm `__sincosf/atan2f/expf` on samplers/env lights | ~6% | no redundant calls; approx breaks parity | — |
-| 7 | `PathVolumeInfo` bookkeeping | ~3% | open (as r2) | — |
+| 7 | `PathVolumeInfo` bookkeeping | ~3% | **landed** (no-volume fast gates + GPU NULLMAT parity) | `0dd8d6ee7` |
 | 8 | LightBVH `NodeImportance`+`SampleLights` | ~3% | already dot-space/trig-free | — |
+
+
+### r6 PathVolumeInfo fast gates (`0dd8d6ee7`)
+
+- Path: `Scene::Intersect` per-hit `BSDF::Init` volume resolution +
+  `ContinueToTrace`/`Update` bookkeeping; GPU twins in
+  `pathvolumeinfo_funcs.cl`/`bsdf_funcs.cl`/`scene_funcs.cl`.
+- Observation: the volume state machine ran unconditionally on every
+  hit even when no volume could possibly be resolved (majority of
+  scenes). GPU additionally paid a NOT_INLINE eval-stack round-trip
+  per `Material_Get*Volume` call.
+- Change: `Material::{HasAnyVolume,CanHaveInteriorVolume}` predicates;
+  `PathVolumeInfo::IsIdle`; early-outs in `ContinueToTrace`,
+  `SetHitPointVolumes`, `Update`; callsite gates in
+  `BSDF::Init`/`Scene::Intersect`. GPU mirrors + evalOpLength==1
+  direct-return shortcut in `Material_Get*Volume`.
+- Parity fix folded in: GPU `PathVolumeInfo_ContinueToTrace` was
+  missing the CPU twin's NULLMAT requirement on condition #2
+  (upstream `d4e4a310d` semantic) - media relmean vs CPU improved
+  13.1 -> 7.1 (64spp).
+- Validation: parity-regression 4/4; e_volfastgate_parity.py
+  (volumeinfo/media/luxball-vol/juice/cornell) CPU/GPU means within
+  4%, no non-finite pixels; pre-existing media/volumeinfo relmean
+  noise confirmed identical on pre-change binary.
+- Timing: interleaved 4x20s A/B, shared host with background load -
+  cornell median 7.506 -> 7.567 Ms/s (+0.8%), media 10.819 ->
+  10.664 (-1.4%); inside run-to-run noise, landed on dead-work
+  removal + parity grounds.
 
 ### r3 #4 Volume const-param cache (`242ec2765`)
 
