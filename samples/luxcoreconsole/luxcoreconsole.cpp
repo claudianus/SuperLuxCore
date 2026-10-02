@@ -135,7 +135,12 @@ int main(int argc, char *argv[]) {
 
 				// Accept both -h and --help: the long form is what a user
 				// reaching for the tool for the first time actually types.
-				if (argv[i][1] == 'h' || strcmp(argv[i], "--help") == 0) {
+				if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+					LC_LOG(LUXCORE_VERSION << endl);
+					exit(EXIT_SUCCESS);
+				}
+
+ 				if (argv[i][1] == 'h' || strcmp(argv[i], "--help") == 0) {
 					LC_LOG("Usage: " << argv[0] << " [options] [configuration file]" << endl <<
 							" -o [configuration file]" << endl <<
 							" -f [scene file]" << endl <<
