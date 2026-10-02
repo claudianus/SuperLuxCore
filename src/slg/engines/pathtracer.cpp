@@ -734,7 +734,8 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 						sampleResult->pixelX, sampleResult->pixelY,
 						pathInfo.lastBSDFPdfW, directPdfW, lightPickProb,
 						weight, emittedRadiance.Filter(),
-						pathThroughput.Filter());
+						pathThroughput.Filter(),
+						Spectrum(pathThroughput * (weight * emittedRadiance)).Filter());
 			}
 		} else
 			weight = 1.f;
