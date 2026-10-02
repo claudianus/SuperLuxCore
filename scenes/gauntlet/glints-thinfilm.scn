@@ -65,6 +65,11 @@ scene.materials.pin.type = matte
 scene.materials.pin.kd = 0.9 0.9 0.9
 scene.materials.pin.emission = 900.0 850.0 700.0
 scene.materials.pin.emission.id = 0
+# Broad cool-warm fill so the thin-film orb + flakes read at low spp
+scene.materials.fill.type = matte
+scene.materials.fill.kd = 0.9 0.9 0.9
+scene.materials.fill.emission = 30.0 34.0 42.0
+scene.materials.fill.emission.id = 1
 
 ################################################################################
 scene.objects.room.material = walls
@@ -93,7 +98,10 @@ scene.objects.disc.transformation = 8.0 0.0 0.0 0.0  0.0 8.0 0.0 0.0  0.0 0.0 8.
 # Pin emitter above and behind the camera side
 scene.objects.pin.material = pin
 scene.objects.pin.ply = scenes/gauntlet/mesh/orb_small.ply
-scene.objects.pin.transformation = 0.05 0.0 0.0 0.0  0.0 0.05 0.0 0.0  0.0 0.0 0.05 0.0  3.6 8.4 5.4 1.0
+scene.objects.pin.transformation = 0.08 0.0 0.0 0.0  0.0 0.08 0.0 0.0  0.0 0.0 0.08 0.0  3.6 8.4 5.4 1.0
+scene.objects.fill.material = fill
+scene.objects.fill.ply = scenes/gauntlet/mesh/orb_small.ply
+scene.objects.fill.transformation = 0.6 0.0 0.0 0.0  0.0 0.6 0.0 0.0  0.0 0.0 0.6 0.0  4.5 10.0 5.8 1.0
 
 ################################################################################
 # Very dim sky so the pin emitter dominates the glints and the fan
