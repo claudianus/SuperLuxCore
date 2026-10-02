@@ -42,6 +42,7 @@ typedef enum {
 	HITPOINT_OBJECTSPACE,  // float3(p in object space, localToWorld^-1)
 	HITPOINT_GENERATED,    // float3(normalized 0..1 in the object-space bbox)
 	HITPOINT_WORLDPOS,     // float3(hitPoint->p) - world-space position
+	HITPOINT_OBJORIGIN,    // float3(localToWorld col 3) - object origin
 	HITPOINT_CHANNEL_COUNT
 } HitPointChannel;
 
