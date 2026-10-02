@@ -1501,3 +1501,37 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   + panel button copies scene.cycles.{samples, max_bounces,
   diffuse/glossy/transparent/transmission bounces, film_transparent,
   use_denoising} and per-view-layer samples into SuperLuxCore props.
+
+## 2026-10-02 — Metropolis LUT + audit of remaining hot path
+
+- `Mutate`/`MutateScaled` in metropolis.cpp now sample their magnitude from
+  a 256-entry constexpr LUT indexed by |2r-1| midpoint instead of running a
+  live float division per dimension per call. Detailed balance is preserved
+  because the sign is drawn independently from the same random value and the
+  magnitude is symmetric either way; quantizing the grid only re-bins the
+  proposal distribution. Parity pass (4/4) + focused-caustic render sanity
+  (320x180, 10s: mean 0.058, max 13.0, 0 NaN). Commit 9fbe71976.
+- Audited the remaining sampler/deposit surface for the next win:
+  * Film::AtomicAddSampleResultColor is already lock-free (per-channel
+    AtomicAddIfValidWeightedPixel); the large __psynch_cvwait share in
+    profiles is idle pool threads, not contended render threads - no
+    serialization fix needed there.
+  * FilmDenoiser::AddSample early-outs on `!enabled`; the only residual
+    per-pixel cost is HasChannel mask checks + the atomic splat fan-out,
+    which is intrinsic work.
+  * Distribution1D::SampleContinuous already uses a hinted linear walk
+    with capped upper_bound fallback; the only remaining div is `du`
+    (kept exact - the debug `Pdf(result)` assert would trap on a
+    recip-multiply 1-ulp corner).
+  * SampleResult::HasChannel mask, channel-mask Init, per-bucket Sobol
+    candidate table, and per-pixel adaptive-threshold memo are all
+    landed and committed (a8f3f0419 and ancestors).
+- Readbacks in ThreadFilm::RecvFilm are CL_FALSE async - no blocking
+  read stall in the PATHOCL loop.
+- Remaining highest-value items are multi-session features, not micro-op:
+  specular AA needs true ray differentials (Ray has no differential
+  fields - per-vertex UV differentials exist but no screen-space
+  footprint transport); VK-M4 native-driver parity is hardware-gated;
+  S5 glints is research-scale. Recommend next session: ray-differential
+  transport on the eye path (camera -> first hit) so normal-map
+  roughness inflation (S6) becomes implementable.
