@@ -27,6 +27,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include "slg/engines/pathoclbase/compiledscene.h"
+#include "luxrays/core/geometry/bbox.h"
 #include "slg/kernels/kernels.h"
 #include "slg/scene/sceneobjectdefs.h"
 
@@ -84,6 +85,12 @@ void CompiledScene::CompileGeometry() {
 	auto InitMeshDesc = [&](slg::ocl::ExtMesh &dstMeshDesc, const ExtMesh &srcMesh,
 			const ExtTriangleMesh &srcBaseMesh) { 
         dstMeshDesc.vertsOffset = vertsOffset;
+		// localBBox: the base mesh's object-space bounds (Generated/Object
+		// coordinates normalize against it). For instanced/motion meshes this
+		// is the shared base mesh's bbox, not the instance's world bbox.
+		const luxrays::BBox &bb = srcBaseMesh.GetBBox();
+		memcpy(&dstMeshDesc.localBBox.pMin.x, &bb.pMin, sizeof(float[3]));
+		memcpy(&dstMeshDesc.localBBox.pMax.x, &bb.pMax, sizeof(float[3]));
 		vertsOffset += srcMesh.GetTotalVertexCount();
 
 		dstMeshDesc.trisOffset = trisOffset;

@@ -39,6 +39,8 @@ typedef enum {
 	HITPOINT_PARAMETRIC,   // float3(b1, b2, 0) - triangle barycentrics
 	HITPOINT_REFLECTION,   // reflect(-fixedDir, shadeN) - view reflection dir
 	HITPOINT_RADIAL,       // float3(theta/2pi, r, 0) - polar of default UV
+	HITPOINT_OBJECTSPACE,  // float3(p in object space, localToWorld^-1)
+	HITPOINT_GENERATED,    // float3(normalized 0..1 in the object-space bbox)
 	HITPOINT_CHANNEL_COUNT
 } HitPointChannel;
 
