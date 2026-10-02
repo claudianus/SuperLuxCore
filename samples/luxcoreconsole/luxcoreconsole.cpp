@@ -125,6 +125,8 @@ int main(int argc, char *argv[]) {
 		// Initialize LuxCore
 		luxcore::Init();
 
+		LC_LOG("LuxCoreConsole v" << LUXCORE_VERSION << " (http://www.luxcorerender.org)");
+
 		bool removeUnused = false;
 		bool showDevicesStats = false;
 		Properties cmdLineProp;
