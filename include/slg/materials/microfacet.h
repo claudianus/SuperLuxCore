@@ -79,11 +79,25 @@ inline float GgxG2(const luxrays::Vector &wi, const luxrays::Vector &wo,
 // Visible-normal (VNDF) sampling of the GGX distribution, Dupuy & Benyoub 2023
 // "Sampling Visible GGX Normals with Spherical Caps". Returns wh in the local
 // frame; the incident direction wi = 2*dot(wh,wo)*wh - wo.
+//
+// The spherical-cap parametrization assumes wo in the +Z hemisphere. When
+// wo.z < 0 (e.g. a ray exiting a dielectric approaches the surface from
+// below the shading plane) the cap degenerates to the horizon and the
+// sampled wh lands on the tangent plane, collapsing D()/pdf to ~0 and
+// reversing the physical MIS ratio (observed: specular glass turning an
+// infinite-light hit black by a ~3e-7 MIS weight). GGX is symmetric under
+// a full 180-degree flip about the origin, so negate wo, sample, and
+// negate wh back - D(wh), G1(wo), |wo.wh| and |wo.z| are all invariant,
+// keeping the sampled pdf consistent with the returned direction.
 inline luxrays::Vector GgxSampleVNDF(const luxrays::Vector &wo,
 		const float alphaX, const float alphaY,
 		const float u0, const float u1) {
 	// Stretch the view direction to the hemisphere configuration
-	luxrays::Vector v = luxrays::Normalize(luxrays::Vector(wo.x * alphaX, wo.y * alphaY, wo.z));
+	const bool belowHorizon = (wo.z < 0.f);
+	const luxrays::Vector v = luxrays::Normalize(luxrays::Vector(
+			(belowHorizon ? -wo.x : wo.x) * alphaX,
+			(belowHorizon ? -wo.y : wo.y) * alphaY,
+			belowHorizon ? -wo.z : wo.z));
 
 	// Sample a spherical cap in (-v.z, 1]
 	const float phi = 2.f * M_PI * u0;
@@ -98,7 +112,7 @@ inline luxrays::Vector GgxSampleVNDF(const luxrays::Vector &wo,
 	h = luxrays::Normalize(luxrays::Vector(h.x * alphaX, h.y * alphaY,
 			luxrays::Max(h.z, 0.f)));
 
-	return h;
+	return belowHorizon ? -h : h;
 }
 
 // Solid-angle PDF of a half-vector wh sampled via the VNDF:

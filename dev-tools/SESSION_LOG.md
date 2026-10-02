@@ -1611,3 +1611,35 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
 **Resolved (env):** bison `code=141` was conan's `M4` env var not being exported — `cmake --build` skips `out/build/generators/conanbuildenv-release-armv8.sh`. Sourcing that script first makes `-d` write work; `luxcoreui`/`pysuperluxcore` rebuild clean, `__version__` + banner report `2.11.7`.
 
 **Remaining (needs idle machine / multi-session):** gauntlet wall A/B on a quiet box; `Ray` differentials for specular AA + glints (shared-struct change across all kernels); N-layer thin film; VK-M4 native drivers.
+
+## Session — VNDF below-horizon fix (PSR glass env blackout)
+
+**Bug**: `path.regularization.auto` (default on, seeds sigma=0.03 on
+caustic-capable scenes) turned every specular glass/mirror hit at
+depth >= mindepth into a GGX lobe via `GlassMicrofacet_Sample`. For a
+ray *exiting* a dielectric (`localFixedDir.z < 0`, below the shading
+plane), `GgxSampleVNDF` degenerated: the spherical cap
+`z in (-v.z, 1]` becomes empty for `v.z < 0`, so `h = c + v` landed on
+the tangent plane, `wh.z ~ 0`, `GgxD -> 0`, and the returned `pdfW`
+collapsed to ~4e-5. The BSDF event was `GLOSSY|TRANSMIT` (not
+SPECULAR), so the env direct-hit at the *next* miss went through
+`PowerHeuristic(lastBSDFPdfW=4e-5, envPdfW)` -> weight ~3e-7 -> the
+infinite-light contribution arriving through the exit face was
+multiplied by ~3e-7. Net effect: glass + env-light + auto-PSR =
+black sphere (PATHCPU ior=1 probe: mean 0.0025 vs 0.5121 reference).
+
+**Fix** (`include/slg/materials/microfacet.h` +
+`materialdefs_funcs_microfacet.cl`): `wo.z < 0` -> sample the VNDF
+with `-wo`, negate the result. GGX isotropic D/G1/|wo.wh|/|wo.z| are
+all invariant under a full sign flip, so the sampled pdf stays
+consistent with the returned wh; the caller's existing `wh.z<0 -> -wh`
+then maps it into the +Z eval frame. At ior=1 the delta limit
+(length=0 Jacobian) yields `pdfW=inf` which is handled as before.
+
+Verified: ior=1 sphere + env light, PATHCPU, mean 0.51211 vs
+no-PSR 0.51214 (was 0.00249). GlassMicrofacet_Pdf/Evaluate symmetry
+is preserved because every term is absolute/even in wh.z.
+
+**Downstream**: any scene with glass/mirror + an env light under the
+default auto stack was darkening multi-bounce transmitted env
+radiance ~200x. Check e53 gauntlet / caustic A/B regressions.

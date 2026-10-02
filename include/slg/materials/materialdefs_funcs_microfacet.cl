@@ -67,11 +67,20 @@ OPENCL_FORCE_INLINE float Microfacet_GgxG2(const float3 wi, const float3 wo,
 }
 
 // VNDF sampling of the GGX distribution, Dupuy & Benyoub 2023 spherical caps.
-// wo must be in the +Z hemisphere; returns wh.
+// wo should be in the +Z hemisphere; returns wh. For wo.z < 0 (a ray
+// exiting a dielectric approaches from below the shading plane) the
+// spherical cap degenerates and collapses the sampled pdf to ~0
+// (reversed MIS ratio -> specular glass kills infinite-light hits).
+// GGX is symmetric under a full flip about the origin: negate wo, sample,
+// negate wh back - D(wh), G1(wo), |wo.wh| and |wo.z| are invariant.
 OPENCL_FORCE_INLINE float3 Microfacet_GgxSampleVNDF(const float3 wo,
 		const float alphaX, const float alphaY,
 		const float u0, const float u1) {
-	const float3 v = normalize(MAKE_FLOAT3(wo.x * alphaX, wo.y * alphaY, wo.z));
+	const bool belowHorizon = (wo.z < 0.f);
+	const float3 v = normalize(MAKE_FLOAT3(
+			(belowHorizon ? -wo.x : wo.x) * alphaX,
+			(belowHorizon ? -wo.y : wo.y) * alphaY,
+			belowHorizon ? -wo.z : wo.z));
 
 	const float phi = 2.f * M_PI_F * u0;
 	const float z = (1.f - u1) * (1.f + v.z) - v.z;
@@ -79,7 +88,9 @@ OPENCL_FORCE_INLINE float3 Microfacet_GgxSampleVNDF(const float3 wo,
 	const float3 c = MAKE_FLOAT3(sinTheta * cos(phi), sinTheta * sin(phi), z);
 
 	const float3 h = c + v;
-	return normalize(MAKE_FLOAT3(h.x * alphaX, h.y * alphaY, fmax(h.z, 0.f)));
+	const float3 r = normalize(MAKE_FLOAT3(h.x * alphaX, h.y * alphaY,
+			fmax(h.z, 0.f)));
+	return belowHorizon ? -r : r;
 }
 
 // Solid-angle PDF of a half-vector sampled via the VNDF:
