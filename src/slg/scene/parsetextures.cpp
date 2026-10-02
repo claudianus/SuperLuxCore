@@ -987,6 +987,14 @@ TextureMapping2DUPtr Scene::CreateTextureMapping2D(const string &prefixName, con
 				uScaleMin, uScaleMax, vScaleMin, vScaleMax,
 				uDeltaMin, uDeltaMax, vDeltaMin, vDeltaMax,
 				uniformScale);
+	} else if (mapType == "dirmapping2d") {
+		const float rotation = props.Get(Property(prefixName + ".rotation")(0.0)).Get<double>();
+		const UV uvScale = props.Get(Property(prefixName + ".uvscale")(1.f, 1.f)).Get<UV>();
+		const UV uvDelta = props.Get(Property(prefixName + ".uvdelta")(0.f, 0.f)).Get<UV>();
+		const bool centerrotation = props.Get(Property(prefixName + ".centerrotation")(false)).Get<bool>();
+
+		return std::make_unique<DirMapping2D>(rotation, centerrotation,
+				uvScale.u, uvScale.v, uvDelta.u, uvDelta.v);
 	} else
 		throw runtime_error("Unknown 2D texture coordinate mapping type: " + mapType);
 }

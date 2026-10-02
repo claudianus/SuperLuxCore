@@ -23,13 +23,18 @@
 //------------------------------------------------------------------------------
 
 typedef enum {
-	UVMAPPING2D, UVRANDOMMAPPING2D
+	UVMAPPING2D, UVRANDOMMAPPING2D, DIRMAPPING2D
 } TextureMapping2DType;
 
 typedef struct {
     float sinTheta, cosTheta, uScale, vScale, uDelta, vDelta;
 	bool centerrotation;
 } UVMapping2DParam;
+
+typedef struct {
+	float sinTheta, cosTheta, uScale, vScale, uDelta, vDelta;
+	bool centerrotation;
+} DirMapping2DParam;
 
 typedef enum {
 	OBJECT_ID, TRIANGLE_AOV, OBJECT_ID_OFFSET
@@ -56,6 +61,7 @@ typedef struct {
 	union {
 		UVMapping2DParam uvMapping2D;
 		UVRandomMapping2DParam uvRandomMapping2D;
+		DirMapping2DParam dirMapping2D;
 	};
 } TextureMapping2D;
 

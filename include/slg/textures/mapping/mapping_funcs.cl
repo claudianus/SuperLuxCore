@@ -137,6 +137,32 @@ OPENCL_FORCE_INLINE float2 UVRandomMapping2D_MapDuv(__global const TextureMappin
 	return  UVRandomMapping2D_MapImpl(mapping, hitPoint, ds, dt TEXTURES_PARAM);
 }
 
+OPENCL_FORCE_INLINE float2 DirMapping2D_Map(__global const TextureMapping2D *mapping,
+		__global const HitPoint *hitPoint TEXTURES_PARAM_DECL) {
+	// dir = -fixedDir, equirect:
+	//   u = 0.5 + atan2(dir.x, dir.z) / (2*pi)
+	//   v = 0.5 - asin(clamp(dir.y, -1,1)) / pi
+	const float dx = -hitPoint->fixedDir.x;
+	const float dy = -hitPoint->fixedDir.y;
+	const float dz = -hitPoint->fixedDir.z;
+	const float u = 0.5f + atan2(dx, dz) * (1.f / (2.f * M_PI_F));
+	const float v = 0.5f - asin(clamp(dy, -1.f, 1.f)) * (1.f / M_PI_F);
+	const float uOffset = 0.5f * mapping->dirMapping2D.centerrotation * mapping->dirMapping2D.uScale;
+	const float vOffset = 0.5f * mapping->dirMapping2D.centerrotation * mapping->dirMapping2D.vScale;
+	const float uScaled = u * mapping->dirMapping2D.uScale - uOffset;
+	const float vScaled = v * mapping->dirMapping2D.vScale - vOffset;
+	const float uRotated = uOffset + uScaled * mapping->dirMapping2D.cosTheta - vScaled * mapping->dirMapping2D.sinTheta;
+	const float vRotated = vOffset + vScaled * mapping->dirMapping2D.cosTheta + uScaled * mapping->dirMapping2D.sinTheta;
+	return (float2)(uRotated + mapping->dirMapping2D.uDelta, vRotated + mapping->dirMapping2D.vDelta);
+}
+
+OPENCL_FORCE_INLINE float2 DirMapping2D_MapDuv(__global const TextureMapping2D *mapping,
+		__global const HitPoint *hitPoint, float2 *ds, float2 *dt TEXTURES_PARAM_DECL) {
+	*ds = (float2)(mapping->dirMapping2D.cosTheta, mapping->dirMapping2D.sinTheta);
+	*dt = (float2)(-mapping->dirMapping2D.sinTheta, mapping->dirMapping2D.cosTheta);
+	return DirMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
+}
+
 //------------------------------------------------------------------------------
 // TextureMapping2D
 //------------------------------------------------------------------------------
@@ -148,6 +174,8 @@ OPENCL_FORCE_NOT_INLINE float2 TextureMapping2D_Map(__global const TextureMappin
 			return UVMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
 		case UVRANDOMMAPPING2D:
 			return UVRandomMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
+		case DIRMAPPING2D:
+			return DirMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
 		default:
 			return MAKE_FLOAT2(0.f, 0.f);
 	}
@@ -160,6 +188,8 @@ OPENCL_FORCE_NOT_INLINE float2 TextureMapping2D_MapDuv(__global const TextureMap
 			return UVMapping2D_MapDuv(mapping, hitPoint, ds, dt TEXTURES_PARAM);
 		case UVRANDOMMAPPING2D:
 			return UVRandomMapping2D_MapDuv(mapping, hitPoint, ds, dt TEXTURES_PARAM);
+		case DIRMAPPING2D:
+			return DirMapping2D_MapDuv(mapping, hitPoint, ds, dt TEXTURES_PARAM);
 		default:
 			return MAKE_FLOAT2(0.f, 0.f);
 	}

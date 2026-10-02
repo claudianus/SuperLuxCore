@@ -156,6 +156,21 @@ void CompiledScene::CompileTextureMapping2D(
 			mapping->uvRandomMapping2D.uniformScale = uvm.uniformScale;
 			break;
 		}
+		case DIRMAPPING2D: {
+			mapping->type = slg::ocl::DIRMAPPING2D;
+
+			auto dm = dynamic_cast<const DirMapping2D &>(m);
+			mapping->dataIndex = dm.GetDataIndex();
+
+			mapping->dirMapping2D.sinTheta = dm.sinTheta;
+			mapping->dirMapping2D.cosTheta = dm.cosTheta;
+			mapping->dirMapping2D.uScale = dm.uScale;
+			mapping->dirMapping2D.vScale = dm.vScale;
+			mapping->dirMapping2D.uDelta = dm.uDelta;
+			mapping->dirMapping2D.vDelta = dm.vDelta;
+			mapping->dirMapping2D.centerrotation = dm.centerrotation;
+			break;
+		}
 		default:
 			throw runtime_error("Unknown 2D texture mapping in CompiledScene::CompileTextureMapping2D: " + ToString(m.GetType()));
 	}

@@ -121,6 +121,65 @@ PropertiesUPtr UVMapping2D::ToProperties(const string &name) const {
 }
 
 //------------------------------------------------------------------------------
+// DirMapping2D
+//------------------------------------------------------------------------------
+
+DirMapping2D::DirMapping2D(const float rot, const bool centerrot,
+		const float uscale, const float vscale,
+		const float udelta, const float vdelta) :
+		TextureMapping2D(0),
+		uvRotation(rot), centerrotation(centerrot), uScale(uscale),
+		vScale(vscale), uDelta(udelta), vDelta(vdelta),
+		sinTheta(sinf(Radians(-uvRotation))), cosTheta(cosf(Radians(-uvRotation))) {
+}
+
+UV DirMapping2D::Map(const HitPoint &hitPoint) const {
+	// dir = -fixedDir = the ray's actual travel direction into the scene.
+	// Cycles' equirectangular env-texture mapping:
+	//   u = 0.5 + atan2(dir.x, dir.z) / (2*pi)
+	//   v = 0.5 - asin(clamp(dir.y, -1, 1)) / pi
+	const Vector dir(
+			-hitPoint.fixedDir.x,
+			-hitPoint.fixedDir.y,
+			-hitPoint.fixedDir.z);
+	const float u = 0.5f + atan2f(dir.x, dir.z) * (1.f / (2.f * 3.14159265f));
+	const float v = 0.5f - asinf(Clamp(dir.y, -1.f, 1.f)) * (1.f / 3.14159265f);
+
+	// Same post-transform as UVMapping2D (centered rotate + scale + translate)
+	const float uOffset = 0.5f * centerrotation * uScale;
+	const float vOffset = 0.5f * centerrotation * vScale;
+	const float uScaled = u * uScale - uOffset;
+	const float vScaled = v * vScale - vOffset;
+	const float uRotated = uOffset + uScaled * cosTheta - vScaled * sinTheta;
+	const float vRotated = vOffset + vScaled * cosTheta + uScaled * sinTheta;
+
+	return UV(uRotated + uDelta, vRotated + vDelta);
+}
+
+UV DirMapping2D::MapDuv(const HitPoint &hitPoint, UV *ds, UV *dt) const {
+	// Direction-based mapping has no surface differential - return zero so
+	// mipmap/AA picks a fixed LOD instead of diverging derivatives.
+	const float signUScale = Sgn(uScale);
+	const float signVScale = Sgn(vScale);
+	*ds = UV(signUScale * cosTheta, signUScale * sinTheta);
+	*dt = UV(-signVScale * sinTheta, signVScale * cosTheta);
+	return Map(hitPoint);
+}
+
+PropertiesUPtr DirMapping2D::ToProperties(const string &name) const {
+	PropertiesUPtr props = std::make_unique<Properties>();
+	*props <<
+			Property(name + ".type")("dirmapping2d") <<
+			TextureMapping2D::ToProperties(name) <<
+			Property(name + ".rotation")(uvRotation) <<
+			Property(name + ".centerrotation")(centerrotation) <<
+			Property(name + ".uvscale")(uScale, vScale) <<
+			Property(name + ".uvdelta")(uDelta, vDelta);
+	return props;
+}
+
+
+//------------------------------------------------------------------------------
 // UVRandomMapping2D
 //------------------------------------------------------------------------------
 

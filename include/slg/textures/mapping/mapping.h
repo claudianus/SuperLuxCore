@@ -51,7 +51,7 @@ extern std::string RandomMappingSeedType2String(const RandomMappingSeedType type
 //------------------------------------------------------------------------------
 
 typedef enum {
-	UVMAPPING2D, UVRANDOMMAPPING2D
+	UVMAPPING2D, UVRANDOMMAPPING2D, DIRMAPPING2D
 } TextureMapping2DType;
 
 class TextureMapping2D{
@@ -87,6 +87,37 @@ public:
 
 	virtual luxrays::UV Map(const HitPoint &hitPoint) const;
 	virtual luxrays::UV MapDuv(const HitPoint &hitPoint, luxrays::UV *ds, luxrays::UV *dt) const;
+
+	virtual luxrays::PropertiesUPtr ToProperties(const std::string &name) const;
+
+	const float uvRotation, uScale, vScale, uDelta, vDelta;
+	const float sinTheta, cosTheta;
+	const bool centerrotation;
+};
+
+//------------------------------------------------------------------------------
+// DirMapping2D - maps the shading ray's incoming direction to equirect UV
+//------------------------------------------------------------------------------
+// Reads hitPoint.fixedDir (the view/eye-ray direction the hit was found
+// with, stored as -rayDir) and turns it into the equirectangular UV a
+// spherical environment texture would need. Used for Cycles' Environment
+// Texture node in materials and for TexImage projection="sphere"/"mirror".
+//
+// u = 0.5 + atan2(dir.x, dir.z) / (2*pi)    (cycles tex_environment)
+// v = 0.5 - asin(clamp(dir.y, -1,1)) / pi
+// dir = -fixedDir = the direction the ray travels into the scene.
+
+class DirMapping2D : public TextureMapping2D {
+public:
+	DirMapping2D(const float rot, const bool centerrot, const float uScale,
+			const float vScale, const float uDelta, const float vDelta);
+	virtual ~DirMapping2D() { }
+
+	virtual TextureMapping2DType GetType() const { return DIRMAPPING2D; }
+
+	virtual luxrays::UV Map(const HitPoint &hitPoint) const;
+	virtual luxrays::UV MapDuv(const HitPoint &hitPoint, luxrays::UV *ds,
+			luxrays::UV *dt) const;
 
 	virtual luxrays::PropertiesUPtr ToProperties(const std::string &name) const;
 
