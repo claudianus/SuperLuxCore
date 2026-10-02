@@ -435,9 +435,13 @@ void SobolSampler::RebuildBucketThreshold() {
 				{0u, 0xFFFFFFFFu, 1.f});
 	}
 
+	// pixelBucketIndex base is bucket-constant - the only varying part is
+	// +j. Hoist the shared base so the 16-iteration loop pays one
+	// FastDivByCached instead of one per pixel.
+	const u_int pixelBucketBase = FastDivByCached(*bucketIndex,
+			overlapping, cacheOverlappingMagic) * bucketSize;
 	for (u_int j = 0; j < bucketSize; ++j) {
-		const u_int pixelBucketIndex = FastDivByCached(*bucketIndex,
-				overlapping, cacheOverlappingMagic) * bucketSize + j;
+		const u_int pixelBucketIndex = pixelBucketBase + j;
 		const u_int mortonCurveOffset = pixelBucketIndex & (tileSize * tileSize - 1);
 		const u_int pixelTileIndex = pixelBucketIndex >> (tileSizeLog2 * 2);
 
