@@ -1,0 +1,80 @@
+# Gauntlet scene - "SSS + Hair Fur".
+#
+# A dense fur volume (Huang'22 hairmat strands) over a pedestal, beside a
+# pair of SSS spheres (openpbr subsurface). Tests the hardest indirect
+# case: very thin translucent strands with anisotropic scattering (MIS
+# through fur, deep fibre bounces) + random-walk SSS on a smooth manikin.
+#
+# Room x in [-7,7], y in [-1,15], z in [0,7].
+scene.camera.lookat.orig = 5.8 11.0 3.2
+scene.camera.lookat.target = -1.8 6.4 1.6
+scene.camera.fieldofview = 50
+
+################################################################################
+# Huang'22 microfacet hair (melanin parameterization, pheomelanin tint)
+scene.materials.fur.type = hairmat
+scene.materials.fur.model = huang
+scene.materials.fur.eumelanin = 0.9
+scene.materials.fur.pheomelanin = 0.6
+scene.materials.fur.eta = 1.55
+scene.materials.fur.beta_m = 0.25
+scene.materials.fur.beta_n = 0.35
+scene.materials.fur.alpha = 6.0
+
+# SSS skin-ish material on the two manikin spheres
+scene.materials.skin.type = openpbr
+scene.materials.skin.basecolor = 0.78 0.45 0.30
+scene.materials.skin.specularroughness = 0.45
+scene.materials.skin.specularlevel = 0.35
+scene.materials.skin.subsurfaceweight = 0.85
+scene.materials.skin.subsurfacecolor = 0.92 0.42 0.22
+scene.materials.skin.subsurfaceradius = 0.45
+scene.materials.skin.subsurfaceradiusscale = 1.0 0.45 0.2
+scene.materials.skin.subsurfaceanisotropy = 0.2
+
+scene.materials.walls.type = matte
+scene.materials.walls.kd = 0.16 0.15 0.14
+scene.materials.floor.type = matte
+scene.materials.floor.kd = 0.50 0.45 0.38
+scene.materials.pedestal.type = matte
+scene.materials.pedestal.kd = 0.12 0.12 0.13
+
+################################################################################
+scene.objects.room.material = walls
+scene.objects.room.ply = scenes/gauntlet/mesh/room_portal.ply
+scene.objects.floor.material = floor
+scene.objects.floor.ply = scenes/gauntlet/mesh/floor_plane.ply
+scene.objects.pedestal.material = pedestal
+scene.objects.pedestal.ply = scenes/gauntlet/mesh/pedestal.ply
+scene.objects.pedestal.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.8 6.4 0.0 1.0
+
+# Fur "rug" on the pedestal: strands distributed on the box top surface.
+# straight.hair is a cyHair bundle; scale 0.008 maps it to ~1.6m across.
+scene.shapes.fur_shape.type = strands
+scene.shapes.fur_shape.file = scenes/strands/straight.hair
+scene.shapes.fur_shape.tessellation.type = solidadaptive
+scene.shapes.fur_shape.tessellation.solid.sidecount = 6
+scene.shapes.fur_shape.tessellation.adaptive.maxdepth = 18
+scene.shapes.fur_shape.tessellation.adaptive.error = 0.05
+scene.objects.fur.material = fur
+scene.objects.fur.shape = fur_shape
+scene.objects.fur.transformation = 0.006 0.0 0.0 0.0  0.0 0.006 0.0 0.0  0.0 0.0 0.006 0.0  -1.8 6.4 1.2 1.0
+
+# Two SSS spheres flanking the pedestal
+scene.objects.sss_a.material = skin
+scene.objects.sss_a.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sss_a.transformation = 0.9 0.0 0.0 0.0  0.0 0.9 0.0 0.0  0.0 0.0 0.9 0.0  -3.4 5.6 0.9 1.0
+scene.objects.sss_b.material = skin
+scene.objects.sss_b.ply = scenes/cornell/sphere-mid.ply
+scene.objects.sss_b.transformation = 0.6 0.0 0.0 0.0  0.0 0.6 0.0 0.0  0.0 0.0 0.6 0.0  -0.2 5.4 0.6 1.0
+
+################################################################################
+# Warm key + cool fill, moderate sun so fibre glints and SSS halo both read
+scene.lights.sun.type = sun
+scene.lights.sun.dir = -0.75 0.10 0.58
+scene.lights.sun.turbidity = 4.0
+scene.lights.sun.relsize = 4.0
+scene.lights.sun.gain = 0.010 0.009 0.007
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 4.0
+scene.lights.sky.gain = 0.0011 0.0012 0.0014

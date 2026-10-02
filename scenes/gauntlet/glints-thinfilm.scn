@@ -1,0 +1,102 @@
+# Gauntlet scene - "Glints + Thin Film + Diffraction".
+#
+# Thin-film interference (glossy coating film) on a glass orb, carpaint
+# flake glints on a body panel, and a radial diffraction grating (CD).
+# Exercises: spectral thin-film colours, microflake sparkle normals,
+# CD rainbow fan, rough-glass caustic fringe.
+#
+# Room x in [-7,7], y in [-1,15], z in [0,7].
+scene.camera.lookat.orig = 5.6 11.2 3.1
+scene.camera.lookat.target = -1.6 6.0 1.5
+scene.camera.fieldofview = 52
+
+################################################################################
+# Glass orb with an optical thin film (soap-bubble colours). Thin-film
+# interference is supported on the dielectric materials (glass/roughglass/
+# archglass/disney/openpbr); roughglass at low roughness keeps the bubble
+# look while letting the film tint read.
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.004 0.004 0.006
+scene.volumes.vol_glass.ior = 1.45
+scene.materials.filmglass.type = roughglass
+scene.materials.filmglass.kt = 0.97 0.97 0.97
+scene.materials.filmglass.kr = 0.97 0.97 0.97
+scene.materials.filmglass.uroughness = 0.02
+scene.materials.filmglass.vroughness = 0.02
+scene.materials.filmglass.volume.interior = vol_glass
+scene.materials.filmglass.distribution = ggx
+scene.materials.filmglass.filmthickness = 0.45
+scene.materials.filmglass.filmior = 1.33
+# True dielectric glass version for the caustic fringe beside it
+scene.materials.pure_glass.type = glass
+scene.materials.pure_glass.kt = 0.97 0.97 0.97
+scene.materials.pure_glass.kr = 0.97 0.97 0.97
+scene.materials.pure_glass.volume.interior = vol_glass
+scene.materials.pure_glass.cauchyb = 0.03
+
+# Carpaint flake panel (metallic flakes over a body tint)
+scene.materials.cp.type = carpaint
+scene.materials.cp.preset = "blue"
+scene.materials.cp.distribution = ggx
+scene.materials.cp.m0 = 0.12
+scene.materials.cp.m1 = 0.32
+scene.materials.cp.m2 = 0.42
+
+# Radial diffraction grating (CD annulus)
+scene.materials.cd.type = diffraction
+scene.materials.cd.kr = 0.95 0.95 0.95
+scene.materials.cd.spacing = 1600.0
+scene.materials.cd.orientation = radial
+scene.materials.cd.center = 0.0 0.0 0.0
+scene.materials.cd.roughness = 0.035
+scene.materials.cd.fillfactor = 0.5
+scene.materials.cd.blaze = 0.0
+scene.materials.cd.orders = 10
+
+scene.materials.walls.type = matte
+scene.materials.walls.kd = 0.16 0.15 0.14
+scene.materials.floor.type = matte
+scene.materials.floor.kd = 0.48 0.43 0.36
+scene.materials.pedestal.type = matte
+scene.materials.pedestal.kd = 0.10 0.10 0.11
+# A small bright emitter is needed to make the diffraction fan read as a
+# distinct rainbow, not a smeared highlight.
+scene.materials.pin.type = matte
+scene.materials.pin.kd = 0.9 0.9 0.9
+scene.materials.pin.emission = 900.0 850.0 700.0
+scene.materials.pin.emission.id = 0
+
+################################################################################
+scene.objects.room.material = walls
+scene.objects.room.ply = scenes/gauntlet/mesh/room_portal.ply
+scene.objects.floor.material = floor
+scene.objects.floor.ply = scenes/gauntlet/mesh/floor_plane.ply
+scene.objects.pedestal.material = pedestal
+scene.objects.pedestal.ply = scenes/gauntlet/mesh/pedestal.ply
+scene.objects.pedestal.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.6 6.0 0.0 1.0
+# Thin-film glass orb on the pedestal
+scene.objects.orb.material = filmglass
+scene.objects.orb.ply = scenes/gauntlet/mesh/orb.ply
+scene.objects.orb.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.6 6.0 2.2 1.0
+# Caustic glass orb beside it (rough dielectric -> dispersion fringe)
+scene.objects.orb2.material = pure_glass
+scene.objects.orb2.ply = scenes/gauntlet/mesh/orb_small.ply
+scene.objects.orb2.transformation = 0.7 0.0 0.0 0.0  0.0 0.7 0.0 0.0  0.0 0.0 0.7 0.0  0.0 5.2 1.42 1.0
+# Carpaint body panel (slab lying almost flat, gently angled)
+scene.objects.panel.material = cp
+scene.objects.panel.ply = scenes/gauntlet/mesh/slab.ply
+scene.objects.panel.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 0.4 0.0  -0.4 4.4 0.9 1.0
+# CD propped against the wall, tilted to catch the pin light
+scene.objects.disc.material = cd
+scene.objects.disc.ply = scenes/diffraction/cd-annulus.ply
+scene.objects.disc.transformation = 8.0 0.0 0.0 0.0  0.0 8.0 0.0 0.0  0.0 0.0 8.0 0.0  1.4 3.2 0.9 1.0
+# Pin emitter above and behind the camera side
+scene.objects.pin.material = pin
+scene.objects.pin.ply = scenes/gauntlet/mesh/orb_small.ply
+scene.objects.pin.transformation = 0.05 0.0 0.0 0.0  0.0 0.05 0.0 0.0  0.0 0.0 0.05 0.0  3.6 8.4 5.4 1.0
+
+################################################################################
+# Very dim sky so the pin emitter dominates the glints and the fan
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 5.0
+scene.lights.sky.gain = 0.0004 0.00045 0.00055

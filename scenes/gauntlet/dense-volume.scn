@@ -1,0 +1,89 @@
+# Gauntlet scene - "Dense Volume".
+#
+# Heterogeneous smoke in a sealed room: fbm-modulated scattering medium
+# inside the fogbox volume, multiscattering on, one tight sun shaft plus a
+# dim sky fill. Exercises: delta-tracking with a majorant grid, multi-
+# scattering, volume transmittance MIS (equiangular), emissive edges on
+# volume boundaries, indirect pick-up on the floor.
+#
+# Room x in [-7,7], y in [-1,15], z in [0,7]; fogbox fills the room up to
+# z=6.9. Camera is inside the room looking at the fog mass + pedestal.
+scene.camera.lookat.orig = 5.4 10.5 3.0
+scene.camera.lookat.target = -1.5 7.0 2.2
+scene.camera.fieldofview = 55
+
+################################################################################
+# Procedural smoke density: fbm value noise on a global 3d mapping. The
+# contrast curve keeps ~35% of the room at low sigma and a dense core.
+scene.textures.smoke.type = fbm
+scene.textures.smoke.octaves = 4
+scene.textures.smoke.roughness = 0.62
+scene.textures.smoke.mapping.type = globalmapping3d
+scene.textures.smoke.mapping.transformation = 0.28 0.0 0.0 0.0  0.0 0.28 0.0 0.0  0.0 0.0 0.28 0.0  0.0 0.0 0.0 1.0
+scene.textures.smoke_sigma.type = scale
+scene.textures.smoke_sigma.texture1 = 0.09
+scene.textures.smoke_sigma.texture2 = smoke
+scene.textures.smoke_abs.type = constfloat3
+scene.textures.smoke_abs.value = 0.010 0.010 0.012
+
+scene.volumes.vol_smoke.type = heterogeneous
+scene.volumes.vol_smoke.scattering = smoke_sigma
+scene.volumes.vol_smoke.absorption = smoke_abs
+scene.volumes.vol_smoke.asymmetry = 0.35 0.35 0.35
+scene.volumes.vol_smoke.multiscattering = 1
+scene.volumes.vol_smoke.steps.size = 0.05
+scene.volumes.vol_smoke.steps.maxcount = 1024
+scene.volumes.vol_smoke.priority = 2
+scene.volumes.vol_smoke.ior = 1.0
+
+# Thin glass shell around the volume box edge (volume-priority entry)
+scene.volumes.vol_glass.type = clear
+scene.volumes.vol_glass.absorption = 0.004 0.004 0.006
+scene.volumes.vol_glass.ior = 1.45
+scene.volumes.vol_glass.priority = 1
+
+################################################################################
+scene.materials.walls.type = matte
+scene.materials.walls.kd = 0.14 0.13 0.12
+scene.materials.floor.type = matte
+scene.materials.floor.kd = 0.45 0.40 0.34
+scene.materials.pedestal.type = matte
+scene.materials.pedestal.kd = 0.08 0.08 0.09
+scene.materials.glass.type = glass
+scene.materials.glass.kt = 0.97 0.97 0.97
+scene.materials.glass.kr = 0.97 0.97 0.97
+scene.materials.glass.volume.interior = vol_smoke
+scene.materials.glass.volume.exterior = vol_glass
+# Emissive marker inside the fog: exercises in-volume light emission and
+# scattering of emitted light
+scene.materials.orb.type = matte
+scene.materials.orb.kd = 0.4 0.3 0.2
+scene.materials.orb.emission = 60.0 34.0 12.0
+scene.materials.orb.emission.id = 0
+################################################################################
+scene.objects.room.material = walls
+scene.objects.room.ply = scenes/gauntlet/mesh/room_portal.ply
+scene.objects.floor.material = floor
+scene.objects.floor.ply = scenes/gauntlet/mesh/floor_plane.ply
+# The fog is bounded by the fogbox shell (a closed volume boundary so the
+# ray sees an interior volume on entry and exits cleanly at the far wall)
+scene.objects.fogbox.material = glass
+scene.objects.fogbox.ply = scenes/gauntlet/mesh/fogbox.ply
+scene.objects.pedestal.material = pedestal
+scene.objects.pedestal.ply = scenes/gauntlet/mesh/pedestal.ply
+scene.objects.pedestal.transformation = 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 1.0 0.0  -1.5 7.0 0.0 1.0
+scene.objects.orb.material = orb
+scene.objects.orb.ply = scenes/gauntlet/mesh/orb_small.ply
+scene.objects.orb.transformation = 0.35 0.0 0.0 0.0  0.0 0.35 0.0 0.0  0.0 0.0 0.35 0.0  -1.5 7.0 1.75 1.0
+
+################################################################################
+# Tight sun shaft through the high window plus a weak sky fill; both must
+# drive visible volumetric beams through the fbm density field.
+scene.lights.sun.type = sun
+scene.lights.sun.dir = -0.85 -0.10 0.52
+scene.lights.sun.turbidity = 4.0
+scene.lights.sun.relsize = 5.0
+scene.lights.sun.gain = 0.012 0.011 0.009
+scene.lights.sky.type = sky2
+scene.lights.sky.turbidity = 4.0
+scene.lights.sky.gain = 0.0008 0.0009 0.0011

@@ -99,6 +99,14 @@ SCENES = [
      False, None, ""),
     ("openpbr-lobes", "scenes/openpbr/openpbr-lobes.scn",
      False, None, ""),
+    ("dense-volume", "scenes/gauntlet/dense-volume.scn",
+     False, None, ""),
+    ("manylights-interior", "scenes/gauntlet/manylights-interior.scn",
+     False, None, ""),
+    ("sss-hair-fur", "scenes/gauntlet/sss-hair-fur.scn",
+     False, None, ""),
+    ("glints-thinfilm", "scenes/gauntlet/glints-thinfilm.scn",
+     False, None, ""),
 ]
 
 # Default engine props: empty = the production "just press render"
