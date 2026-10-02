@@ -1591,3 +1591,23 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   default means VC adds only the bidirectional connects the auto
   MNEE+LT stack already covers). Keep opt-in.
 - luxcoreconsole: --help alias added (was 'Invalid option'). -h kept.
+  NodeImportance trig (~3.1k), GetDifferentials (~2.8k).
+
+## Session notes (2026-10-02, promotion matrix + build hygiene)
+
+**Shipped (this turn):**
+- `luxcoreconsole` + `luxcoreui` `--help` aliases (61ae0d97a, 71a8ad6c4)
+- `CMakeLists.txt` `LUXCORE_VERSION` `FORCE`-refresh — stale-cache version desync (e97777362)
+- `pysuperluxcore.__version__` — module introspection surface (c141fdb54)
+- `docs/assets/` render PNGs + `engines.html` UI→engine map (428df1e1, a3453d8b)
+
+**Promotion matrix — closed by measurement (all keep-opt-in, 0 NaN, fixed 48spp):**
+| Feature | Scenes | Verdict |
+|---|---|---|
+| `path.guiding` | portal-interior ×2, classroom | keep opt-in (identical on all three) |
+| `path.vertexconnection` | caustic-stress-many | keep opt-in (identical) |
+| `path.restir.gi` | manylights | keep opt-in (identical) |
+
+**Blocked (environmental, not code):** `out/build` ninja can't regen `luxparse.cpp` — conan bison 3.8.2 exits SIGPIPE (code 141) on `-d` output inside the session sandbox; `--version`/`--help` work fine. System bison is 2.3 (too old). Pre-existing; lands on next clean configure outside the sandbox or after a conan re-install.
+
+**Remaining (needs idle machine / multi-session):** gauntlet wall A/B on a quiet box; `Ray` differentials for specular AA + glints (shared-struct change across all kernels); N-layer thin film; VK-M4 native drivers.
