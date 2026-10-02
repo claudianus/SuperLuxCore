@@ -1258,13 +1258,12 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	// Wavefront per-state task queues (E3): pathocl.wavefront =
 	// auto|on|off, LUXRAYS_WAVEFRONT_QUEUES env overrides. The decision
 	// is compile+buffer-time so it must precede InitGPUTaskBuffer() and
-	// InitKernels(). AUTO currently resolves to OFF: clean-GPU
-	// measurements (dev-tools/wf_auto_bench.py, Metal M5 Pro, 720p)
-	// show wavefront at parity to +15% (earlier regressions were
-	// benchmark contamination from a concurrent GPU process; earlier
-	// +153% was a branch-era figure that does not reproduce on main).
-	// Re-enable auto only when a consistent win is shown across
-	// task counts and divergent scenes.
+	// AUTO currently resolves to OFF: clean-GPU measurements
+	// (dev-tools/wf_auto_bench.py, Metal M5 Pro, 720p, cornell
+	// 262144 tasks) show wavefront=on at 0.58x off (5.70 vs 9.88
+	// Ms/s) - the per-state queue/histogram passes lose on
+	// unified-memory Metal. Re-enable auto only when a consistent
+	// win is shown across task counts and divergent scenes.
 	//--------------------------------------------------------------------------
 	{
 		const string wavefrontMode = renderEngine->renderConfig.GetConfig().Get(
