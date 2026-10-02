@@ -75,7 +75,6 @@ int main(int argc, char *argv[]) {
     //luxcore::SetFileLog("luxcore.log", 1000 * 1024, 3);
 
 
-    LA_LOG("LuxCoreUI v" LUXCORE_VERSION " (http://www.luxcorerender.org)");
 
     //ConvertImage("samples/luxcoreui/resources/luxlogo_bg.png");
 
@@ -154,6 +153,8 @@ int main(int argc, char *argv[]) {
           throw runtime_error("Unknown file extension: " + fileName);
       }
     }
+
+    LA_LOG("LuxCoreUI v" LUXCORE_VERSION " (http://www.luxcorerender.org)");
 
     // Check if we have to parse a LuxCore SDL file or a LuxRender SDL file
     RenderConfigRPtr config;
