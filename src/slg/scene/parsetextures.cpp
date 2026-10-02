@@ -50,6 +50,7 @@
 #include "slg/textures/fresnel/fresnelcolor.h"
 #include "slg/textures/fresnel/fresnelconst.h"
 #include "slg/textures/fresnel/fresnelior.h"
+#include "slg/textures/fresnel/fresnelfacing.h"
 #include "slg/textures/fresnel/fresnelluxpop.h"
 #include "slg/textures/fresnel/fresnelpreset.h"
 #include "slg/textures/fresnel/fresnelsopra.h"
@@ -534,6 +535,10 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		const float eta = props.Get(Property(propName + ".ior")(1.45f)).Get<double>();
 
 		tex = std::make_unique<FresnelIorTexture>(eta);
+	} else if (texType == "facing") {
+		const float blend = props.Get(Property(propName + ".blend")(1.0f)).Get<double>();
+
+		tex = std::make_unique<FacingTexture>(blend);
 	} else if (texType == "fresnelluxpop") {
 		tex = AllocFresnelLuxPopTex(props, propName);
 	} else if (texType == "fresnelpreset") {

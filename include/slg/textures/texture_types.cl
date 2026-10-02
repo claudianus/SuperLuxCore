@@ -80,7 +80,7 @@ typedef enum {
 	MARBLE, DOTS, BRICK, WINDY, WRINKLED, UV_TEX, BAND_TEX,
 	WIREFRAME_TEX, // 65 textures
 	// Fresnel textures
-	FRESNELCOLOR_TEX, FRESNELCONST_TEX, FRESNELIOR_TEX,
+	FRESNELCOLOR_TEX, FRESNELCONST_TEX, FRESNELIOR_TEX, FACING_TEX,
 	// Generic math-function texture (trig/exp/log)
 	MATHFUNC_TEX,
 	// Sparse Gabor convolution noise
@@ -442,6 +442,10 @@ typedef struct {
 } FresnelIorParam;
 
 typedef struct {
+	float blend;
+} FacingParam;
+
+typedef struct {
 	unsigned int texIndex;
 } AbsTexParam;
 
@@ -610,6 +614,7 @@ typedef struct {
 		FresnelColorParam fresnelColor;
 		FresnelConstParam fresnelConst;
 		FresnelIorParam fresnelIor;
+		FacingParam facingTex;
 		AbsTexParam absTex;
 		ClampTexParam clampTex;
 		BilerpTexParam bilerpTex;

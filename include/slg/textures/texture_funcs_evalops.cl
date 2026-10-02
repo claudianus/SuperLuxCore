@@ -1982,6 +1982,32 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// FACING_TEX
+		//----------------------------------------------------------------------
+		case FACING_TEX: {
+			// LayerWeight "Facing": pow(1 - |cosi|, blend). |cosi| folds the
+			// backface case, matching the CPU path.
+			const float blend = texture->facingTex.blend;
+			const float c = fabs(hitPoint->fixedDir.x * hitPoint->shadeN.x + hitPoint->fixedDir.y * hitPoint->shadeN.y + hitPoint->fixedDir.z * hitPoint->shadeN.z);
+			const float f = native_powr(1.f - clamp(c, 0.f, 1.f), blend);
+			switch (evalType) {
+				case EVAL_FLOAT:
+					EvalStack_PushFloat(f);
+					break;
+				case EVAL_SPECTRUM:
+					EvalStack_PushFloat3(MAKE_FLOAT3(f, f, f));
+					break;
+				case EVAL_BUMP: {
+					const float3 shadeN2 = ConstTexture_Bump(hitPoint);
+					EvalStack_PushFloat3(shadeN2);
+					break;
+				}
+				default:
+					break;
+			}
+			break;
+		}
+		//----------------------------------------------------------------------
 		// RANDOM_TEX
 		//----------------------------------------------------------------------
 		case RANDOM_TEX:

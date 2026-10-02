@@ -53,6 +53,7 @@
 #include "slg/textures/fresnel/fresnelcolor.h"
 #include "slg/textures/fresnel/fresnelconst.h"
 #include "slg/textures/fresnel/fresnelior.h"
+#include "slg/textures/fresnel/fresnelfacing.h"
 #include "slg/textures/fresnel/fresnelluxpop.h"
 #include "slg/textures/fresnel/fresnelpreset.h"
 #include "slg/textures/fresnel/fresnelsopra.h"
@@ -376,7 +377,8 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		case slg::ocl::OBJECTID_NORMALIZED_TEX:
 		case slg::ocl::FRESNELCOLOR_TEX:
 		case slg::ocl::FRESNELCONST_TEX:
-		case slg::ocl::FRESNELIOR_TEX: {
+		case slg::ocl::FRESNELIOR_TEX:
+		case slg::ocl::FACING_TEX: {
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 					evalOpStackSize += 1;
@@ -2211,6 +2213,13 @@ void CompiledScene::CompileTextures() {
 
 				tex->type = slg::ocl::FRESNELIOR_TEX;
 				tex->fresnelIor.eta = fit.GetEta();
+				break;
+			}
+			case FACING_TEX: {
+				auto& ft = dynamic_cast<const FacingTexture &>(t);
+
+				tex->type = slg::ocl::FACING_TEX;
+				tex->facingTex.blend = ft.GetBlend();
 				break;
 			}
 			case ABS_TEX: {
