@@ -86,7 +86,9 @@ typedef enum {
 	// Sparse Gabor convolution noise
 	GABORNOISE_TEX,
 	// Ray context information (Cycles LightPath equivalent)
-	RAYINFO_TEX
+	RAYINFO_TEX,
+	// Raw HitPoint field reads (Geometry-node remaining outputs)
+	HITPOINT_TEX
 } TextureType;
 
 // Note: keep aligned with the copy in rayinfo.h
@@ -107,6 +109,14 @@ typedef enum {
 	RAYINFO_TRANSMISSION_DEPTH,
 	RAYINFO_TRANSPARENT_DEPTH
 } RayInfoChannel;
+
+// Note: keep aligned with the copy in hitpoint.h
+typedef enum {
+	HITPOINT_GEOMETRYN,
+	HITPOINT_BACKFACING,
+	HITPOINT_INCOMING,
+	HITPOINT_PARAMETRIC
+} HitPointChannel;
 
 typedef struct {
 	float value;
@@ -446,6 +456,11 @@ typedef struct {
 } FacingParam;
 
 typedef struct {
+	// HitPointChannel
+	int channel;
+} HitPointParam;
+
+typedef struct {
 	unsigned int texIndex;
 } AbsTexParam;
 
@@ -615,6 +630,7 @@ typedef struct {
 		FresnelConstParam fresnelConst;
 		FresnelIorParam fresnelIor;
 		FacingParam facingTex;
+		HitPointParam hitPointTex;
 		AbsTexParam absTex;
 		ClampTexParam clampTex;
 		BilerpTexParam bilerpTex;

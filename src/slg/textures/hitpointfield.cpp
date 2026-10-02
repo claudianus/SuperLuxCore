@@ -1,0 +1,72 @@
+/***************************************************************************
+ * Copyright 1998-2026 by authors (see AUTHORS.txt)                        *
+ *                                                                         *
+ *   This file is part of LuxCoreRender.                                   *
+ *                                                                         *
+ * Licensed under the Apache License, Version 2.0 (the "License");         *
+ * you may not use this file except in compliance with the License.        *
+ * You may obtain a copy of the License at                                 *
+ *                                                                         *
+ *     http://www.apache.org/licenses/LICENSE-2.0                          *
+ *                                                                         *
+ * Unless required by applicable law or agreed to in writing, software     *
+ * distributed under the License is distributed on an "AS IS" BASIS,       *
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.*
+ * See the License for the specific language governing permissions and     *
+ * limitations under the License.                                          *
+ ***************************************************************************/
+
+#include "slg/textures/hitpointfield.h"
+#include "slg/bsdf/hitpoint.h"
+
+using namespace std;
+using namespace luxrays;
+using namespace slg;
+
+//------------------------------------------------------------------------------
+// HitPoint texture - raw HitPoint field reads for the shading graph
+//------------------------------------------------------------------------------
+
+float HitPointFieldTexture::GetFloatValue(const HitPoint &hitPoint) const {
+	switch (channel) {
+		case HITPOINT_BACKFACING:
+			// Cycles' Backfacing is the geometric winding sign: the face's
+			// front-back classification, NOT ray-entry (intoObject is true on
+			// a solid surface's visible face too - the ray crosses inside).
+			return (Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN.x, hitPoint.geometryN.y, hitPoint.geometryN.z)) < 0.f) ? 1.f : 0.f;
+		default:
+			return EvalSpectrumValue(hitPoint).Y();
+	}
+}
+
+Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
+	switch (channel) {
+		case HITPOINT_GEOMETRYN:
+			return Spectrum(hitPoint.geometryN.x, hitPoint.geometryN.y, hitPoint.geometryN.z);
+		case HITPOINT_INCOMING:
+			return Spectrum(hitPoint.fixedDir.x, hitPoint.fixedDir.y, hitPoint.fixedDir.z);
+		case HITPOINT_PARAMETRIC:
+			return Spectrum(hitPoint.triangleBariCoord1, hitPoint.triangleBariCoord2, 0.f);
+		case HITPOINT_BACKFACING: {
+			const float s = Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN.x, hitPoint.geometryN.y, hitPoint.geometryN.z));
+			return Spectrum(s > 0.f ? 1.f : 0.f);
+		}
+		default:
+			return Spectrum(0.f, 0.f, 0.f);
+	}
+}
+
+PropertiesUPtr HitPointFieldTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
+	auto props = std::make_unique<Properties>();
+
+	static const char *channelNames[] = {
+		"geometrynormal", "backfacing", "incoming", "parametric"
+	};
+
+	const string name = GetName();
+	props->Set(Property("scene.textures." + name + ".type")("hitpoint"));
+	props->Set(Property("scene.textures." + name + ".channel")(channelNames[channel]));
+
+	return props;
+}
+// vim: autoindent noexpandtab tabstop=4 shiftwidth=4

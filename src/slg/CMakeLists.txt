@@ -470,6 +470,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelpreset.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelsopra.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresneltexture.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpointfield.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/hitpointaov.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/hitpointcolor.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/hitpoint/position.cpp

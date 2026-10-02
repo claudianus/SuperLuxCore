@@ -58,6 +58,7 @@
 #include "slg/textures/fresnel/fresnelpreset.h"
 #include "slg/textures/fresnel/fresnelsopra.h"
 #include "slg/textures/fresnel/fresneltexture.h"
+#include "slg/textures/hitpointfield.h"
 #include "slg/textures/hitpoint/hitpointaov.h"
 #include "slg/textures/hitpoint/hitpointcolor.h"
 #include "slg/textures/hitpoint/position.h"
@@ -412,6 +413,7 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		case slg::ocl::SHADING_NORMAL_TEX:
 		case slg::ocl::POSITION_TEX:
 		case slg::ocl::RAYINFO_TEX:
+		case slg::ocl::HITPOINT_TEX:
 		case slg::ocl::BLENDER_BLEND:
 		case slg::ocl::BLENDER_CLOUDS:
 		case slg::ocl::BLENDER_DISTORTED_NOISE:
@@ -2377,6 +2379,13 @@ void CompiledScene::CompileTextures() {
 
 				tex->type = slg::ocl::RAYINFO_TEX;
 				tex->rayInfoTex.channel = (u_int)rit.GetChannel();
+				break;
+			}
+			case HITPOINT_TEX: {
+				auto& hpt = dynamic_cast<const HitPointFieldTexture &>(t);
+
+				tex->type = slg::ocl::HITPOINT_TEX;
+				tex->hitPointTex.channel = (int)hpt.GetChannel();
 				break;
 			}
 			case SPLIT_FLOAT3: {

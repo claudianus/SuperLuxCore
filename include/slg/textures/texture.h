@@ -77,7 +77,9 @@ typedef enum {
 	// Sparse Gabor convolution noise
 	GABORNOISE_TEX,
 	// Ray context information (Cycles LightPath equivalent)
-	RAYINFO_TEX
+	RAYINFO_TEX,
+	// Raw HitPoint field reads (Geometry-node remaining outputs)
+	HITPOINT_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

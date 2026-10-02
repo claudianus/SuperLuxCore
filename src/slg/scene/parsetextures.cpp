@@ -58,6 +58,7 @@
 #include "slg/textures/hitpoint/hitpointaov.h"
 #include "slg/textures/hitpoint/hitpointcolor.h"
 #include "slg/textures/hitpoint/position.h"
+#include "slg/textures/hitpointfield.h"
 #include "slg/textures/hitpoint/rayinfo.h"
 #include "slg/textures/hitpoint/shadingnormal.h"
 #include "slg/textures/hsv.h"
@@ -662,6 +663,15 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				channelStr == "transparentdepth" ? RAYINFO_TRANSPARENT_DEPTH :
 				throw runtime_error("Unknown rayinfo texture channel: " + channelStr);
 		tex = std::make_unique<RayInfoTexture>(channel);
+	} else if (texType == "hitpoint") {
+		const string channelStr = props.Get(Property(propName + ".channel")("geometrynormal")).Get<string>();
+		const HitPointChannel channel =
+				channelStr == "geometrynormal" ? HITPOINT_GEOMETRYN :
+				channelStr == "backfacing" ? HITPOINT_BACKFACING :
+				channelStr == "incoming" ? HITPOINT_INCOMING :
+				channelStr == "parametric" ? HITPOINT_PARAMETRIC :
+				throw runtime_error("Unknown hitpoint texture channel: " + channelStr);
+		tex = std::make_unique<HitPointFieldTexture>(channel);
 	} else if (texType == "splitfloat3") {
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));

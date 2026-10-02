@@ -2008,6 +2008,46 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// HITPOINT_TEX
+		//----------------------------------------------------------------------
+		case HITPOINT_TEX: {
+			float fval = 0.f;
+			float3 f3val = MAKE_FLOAT3(0.f, 0.f, 0.f);
+			switch (texture->hitPointTex.channel) {
+				case HITPOINT_GEOMETRYN:
+					f3val = VLOAD3F(&hitPoint->geometryN.x);
+					break;
+				case HITPOINT_INCOMING:
+					f3val = VLOAD3F(&hitPoint->fixedDir.x);
+					break;
+				case HITPOINT_PARAMETRIC:
+					f3val = MAKE_FLOAT3(hitPoint->triangleBariCoord1, hitPoint->triangleBariCoord2, 0.f);
+					break;
+				case HITPOINT_BACKFACING:
+					fval = ((hitPoint->fixedDir.x * hitPoint->geometryN.x + hitPoint->fixedDir.y * hitPoint->geometryN.y + hitPoint->fixedDir.z * hitPoint->geometryN.z) < 0.f) ? 1.f : 0.f;
+					f3val = MAKE_FLOAT3(fval, fval, fval);
+					break;
+				default:
+					break;
+			}
+			switch (evalType) {
+				case EVAL_FLOAT:
+					EvalStack_PushFloat((f3val.x + f3val.y + f3val.z) * 0.333333f);
+					break;
+				case EVAL_SPECTRUM:
+					EvalStack_PushFloat3(f3val);
+					break;
+				case EVAL_BUMP: {
+					const float3 shadeN2 = ConstTexture_Bump(hitPoint);
+					EvalStack_PushFloat3(shadeN2);
+					break;
+				}
+				default:
+					break;
+			}
+			break;
+		}
+		//----------------------------------------------------------------------
 		// RANDOM_TEX
 		//----------------------------------------------------------------------
 		case RANDOM_TEX:
