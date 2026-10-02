@@ -66,7 +66,12 @@ else()
   SET(_DEFAULT_LUXCORE_VERSION "${_DEFAULT_VERSION_BASE}")
 endif()
 
-SET(LUXCORE_VERSION "${_DEFAULT_LUXCORE_VERSION}" CACHE STRING "LuxCore version")
+# An explicit -DLUXCORE_VERSION=... still wins: CMake applies the -D
+# value into the cache before this runs, so setting FORCE only rewrites
+# the entry with the (same) value - no override loss. Without FORCE a
+# stale cache entry survives a build-settings.json bump (observed:
+# binaries reporting 2.11.2 while the wheel was 2.11.7).
+SET(LUXCORE_VERSION "${_DEFAULT_LUXCORE_VERSION}" CACHE STRING "LuxCore version" FORCE)
 
 # Dependencies check
 STRING(JSON REQUIRED_LUXCOREDEPS_VERSION GET "${settings_json}" Dependencies release)
