@@ -49,6 +49,7 @@
 #include "slg/textures/fresnel/fresnelcauchy.h"
 #include "slg/textures/fresnel/fresnelcolor.h"
 #include "slg/textures/fresnel/fresnelconst.h"
+#include "slg/textures/fresnel/fresnelior.h"
 #include "slg/textures/fresnel/fresnelluxpop.h"
 #include "slg/textures/fresnel/fresnelpreset.h"
 #include "slg/textures/fresnel/fresnelsopra.h"
@@ -529,6 +530,10 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		const Spectrum k = GetColor(props.Get(Property(propName + ".k")(1.f, 1.f, 1.f)));
 
 		tex = std::make_unique<FresnelConstTexture>(n, k);
+	} else if (texType == "fresnelior") {
+		const float eta = props.Get(Property(propName + ".ior")(1.45f)).Get<double>();
+
+		tex = std::make_unique<FresnelIorTexture>(eta);
 	} else if (texType == "fresnelluxpop") {
 		tex = AllocFresnelLuxPopTex(props, propName);
 	} else if (texType == "fresnelpreset") {

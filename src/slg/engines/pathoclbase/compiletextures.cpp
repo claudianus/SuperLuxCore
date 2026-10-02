@@ -52,6 +52,7 @@
 #include "slg/textures/fresnelapprox.h"
 #include "slg/textures/fresnel/fresnelcolor.h"
 #include "slg/textures/fresnel/fresnelconst.h"
+#include "slg/textures/fresnel/fresnelior.h"
 #include "slg/textures/fresnel/fresnelluxpop.h"
 #include "slg/textures/fresnel/fresnelpreset.h"
 #include "slg/textures/fresnel/fresnelsopra.h"
@@ -374,7 +375,8 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		case slg::ocl::OBJECTID_COLOR_TEX:
 		case slg::ocl::OBJECTID_NORMALIZED_TEX:
 		case slg::ocl::FRESNELCOLOR_TEX:
-		case slg::ocl::FRESNELCONST_TEX: {
+		case slg::ocl::FRESNELCONST_TEX:
+		case slg::ocl::FRESNELIOR_TEX: {
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 					evalOpStackSize += 1;
@@ -2202,6 +2204,13 @@ void CompiledScene::CompileTextures() {
 				tex->type = slg::ocl::FRESNELCONST_TEX;
 				ASSIGN_SPECTRUM(tex->fresnelConst.n, fct.GetN());
 				ASSIGN_SPECTRUM(tex->fresnelConst.k, fct.GetK());
+				break;
+			}
+			case FRESNELIOR_TEX: {
+				auto& fit = dynamic_cast<const FresnelIorTexture &>(t);
+
+				tex->type = slg::ocl::FRESNELIOR_TEX;
+				tex->fresnelIor.eta = fit.GetEta();
 				break;
 			}
 			case ABS_TEX: {

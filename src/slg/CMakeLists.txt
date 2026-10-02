@@ -464,6 +464,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelcauchy.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelcolor.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelconst.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelior.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelluxpop.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelpreset.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/fresnel/fresnelsopra.cpp

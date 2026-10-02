@@ -1941,6 +1941,47 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			break;
 		}
 		//----------------------------------------------------------------------
+		// FRESNELIOR_TEX
+		//----------------------------------------------------------------------
+		case FRESNELIOR_TEX: {
+			// cosi = dot(-fixedDir, shadeN); shadeN is incident-side oriented.
+			// Dielectric Cauchy Fresnel with TIR handling - the scalar path is
+			// inlined here (materialdefs_funcs_generic lands later in the
+			// kernel source order, so its helper is not visible yet).
+			const float eta = texture->fresnelIor.eta;
+			const float cosi = clamp(-(hitPoint->fixedDir.x * hitPoint->shadeN.x + hitPoint->fixedDir.y * hitPoint->shadeN.y + hitPoint->fixedDir.z * hitPoint->shadeN.z), -1.f, 1.f);
+			const bool entering = (cosi > 0.f);
+			const float eta2 = eta * eta;
+			const float sint2 = (entering ? 1.f / eta2 : eta2) * fmax(0.f, 1.f - cosi * cosi);
+			float f = 1.f;
+			if (sint2 < 1.f) {
+				const float acosi = fabs(cosi);
+				const float cost = sqrt(fmax(0.f, 1.f - sint2));
+				const float e = entering ? eta : (1.f / eta);
+				const float rp = e * acosi;
+				const float Rparl = (cost - rp) / (cost + rp);
+				const float rq = e * cost;
+				const float Rperp = (acosi - rq) / (acosi + rq);
+				f = (Rparl * Rparl + Rperp * Rperp) * .5f;
+			}
+			switch (evalType) {
+				case EVAL_FLOAT:
+					EvalStack_PushFloat(f);
+					break;
+				case EVAL_SPECTRUM:
+					EvalStack_PushFloat3(MAKE_FLOAT3(f, f, f));
+					break;
+				case EVAL_BUMP: {
+					const float3 shadeN2 = ConstTexture_Bump(hitPoint);
+					EvalStack_PushFloat3(shadeN2);
+					break;
+				}
+				default:
+					break;
+			}
+			break;
+		}
+		//----------------------------------------------------------------------
 		// RANDOM_TEX
 		//----------------------------------------------------------------------
 		case RANDOM_TEX:
