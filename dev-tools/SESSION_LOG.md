@@ -1535,3 +1535,24 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   S5 glints is research-scale. Recommend next session: ray-differential
   transport on the eye path (camera -> first hit) so normal-map
   roughness inflation (S6) becomes implementable.
+
+## 2026-10-02 (cont) — path.guiding measured A/B + preset library
+
+- Fixed-spp A/B on `portal-interior` (PATHCPU, 48spp, 320x180): guiding
+  recovers portal-transported energy - mean luminance 0.295 -> 0.312
+  (+8.9%), peak 655 -> 1297 (bright region now sampled). 0 NaN.
+  Physically the expected direction: an indirect-dominant scene gains
+  real signal, not noise-shifted noise.
+- Promotion status: path.guiding.enable stays default-off. The megaplan
+  requires a diffuse-dominated-scene overhead check before an auto or
+  default flip; the correct auto-signature is indirect-dominance, NOT
+  caustic-capability (which is the signature ApplyAutoLightTracing
+  uses). A future `path.guiding.auto` should key on "no dominant direct
+  sun/sky + interior" rather than reuse SceneHasCausticCapablePaths.
+- SuperBlendLuxCore: "Physically Measured" material preset category
+  shipped (17 measured n/k metals + 8 measured carpaints, one click).
+  Headless Blender 5.2.1 verification caught + fixed two real bugs:
+  fresnel auto-node reuse and `link.to_node is` (RNA wrappers are
+  re-instantiated per access - must compare data blocks with ==).
+  Commits 32dbbc71 (site docs) + 259a804a (the fix). e45 16/16 +
+  e49 155/155 pass under the synced addon.
