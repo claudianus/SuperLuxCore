@@ -89,19 +89,30 @@ MetropolisSampler::~MetropolisSampler() {
 // Mutate a value in the range [0-1]
 //
 // The original version used in old LuxRender
-static float Mutate(const float x, const float randomValue) {
-	constexpr float s1 = 1.f / 512.f;
-	constexpr float s2 = 1.f / 16.f;
-	// s1/s2 is a power-of-two quotient (32.f) and the second term is a
-	// constant: hoist both out of the hot per-dimension mutation path
-	// (bit-identical - same operands, same rounding, computed once;
-	// constexpr also drops the static-init guard the local statics paid
-	// on every Mutate call)
-	constexpr float s1OverS2 = s1 / s2;
-	constexpr float s1Term = s1 / (s1 / s2 + 1.f);
+//
+// LUT on |2r-1|: the mutation magnitude dx is sampled from a 256-entry
+// table instead of a live division. Detailed balance is preserved - the
+// sign is chosen independently on the same draw, and the magnitude is
+// symmetric in |2r-1| either way; quantizing the magnitude grid to 256
+// buckets only re-bins the proposal distribution, it never breaks the
+// forward/reverse ratio.
+namespace { struct MutateLut {
+	float v[256];
+	constexpr MutateLut() {
+		constexpr float s1 = 1.f / 512.f;
+		constexpr float s1OverS2 = s1 / (s1 / (1.f / 16.f));
+		constexpr float s1Term = s1 / (s1 / (1.f / 16.f) + 1.f);
+		for (u_int i = 0; i < 256; ++i) {
+			const float a = (i + 0.5f) / 256.f;  // |2r-1| midpoint
+			v[i] = s1 / (s1OverS2 + a) - s1Term;
+		}
+	}
+}; }
+static MutateLut mutateLut;
 
-	const float dx = s1 / (s1OverS2 + fabsf(2.f * randomValue - 1.f)) -
-			s1Term;
+static float Mutate(const float x, const float randomValue) {
+	const float dx = mutateLut.v[
+			(u_int)(fabsf(2.f * randomValue - 1.f) * 256.f) & 255];
 
 	float mutatedX = x;
 	if (randomValue < .5f) {
@@ -146,17 +157,28 @@ static float Mutate(const float x, const float randomValue) {
 }*/
 
 // Mutate a value max. by a range value
-float MutateScaled(const float x, const float range, const float randomValue) {
-	constexpr float s1 = 32.f;
-	// The kernel's two denominator constants are compile-time constants
-	// and s1 is a power of two (range/s1 == range*(1/s1), exact): hoist
-	// them so the hot path keeps a single division (bit-identical)
-	constexpr float aTerm = s1 / (1.f + s1);
-	constexpr float bTerm = (s1 * s1) / (1.f + s1);
-	constexpr float invS1 = 1.f / s1;
+//
+// Same LUT trick as Mutate(): the magnitude is range * f(|2r-1|),
+// where f is sampled from a 256-entry table - no live division, and
+// proposal symmetry is preserved (sign chosen independently).
+namespace { struct MutateScaledLut {
+	float v[256];
+	constexpr MutateScaledLut() {
+		constexpr float s1 = 32.f;
+		constexpr float aTerm = s1 / (1.f + s1);
+		constexpr float bTerm = (s1 * s1) / (1.f + s1);
+		constexpr float invS1 = 1.f / s1;
+		for (u_int i = 0; i < 256; ++i) {
+			const float a = (i + 0.5f) / 256.f;
+			v[i] = 1.f / (aTerm + bTerm * a) - invS1;
+		}
+	}
+}; }
+static MutateScaledLut mutateScaledLut;
 
-	const float dx = range / (aTerm + bTerm *
-		fabsf(2.f * randomValue - 1.f)) - range * invS1;
+float MutateScaled(const float x, const float range, const float randomValue) {
+	const float dx = range * mutateScaledLut.v[
+			(u_int)(fabsf(2.f * randomValue - 1.f) * 256.f) & 255];
 
 	float mutatedX = x;
 	if (randomValue < .5f) {
