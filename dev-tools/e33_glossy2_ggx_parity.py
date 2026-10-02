@@ -25,7 +25,11 @@ sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
 import pysuperluxcore
 
 WIDTH, HEIGHT = 320, 240
-SPP = 64
+# 64spp is inside the per-pixel sampler-noise floor for this converged
+# scene (CPU/GPU Sobol sequences differ -> ~0.19 relerr noise at 64spp,
+# already over the 0.15 gate). 384spp brings the floor to ~0.107, below
+# the threshold with margin. See SESSION_LOG 2026-10-02 e33 note.
+SPP = 384
 RENDER_TIMEOUT_S = 600
 
 
