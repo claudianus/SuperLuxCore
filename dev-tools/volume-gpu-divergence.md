@@ -44,3 +44,33 @@ first hit of a camera ray inside a glass-shelled box; compare to CPU.
   static (has both interior AND exterior volume evals in one op
   program). Worth checking whether the op result consumes a stale
   `passThroughEvent` on the eval stack on GPU.
+
+## Channel isolation (mhsun.scn minimal repro)
+
+160x120 heterogeneous fbm volume, glass shell, camera on the face
+plane (half the frame inside the box), sun light only:
+
+- lighttracing + MNEE disabled: GPU == CPU (51.1% lit both) - eye
+  path transport through the delta boundary is correct.
+- lighttracing enabled (0.5 task fraction, MNEE off): GPU 74.3% lit,
+  CPU 99.4% - the divergence is in the GPU light-tracing connect
+  channel only.
+- Volume self-emission through the same glass shell: GPU == CPU -
+  `Volume_Scatter` + `PathVolumeInfo_Update` at the boundary work
+  correctly for eye paths.
+
+Isolated root cause hypothesis: in
+`pathoclbase_kernels_micro.cl` Stage A (line ~3391) the
+light-to-camera visibility ray is traced with
+`Scene_Intersect(LIGHT_RAY | CAMERA_RAY | SHADOW_RAY)`. For a glass
+shell `BSDF_GetPassThroughShadowTransparency` is BLACK (parsematerials
+default 0), so the connect ray terminates at the glass face on the
+*first* hit. On the CPU side `TraceLightPath`'s connect does the same,
+so symmetric-blocking is consistent - but the *splat* conditional on
+line 3415 (`visRayHit->meshIndex == NULL_INDEX`) then drops the
+contribution differently. CPU `TraceLightPath` applies splat on the
+*same* condition but carries `pathThroughput` through the boundary
+via a different accounting path. The GPU's `pendingSplat.radiance*`
+was already committed before the boundary was consumed by the
+`PathVolumeInfo_Update` inside the marching loop, so a shadowed
+transmission term is applied one march too late.
