@@ -1643,3 +1643,15 @@ is preserved because every term is absolute/even in wh.z.
 **Downstream**: any scene with glass/mirror + an env light under the
 default auto stack was darkening multi-bounce transmitted env
 radiance ~200x. Check e53 gauntlet / caustic A/B regressions.
+
+**Follow-up (same session)**: the first σ sweep ran the stale Release
+`.so` (15:14, pre-fix) - `ninja luxcoreconsole` only rebuilds Debug,
+`pysuperluxcore` needs `make pysuperluxcore` / `luxmake
+build-and-install`. On the rebuilt module the ordering inverts: on
+focused-caustic-ring @20s, σ=0.03/h64 (the default) is the best
+operating point (rmse 0.3695) and auto beats no-psr (0.4818) - the
+Kaplanyan seed earns its keep once the exit pdf is real. GPU PATHOCL
+on ior=1.5 glass+env renders 0.5113 vs CPU 0.5121 (cl2msl propagates
+the .cl fix). Lesson: any "auto-stack worse" reading before the
+Release .so refresh was a stale-binary artifact; always rebuild the
+python module before A/B numbers.
