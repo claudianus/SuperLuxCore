@@ -2023,6 +2023,15 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				case HITPOINT_PARAMETRIC:
 					f3val = MAKE_FLOAT3(hitPoint->triangleBariCoord1, hitPoint->triangleBariCoord2, 0.f);
 					break;
+				case HITPOINT_REFLECTION: {
+					// r = d - 2(d.n)n, d = -fixedDir into the scene, n = shadeN
+					const float3 d = -VLOAD3F(&hitPoint->fixedDir.x);
+					const float nd = 2.f * (d.x * hitPoint->shadeN.x + d.y * hitPoint->shadeN.y + d.z * hitPoint->shadeN.z);
+					f3val = MAKE_FLOAT3(d.x - nd * hitPoint->shadeN.x,
+										d.y - nd * hitPoint->shadeN.y,
+										d.z - nd * hitPoint->shadeN.z);
+					break;
+				}
 				case HITPOINT_BACKFACING:
 					fval = ((hitPoint->fixedDir.x * hitPoint->geometryN.x + hitPoint->fixedDir.y * hitPoint->geometryN.y + hitPoint->fixedDir.z * hitPoint->geometryN.z) < 0.f) ? 1.f : 0.f;
 					f3val = MAKE_FLOAT3(fval, fval, fval);

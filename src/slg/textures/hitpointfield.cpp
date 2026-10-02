@@ -47,6 +47,15 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			return Spectrum(hitPoint.fixedDir.x, hitPoint.fixedDir.y, hitPoint.fixedDir.z);
 		case HITPOINT_PARAMETRIC:
 			return Spectrum(hitPoint.triangleBariCoord1, hitPoint.triangleBariCoord2, 0.f);
+		case HITPOINT_REFLECTION: {
+			// r = d - 2(d.n)n where d = -fixedDir is the direction of travel;
+			// fixedDir points back to the camera, so -fixedDir is "into" the scene.
+			const Vector d(-hitPoint.fixedDir.x, -hitPoint.fixedDir.y, -hitPoint.fixedDir.z);
+			const float nd = 2.f * (d.x * hitPoint.shadeN.x + d.y * hitPoint.shadeN.y + d.z * hitPoint.shadeN.z);
+			return Spectrum(d.x - nd * hitPoint.shadeN.x,
+							d.y - nd * hitPoint.shadeN.y,
+							d.z - nd * hitPoint.shadeN.z);
+		}
 		case HITPOINT_BACKFACING: {
 			const float s = Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN.x, hitPoint.geometryN.y, hitPoint.geometryN.z));
 			return Spectrum(s > 0.f ? 1.f : 0.f);
@@ -60,7 +69,7 @@ PropertiesUPtr HitPointFieldTexture::ToProperties(const ImageMapCache &imgMapCac
 	auto props = std::make_unique<Properties>();
 
 	static const char *channelNames[] = {
-		"geometrynormal", "backfacing", "incoming", "parametric"
+		"geometrynormal", "backfacing", "incoming", "parametric", "reflection"
 	};
 
 	const string name = GetName();
