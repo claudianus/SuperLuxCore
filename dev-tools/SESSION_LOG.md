@@ -1569,3 +1569,14 @@ That's the per-bounce material setup cost - intrinsic, not overhead.
   indirect-dominant promotion condition is NOT demonstrated at production
   budgets; an auto gate would buy nothing and cost a scene-signature
   mispredict. Negative result recorded to close the promotion question.
+
+## 2026-10-02 (cont3) — path.vertexconnection: measured keep-opt-in
+
+- caustic-stress-many A/B (PATHCPU, 48spp): BASE mean 0.0958 / VC mean
+  0.0958, max 5.73/5.74 — identical. Vertex merging default radius is 0
+  (path.vertexconnection.mergeradius=0), so VC alone only adds
+  bidirectional connects that the auto MNEE + light-tracing stack
+  already covers. No benefit at production budgets.
+- Manual: docs/manual/engines.html engine table now lists the full
+  registry (PATHCPU/OCL, BIDIRCPU/BIDIRVMCPU, TILEPATH*/RTPATH*,
+  FILESAVER) instead of generic PATH/BIDIR rows (commit aeea1d68).
