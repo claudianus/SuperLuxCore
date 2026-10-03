@@ -129,8 +129,11 @@ FilmUPtr Film::FromProperties(PropertiesRPtr cfg) {
 			film->RemoveChannel(Film::ALPHA);
 	}
 
+	const string engineType = cfg->Get(Property("renderengine.type")("PATHCPU")).Get<string>();
+	const bool defaultHWEnable = engineType == "PATHOCL" ||
+			engineType == "TILEPATHOCL" || engineType == "RTPATHOCL";
 	film->hwEnable = cfg->Get(Property("film.hw.enable")(
-			cfg->Get(Property("film.opencl.enable")(true)).Get<bool>()
+			cfg->Get(Property("film.opencl.enable")(defaultHWEnable)).Get<bool>()
 			)).Get<bool>();
 	film->hwDeviceIndex = cfg->Get(Property("film.hw.device")(
 			// For compatibility with the past

@@ -486,6 +486,16 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   with a callback returning `CL_INVALID_VALUE`: rebuilt PATHCPU rendered
   the expected `[4.5,4.5,4.5]` radiance, while explicit GPU discovery still
   reported the injected driver error.
+- The next wheel run rendered successfully but `Film.Save()` still created
+  an optional GPU image-pipeline context. Film configuration now defaults
+  to software processing for CPU engines and hardware processing for
+  PATHOCL/TILEPATHOCL/RTPATHOCL. Explicit `film.hw.enable` requests (and the
+  existing legacy setting) retain precedence.
+- With the actual OpenCL query pointer returning `CL_INVALID_VALUE`,
+  default PATHCPU rendered `[4,4,4]` and saved a valid 32×32 PNG without
+  calling that pointer. Explicit hardware processing still raised the
+  driver error. Isolated Metal rendering and its default hardware pipeline
+  saved the same scene successfully; pipeline hardware memory was 28 KiB.
 
 ### Transformed Generated bounds without per-hit mesh scans
 
@@ -512,9 +522,22 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   A constant-colour control and a 100× amplified diagnostic separated
   existing Metal radiance residuals from coordinate errors.
 - The full actual Blender export/SDL/CPU/isolated Metal corpus passed
-  308 checks. The installed extension rendered the unchanged 384×192
+  310 checks, including live transform edits. The installed extension rendered the unchanged 384×192
   RGB extrema diagram: raw EXR samples verified the minimum's upper
   plateau, maximum's lower plateau and distinct blue components.
 - This validates transformed base-mesh bounds, not complete Blender
   undeformed ORCO, custom texspace or multi-material whole-object bounds.
+
+### Noncommuting applied-transform edits
+
+- A live rotation after a baked rotation/nonuniform scale exposed a
+  composition-order defect: vertices received `new × old`, while stored
+  applied-transform metadata received `old × new`. Generated's 1000×
+  amplified residual rendered `[5.31,8.80,4]` instead of `[4,4,4]`.
+- Applied-transform metadata now uses the same order as vertex updates.
+  No new allocation or transform multiplication is introduced.
+- The same reproduction passed on PATHCPU and isolated Metal. A permanent
+  Blender-reference fixture warms the scene, then applies rotation and
+  translation through two BeginSceneEdit/EndSceneEdit transitions. Both
+  backends retained `[4,4,4]` and passed every original 4×4 ROI check.
 

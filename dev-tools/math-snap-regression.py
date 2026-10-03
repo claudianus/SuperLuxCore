@@ -205,6 +205,10 @@ film.outputs.0.filename = snap-regression.exr
     session = lux.RenderSession(lux.RenderConfig(props, scene))
     session.Start()
     try:
+        for transform in case.get("update_transforms", []):
+            session.BeginSceneEdit()
+            scene.UpdateObjectTransformation("obj", transform)
+            session.EndSceneEdit()
         deadline = time.monotonic() + 120
         while not session.HasDone():
             if time.monotonic() >= deadline:

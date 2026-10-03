@@ -100,7 +100,7 @@ and zero Snap increments, signed integer boundaries, fractional values,
 large float32 Round boundaries, SDL texture round-trip, and real
 CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
 actual Blender nodes and feeds their graphs into the same renderer gate:
-308 checks passed, including scalar Clamp, typed vector/colour inputs,
+310 checks passed, including scalar Clamp, typed vector/colour inputs,
 inclusive Compare/minimum epsilon, float32 spacing boundaries, NaN
 differences, componentwise Vector Math Floor/Ceil/Fraction, linked/folded
 extrema, and HDR/subnormal-input quotients. Seventy installed-package
@@ -116,6 +116,8 @@ their wrapper transform. Flat axes return 0.5.
 
 The cache is prepared before shading and invalidated by geometry or applied
 transform changes. Only meshes whose material reads Generated are scanned.
+Live noncommuting rotation/translation edits are checked against Blender's
+reference coordinates after scene-edit cache invalidation on CPU and Metal.
 Evaluation performs neither a full mesh scan nor bounding-box division.
 The GPU mesh descriptor stores a 48-byte map instead of a 24-byte bbox;
 texture descriptors are unchanged and no per-vertex coordinates are added.

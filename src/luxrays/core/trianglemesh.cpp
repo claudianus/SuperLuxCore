@@ -87,7 +87,7 @@ BBox TriangleMesh::GetBBox() const {
 }
 
 void TriangleMesh::ApplyTransform(const Transform &trans) {
-	appliedTrans = appliedTrans * trans;
+	appliedTrans = trans * appliedTrans;
 	appliedTransSwapsHandedness = appliedTrans.SwapsHandedness();
 
 	for (u_int i = 0; i < vertices.Count(); ++i)
