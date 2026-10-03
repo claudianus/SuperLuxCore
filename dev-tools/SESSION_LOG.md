@@ -1779,3 +1779,15 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
   pass (correlated accept/reject + global normalization) vs the GPU
   i.i.d. task population. Closing it needs a converged
   (>4kspp, deterministic-task-count) A/B, not another code diff.
+
+## Session notes (2026-10-03, lt-channel residual resolved)
+
+- mhsun lt divergence root-caused to the estimator, not a code bug:
+  LTOCL at 1024spp closes to -1.8% vs LTCPU (was -4% at 64spp);
+  mixed-mode R deficit (-14%) is the GPU i.i.d.-Sobol light pass
+  converging slower than CPU Metropolis on caustic-class volume paths
+  (eye NEE is caustic-suppressed by design). Audit of every twin
+  (Intersect, VolWalk, DeltaTrack, AddVertex, IsCausticPath,
+  BSDF_Sample, SplatLight, GetPDF, SunEmit, LightFocusEmitDistant)
+  found bit-equivalent ports. Verdict + closure notes in
+  dev-tools/volume-gpu-divergence.md.
