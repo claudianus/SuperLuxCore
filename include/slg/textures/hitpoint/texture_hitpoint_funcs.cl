@@ -388,6 +388,8 @@ OPENCL_FORCE_INLINE float RayInfoTexture_ConstEvaluateFloat(__global const HitPo
 			return (float)hitPoint->rayTransmissionDepth;
 		case RAYINFO_TRANSPARENT_DEPTH:
 			return (float)hitPoint->rayTransparentDepth;
+		case RAYINFO_VIEW_DEPTH:
+			return hitPoint->rayViewDepth;
 		default:
 			return 0.f;
 	}

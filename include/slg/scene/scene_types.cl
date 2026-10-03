@@ -39,6 +39,14 @@ typedef int SceneRayType;
 
 typedef struct {
 	unsigned int defaultVolumeIndex;
+	// Camera position + normalized forward direction in world space,
+	// baked into the config by InitGPUTaskConfiguration. Used to
+	// compute HitPoint.rayViewDepth (the "rayinfo" "viewdepth" channel
+	// = Cycles Camera Data "View Z Depth"). Zero-filled when the scene
+	// has no camera; viewdepth evaluates to 0 like every other ray
+	// context field.
+	float cameraPosition[4];
+	float cameraDirection[4];
 } Scene;
 
 #if defined(SLG_OPENCL_KERNEL)

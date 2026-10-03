@@ -1635,8 +1635,12 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 		// past the current path vertex
 		*tmpPathDepthInfo = pathInfo->depth;
 		PathDepthInfo_IncDepths(tmpPathDepthInfo, rec->event);
+		const float3 restirViewDp3 = VLOAD3F(&tmpBsdf->hitPoint.p.x) -
+				MAKE_FLOAT3(scene->cameraPosition[0], scene->cameraPosition[1], scene->cameraPosition[2]);
 		HitPoint_SetRayContext(&tmpBsdf->hitPoint, EYE_RAY | INDIRECT_RAY,
-				rec->event, tmpPathDepthInfo, candHits[i].t);
+				rec->event, tmpPathDepthInfo, candHits[i].t,
+				dot(restirViewDp3, MAKE_FLOAT3(scene->cameraDirection[0],
+						scene->cameraDirection[1], scene->cameraDirection[2])));
 		VSTORE3F(VLOAD3F(&tmpBsdf->hitPoint.geometryN.x), &rec->x2nX);
 
 		float directPdfA;
@@ -2253,8 +2257,12 @@ OPENCL_FORCE_NOT_INLINE void RestirPT_Bounce(
 		// past the current path vertex
 		*tmpPathDepthInfo = pathInfo->depth;
 		PathDepthInfo_IncDepths(tmpPathDepthInfo, rec->event);
+		const float3 restirViewDp3b = VLOAD3F(&tmpBsdf->hitPoint.p.x) -
+				MAKE_FLOAT3(scene->cameraPosition[0], scene->cameraPosition[1], scene->cameraPosition[2]);
 		HitPoint_SetRayContext(&tmpBsdf->hitPoint, EYE_RAY | INDIRECT_RAY,
-				rec->event, tmpPathDepthInfo, candHits[i].t);
+				rec->event, tmpPathDepthInfo, candHits[i].t,
+				dot(restirViewDp3b, MAKE_FLOAT3(scene->cameraDirection[0],
+						scene->cameraDirection[1], scene->cameraDirection[2])));
 		VSTORE3F(VLOAD3F(&tmpBsdf->hitPoint.geometryN.x), &rec->x2nX);
 
 		float directPdfA;

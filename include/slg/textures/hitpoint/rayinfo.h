@@ -51,6 +51,11 @@ namespace slg {
 //   "transmissiondepth" the number of TRANSMIT bounces before the ray
 //   "transparentdepth"  the number of transparent surfaces crossed by the
 //                       path before this hit
+//   "viewdepth"        camera-space depth of the hit point along the
+//                      camera forward direction (Cycles Camera Data
+//                      "View Z Depth"). For a motion-blurred camera the
+//                      base pose is used; outside ray-traced contexts
+//                      the value is 0.
 //
 // The bounce event is only meaningful for indirect path continuations:
 // camera rays have no generating bounce and shadow rays are spawned for
@@ -73,7 +78,8 @@ typedef enum {
 	RAYINFO_GLOSSY_DEPTH,
 	RAYINFO_SPECULAR_DEPTH,
 	RAYINFO_TRANSMISSION_DEPTH,
-	RAYINFO_TRANSPARENT_DEPTH
+	RAYINFO_TRANSPARENT_DEPTH,
+	RAYINFO_VIEW_DEPTH
 } RayInfoChannel;
 
 class RayInfoTexture : public Texture {

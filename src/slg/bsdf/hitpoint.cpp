@@ -124,7 +124,8 @@ void HitPoint::Init() {
 }
 
 void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
-		const PathDepthInfo *depthInfo, const float length) {
+		const PathDepthInfo *depthInfo, const float length,
+		const float viewDepth) {
 	rayEvent = event;
 	rayFlags = rayType;
 	rayDepth = depthInfo ? depthInfo->depth : 0;
@@ -134,6 +135,7 @@ void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
 	rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0;
 	rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0;
 	rayLength = length;
+	rayViewDepth = viewDepth;
 	// PSR: the engine seeds PathDepthInfo::regularization at path init;
 	// gate it per vertex so first-bounce shading stays exact
 	regularization = (depthInfo && (depthInfo->depth >= depthInfo->regularizationMinDepth)) ?

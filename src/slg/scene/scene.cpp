@@ -888,6 +888,13 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 	// This field can be checked by the calling code even if there was no
 	// intersection (and not BSDF initialization)
 	bsdf->hitPoint.throughShadowTransparency = false;
+	// Camera-space depth basis for the "rayinfo" "viewdepth" channel
+	// (Cycles Camera Data "View Z Depth"). Computed once per call; the
+	// per-hit value is dot(p - camPos, camDir). Camera-less scenes (rare,
+	// e.g. baking) get zero like every other ray context field.
+	const bool hasCam = HasCamera();
+	const Point camPos = hasCam ? camera->GetCameraToWorld() * Point(0.f, 0.f, 0.f) : Point(0.f, 0.f, 0.f);
+	const Vector camDir = hasCam ? Normalize(camera->GetDir()) : Vector(0.f, 0.f, 0.f);
 
 	// The Embree accelerator is pinned on the scene at dataSet build:
 	// a raw pointer here skips the shared_ptr atomic inc/dec + map
@@ -920,7 +927,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			);
 			// Fill the context of the ray that produced this hit point
 			// (used by the "rayinfo" texture)
-			bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo, rayHit->t);
+			bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo,
+					rayHit->t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
 			rayVolume = bsdf->hitPoint.intoObject ?
 				bsdf->hitPoint.exteriorVolume : bsdf->hitPoint.interiorVolume;
 
@@ -1007,7 +1015,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 					t,
 					passThrough
 				);
-				bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo, t);
+				bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo,
+						t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
 				volInfo->SetScatteredStart(true);
 
 				return true;

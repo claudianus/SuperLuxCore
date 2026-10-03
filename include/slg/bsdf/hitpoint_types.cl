@@ -99,7 +99,13 @@ typedef struct {
 	unsigned int rayTransmissionDepth;
 	unsigned int rayTransparentDepth;
 	// The length of the incoming ray segment
+	// The length of the incoming ray segment
 	float rayLength;
+	// Camera-space depth of the hit point along the camera forward
+	// direction (dot(p - cameraPos, cameraDir)); 0 outside ray-traced
+	// contexts. Read by the "rayinfo" "viewdepth" channel - the Cycles
+	// Camera Data "View Z Depth" output.
+	float rayViewDepth;
 
 	// Path-space regularization: effective microfacet-alpha inflation
 	// for this vertex (0 = disabled), gated into place by

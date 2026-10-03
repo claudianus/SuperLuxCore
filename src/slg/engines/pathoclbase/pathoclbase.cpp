@@ -211,9 +211,33 @@ PathOCLBaseRenderEngine::~PathOCLBaseRenderEngine() {
 	delete oclPixelFilter;
 }
 
+void PathOCLBaseRenderEngine::BakeSceneCamera() {
+	// Camera basis baked into the device Scene for the "viewdepth"
+	// rayinfo channel (Cycles Camera Data "View Z Depth"). Uses the
+	// base pose; a motion-blurred camera keeps its primary transform
+	// (approximation documented on the rayinfo doc block).
+	if (renderConfig.GetScene().HasCamera()) {
+		const Camera &cam = renderConfig.GetScene().GetCamera();
+		const Point camPos = cam.GetCameraToWorld() * Point(0.f, 0.f, 0.f);
+		const Vector camDir = Normalize(cam.GetDir());
+		taskConfig.scene.cameraPosition[0] = camPos.x;
+		taskConfig.scene.cameraPosition[1] = camPos.y;
+		taskConfig.scene.cameraPosition[2] = camPos.z;
+		taskConfig.scene.cameraDirection[0] = camDir.x;
+		taskConfig.scene.cameraDirection[1] = camDir.y;
+		taskConfig.scene.cameraDirection[2] = camDir.z;
+	} else {
+		for (u_int i = 0; i < 4; ++i) {
+			taskConfig.scene.cameraPosition[i] = 0.f;
+			taskConfig.scene.cameraDirection[i] = 0.f;
+		}
+	}
+}
+
 void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 	// Scene configuration
 	taskConfig.scene.defaultVolumeIndex = compiledScene->defaultWorldVolumeIndex;
+	BakeSceneCamera();
 
 	// Sampler configuration
 	taskConfig.sampler = *oclSampler;
@@ -666,6 +690,13 @@ void PathOCLBaseRenderEngine::EndSceneEditLockLess(const EditActionList &editAct
 	if (lightSamplerSharedData)
 		lightSamplerSharedData->Reset();
 	compiledScene->Recompile(editActions);
+
+	// The baked camera basis in taskConfig.scene goes stale on a
+	// camera edit (it is normally only written by
+	// InitGPUTaskConfiguration at render start). Re-bake here; the OCL
+	// threads pick it up via wasCameraCompiled -> EndSceneEdit.
+	if (editActions.Has(CAMERA_EDIT))
+		BakeSceneCamera();
 
 	for (size_t i = 0; i < renderOCLThreads.size(); ++i) {
 		renderOCLThreads[i]->intersectionDevice.PushThreadCurrentDevice();

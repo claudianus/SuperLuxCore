@@ -22,7 +22,8 @@
 // "rayinfo" texture). A NULL depthInfo means all depths are 0.
 OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 		const uint rayType, const BSDFEvent event,
-		__global const PathDepthInfo *depthInfo, const float length) {
+		__global const PathDepthInfo *depthInfo, const float length,
+		const float viewDepth) {
 	hitPoint->rayEvent = event;
 	hitPoint->rayFlags = rayType;
 	hitPoint->rayDepth = depthInfo ? depthInfo->depth : 0u;
@@ -32,6 +33,7 @@ OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 	hitPoint->rayTransmissionDepth = depthInfo ? depthInfo->transmitDepth : 0u;
 	hitPoint->rayTransparentDepth = depthInfo ? depthInfo->transparentDepth : 0u;
 	hitPoint->rayLength = length;
+	hitPoint->rayViewDepth = viewDepth;
 	// PSR: seed at path init (PathDepthInfo.regularization), gated per
 	// vertex so first-bounce shading stays exact
 	hitPoint->regularization = (depthInfo &&
@@ -92,8 +94,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 				);
 		// Fill the context of the ray that produced this hit point
 		// (used by the "rayinfo" texture)
+		// Camera-space depth for the "viewdepth" rayinfo channel:
+		// dot(p - camPos, camDir) with the config-baked basis (0 when
+		// the scene has no camera).
+		const float3 viewDp3 = VLOAD3F(&bsdf->hitPoint.p.x) -
+				MAKE_FLOAT3(scene->cameraPosition[0], scene->cameraPosition[1], scene->cameraPosition[2]);
+		const float viewDepth = dot(viewDp3,
+				MAKE_FLOAT3(scene->cameraDirection[0], scene->cameraDirection[1], scene->cameraDirection[2]));
 		HitPoint_SetRayContext(&bsdf->hitPoint, rayType, rayEvent,
-				rayDepthInfo, rayHit->t);
+				rayDepthInfo, rayHit->t, viewDepth);
 
 #if defined(SLG_SPECTRAL)
 		if (sampleResult) {
@@ -165,8 +174,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			rayHit->meshIndex = 0xfffffffeu;
 
 			BSDF_InitVolume(bsdf, *throughShadowTransparency, mats, ray, rayVolumeIndex, t, passThrough);
+			// Same viewdepth basis as the surface path - the scatter
+			// point is rayOrig + t*rayDir (hitPoint.p was just set by
+			// BSDF_InitVolume).
+			const float3 viewDp3v = VLOAD3F(&bsdf->hitPoint.p.x) -
+					MAKE_FLOAT3(scene->cameraPosition[0], scene->cameraPosition[1], scene->cameraPosition[2]);
+			const float viewDepthV = dot(viewDp3v,
+					MAKE_FLOAT3(scene->cameraDirection[0], scene->cameraDirection[1], scene->cameraDirection[2]));
 			HitPoint_SetRayContext(&bsdf->hitPoint, rayType, rayEvent,
-					rayDepthInfo, t);
+					rayDepthInfo, t, viewDepthV);
 			volInfo->scatteredStart = true;
 
 #if defined(SLG_SPECTRAL)

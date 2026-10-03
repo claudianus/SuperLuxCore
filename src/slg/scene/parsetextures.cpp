@@ -661,6 +661,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				channelStr == "speculardepth" ? RAYINFO_SPECULAR_DEPTH :
 				channelStr == "transmissiondepth" ? RAYINFO_TRANSMISSION_DEPTH :
 				channelStr == "transparentdepth" ? RAYINFO_TRANSPARENT_DEPTH :
+				channelStr == "viewdepth" ? RAYINFO_VIEW_DEPTH :
 				throw runtime_error("Unknown rayinfo texture channel: " + channelStr);
 		tex = std::make_unique<RayInfoTexture>(channel);
 	} else if (texType == "hitpoint") {

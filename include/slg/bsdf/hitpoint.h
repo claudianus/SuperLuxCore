@@ -100,7 +100,14 @@ typedef struct HitPoint_t {
 	u_int rayTransmissionDepth;
 	u_int rayTransparentDepth;
 	// The length of the incoming ray segment
+	// The length of the incoming ray segment
 	float rayLength;
+	// Camera-space depth of the hit point along the camera forward
+	// direction (dot(p - cameraPos, cameraDir)); 0 outside ray-traced
+	// contexts. Read by the "rayinfo" "viewdepth" channel - the Cycles
+	// Camera Data "View Z Depth" output. Keep aligned with
+	// hitpoint_types.cl.
+	float rayViewDepth;
 
 	// Path-space regularization: effective microfacet-alpha inflation
 	// for this vertex (0 = disabled). Gated from
@@ -143,8 +150,12 @@ typedef struct HitPoint_t {
 
 	// Sets the ray context fields (called by Scene::Intersect()). A NULL
 	// depthInfo means all depths are set to 0.
+	// Sets the ray context fields (called by Scene::Intersect()). A NULL
+	// depthInfo means all depths are set to 0. viewDepth is the
+	// camera-space depth of the hit point (0 when no camera).
 	void SetRayContext(const u_int rayType, const BSDFEvent event,
-		const PathDepthInfo *depthInfo, const float length);
+		const PathDepthInfo *depthInfo, const float length,
+		const float viewDepth = 0.f);
 
 	luxrays::Frame GetFrame() const { return luxrays::Frame(dpdu, dpdv, shadeN); }
 	luxrays::Normal GetLandingGeometryN() const { return (intoObject ? 1.f : -1.f) * geometryN; }

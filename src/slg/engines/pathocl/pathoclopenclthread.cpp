@@ -377,6 +377,26 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			f.close();
 		}
 
+		// LUX_TASKSTATE_LIGHT_DUMP: same record but for the light-side
+		// state - lightPathInfos (LightPathInfo: lpi->volume,
+		// connectVolInfo, pendingSplat.valid). Paired with the eye dump
+		// above; appended after it.
+		static const bool dumpLight = getenv("LUX_TASKSTATE_LIGHT_DUMP") != nullptr;
+		if (dumpLight && lightPathInfosBuff && renderEngine->lightTaskCount > 0) {
+			const size_t lpiSize = sizeof(slg::ocl::pathoclbase::LightPathInfo);
+			const u_int ltCount = renderEngine->lightTaskCount;
+			std::vector<char> lpi(lpiSize * ltCount);
+			intersectionDevice.EnqueueReadBuffer(lightPathInfosBuff,
+					CL_TRUE, lpi.size(), lpi.data());
+			intersectionDevice.FinishQueue();
+			const std::string name = "taskstate_light_" +
+					ToString(threadIndex) + ".bin";
+			std::ofstream f(name.c_str(), std::ios::binary | std::ios::app);
+			f.write(reinterpret_cast<const char *>(&ltCount), sizeof(ltCount));
+			f.write(lpi.data(), lpi.size());
+			f.close();
+		}
+
 		// Path guiding (P1-3 M2b-2): drain GPU training records once per
 		// batch, after the queue drain above. A per-iteration drain
 		// serializes the loop - each blocking read flushes the whole

@@ -67,6 +67,8 @@ float RayInfoTexture::GetFloatValue(const HitPoint &hitPoint) const {
 			return hitPoint.rayTransmissionDepth;
 		case RAYINFO_TRANSPARENT_DEPTH:
 			return hitPoint.rayTransparentDepth;
+		case RAYINFO_VIEW_DEPTH:
+			return hitPoint.rayViewDepth;
 		default:
 			throw runtime_error("Unknown channel in RayInfoTexture::GetFloatValue(): " +
 					ToString(channel));
@@ -94,6 +96,7 @@ static string Channel2String(const RayInfoChannel channel) {
 		case RAYINFO_SPECULAR_DEPTH: return "speculardepth";
 		case RAYINFO_TRANSMISSION_DEPTH: return "transmissiondepth";
 		case RAYINFO_TRANSPARENT_DEPTH: return "transparentdepth";
+		case RAYINFO_VIEW_DEPTH: return "viewdepth";
 		default:
 			throw runtime_error("Unknown channel in RayInfoTexture::Channel2String(): " +
 					ToString(channel));

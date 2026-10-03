@@ -387,6 +387,14 @@ void PathOCLBaseOCLRenderThread::EndSceneEdit(const EditActionList &editActions)
 	if (cscene->wasCameraCompiled) {
 		// Update Camera
 		InitCamera();
+		// The engine re-baked the camera basis into taskConfig.scene for
+		// the "viewdepth" rayinfo channel; mirror it into this thread's
+		// config copy and push it to the device.
+		threadTaskConfig.scene = renderEngine->taskConfig.scene;
+		intersectionDevice.EnqueueWriteBuffer(taskConfigBuff,
+				CL_FALSE,
+				sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
+				&threadTaskConfig);
 	}
 
 	if (cscene->wasGeometryCompiled) {

@@ -76,6 +76,7 @@ protected:
 		throw std::runtime_error("Internal error, called PathOCLBaseRenderEngine::CreateNativeThread()");
 	}
 
+	void BakeSceneCamera();
 	virtual void InitGPUTaskConfiguration();
 	void InitPixelFilterDistribution();
 
