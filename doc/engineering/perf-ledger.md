@@ -300,3 +300,23 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   cases passed after this change.
 - Release build passed. GPU varying-normal derivative behavior is still
   outside the signed interpolation regression's verification scope.
+
+### Normal derivatives: generic bump consumer gate
+
+- `Texture::Bump` perturbs shading normals with `dndu/dndv` before
+  evaluating a normal-dependent texture. This gives an observable
+  consumer path for testing the differential contract, rather than
+  inspecting kernel source or comparing two copies of an implementation.
+- Added `dev-tools/bump-differential-regression.py`: three unequal,
+  nonunit corner normals, unit UV triangle, and `shadingnormal.x` bump.
+  An independent NumPy oracle computes transformed normalized corner
+  differences, projected geometry derivatives, finite-difference bump
+  slopes and the final oriented cross-product normal at the centre ray.
+- Actual signed SHADING_NORMAL outputs passed for static geometry,
+  nonuniform scale `(0.5,1,2)` and reflection/nonuniform scale
+  `(-0.5,1,2)`, each on PATHCPU and isolated Metal PATHOCL.
+  Largest central mean component error: `0.000408`; tolerance `0.002`
+  allows differing subpixel hit positions, not an inverted normal.
+- No additional renderer change was needed at this gate. Motion-varying
+  normal derivatives and native CUDA/OpenCL/Vulkan executions are not
+  covered by this Apple Metal run.

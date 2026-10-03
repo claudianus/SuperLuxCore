@@ -50,6 +50,12 @@ It checks baked reflections, static/instance/motion wrappers and composed
 reflected nonuniform transforms against analytic float normals (`1e-5`).
 Use the device mask appropriate to the host, or `--cpu-only` for CPU.
 
+`dev-tools/bump-differential-regression.py` (same invocation/environment)
+uses unequal nonunit corner normals and a normal-dependent bump texture.
+It checks static, nonuniform and reflected transforms against an analytic
+finite-difference bump oracle; NumPy is required. GPU native workers are
+disabled. The centre-ray tolerance accommodates subpixel sampling.
+
 ## Regression covered
 
 Commit `metalrtaccel`: on Apple Metal, calling the timed
