@@ -56,6 +56,7 @@ static float ApplyFunc(MathFuncOp op, const float a, const float b) {
 		case MATHFUNC_ROUND: return floorf(a + .5f);
 		case MATHFUNC_MAX: return fmaxf(a, b);
 		case MATHFUNC_LESSEQUAL: return (a <= b) ? 1.f : 0.f;
+		case MATHFUNC_MIN: return fminf(a, b);
 		default:
 			return 0.f;
 	}
@@ -101,6 +102,7 @@ const char *MathFuncTexture::OpToString(MathFuncOp o) {
 		case MATHFUNC_ROUND: return "round";
 		case MATHFUNC_MAX: return "max";
 		case MATHFUNC_LESSEQUAL: return "lessequal";
+		case MATHFUNC_MIN: return "min";
 		default: return "sin";
 	}
 }

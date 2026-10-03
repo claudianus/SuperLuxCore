@@ -41,7 +41,10 @@ Spectrum DivideTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 		return Spectrum(0.f);
 	
 	const Spectrum value1 = GetTexture1().GetSpectrumValue(hitPoint);
-	return value1 / value2;
+	// Avoid Color's reciprocal multiplication: small nonzero divisors can
+	// overflow their reciprocal even when the quotient is finite.
+	return Spectrum(value1.c[0] / value2.c[0],
+			value1.c[1] / value2.c[1], value1.c[2] / value2.c[2]);
 }
 
 float DivideTexture::Y() const {

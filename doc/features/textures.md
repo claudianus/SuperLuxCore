@@ -50,13 +50,13 @@ two (found and fixed during validation).
 
 Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeMath` trig/exp/log
 and integer/fractional ops, plus componentwise Vector Math Floor, Ceil,
-Fraction and Snap. LOGARITHM uses ln(x)/ln(b) composition; Compare uses
-absolute difference, maximum epsilon and inclusive comparison.
+Fraction, Snap, Minimum and Maximum. LOGARITHM uses ln(x)/ln(b) composition;
+Compare uses absolute difference, maximum epsilon and inclusive comparison.
 
 **Properties.** `mathfunc.op` =
-`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap|floor|ceil|trunc|fract|round|max|lessequal`;
+`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap|floor|ceil|trunc|fract|round|max|lessequal|min`;
 `mathfunc.texture1` is the first operand. `mathfunc.texture2` is evaluated
-for `atan2`, `floormod`, `snap`, `max` and `lessequal`. Scalar and float3
+for `atan2`, `floormod`, `snap`, `max`, `lessequal` and `min`. Scalar and float3
 inputs are supported.
 
 `snap(a,b) = floor(a/b)*b`, with zero output when `b == 0`.
@@ -81,12 +81,17 @@ float32 even for constant inputs: `round(8388609.f)=8388610.f`.
 All five unary operations apply independently to float3 components.
 Previously serialized operation IDs remain unchanged.
 
-`max(a,b)` uses native floating-point maximum; `lessequal(a,b)` returns
-one when `a <= b`, zero otherwise, including unordered NaN comparisons.
-Both apply componentwise to float3 spectrum outputs. The adapter converts
+`min(a,b)` and `max(a,b)` use native floating-point extrema; `lessequal(a,b)`
+returns one when `a <= b`, zero otherwise, including unordered NaN comparisons.
+All three apply componentwise to float3 spectrum outputs. The adapter converts
 Vector/Color→Float at scalar socket boundaries before exporting Math.
 Blender Compare is `abs(a-b) <= max(epsilon, 1e-5f)`; constant subtraction
 also rounds to float32 before comparison.
+
+Math and Vector Math Minimum/Maximum each use one native operation, rather
+than subtract/compare/multiply/add selection. This avoids an overflowing
+intermediate `a-b` for finite opposite-sign inputs near float32's maximum.
+Two linked inputs now require three explicit textures instead of six.
 
 **Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
 through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
@@ -95,9 +100,11 @@ and zero Snap increments, signed integer boundaries, fractional values,
 large float32 Round boundaries, SDL texture round-trip, and real
 CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
 actual Blender nodes and feeds their graphs into the same renderer gate:
-268 checks passed, including scalar Clamp, typed vector/colour inputs,
+302 checks passed, including scalar Clamp, typed vector/colour inputs,
 inclusive Compare/minimum epsilon, float32 spacing boundaries, NaN
-differences, and componentwise Vector Math Floor/Ceil/Fraction.
+differences, componentwise Vector Math Floor/Ceil/Fraction, linked/folded
+extrema, and HDR/subnormal-input quotients. Seventy installed-package
+CPU/Metal checks also passed. Radiance tolerance is 0.05, not bitwise parity.
 
 ## gabornoise texture — sparse Gabor convolution
 

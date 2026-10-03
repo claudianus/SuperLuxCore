@@ -47,10 +47,11 @@
 #define MATHFUNC_OP_ROUND 19
 #define MATHFUNC_OP_MAX 20
 #define MATHFUNC_OP_LESSEQUAL 21
+#define MATHFUNC_OP_MIN 22
 
 OPENCL_FORCE_INLINE bool MathFuncTexture_IsBinary(const uint op) {
 	return op == MATHFUNC_OP_ATAN2 || op == MATHFUNC_OP_FLOORMOD || op == MATHFUNC_OP_SNAP ||
-			op == MATHFUNC_OP_MAX || op == MATHFUNC_OP_LESSEQUAL;
+			op == MATHFUNC_OP_MAX || op == MATHFUNC_OP_LESSEQUAL || op == MATHFUNC_OP_MIN;
 }
 
 OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
@@ -82,6 +83,7 @@ OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
 		case MATHFUNC_OP_ROUND: return floor(a + .5f);
 		case MATHFUNC_OP_MAX: return fmax(a, b);
 		case MATHFUNC_OP_LESSEQUAL: return (a <= b) ? 1.f : 0.f;
+		case MATHFUNC_OP_MIN: return fmin(a, b);
 		default: return 0.f;
 	}
 }

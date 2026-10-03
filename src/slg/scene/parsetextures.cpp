@@ -630,6 +630,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		else if (opStr == "round") op = MATHFUNC_ROUND;
 		else if (opStr == "max") op = MATHFUNC_MAX;
 		else if (opStr == "lessequal") op = MATHFUNC_LESSEQUAL;
+		else if (opStr == "min") op = MATHFUNC_MIN;
 		else
 			throw runtime_error("Unknown mathfunc texture op: " + opStr);
 

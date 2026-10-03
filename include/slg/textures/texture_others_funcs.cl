@@ -719,16 +719,26 @@ OPENCL_FORCE_NOT_INLINE float3 BevelTexture_Bump(__global const HitPoint *hitPoi
 // Divide texture
 //------------------------------------------------------------------------------
 
+#ifndef LUXRAYS_TEXTURE_DIVIDE
+#define LUXRAYS_TEXTURE_DIVIDE(x, y) ((x) / (y))
+#endif
+#ifndef LUXRAYS_TEXTURE_FLOAT_IS_ZERO
+#define LUXRAYS_TEXTURE_FLOAT_IS_ZERO(x) ((x) == 0.f)
+#endif
+#ifndef LUXRAYS_TEXTURE_SPECTRUM_IS_ZERO
+#define LUXRAYS_TEXTURE_SPECTRUM_IS_ZERO(x) Spectrum_IsBlack(x)
+#endif
+
 OPENCL_FORCE_INLINE float DivideTexture_ConstEvaluateFloat(const float tex1, const float tex2) {
-	if (tex2 == 0.f)
+	if (LUXRAYS_TEXTURE_FLOAT_IS_ZERO(tex2))
 		return 0.f;
-	return tex1 / tex2;
+	return LUXRAYS_TEXTURE_DIVIDE(tex1, tex2);
 }
 
 OPENCL_FORCE_INLINE float3 DivideTexture_ConstEvaluateSpectrum(const float3 tex1, const float3 tex2) {
-	if (Spectrum_IsBlack(tex2))
+	if (LUXRAYS_TEXTURE_SPECTRUM_IS_ZERO(tex2))
 		return BLACK;
-	return tex1 / tex2;
+	return LUXRAYS_TEXTURE_DIVIDE(tex1, tex2);
 }
 
 //------------------------------------------------------------------------------

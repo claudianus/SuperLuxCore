@@ -55,6 +55,7 @@ def native_cases():
                       "expected": [0.] * 3})
     for op, a, b, expected in [
         ("max", [1.5, -1., -.5], [1., 0., -2.], [1.5, 0., -.5]),
+        ("min", [1.5, -1., -.5], [1., 0., -2.], [1., -1., -2.]),
         ("lessequal", [0., .125, .25], [0., .125, .125], [1., 1., 0.]),
     ]:
         cases.append({"label": "native-" + op, "output": "compared",
@@ -65,6 +66,7 @@ def native_cases():
                       "expected": expected})
     for op, a, b, expected in [
         ("max", -.75, .25, .0625), ("lessequal", .125, .125, 1.),
+        ("min", -.75, .25, .5625),
     ]:
         cases.append({"label": "native-float-" + op, "output": "powered",
                       "graph": "scene.textures.compared.type = mathfunc\n"
@@ -93,6 +95,49 @@ def native_cases():
         cases.append({"label": f"native-nan-compare-float-{int(float_consumer)}",
                       "output": "powered" if float_consumer else "compared",
                       "graph": graph, "expected": [0.] * 3})
+    cases.append({"label": "native-divide-hdr-spectrum", "output": "quotient",
+                  "graph": "scene.textures.quotient.type = divide\n"
+                           "scene.textures.quotient.texture1 = -3e38 3e38 0\n"
+                           "scene.textures.quotient.texture2 = -3e38 3e38 1\n",
+                  "expected": [1., 1., 0.]})
+    cases.append({"label": "native-divide-hdr-float", "output": "powered",
+                  "graph": "scene.textures.quotient.type = divide\n"
+                           "scene.textures.quotient.texture1 = 3e38\n"
+                           "scene.textures.quotient.texture2 = 3e38\n"
+                           "scene.textures.powered.type = power\n"
+                           "scene.textures.powered.base = quotient\n"
+                           "scene.textures.powered.exponent = 1\n",
+                  "expected": [1.] * 3})
+    cases.append({"label": "native-divide-tiny-spectrum", "output": "quotient",
+                  "graph": "scene.textures.quotient.type = divide\n"
+                           "scene.textures.quotient.texture1 = 3e-38 1e-38 1e-45\n"
+                           "scene.textures.quotient.texture2 = 3e-38 1e-38 1e-45\n",
+                  "expected": [1.] * 3})
+    cases.append({"label": "native-divide-tiny-float", "output": "powered",
+                  "graph": "scene.textures.quotient.type = divide\n"
+                           "scene.textures.quotient.texture1 = 1e-45\n"
+                           "scene.textures.quotient.texture2 = 1e-45\n"
+                           "scene.textures.powered.type = power\n"
+                           "scene.textures.powered.base = quotient\n"
+                           "scene.textures.powered.exponent = 1\n",
+                  "expected": [1.] * 3})
+    cases.append({"label": "native-divide-tiny-signed-spectrum", "output": "quotient",
+                  "graph": "scene.textures.quotient.type = divide\n"
+                           "scene.textures.quotient.texture1 = -1e-38 -1e-45 0\n"
+                           "scene.textures.quotient.texture2 = 1e-38 -1e-45 1e-45\n",
+                  "expected": [-1., 1., 0.]})
+    for float_consumer in (False, True):
+        graph = ("scene.textures.quotient.type = divide\n"
+                 "scene.textures.quotient.texture1 = 1\n"
+                 "scene.textures.quotient.texture2 = -0\n")
+        output = "quotient"
+        if float_consumer:
+            graph += ("scene.textures.powered.type = power\n"
+                      "scene.textures.powered.base = quotient\n"
+                      "scene.textures.powered.exponent = 1\n")
+            output = "powered"
+        cases.append({"label": f"native-divide-zero-{int(float_consumer)}",
+                      "output": output, "graph": graph, "expected": [0.] * 3})
     return cases
 
 
@@ -101,6 +146,8 @@ def render(case, engine, devices):
     scene.DefineMesh("plane", [(-4., -4., 0.), (4., -4., 0.), (4., 4., 0.), (-4., 4., 0.)],
                      [(0, 1, 2), (0, 2, 3)], None, None, None, None)
     props = lux.Properties()
+    output = case["output"]
+    output_sdl = " ".join(map(str, output)) if isinstance(output, (list, tuple)) else str(output)
     props.SetFromString(case["graph"] + f"""
 scene.camera.lookat.orig = 0 0 3
 scene.camera.lookat.target = 0 0 0
@@ -111,7 +158,7 @@ scene.materials.mat.type = matte
 scene.materials.mat.kd = 0
 scene.materials.mat.emission = biased
 scene.textures.biased.type = add
-scene.textures.biased.texture1 = {case['output']}
+scene.textures.biased.texture1 = {output_sdl}
 scene.textures.biased.texture2 = 4
 """)
     scene.Parse(props)

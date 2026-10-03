@@ -434,3 +434,39 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   zero/negative epsilon, float32 spacing and unordered NaN differences.
   Installed-extension Compare graphs also passed; radiance tolerance
   remains 0.05 and does not establish bitwise shader parity.
+
+### Native extrema and range-safe texture division
+
+- The old Math Minimum selection returned black on PATHCPU for linked
+  finite inputs `3e38` and `-3e38`: its intermediate subtraction
+  overflowed before selection. Scalar/vector Minimum and Maximum now
+  use native `mathfunc.min/max`; `min` appends operation ID 22 without
+  changing any texture fields or previously serialized IDs.
+- Four real Blender graph probes (Math/Vector Math Minimum/Maximum,
+  two linked inputs each): explicit textures fall from 6 to 3,
+  arithmetic operations from 4 to 1. No measured render-speedup claim.
+  Constant Vector Math extrema also fold independently by component.
+- Keeping the full-range normalization fixture exposed Metal division:
+  `3e38/3e38` returned 0 instead of 1 because fast reciprocal arithmetic
+  underflowed. Divide textures now request Metal's precise intrinsic,
+  without disabling fast math throughout the renderer.
+- Small-denominator probes exposed a separate CPU reciprocal overflow
+  in `Color::operator/`. Only Divide texture spectrum evaluation now
+  divides components directly; the shared colour operator is unchanged.
+- Actual Metal kernels returned NaN for subnormal-input quotients with
+  both fast math enabled and disabled. The Divide shim decodes exact
+  integer significands for subnormal inputs, then divides/rescales them.
+  Ordinary inputs retain the precise intrinsic path. Bitwise zero guards
+  distinguish actual zero from a subnormal denominator.
+- No new texture storage, buffers or worker threads. Extra bit tests and
+  precise division are a correctness tradeoff; no division throughput
+  improvement is claimed. Results that remain subnormal are still
+  subject to Metal's arithmetic limits, not a bitwise-parity guarantee.
+- Development synchronization now updates the bundled Metal translator
+  beside the extension and inside its cached wheel, not just the binary.
+  Installed binary/exporter/translator rendering passed HDR, tiny signed
+  quotients, zero divisors and linked/folded extrema.
+- Final actual Blender export → SDL round-trip → CPU/isolated Metal gate:
+  302 checks passed, with unchanged `±3e38` extrema fixtures. Seventy
+  installed-package render checks passed. Radiance tolerance remains
+  0.05; CPU workers are disabled on the Metal gate.

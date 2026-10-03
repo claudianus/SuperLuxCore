@@ -161,6 +161,30 @@ inline size_t get_num_groups(uint d) { return 1; }
 #define native_divide(x, y) ((x) / (y))
 #define native_recip(x) (1.0f / (x))
 
+// Metal flushes subnormal arithmetic inputs even in precise math mode.
+// Use exact integer significands when needed; keep ordinary quotients native.
+inline float lux_texture_divide(float x, float y) {
+    const uint xb = as_type<uint>(x), yb = as_type<uint>(y);
+    const uint ax = xb & 0x7fffffffu, ay = yb & 0x7fffffffu;
+    const bool subnormal = (ax != 0u && ax < 0x00800000u) ||
+                           (ay != 0u && ay < 0x00800000u);
+    if (!subnormal || ax >= 0x7f800000u || ay >= 0x7f800000u)
+        return metal::precise::divide(x, y);
+    const int xe = int(ax >> 23), ye = int(ay >> 23);
+    const float xm = float((ax & 0x007fffffu) | (xe ? 0x00800000u : 0u));
+    const float ym = float((ay & 0x007fffffu) | (ye ? 0x00800000u : 0u));
+    const float q = metal::ldexp(metal::precise::divide(xm, ym),
+            (xe ? xe - 150 : -149) - (ye ? ye - 150 : -149));
+    return as_type<float>(as_type<uint>(q) | ((xb ^ yb) & 0x80000000u));
+}
+inline float3 lux_texture_divide(float3 x, float3 y) {
+    return float3(lux_texture_divide(x.x, y.x), lux_texture_divide(x.y, y.y),
+            lux_texture_divide(x.z, y.z));
+}
+#define LUXRAYS_TEXTURE_DIVIDE(x, y) lux_texture_divide(x, y)
+#define LUXRAYS_TEXTURE_FLOAT_IS_ZERO(x) ((as_type<uint>(x) & 0x7fffffffu) == 0u)
+#define LUXRAYS_TEXTURE_SPECTRUM_IS_ZERO(x) all((as_type<uint3>(x) & uint3(0x7fffffffu)) == uint3(0u))
+
 // Half-float loads: Metal exposes half types
 inline float vload_half(size_t o, const device half *p) { return (float)p[o]; }
 inline float vload_half(size_t o, const thread half *p) { return (float)p[o]; }
