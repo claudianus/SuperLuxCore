@@ -708,3 +708,17 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   extensions directories before startup produced the successful offline
   installation above. These artifacts remain rolling pre-releases.
 
+- Documentation-aligned bundle run 37141749403 published add-on
+  `1ee921d62691d2652c4d3a191c3077cf7c76378b`. The final public ARM ZIP
+  matched SHA-256
+  `06ec7e9ba4752a81a9dfd55c99d6747f25935f4ee9807667b84aac0be686b567`;
+  its embedded native wheel retained digest
+  `499fdb7dfaa570fff5698a267e1be611d06d0a1aeb2316e499183a34141aa93a`.
+  Another fresh-profile offline install and all 15 actual camera renders
+  passed against Cycles with the unchanged gates.
+- Pages run 37141748550 deployed the matching public manual from add-on
+  `main/docs`. Actual Chromium views verified the 2.11.10 version pair,
+  camera/reference bounds, genuine loaded 384×192 panorama, remaining
+  camera limitations and install-to-camera section link at
+  `https://claudianus.github.io/SuperBlendLuxCore/manual/`.
+
