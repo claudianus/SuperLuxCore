@@ -541,3 +541,23 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   translation through two BeginSceneEdit/EndSceneEdit transitions. Both
   backends retained `[4,4,4]` and passed every original 4×4 ROI check.
 
+### Published Blender 5.2.1 artifact cutover
+
+- Release wheel run 37121201329 built and smoked all four cp313 platforms.
+  `wheels-latest` now contains 2.11.8 built from
+  `dbf65e08329ac60c12280833bc8f299352a83521`, not the prior 2.11.7 artifacts.
+- The downloaded macOS-arm64 wheel matched its public SHA-256
+  `f3f1952bdb4285798cb817cb002c14bb008a5b9b281d39fefdbc6348762a21b9`.
+  A factory-startup Blender 5.2.1 process imported it from an isolated site
+  and passed all 310 export/SDL/CPU/isolated Metal gates, including live edits.
+- Bundle run 37123241893 used Blender 5.2.1 and published four matching
+  offline platform ZIPs. The public ARM ZIP matched SHA-256
+  `f43ef07c46b116bd85a29a4a39125977453328f1f8491a1fee49f579a4f40467`.
+  Blender's extension installer installed it into a separate profile
+  without an engine download.
+- Actual SUPERLUXCORE CPU and Metal renders of sine-controlled emission
+  cubes passed bright/dark PNG-region checks; the Metal run used no native
+  CPU workers. These are installation and behavior checks, not a speedup,
+  cross-vendor GPU or production-certification claim. Rolling bundle
+  releases retain their pre-release warning.
+
