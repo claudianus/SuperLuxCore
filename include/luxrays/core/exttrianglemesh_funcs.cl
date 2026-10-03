@@ -266,13 +266,17 @@ OPENCL_FORCE_INLINE float3 ExtMesh_GetInterpolateNormal(
 			}
 			case TYPE_EXT_TRIANGLE_INSTANCE: {
 				// Transform to global coordinates
-				interpolatedN = (meshDesc->instance.transSwapsHandedness ? -1.f : 1.f) * normalize(Transform_ApplyNormal(localToWorld, interpolatedN));
+				interpolatedN = ((meshDesc->instance.transSwapsHandedness !=
+						meshDesc->baseAppliedTransSwapsHandedness) ? -1.f : 1.f) *
+						normalize(Transform_ApplyNormal(localToWorld, interpolatedN));
 				break;
 			}
 			case TYPE_EXT_TRIANGLE_MOTION: {
 				const bool swapsHandedness = Transform_SwapsHandedness(localToWorld); 
 				// Transform to global coordinates
-				interpolatedN = (swapsHandedness ? -1.f : 1.f) * normalize(Transform_ApplyNormal(localToWorld, interpolatedN));
+				interpolatedN = ((swapsHandedness !=
+						(bool)meshDesc->baseAppliedTransSwapsHandedness) ? -1.f : 1.f) *
+						normalize(Transform_ApplyNormal(localToWorld, interpolatedN));
 				break;
 			}
 		}
@@ -371,12 +375,14 @@ OPENCL_FORCE_INLINE void ExtMesh_GetShadingInfo(
 						-1.f : 1.f) * localN;
 				break;
 			case TYPE_EXT_TRIANGLE_INSTANCE:
-				interpolatedN = (meshDesc->instance.transSwapsHandedness ?
-						-1.f : 1.f) * normalize(Transform_ApplyNormal(localToWorld, localN));
+				interpolatedN = ((meshDesc->instance.transSwapsHandedness !=
+						meshDesc->baseAppliedTransSwapsHandedness) ? -1.f : 1.f) *
+						normalize(Transform_ApplyNormal(localToWorld, localN));
 				break;
 			case TYPE_EXT_TRIANGLE_MOTION: {
 				const bool swapsHandedness = Transform_SwapsHandedness(localToWorld);
-				interpolatedN = (swapsHandedness ? -1.f : 1.f) *
+				interpolatedN = ((swapsHandedness !=
+						(bool)meshDesc->baseAppliedTransSwapsHandedness) ? -1.f : 1.f) *
 						normalize(Transform_ApplyNormal(localToWorld, localN));
 				break;
 			}
@@ -446,9 +452,11 @@ OPENCL_FORCE_INLINE void ExtMesh_GetShadingInfo(
 			} else {
 				// TYPE_EXT_TRIANGLE_INSTANCE / MOTION: CPU applies
 				// local2World * normal then normalizes
-				const float s = (meshDesc->type == TYPE_EXT_TRIANGLE_INSTANCE) ?
-						(meshDesc->instance.transSwapsHandedness ? -1.f : 1.f) :
-						(Transform_SwapsHandedness(localToWorld) ? -1.f : 1.f);
+				const bool swapsHandedness = (meshDesc->type == TYPE_EXT_TRIANGLE_INSTANCE) ?
+						(bool)meshDesc->instance.transSwapsHandedness :
+						Transform_SwapsHandedness(localToWorld);
+				const float s = (swapsHandedness !=
+						(bool)meshDesc->baseAppliedTransSwapsHandedness) ? -1.f : 1.f;
 				n0w = s * normalize(Transform_ApplyNormal(localToWorld, n0));
 				n1w = s * normalize(Transform_ApplyNormal(localToWorld, n1));
 				n2w = s * normalize(Transform_ApplyNormal(localToWorld, n2));

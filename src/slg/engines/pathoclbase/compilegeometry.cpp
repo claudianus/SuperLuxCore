@@ -254,6 +254,9 @@ void CompiledScene::CompileGeometry() {
 			default:
 				throw runtime_error("Unsupported mesh type in CompiledScene::CompileGeometry(): " + ToString(mesh.GetType()));
 		}
+		Transform baseTransform;
+		baseMesh.get().GetLocal2World(0.f, baseTransform);
+		currentMeshDesc.baseAppliedTransSwapsHandedness = baseTransform.SwapsHandedness();
 
 		if (!isExistingInstance) {		
 			//------------------------------------------------------------------

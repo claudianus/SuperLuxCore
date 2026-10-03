@@ -36,6 +36,8 @@ typedef struct {
 
 typedef struct {
 	MeshType type;
+	// Raw vertex normals do not include the base mesh's applied sign.
+	int baseAppliedTransSwapsHandedness;
 
 	// Vertex information
 	unsigned int vertsOffset;

@@ -35,6 +35,21 @@ Select the intersection backend with `opencl.devices.select` /
 OpenCL device (it can be forced off with `LUXRAYS_METAL_HWRT=0` to fall back
 to the software MBVH kernel on the same device).
 
+For GPU-only parity, set `opencl.native.threads.count = 0`; PATHOCL can
+otherwise mix native CPU workers into its film and mask GPU differences.
+`native.threads.count` is not the hybrid-worker setting.
+
+The signed-normal transform regression creates its scenes through the API:
+
+```sh
+PYTHONPATH=out/build/src/pysuperluxcore/Release python3.13 \
+  dev-tools/shading-handedness-regression.py --gpu-devices 010
+```
+
+It checks baked reflections, static/instance/motion wrappers and composed
+reflected nonuniform transforms against analytic float normals (`1e-5`).
+Use the device mask appropriate to the host, or `--cpu-only` for CPU.
+
 ## Regression covered
 
 Commit `metalrtaccel`: on Apple Metal, calling the timed

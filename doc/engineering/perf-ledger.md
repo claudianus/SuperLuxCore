@@ -270,5 +270,33 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   interpolation plus cached differentials 8.03/8.12 ns per hit.
   This probe demonstrated no speedup; it does not measure scattered
   normal traffic or end-to-end render throughput.
-- Scope limits: GPU varying-normal derivative parity and reflected/motion
-  transforms remain unverified. No speedup or bitwise-equivalence claim.
+- Scope limits at this gate: GPU varying-normal derivatives remained
+  unverified; reflected/motion interpolation was exercised in the next
+  gate below. No speedup or bitwise-equivalence claim.
+
+### Applied handedness: cache invalidation and GPU base-sign composition
+
+- Reproduced with a mesh whose X reflection was baked into positions and
+  vertex normals, followed by `Scene.SetMeshAppliedTransformation`.
+  Cached static CPU interpolation retained the pre-setter sign.
+  `ExtTriangleMesh::SetLocal2World` now invalidates signed-normal cache
+  entries only when the handedness changes; no extra per-hit work.
+- With GPU native workers disabled, instance and motion shading returned
+  `(-0.6,0,0.8)` instead of CPU `(0.6,0,-0.8)`: descriptors lacked the
+  base mesh's applied sign. A common per-mesh integer records that sign;
+  GPU interpolation and normal derivatives compose it with the
+  instance/motion transform sign. Geometry normals already contain the
+  base sign and therefore are intentionally unchanged.
+- Added `dev-tools/shading-handedness-regression.py`: actual signed float
+  SHADING_NORMAL output is checked at every central pixel against an
+  analytic normal, including magnitude (no renormalization hiding errors).
+  Static, instance and translating-motion wrappers over a baked reflection,
+  plus reflected/nonuniform instance and motion transforms, passed:
+  five cases on each of PATHCPU and isolated Metal PATHOCL, tolerance `1e-5`.
+- GPU isolation requires `opencl.native.threads.count = 0`, not
+  `native.threads.count = 0`. Mixed CPU/GPU rendering can dilute an inverted
+  GPU normal and is not proof of backend parity. The existing
+  `parity-regression.sh` now disables native workers on GPU runs; its four
+  cases passed after this change.
+- Release build passed. GPU varying-normal derivative behavior is still
+  outside the signed interpolation regression's verification scope.

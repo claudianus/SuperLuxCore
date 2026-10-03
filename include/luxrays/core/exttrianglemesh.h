@@ -614,6 +614,9 @@ public:
 		return tri.GetBaryCoords(vertices, hitPoint, b1, b2);
 	}
 	void SetLocal2World(const luxrays::Transform &t) {
+		// Cached corner normals include the applied handedness sign.
+		if (appliedTransSwapsHandedness != t.SwapsHandedness())
+			triDiffCache.clear();
 		appliedTrans = t;
 		appliedTransSwapsHandedness = appliedTrans.SwapsHandedness();
 	}

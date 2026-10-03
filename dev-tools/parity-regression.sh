@@ -112,6 +112,7 @@ EOF
 renderengine.type = PATHOCL
 opencl.cpu.use = 0
 opencl.gpu.use = 1
+opencl.native.threads.count = 0
 EOF
     fi
     ( cd "$ROOT" && "$CONSOLE" "$cfg" ) > "$WORK/$name-$backend.log" 2>&1
