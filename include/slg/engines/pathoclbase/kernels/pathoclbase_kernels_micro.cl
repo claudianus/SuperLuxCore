@@ -3140,8 +3140,9 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 
 			if (sumR2 > 0.f) {
 				const float g = pathTracer->lightTracing.focusRatio;
-				// Same radius the emit used (kernel-side envRadius arg)
-				const float envRadius = worldRadius;
+				// Same radius the emit used: Light_Emit now derives
+				// envRadius = GetEnvRadius(worldRadius) internally.
+				const float envRadius = EnvLightSource_GetEnvRadius(worldRadius);
 				const float3 wc = MAKE_FLOAT3(worldCenterX, worldCenterY, worldCenterZ);
 				float3 aDir, axX, axY;
 				if (light->type == TYPE_SHARPDISTANT) {

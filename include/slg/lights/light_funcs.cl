@@ -1950,11 +1950,15 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 		const float worldCenterX,
 		const float worldCenterY,
 		const float worldCenterZ,
-		const float envRadius,
+		// The raw scene bounding-sphere radius: env _Emit receivers
+		// expect the CPU-side 5% margin (LightSource::GetEnvRadius),
+		// applied here once instead of at every call site.
+		const float sceneRadius,
 		__global HitPoint *tmpHitPoint,
 		__global Ray *ray, float *emissionPdfW,
 		float *directPdfA, float *cosThetaAtLight
 		LIGHTS_PARAM_DECL) {
+	const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
 	float3 flux;
 	switch (light->type) {
 		case TYPE_IL_CONSTANT:
