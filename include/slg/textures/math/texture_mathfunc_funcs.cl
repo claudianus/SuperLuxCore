@@ -39,9 +39,10 @@
 #define MATHFUNC_OP_TANH  11
 #define MATHFUNC_OP_INVSQRT 12
 #define MATHFUNC_OP_FLOORMOD 13
+#define MATHFUNC_OP_SNAP 14
 
 OPENCL_FORCE_INLINE bool MathFuncTexture_IsBinary(const uint op) {
-	return op == MATHFUNC_OP_ATAN2 || op == MATHFUNC_OP_FLOORMOD;
+	return op == MATHFUNC_OP_ATAN2 || op == MATHFUNC_OP_FLOORMOD || op == MATHFUNC_OP_SNAP;
 }
 
 OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
@@ -65,6 +66,7 @@ OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
 		// Floored modulo (Blender FLOORMOD); guard against mod 0
 		case MATHFUNC_OP_FLOORMOD: return (b == 0.f) ? 0.f :
 				a - b * floor(a / b);
+		case MATHFUNC_OP_SNAP: return (b == 0.f) ? 0.f : floor(a / b) * b;
 		default: return 0.f;
 	}
 }

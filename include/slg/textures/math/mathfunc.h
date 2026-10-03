@@ -44,11 +44,12 @@ typedef enum {
 	MATHFUNC_COSH,
 	MATHFUNC_TANH,
 	MATHFUNC_INVSQRT,
-	MATHFUNC_FLOORMOD	// binary: floored modulo tex1 mod tex2
+	MATHFUNC_FLOORMOD,	// binary: floored modulo tex1 mod tex2
+	MATHFUNC_SNAP		// binary: floor(safe_divide(tex1, tex2)) * tex2
 } MathFuncOp;
 
 inline bool MathFuncIsBinary(MathFuncOp o) {
-	return o == MATHFUNC_ATAN2 || o == MATHFUNC_FLOORMOD;
+	return o == MATHFUNC_ATAN2 || o == MATHFUNC_FLOORMOD || o == MATHFUNC_SNAP;
 }
 
 class MathFuncTexture : public Texture {

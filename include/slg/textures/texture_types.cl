@@ -519,7 +519,7 @@ typedef struct {
 typedef struct {
 	unsigned int op; // slg::MathFuncOp
 	unsigned int tex1Index;
-	// tex2Index is only pushed/popped for the binary op (MATHFUNC_ATAN2)
+	// tex2Index is pushed/popped only for binary math functions.
 	unsigned int tex2Index;
 } MathFuncTexParam;
 

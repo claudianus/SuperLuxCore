@@ -52,12 +52,33 @@ Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeMath` trig/exp/log
 ops (SINE, COSINE, TANGENT, ARCSINE, ARCCOSINE, ARCTANGENT, ARCTAN2,
 EXPONENT, LOGARITHM via ln(x)/ln(b) composition).
 
-**Properties.** `mathfunc.op` = `sin|cos|tan|asin|acos|atan|atan2|exp|ln`;
-`mathfunc.texture1` (operand), `mathfunc.texture2` (atan2 only; unary ops
-ignore it). Scalar and float3 inputs both supported.
+**Properties.** `mathfunc.op` =
+`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap`;
+`mathfunc.texture1` is the first operand. `mathfunc.texture2` is evaluated
+for `atan2`, `floormod` and `snap` only. Scalar and float3 inputs are supported.
+
+`snap(a,b) = floor(a/b)*b`, with zero output when `b == 0`.
+Float3 increments are applied componentwise, including negative and zero
+increments. This matches Blender Math/Vector Math Snap, not nearest rounding:
+`snap(1.75,1)=1`, `snap(-1.25,1)=-2`.
+
+```properties
+scene.textures.snapped.type = mathfunc
+scene.textures.snapped.op = snap
+scene.textures.snapped.texture1 = 1.75 -1.25 0.5
+scene.textures.snapped.texture2 = 1 1 0
+```
+
+The resulting vector is `(1,-2,0)`. No intermediate divide/round/multiply
+textures are needed.
 
 **Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
 through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
+`dev-tools/math-snap-regression.py` additionally exercises positive/negative
+inputs, per-component and zero increments, SDL texture round-trip, and real
+CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
+actual Blender nodes and feeds their graphs into the same renderer gate,
+including scalar Clamp and linked inputs.
 
 ## gabornoise texture — sparse Gabor convolution
 

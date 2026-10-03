@@ -48,6 +48,7 @@ static float ApplyFunc(MathFuncOp op, const float a, const float b) {
 		// Floored modulo (Blender FLOORMOD); guard against mod 0
 		case MATHFUNC_FLOORMOD: return (b == 0.f) ? 0.f :
 				a - b * floorf(a / b);
+		case MATHFUNC_SNAP: return (b == 0.f) ? 0.f : floorf(a / b) * b;
 		default:
 			return 0.f;
 	}
@@ -85,6 +86,7 @@ const char *MathFuncTexture::OpToString(MathFuncOp o) {
 		case MATHFUNC_TANH: return "tanh";
 		case MATHFUNC_INVSQRT: return "invsqrt";
 		case MATHFUNC_FLOORMOD: return "floormod";
+		case MATHFUNC_SNAP: return "snap";
 		default: return "sin";
 	}
 }
