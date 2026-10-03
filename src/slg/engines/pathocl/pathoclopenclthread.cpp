@@ -345,6 +345,38 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			SLG_LOG(os.str());
 		}
 
+		// LUX_TASKSTATE_VOL_DUMP: append the per-task EyePathInfo +
+		// DirectLight PathVolumeInfo state to <cwd>/taskstate_vol_<t>.bin.
+		// Post-mortem volume tracking debug (glass-shell light-path
+		// divergence): EyePathInfo.volume.currentVolumeIndex +
+		// volumeIndexList reveals whether the task still carries a
+		// volume mid-march, and directLightVolInfos captures the
+		// shadow/connect side. Format: taskCount u32 taskIndex +
+		// EyePathInfo (host mirror of slg::ocl::EyePathInfo) +
+		// PathVolumeInfo (host slg::ocl::PathVolumeInfo). Parse with
+		// dev-tools/taskstate_parse.py.
+		static const bool dumpVol = getenv("LUX_TASKSTATE_VOL_DUMP") != nullptr;
+		if (dumpVol && eyePathInfosBuff && directLightVolInfosBuff) {
+			const size_t epiSize = sizeof(slg::ocl::EyePathInfo);
+			const size_t pviSize = sizeof(slg::ocl::PathVolumeInfo);
+			std::vector<char> epi(epiSize * taskCount);
+			std::vector<char> pvi(pviSize * taskCount);
+			intersectionDevice.EnqueueReadBuffer(eyePathInfosBuff,
+					CL_TRUE, epi.size(), epi.data());
+			intersectionDevice.EnqueueReadBuffer(directLightVolInfosBuff,
+					CL_TRUE, pvi.size(), pvi.data());
+			intersectionDevice.FinishQueue();
+			const std::string name = "taskstate_vol_" +
+					ToString(threadIndex) + ".bin";
+			std::ofstream f(name.c_str(), std::ios::binary |
+					std::ios::app);
+			const u_int tc = taskCount;
+			f.write(reinterpret_cast<const char *>(&tc), sizeof(tc));
+			f.write(epi.data(), epi.size());
+			f.write(pvi.data(), pvi.size());
+			f.close();
+		}
+
 		// Path guiding (P1-3 M2b-2): drain GPU training records once per
 		// batch, after the queue drain above. A per-iteration drain
 		// serializes the loop - each blocking read flushes the whole
