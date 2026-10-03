@@ -53,6 +53,46 @@ def native_cases():
                                "scene.textures.residual.texture1 = rounded\n"
                                f"scene.textures.residual.texture2 = {rounded}\n",
                       "expected": [0.] * 3})
+    for op, a, b, expected in [
+        ("max", [1.5, -1., -.5], [1., 0., -2.], [1.5, 0., -.5]),
+        ("lessequal", [0., .125, .25], [0., .125, .125], [1., 1., 0.]),
+    ]:
+        cases.append({"label": "native-" + op, "output": "compared",
+                      "graph": "scene.textures.compared.type = mathfunc\n"
+                               f"scene.textures.compared.op = {op}\n"
+                               "scene.textures.compared.texture1 = " + " ".join(map(str, a)) + "\n"
+                               "scene.textures.compared.texture2 = " + " ".join(map(str, b)) + "\n",
+                      "expected": expected})
+    for op, a, b, expected in [
+        ("max", -.75, .25, .0625), ("lessequal", .125, .125, 1.),
+    ]:
+        cases.append({"label": "native-float-" + op, "output": "powered",
+                      "graph": "scene.textures.compared.type = mathfunc\n"
+                               f"scene.textures.compared.op = {op}\n"
+                               f"scene.textures.compared.texture1 = {a}\n"
+                               f"scene.textures.compared.texture2 = {b}\n"
+                               "scene.textures.powered.type = power\n"
+                               "scene.textures.powered.base = compared\n"
+                               "scene.textures.powered.exponent = 2\n",
+                      "expected": [expected] * 3})
+    for float_consumer in (False, True):
+        graph = ("scene.textures.grow.type = mathfunc\n"
+                 "scene.textures.grow.op = exp\n"
+                 "scene.textures.grow.texture1 = 1000\n"
+                 "scene.textures.nan.type = subtract\n"
+                 "scene.textures.nan.texture1 = grow\n"
+                 "scene.textures.nan.texture2 = grow\n"
+                 "scene.textures.compared.type = mathfunc\n"
+                 "scene.textures.compared.op = lessequal\n"
+                 "scene.textures.compared.texture1 = nan\n"
+                 "scene.textures.compared.texture2 = 0\n")
+        if float_consumer:
+            graph += ("scene.textures.powered.type = power\n"
+                      "scene.textures.powered.base = compared\n"
+                      "scene.textures.powered.exponent = 1\n")
+        cases.append({"label": f"native-nan-compare-float-{int(float_consumer)}",
+                      "output": "powered" if float_consumer else "compared",
+                      "graph": graph, "expected": [0.] * 3})
     return cases
 
 

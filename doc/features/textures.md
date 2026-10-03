@@ -50,12 +50,14 @@ two (found and fixed during validation).
 
 Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeMath` trig/exp/log
 and integer/fractional ops, plus componentwise Vector Math Floor, Ceil,
-Fraction and Snap. LOGARITHM uses ln(x)/ln(b) composition.
+Fraction and Snap. LOGARITHM uses ln(x)/ln(b) composition; Compare uses
+absolute difference, maximum epsilon and inclusive comparison.
 
 **Properties.** `mathfunc.op` =
-`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap|floor|ceil|trunc|fract|round`;
+`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap|floor|ceil|trunc|fract|round|max|lessequal`;
 `mathfunc.texture1` is the first operand. `mathfunc.texture2` is evaluated
-for `atan2`, `floormod` and `snap` only. Scalar and float3 inputs are supported.
+for `atan2`, `floormod`, `snap`, `max` and `lessequal`. Scalar and float3
+inputs are supported.
 
 `snap(a,b) = floor(a/b)*b`, with zero output when `b == 0`.
 Float3 increments are applied componentwise, including negative and zero
@@ -79,6 +81,13 @@ float32 even for constant inputs: `round(8388609.f)=8388610.f`.
 All five unary operations apply independently to float3 components.
 Previously serialized operation IDs remain unchanged.
 
+`max(a,b)` uses native floating-point maximum; `lessequal(a,b)` returns
+one when `a <= b`, zero otherwise, including unordered NaN comparisons.
+Both apply componentwise to float3 spectrum outputs. The adapter converts
+Vector/Color→Float at scalar socket boundaries before exporting Math.
+Blender Compare is `abs(a-b) <= max(epsilon, 1e-5f)`; constant subtraction
+also rounds to float32 before comparison.
+
 **Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
 through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
 `dev-tools/math-snap-regression.py` additionally exercises positive/negative
@@ -86,8 +95,9 @@ and zero Snap increments, signed integer boundaries, fractional values,
 large float32 Round boundaries, SDL texture round-trip, and real
 CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
 actual Blender nodes and feeds their graphs into the same renderer gate:
-206 checks passed, including scalar Clamp, linked inputs, and componentwise
-Vector Math Floor/Ceil/Fraction.
+268 checks passed, including scalar Clamp, typed vector/colour inputs,
+inclusive Compare/minimum epsilon, float32 spacing boundaries, NaN
+differences, and componentwise Vector Math Floor/Ceil/Fraction.
 
 ## gabornoise texture — sparse Gabor convolution
 

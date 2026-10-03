@@ -628,6 +628,8 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		else if (opStr == "trunc") op = MATHFUNC_TRUNC;
 		else if (opStr == "fract") op = MATHFUNC_FRACT;
 		else if (opStr == "round") op = MATHFUNC_ROUND;
+		else if (opStr == "max") op = MATHFUNC_MAX;
+		else if (opStr == "lessequal") op = MATHFUNC_LESSEQUAL;
 		else
 			throw runtime_error("Unknown mathfunc texture op: " + opStr);
 

@@ -19,6 +19,7 @@
 #ifndef _LUXRAYS_STRUTILS_H
 #define	_LUXRAYS_STRUTILS_H
 
+#include <charconv>
 #include <string>
 #include <sstream>
 #include <limits>
@@ -39,14 +40,18 @@ template <class T> inline std::string ToString(const T &t) {
 	return ss.str();
 }
 
+// Shortest round-trip representations of float/double fit in 24 characters,
+// including sign and exponent. The fixed buffer cannot exhaust to_chars.
 inline std::string ToString(const float t) {
-	std::ostringstream ss;
-	
-	ss.imbue(cLocale);
+	char buffer[32];
+	const auto result = std::to_chars(buffer, buffer + sizeof(buffer), t);
+	return std::string(buffer, result.ptr);
+}
 
-	ss << std::setprecision(std::numeric_limits<float>::digits10 + 1) << t;
-
-	return ss.str();
+inline std::string ToString(const double t) {
+	char buffer[32];
+	const auto result = std::to_chars(buffer, buffer + sizeof(buffer), t);
+	return std::string(buffer, result.ptr);
 }
 
 inline std::string ToString(const int t) {

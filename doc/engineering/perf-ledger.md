@@ -399,3 +399,38 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   including evaluated vector products, colour luminance, third operands
   and both scalar group boundaries. The existing `0.05` radiance tolerance
   does not establish bitwise math parity.
+
+### Inclusive Compare and precise, cheaper SDL number formatting
+
+- Blender Compare uses `abs(a-b) <= max(epsilon,1e-5f)`. The old adapter
+  used strict less-than with no epsilon floor: actual CPU Compare(1,1,0)
+  emitted biased radiance 4 instead of 5. Added `mathfunc.max/lessequal`
+  binary ops (IDs 20/21), preserving existing IDs and texture layouts.
+  Constant differences round to float32, matching native evaluation.
+- Paired real Blender exports: two linked operands with constant epsilon
+  remain five explicit textures, including input leaves (three operations).
+  A linked epsilon changes six→seven textures because its minimum must
+  be evaluated. Native maximum needs one operation rather than a
+  less-than/select composition; inclusive comparison needs no inversion.
+- The large linked Compare fixture exposed a separate serialization defect:
+  Python double properties rendered `16777216` as `1.67772e+07`
+  (16777200). Native float `ToString` used seven significant digits;
+  the direct C++ round-trip changed 16777216 to 16777220.
+- Float/double `ToString` now uses locale-independent `std::to_chars`
+  shortest round-trip formatting in a fixed 32-byte stack buffer.
+  Integer and generic formatting remain unchanged. No stream is
+  constructed for these floating-point overloads; owned result strings
+  can still allocate when their accurate representation exceeds SSO.
+- Release C++ smoke: 19915 finite float and 19990 finite double bit
+  patterns plus 12 signed-zero, unit-spacing, maximum, normal/subnormal
+  boundary cases round-tripped exactly through the real utility.
+  Installed numeric Property SDL also round-tripped 5004 finite doubles.
+- Eight representative floats, 200000 formatting calls per round, three
+  paired rounds on M5 Pro: old stream 108.44–109.38 ns/call; new formatter
+  10.67–10.81 ns/call. Ordinary `operator new` calls were zero for both
+  paths in this selected set. This measures formatting, not rendering.
+- The full Release rebuild linked. 268 actual CPU/isolated Metal render
+  checks passed through SDL round-trip, including equality at epsilon,
+  zero/negative epsilon, float32 spacing and unordered NaN differences.
+  Installed-extension Compare graphs also passed; radiance tolerance
+  remains 0.05 and does not establish bitwise shader parity.

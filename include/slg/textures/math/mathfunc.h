@@ -50,11 +50,14 @@ typedef enum {
 	MATHFUNC_CEIL,
 	MATHFUNC_TRUNC,
 	MATHFUNC_FRACT,
-	MATHFUNC_ROUND		// Blender round: floor(tex1 + 0.5)
+	MATHFUNC_ROUND,		// Blender round: floor(tex1 + 0.5)
+	MATHFUNC_MAX,
+	MATHFUNC_LESSEQUAL
 } MathFuncOp;
 
 inline bool MathFuncIsBinary(MathFuncOp o) {
-	return o == MATHFUNC_ATAN2 || o == MATHFUNC_FLOORMOD || o == MATHFUNC_SNAP;
+	return o == MATHFUNC_ATAN2 || o == MATHFUNC_FLOORMOD || o == MATHFUNC_SNAP ||
+			o == MATHFUNC_MAX || o == MATHFUNC_LESSEQUAL;
 }
 
 class MathFuncTexture : public Texture {
