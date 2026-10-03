@@ -19,12 +19,12 @@
 #ifndef _LUXRAYS_STRUTILS_H
 #define	_LUXRAYS_STRUTILS_H
 
-#include <charconv>
 #include <string>
 #include <sstream>
 #include <limits>
 
 #include <boost/lexical_cast.hpp>
+#include "fmt/compile.h"
 
 #include "luxrays/luxrays.h"
 
@@ -41,17 +41,17 @@ template <class T> inline std::string ToString(const T &t) {
 }
 
 // Shortest round-trip representations of float/double fit in 24 characters,
-// including sign and exponent. The fixed buffer cannot exhaust to_chars.
+// including sign and exponent. fmt keeps this portable to older macOS targets.
 inline std::string ToString(const float t) {
 	char buffer[32];
-	const auto result = std::to_chars(buffer, buffer + sizeof(buffer), t);
-	return std::string(buffer, result.ptr);
+	const auto end = fmt::format_to(buffer, FMT_COMPILE("{}"), t);
+	return std::string(buffer, end);
 }
 
 inline std::string ToString(const double t) {
 	char buffer[32];
-	const auto result = std::to_chars(buffer, buffer + sizeof(buffer), t);
-	return std::string(buffer, result.ptr);
+	const auto end = fmt::format_to(buffer, FMT_COMPILE("{}"), t);
+	return std::string(buffer, end);
 }
 
 inline std::string ToString(const int t) {

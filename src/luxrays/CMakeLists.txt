@@ -261,6 +261,8 @@ target_link_libraries(luxrays PRIVATE
   boost::boost
   OpenMP::OpenMP_CXX
 )
+# Public string utilities format floating-point values with fmt.
+target_link_libraries(luxrays PUBLIC fmt::fmt)
 # Stable system/Boost precompiled header: a typical TU parses ~2000+
 # includes (mostly STL + Boost) before reaching project code; seeding
 # them once per target cuts per-TU parse time measurably. The umbrella

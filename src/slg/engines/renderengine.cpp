@@ -73,6 +73,13 @@ RenderEngine::RenderEngine(RenderConfigRef cfg) :
 		cfgProps.GetAllProperties("accelerator.") <<
 		cfgProps.GetAllProperties("context.");
 
+	// CPU engines select only native intersection devices. Do not initialize
+	// unrelated hardware runtimes while constructing their context.
+	const RenderEngineType type = String2RenderEngineType(
+			cfgProps.Get("renderengine.type").Get<string>());
+	config->Set(Property("context.nativeonly")(
+			type != PATHOCL && type != TILEPATHOCL && type != RTPATHOCL));
+
 	ctx = std::make_unique<Context>(
 		LuxRays_DebugHandler ? LuxRays_DebugHandler : NullDebugHandler,
 		std::move(config)

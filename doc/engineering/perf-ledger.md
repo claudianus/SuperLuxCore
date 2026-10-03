@@ -416,19 +416,23 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   Python double properties rendered `16777216` as `1.67772e+07`
   (16777200). Native float `ToString` used seven significant digits;
   the direct C++ round-trip changed 16777216 to 16777220.
-- Float/double `ToString` now uses locale-independent `std::to_chars`
+- Float/double `ToString` uses locale-independent, compile-time `fmt`
   shortest round-trip formatting in a fixed 32-byte stack buffer.
-  Integer and generic formatting remain unchanged. No stream is
-  constructed for these floating-point overloads; owned result strings
+  Integer and generic formatting remain unchanged. No stream or runtime
+  format-string parser is used by these overloads; owned result strings
   can still allocate when their accurate representation exceeds SSO.
-- Release C++ smoke: 19915 finite float and 19990 finite double bit
-  patterns plus 12 signed-zero, unit-spacing, maximum, normal/subnormal
-  boundary cases round-tripped exactly through the real utility.
-  Installed numeric Property SDL also round-tripped 5004 finite doubles.
-- Eight representative floats, 200000 formatting calls per round, three
-  paired rounds on M5 Pro: old stream 108.44–109.38 ns/call; new formatter
-  10.67–10.81 ns/call. Ordinary `operator new` calls were zero for both
-  paths in this selected set. This measures formatting, not rendering.
+- The initial `std::to_chars` implementation failed the macOS Intel wheel
+  build: floating-point overloads require macOS 13.3, while the supported
+  Intel deployment target is 11.0. The existing fmt dependency preserves
+  that target; the public LuxRays header propagates `fmt::fmt` to consumers.
+- Current Release C++ smoke: 19898 finite float and 19990 finite double bit
+  patterns plus 14 signed-zero, unit-spacing, maximum, normal/subnormal
+  boundary cases round-tripped exactly. The same source compiled for
+  Intel's macOS 11.0 target. Earlier installed Property SDL validation
+  also round-tripped 5004 finite doubles.
+- Eight representative floats, 1000000 calls per path on M5 Pro:
+  compiled fmt 11.51 ns/value; classic-locale stream 111.46 ns/value.
+  This single paired run measures formatting, not rendering or allocation.
 - The full Release rebuild linked. 268 actual CPU/isolated Metal render
   checks passed through SDL round-trip, including equality at epsilon,
   zero/negative epsilon, float32 spacing and unordered NaN differences.
@@ -470,3 +474,47 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   302 checks passed, with unchanged `±3e38` extrema fixtures. Seventy
   installed-package render checks passed. Radiance tolerance remains
   0.05; CPU workers are disabled on the Metal gate.
+
+### CPU startup without optional GPU discovery
+
+- The ARM macOS wheel's CPU render smoke failed in optional OpenCL device
+  enumeration with `CL_INVALID_VALUE`. CPU engines only consume native
+  intersection devices, so their render contexts now skip OpenCL, CUDA,
+  Metal and Vulkan discovery. GPU engines and explicit device-list APIs
+  retain discovery and its errors; no exception is suppressed.
+- Fault injection replaced the actual exported OpenCL device-query pointer
+  with a callback returning `CL_INVALID_VALUE`: rebuilt PATHCPU rendered
+  the expected `[4.5,4.5,4.5]` radiance, while explicit GPU discovery still
+  reported the injected driver error.
+
+### Transformed Generated bounds without per-hit mesh scans
+
+- An actual Blender RGB Min/Max emission diagram exposed mixed spaces:
+  hit positions were inverse-transformed, but normalization used the
+  already-baked base mesh's bounding box. Translated planes lost their
+  intended ramps. Rotating a world-space AABB back is not an exact fix.
+- Each base mesh now caches a 3×4 baked-to-normalized authoring map.
+  Authoring bounds come from inverse-transformed vertices, once when
+  needed. Scene preprocessing warms only meshes whose material references
+  Generated, before shading workers start; unrelated proxy meshes are
+  not scanned for this cache. Geometry/applied-transform edits invalidate it.
+- Direct meshes use their baked hit position. Instance/motion wrappers
+  undo only their wrapper transform before applying the shared base map.
+  Flat axes evaluate to 0.5, matching Blender's texture-space center.
+  Shading performs no geometry scan or bounds division; no per-vertex
+  coordinate array is added. The GPU mesh payload replaces a 24-byte
+  bbox with a 48-byte map; texture layouts are unchanged.
+- Blender 5.2 texspace values independently populate reference vertex
+  colours. Translation and rotation/nonuniform-scale fixtures, both direct
+  and instanced, subtract this reference from Generated and amplify by
+  1000 before emission. All 16 checked pixels retain the existing 0.05
+  radiance tolerance, corresponding to roughly 0.00005 coordinate error.
+  A constant-colour control and a 100× amplified diagnostic separated
+  existing Metal radiance residuals from coordinate errors.
+- The full actual Blender export/SDL/CPU/isolated Metal corpus passed
+  308 checks. The installed extension rendered the unchanged 384×192
+  RGB extrema diagram: raw EXR samples verified the minimum's upper
+  plateau, maximum's lower plateau and distinct blue components.
+- This validates transformed base-mesh bounds, not complete Blender
+  undeformed ORCO, custom texspace or multi-material whole-object bounds.
+

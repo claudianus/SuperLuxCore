@@ -72,6 +72,9 @@ Context::Context(LuxRaysDebugHandler handler, PropertiesUPtr&& config)
 	//--------------------------------------------------------------------------
 
 	NativeIntersectionDeviceDescription::AddDeviceDescs(deviceDescriptions);
+	// Native-only renderers must remain independent of optional GPU drivers.
+	if (cfg->Get(Property("context.nativeonly")(false)).Get<bool>())
+		return;
 
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 	//--------------------------------------------------------------------------

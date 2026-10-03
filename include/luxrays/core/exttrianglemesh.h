@@ -567,6 +567,11 @@ public:
 	// conservative for every shutter time.
 	virtual BBox GetBBox() const;
 
+	// Maps baked base-mesh vertices to normalized authoring coordinates.
+	// Scene preprocessing warms this cache before shading threads start.
+	const std::array<float, 12> &GetGeneratedTransform() const;
+	bool HasGeneratedTransform() const { return generatedTransformValid; }
+
 	// Resolves instance/motion wrappers to the base ExtTriangleMesh they
 	// wrap (vertex motion and curve data live on the base mesh); returns
 	// nullptr for plain TriangleMesh.
@@ -619,6 +624,7 @@ public:
 			triDiffCache.clear();
 		appliedTrans = t;
 		appliedTransSwapsHandedness = appliedTrans.SwapsHandedness();
+		generatedTransformValid = false;
 	}
 
 	virtual void ApplyTransform(const Transform &trans);
@@ -900,6 +906,8 @@ public:
 		Normal n0, n1, n2;
 	};
 	mutable std::vector<TriDifferentialCache> triDiffCache;
+	mutable std::array<float, 12> generatedTransform;
+	mutable bool generatedTransformValid = false;
 	// Bound the additional per-triangle working set on large meshes.
 	static constexpr u_int triDiffCacheMaxTris = 2 * 1024 * 1024;
 	void BuildTriDiffCache();

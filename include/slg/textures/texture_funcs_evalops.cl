@@ -2055,20 +2055,20 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					break;
 				}
 				case HITPOINT_GENERATED: {
-					const float4 p4 = (float4)(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z, 1.f);
-					__global const float (*mi)[4] = hitPoint->localToWorld.mInv.m;
-					const float px = mi[0][0] * p4.x + mi[0][1] * p4.y + mi[0][2] * p4.z + mi[0][3] * p4.w;
-					const float py = mi[1][0] * p4.x + mi[1][1] * p4.y + mi[1][2] * p4.z + mi[1][3] * p4.w;
-					const float pz = mi[2][0] * p4.x + mi[2][1] * p4.y + mi[2][2] * p4.z + mi[2][3] * p4.w;
-					// localBBox lives on ExtMesh - normalized [0,1]^3 object-space
 					__global const ExtMesh *mesh = &meshDescs[hitPoint->meshIndex];
-					const float3 bmin = VLOAD3F(&mesh->localBBox.pMin.x);
-					const float3 bmax = VLOAD3F(&mesh->localBBox.pMax.x);
-					const float3 ext = bmax - bmin;
+					float3 p = VLOAD3F(&hitPoint->p.x);
+					if (mesh->type != TYPE_EXT_TRIANGLE) {
+						__global const float (*mi)[4] = hitPoint->localToWorld.mInv.m;
+						p = (float3)(
+							mi[0][0] * p.x + mi[0][1] * p.y + mi[0][2] * p.z + mi[0][3],
+							mi[1][0] * p.x + mi[1][1] * p.y + mi[1][2] * p.z + mi[1][3],
+							mi[2][0] * p.x + mi[2][1] * p.y + mi[2][2] * p.z + mi[2][3]);
+					}
+					__global const float (*m)[4] = mesh->generatedTransform;
 					f3val = (float3)(
-						ext.x > 1e-9f ? (px - bmin.x) / ext.x : 0.f,
-						ext.y > 1e-9f ? (py - bmin.y) / ext.y : 0.f,
-						ext.z > 1e-9f ? (pz - bmin.z) / ext.z : 0.f);
+						m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3],
+						m[1][0] * p.x + m[1][1] * p.y + m[1][2] * p.z + m[1][3],
+						m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3]);
 					break;
 				}
 				case HITPOINT_WORLDPOS:

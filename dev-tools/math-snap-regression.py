@@ -143,14 +143,31 @@ def native_cases():
 
 def render(case, engine, devices):
     scene = lux.Scene()
+    colours = [tuple(value) for value in case["reference_colours"]] if "reference_colours" in case else None
     scene.DefineMesh("plane", [(-4., -4., 0.), (4., -4., 0.), (4., 4., 0.), (-4., 4., 0.)],
-                     [(0, 1, 2), (0, 2, 3)], None, None, None, None)
+                     [(0, 1, 2), (0, 2, 3)], None, None, colours, None,
+                     case.get("mesh_transform"))
     props = lux.Properties()
     output = case["output"]
     output_sdl = " ".join(map(str, output)) if isinstance(output, (list, tuple)) else str(output)
-    props.SetFromString(case["graph"] + f"""
-scene.camera.lookat.orig = 0 0 3
-scene.camera.lookat.target = 0 0 0
+    graph = case["graph"]
+    if "reference_colours" in case:
+        # Independent Blender-derived vertex values interpolate over the
+        # same surface, without assumptions about camera/filter sampling.
+        graph += ("scene.textures.reference.type = hitpointcolor\n"
+                  "scene.textures.residual.type = subtract\n"
+                  f"scene.textures.residual.texture1 = {output_sdl}\n"
+                  "scene.textures.residual.texture2 = reference\n"
+                  "scene.textures.amplified.type = scale\n"
+                  "scene.textures.amplified.texture1 = residual\n"
+                  "scene.textures.amplified.texture2 = 1000\n")
+        output_sdl = "amplified"
+    target = case.get("target", [0., 0., 0.])
+    camera_target = " ".join(map(str, target))
+    camera_origin = " ".join(map(str, [target[0], target[1], target[2] + 3.]))
+    props.SetFromString(graph + f"""
+scene.camera.lookat.orig = {camera_origin}
+scene.camera.lookat.target = {camera_target}
 scene.camera.up = 0 1 0
 scene.objects.obj.shape = plane
 scene.objects.obj.material = mat
@@ -161,6 +178,8 @@ scene.textures.biased.type = add
 scene.textures.biased.texture1 = {output_sdl}
 scene.textures.biased.texture2 = 4
 """)
+    if "object_transform" in case:
+        props.Set(lux.Property("scene.objects.obj.transformation", case["object_transform"]))
     scene.Parse(props)
     # Reparse serialized scene properties: binary operands and the op must
     # survive SDL round-trip, not only an in-memory graph.
@@ -200,10 +219,8 @@ film.outputs.0.filename = snap-regression.exr
     for y in range(14, 18):
         for x in range(14, 18):
             actual = pixels[3 * (y * 32 + x):3 * (y * 32 + x) + 3]
-            # Rendered radiance allows small backend residuals; nearest
-            # rounding changes these fixtures by at least half a step.
-            assert all(math.isfinite(v) and abs(v - e) < .05 for v, e in zip(actual, expected)), (
-                case["label"], engine, actual, expected)
+            assert all(math.isfinite(v) and abs(v - e) < .05
+                       for v, e in zip(actual, expected)), (case["label"], engine, actual, expected)
     print(f"PASS {case['label']}/{engine}: {expected}", flush=True)
 
 

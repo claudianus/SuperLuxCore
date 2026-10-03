@@ -68,19 +68,20 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			return Spectrum(pObj.x, pObj.y, pObj.z);
 		}
 		case HITPOINT_GENERATED: {
-			// "Generated": object-space hit point normalized into the base
-			// mesh's local bbox [0,1]^3 - Cycles' procedural coordinate.
-			// GetAsExtTriangleMesh() resolves instanced/motion wrappers to
-			// their base mesh (its bbox is object-space, matching p_obj).
-			const Point pObj = Inverse(hitPoint.localToWorld) * hitPoint.p;
 			const auto *base = hitPoint.mesh ? hitPoint.mesh->GetAsExtTriangleMesh() : nullptr;
-			if (!base)
+			if (!base) {
+				const Point pObj = Inverse(hitPoint.localToWorld) * hitPoint.p;
 				return Spectrum(pObj.x, pObj.y, pObj.z);
-			const BBox bb = base->GetBBox();
-			const float rx = (bb.pMax.x - bb.pMin.x > 1e-9f) ? (pObj.x - bb.pMin.x) / (bb.pMax.x - bb.pMin.x) : 0.f;
-			const float ry = (bb.pMax.y - bb.pMin.y > 1e-9f) ? (pObj.y - bb.pMin.y) / (bb.pMax.y - bb.pMin.y) : 0.f;
-			const float rz = (bb.pMax.z - bb.pMin.z > 1e-9f) ? (pObj.z - bb.pMin.z) / (bb.pMax.z - bb.pMin.z) : 0.f;
-			return Spectrum(rx, ry, rz);
+			}
+			// Direct meshes are already baked. Only wrappers need undoing;
+			// the cached map includes the base mesh's applied transform.
+			const Point p = hitPoint.mesh->GetType() == TYPE_EXT_TRIANGLE ?
+					hitPoint.p : Inverse(hitPoint.localToWorld) * hitPoint.p;
+			const auto &m = base->GetGeneratedTransform();
+			return Spectrum(
+					m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3],
+					m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+					m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]);
 		}
 		case HITPOINT_WORLDPOS:
 			return Spectrum(hitPoint.p.x, hitPoint.p.y, hitPoint.p.z);

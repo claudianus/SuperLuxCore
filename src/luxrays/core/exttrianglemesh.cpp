@@ -296,6 +296,7 @@ void ExtTriangleMesh::Init(
 }
 
 void ExtTriangleMesh::Preprocess() {
+	generatedTransformValid = false;
 	// Compute all triangle normals — skipped when triNormals was adopted
 	// from a .lxm section (LoadProxy v3): recomputing it would fault in
 	// every vertex/triangle page, defeating ray-driven residency.
@@ -582,6 +583,31 @@ BBox ExtTriangleMesh::GetBBox() const {
 	}
 
 	return cachedBBox;
+}
+
+const std::array<float, 12> &ExtTriangleMesh::GetGeneratedTransform() const {
+	if (!generatedTransformValid) {
+		const Transform toAuthoring = Inverse(appliedTrans);
+		BBox bounds;
+		for (u_int i = 0; i < vertices.Count(); ++i)
+			bounds = Union(bounds, toAuthoring * vertices[i]);
+
+		for (u_int axis = 0; axis < 3; ++axis) {
+			const float extent = bounds.pMax[axis] - bounds.pMin[axis];
+			float *row = generatedTransform.data() + 4 * axis;
+			if (extent > 0.f) {
+				const float scale = 1.f / extent;
+				for (u_int col = 0; col < 4; ++col)
+					row[col] = toAuthoring.m.m[axis][col] * scale;
+				row[3] -= bounds.pMin[axis] * scale;
+			} else {
+				row[0] = row[1] = row[2] = 0.f;
+				row[3] = .5f;
+			}
+		}
+		generatedTransformValid = true;
+	}
+	return generatedTransform;
 }
 
 const ExtTriangleMesh *ExtTriangleMesh::FromMesh(const Mesh *mesh) {

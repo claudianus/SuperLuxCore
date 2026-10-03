@@ -100,11 +100,32 @@ and zero Snap increments, signed integer boundaries, fractional values,
 large float32 Round boundaries, SDL texture round-trip, and real
 CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
 actual Blender nodes and feeds their graphs into the same renderer gate:
-302 checks passed, including scalar Clamp, typed vector/colour inputs,
+308 checks passed, including scalar Clamp, typed vector/colour inputs,
 inclusive Compare/minimum epsilon, float32 spacing boundaries, NaN
 differences, componentwise Vector Math Floor/Ceil/Fraction, linked/folded
 extrema, and HDR/subnormal-input quotients. Seventy installed-package
 CPU/Metal checks also passed. Radiance tolerance is 0.05, not bitwise parity.
+
+## hitpoint Generated coordinates — transformed base-mesh bounds
+
+`hitpoint.channel = generated` normalizes the shading point in the base
+mesh's authoring frame. A cached 3×4 map keeps translated, rotated and
+nonuniformly scaled baked meshes in the same frame as their bounds.
+Instances and object-motion wrappers use the shared base map after undoing
+their wrapper transform. Flat axes return 0.5.
+
+The cache is prepared before shading and invalidated by geometry or applied
+transform changes. Only meshes whose material reads Generated are scanned.
+Evaluation performs neither a full mesh scan nor bounding-box division.
+The GPU mesh descriptor stores a 48-byte map instead of a 24-byte bbox;
+texture descriptors are unchanged and no per-vertex coordinates are added.
+
+Four transformed direct/instance Blender fixtures compare Generated with
+independently interpolated Blender texspace reference values. Their error
+is amplified 1000× before the ordinary 0.05 radiance gate. Complete
+undeformed ORCO, custom texspace and whole-object bounds across material
+submeshes are not established by this base-mesh approximation.
+
 
 ## gabornoise texture — sparse Gabor convolution
 

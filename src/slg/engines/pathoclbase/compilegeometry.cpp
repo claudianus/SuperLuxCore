@@ -85,12 +85,13 @@ void CompiledScene::CompileGeometry() {
 	auto InitMeshDesc = [&](slg::ocl::ExtMesh &dstMeshDesc, const ExtMesh &srcMesh,
 			const ExtTriangleMesh &srcBaseMesh) { 
         dstMeshDesc.vertsOffset = vertsOffset;
-		// localBBox: the base mesh's object-space bounds (Generated/Object
-		// coordinates normalize against it). For instanced/motion meshes this
-		// is the shared base mesh's bbox, not the instance's world bbox.
-		const luxrays::BBox &bb = srcBaseMesh.GetBBox();
-		memcpy(&dstMeshDesc.localBBox.pMin.x, &bb.pMin, sizeof(float[3]));
-		memcpy(&dstMeshDesc.localBBox.pMax.x, &bb.pMax, sizeof(float[3]));
+		// Prepared before worker startup; unused Generated coordinates must
+		// not trigger a vertex scan of an unrelated proxy mesh.
+		if (srcBaseMesh.HasGeneratedTransform())
+			memcpy(dstMeshDesc.generatedTransform,
+					srcBaseMesh.GetGeneratedTransform().data(), sizeof(float[12]));
+		else
+			memset(dstMeshDesc.generatedTransform, 0, sizeof(float[12]));
 		vertsOffset += srcMesh.GetTotalVertexCount();
 
 		dstMeshDesc.trisOffset = trisOffset;

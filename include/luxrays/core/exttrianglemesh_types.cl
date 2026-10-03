@@ -62,9 +62,8 @@ typedef struct {
 	unsigned int curveSegsOffset;
 	unsigned int curveSegsCount;
 
-	// Object-space bounding box of the base mesh - the Generated/Object
-	// coordinates of Cycles' Texture Coordinate node normalize against it.
-	BBox localBBox;
+	// Baked base-mesh coordinates to normalized authoring coordinates.
+	float generatedTransform[3][4];
 
 	// Object space transformation
 	union {

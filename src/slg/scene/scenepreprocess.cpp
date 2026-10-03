@@ -29,6 +29,8 @@
 #include "slg/lights/projectionlight.h"
 #include "slg/lights/laserlight.h"
 #include "slg/volumes/heterogenous.h"
+#include "slg/textures/texturedefs.h"
+#include "slg/textures/hitpointfield.h"
 
 using namespace std;
 using namespace luxrays;
@@ -44,6 +46,42 @@ void Scene::PreprocessCamera(const u_int filmWidth, const u_int filmHeight, cons
 
 void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeight,
 		const u_int *filmSubRegion, const bool useRTMode) {
+	// Warm only meshes whose material reads Generated coordinates. Unrelated
+	// proxy meshes must not fault their vertex pages in for this cache.
+	bool needsGenerated = false;
+	for (u_int i = 0; i < texDefs->GetSize(); ++i) {
+		const Texture &tex = texDefs->GetTexture(i);
+		if (tex.GetType() == HITPOINT_TEX &&
+				static_cast<const HitPointFieldTexture &>(tex).GetChannel() == HITPOINT_GENERATED) {
+			needsGenerated = true;
+			break;
+		}
+	}
+	if (needsGenerated) {
+		std::unordered_set<const Material *> generatedMaterials;
+		std::unordered_set<const Texture *> referencedTextures;
+		for (u_int i = 0; i < matDefs->GetSize(); ++i) {
+			const Material &mat = matDefs->GetMaterial(i);
+			referencedTextures.clear();
+			mat.AddReferencedTextures(referencedTextures);
+			for (const Texture *tex : referencedTextures) {
+				if (tex->GetType() == HITPOINT_TEX &&
+						static_cast<const HitPointFieldTexture *>(tex)->GetChannel() == HITPOINT_GENERATED) {
+					generatedMaterials.insert(&mat);
+					break;
+				}
+			}
+		}
+		for (u_int i = 0; i < objDefs->GetSize(); ++i) {
+			const SceneObject &obj = objDefs->GetSceneObject(i);
+			if (generatedMaterials.count(&obj.GetMaterial())) {
+				const ExtTriangleMesh *base = obj.GetExtMesh().GetAsExtTriangleMesh();
+				if (base)
+					base->GetGeneratedTransform();
+			}
+		}
+	}
+
 	//--------------------------------------------------------------------------
 	// Check if I have to update geometry
 	//--------------------------------------------------------------------------
