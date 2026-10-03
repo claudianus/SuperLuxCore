@@ -217,18 +217,22 @@ inline uint as_uint(float x) { return as_type<uint>(x); }
 inline int as_int(float x) { return as_type<int>(x); }
 inline float as_float(uint x) { return as_type<float>(x); }
 
+// OpenCL cmpxchg is strong: a spurious Metal weak-CAS failure must not
+// report the expected value as though the desired value was stored.
 inline uint atomic_cmpxchg(device uint *p, uint expected, uint desired) {
     device metal::atomic<uint> *ap = reinterpret_cast<device metal::atomic<uint> *>(p);
     uint current = expected;
-    metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
-        metal::memory_order_relaxed, metal::memory_order_relaxed);
+    while (!metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
+            metal::memory_order_relaxed, metal::memory_order_relaxed) &&
+            current == expected) {}
     return current;
 }
 inline int atomic_cmpxchg(device int *p, int expected, int desired) {
     device metal::atomic<int> *ap = reinterpret_cast<device metal::atomic<int> *>(p);
     int current = expected;
-    metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
-        metal::memory_order_relaxed, metal::memory_order_relaxed);
+    while (!metal::atomic_compare_exchange_weak_explicit(ap, &current, desired,
+            metal::memory_order_relaxed, metal::memory_order_relaxed) &&
+            current == expected) {}
     return current;
 }
 // ---- end shim ----
@@ -417,7 +421,7 @@ def propagate_gid(text: str) -> str:
     kernel_pat = re.compile(r"^kernel void\s+(\w+)\s*\(", re.M)
     kernel_names = set(kernel_pat.findall(text))
 
-    # pass 1: inject 'thread const size_t& gid' into signatures of
+    # pass 1: inject 'const size_t gid' into signatures of
     # non-kernel needing functions (last parameter). The signature
     # text starts at the header - scan FORWARD for its close paren.
     edits = []  # (position, old, new) - applied right-to-left
@@ -449,9 +453,9 @@ def propagate_gid(text: str) -> str:
         while k >= 0 and text[k].isspace():
             k -= 1
         if k < 0 or text[k] in "(,":
-            inj = "thread const size_t& gid"
+            inj = "const size_t gid"
         else:
-            inj = ", thread const size_t& gid"
+            inj = ", const size_t gid"
         # Skip injection when the signature already has a gid parameter
         # (e.g. via SAMPLER_PARAM_DECL, which may already be expanded to
         # 'const size_t gid' at this stage). Injecting a second gid
@@ -533,14 +537,15 @@ def propagate_gid(text: str) -> str:
     # the EDITED text - the pass-1/2 insertions above shifted every
     # offset captured in fn_map.
     spans2 = _fn_spans(text)
-    for (name, hs2, bo2, bc2) in spans2:
+    for (name, hs2, bo2, bc2) in reversed(spans2):
         if name in kernel_names or name == "get_global_id":
             continue
         if name not in needs:
             continue
         body = text[bo2 : bc2 + 1]
-        body2 = body.replace(
-            "\tconst size_t gid = get_global_id(0);\n", ""
+        body2 = re.sub(
+            r"\bconst\s+size_t\s+gid\s*=\s*get_global_id\(0\)\s*;",
+            "", body
         ).replace("get_global_id(0)", "gid")
         if body2 != body:
             text = text[:bo2] + body2 + text[bc2 + 1 :]
@@ -948,7 +953,7 @@ def rule_kernel_buffer_attrs(body: str) -> str:
         # stub always returns 0).
         out_joined = "".join(out)
         out_joined = _rewrite_kernel_bodies_only(out_joined)
-        return out_joined
+        return propagate_gid(out_joined)
 
     # ---- symbol-table pass over kernel bodies ----
     # Each kernel signature references its own KernelScalarsN struct.
@@ -1054,7 +1059,7 @@ def rule_kernel_buffer_attrs(body: str) -> str:
     # CALLING work-item's id. The MSL shim can't reproduce that (no
     # TLS in kernels), so propagate the kernel's 'gid' down the call
     # graph: every helper that uses get_global_id(0) (directly, or via
-    # a helper that does) gains a 'thread const size_t& gid' last
+    # a helper that does) gains a 'const size_t gid' last
     # parameter, call sites pass 'gid', and the kernel root already
     # has its local. Fixpoint because the fan-in spreads upward.
     joined = propagate_gid(joined)
@@ -1330,10 +1335,10 @@ def translate(cl_source: str, params: list) -> str:
         # hit-point setup evaluates UV/alpha textures
         "Material_Bump",
         "HitPoint_Init",
-        # slow-path texture reads (image maps, buffer indirection)
-        "Texture_GetFloatValueSlowPath",
-        "Texture_GetSpectrumValueSlowPath",
     ]
+    # Keep the small texture-reader loops inline. Forcing a separate
+    # call boundary produced rare black VM results on Apple M5 Pro;
+    # the large dispatchers above still bound compiler graph expansion.
     # Only annotate DEFINITIONS: they start a line with 'inline'; call
     # sites are indented. Suffix match catches both the generic entry
     # ('Material_Evaluate(') and the per-type variants

@@ -722,3 +722,80 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   camera limitations and install-to-camera section link at
   `https://claudianus.github.io/SuperBlendLuxCore/manual/`.
 
+### Final-render transfer and Metal diagnostics — local evidence
+
+- Blender 5.2.1, Apple M5 Pro, 1024×512 film: the large-film
+  `RGBA_IMAGEPIPELINE` conversion advanced shared source/destination
+  pointers inside parallel pixel lambdas. Indexed, disjoint writes restore
+  RGB and alpha without another allocation. The two `RADIANCE_GROUP`
+  accumulation branches had the same shared-destination race; destination
+  pointers now belong to each pixel invocation.
+- Four actual Blender CPU/Metal opaque/transparent renders matched their
+  independently extracted native RGB and alpha exactly after the RGBA
+  correction. The light-group correction restored agreement with native
+  RGB/emission. This is channel-transfer evidence, not a claim that the
+  remaining high-resolution Metal emission discrepancy is fixed.
+- Opaque Blender Combined packing now allocates one RGB buffer and one
+  RGBA buffer, fills the alpha column in place, and releases RGB before
+  AOV transfer. NumPy payload peak changes from `32N` to `28N` bytes:
+  16 MiB to 14 MiB for this film, 12.5%. Seven live final-draw calls per
+  device measured approximately 16,778,504 → 14,683,704 traced bytes on
+  CPU and 16,778,507 → 14,683,590 on Metal. Minimum draw time changed
+  2.229 → 2.157 ms on CPU and 2.646 → 2.728 ms on Metal. These mixed
+  timings do not establish a general speedup; neither the payload nor
+  traced peak is process RSS, VRAM, or whole-render peak memory.
+- An isolated native SDK render reproduces the Metal defect without
+  Blender: literal emission `0.5 0.5 0.5` stays at 0.5, while the texture
+  VM graph `0.25 + 0.25` produces rare black contributions. One 512-spp
+  run returned blue 0.496805–0.5 in an interior ROI. Do not explain this
+  deterministic constant-expression deficit as sampling noise or widen
+  the Blender regression's RGB gate to conceal it.
+- Apple documents that Shader Validation is incompatible with Metal
+  binary archives:
+  <https://developer.apple.com/documentation/xcode/validating-your-apps-metal-shader-usage>.
+  Loading an existing archive under validation crashed inside Apple's
+  `_MTLBinaryArchive` loader. Archive use is now skipped when the
+  `MTL_SHADER_VALIDATION` environment variable enables instrumentation.
+  Pipeline creation retains function labels and uses initialized
+  descriptor-based creation with or without an archive. The actual native
+  `metal_kernel_smoke` passed all 64 values (1, 3, …, 127) with both API
+  and shader validation enabled. Full render API validation separately
+  exposed a missing optional `Film_Clear` buffer binding; this smoke
+  does not certify full-render validation.
+- A scalar-free helper-ID GPU probe returned zero for every work-item
+  before correction: 63/64 outputs wrong. The early direct-pointer-only
+  path now propagates helper IDs too, and body substitutions run from
+  the end so shortened bodies cannot invalidate later spans. Actual
+  Metal outputs passed all 64 expected `3*gid` values, including
+  0, 3, 189; a scalar-bundle case passed `3*gid+1`, including 1, 4, 190.
+  These are executed GPU results, not assertions about generated text.
+- The helper's redundant `const size_t gid = get_global_id(0);`
+  declaration is removed independent of indentation. A four-space
+  declaration previously became the invalid self-shadowing `gid = gid`.
+  After correction, a separate device-stack GPU scenario evaluated
+  `0.25 + 0.25` 8,388,608 times across 131,072 work-items with zero
+  wrong results and both API/shader validation enabled. That reduced
+  case does not reproduce or resolve the full renderer's deficit.
+- Clean-render resolution: pass helper IDs as scalar values, and do not
+  force `noinline` on the small float/spectrum reader loops. Large VM
+  dispatchers remain separate call targets. Changing only ID passing
+  still returned blue 0.497470–0.5 with 10,227 deficient ROI pixels;
+  removing the reader boundary returned 0.4999999702–0.5 with zero
+  deficient pixels and zero measured noise. The latter run contained
+  no diagnostic shader writes, scratch locks, or retries. The precise
+  Apple compiler/backend mechanism is not established by these results.
+- The synchronized Blender 5.2.1 developer runtime then passed nine
+  actual 1024×512, 512-spp Cycles/CPU/Metal renders: opaque full plane,
+  transparent full plane, and transparent half plane. Independent
+  camera-geometry RGB and alpha gates remain 0.003 and 1e-5. Maximum
+  observed RGB residual was 4.2945147e-5; alpha residual was 5.9604645e-8.
+  The same live final-draw observer checks the native radiance group.
+  Local runtime proof is complete; public artifact proof is recorded
+  separately after publishing, not inferred from these developer runs.
+- Reconfigured and completed all 459 native build steps for 2.11.11, then
+  synchronized the version-checked binary and translator into Blender.
+  The release-candidate run passed the nine large-film renders, all 15
+  camera-reference renders, and the existing 328 coordinate/math checks.
+  Camera maximum row-Y residual was 0.0172316 pixels; no acceptance
+  tolerance, renderer default, or diagnostic shader override was changed.
+

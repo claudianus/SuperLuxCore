@@ -1067,13 +1067,14 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 			if (executeImagePipeline)
 				ExecuteImagePipeline(index);
 
-			float *srcRGB = channel_IMAGEPIPELINEs[index]->GetPixels();
-			float *dst = buffer;
+			const float *srcRGB = channel_IMAGEPIPELINEs[index]->GetPixels();
 			parallelPixels([&](const u_int i) {
-				*dst++ = *srcRGB++;
-				*dst++ = *srcRGB++;
-				*dst++ = *srcRGB++;
-				channel_ALPHA->GetWeightedPixel(i, dst++);
+				const u_int srcOffset = i * 3;
+				const u_int dstOffset = i * 4;
+				buffer[dstOffset] = srcRGB[srcOffset];
+				buffer[dstOffset + 1] = srcRGB[srcOffset + 1];
+				buffer[dstOffset + 2] = srcRGB[srcOffset + 2];
+				channel_ALPHA->GetWeightedPixel(i, &buffer[dstOffset + 3]);
 			});
 			break;
 		}
@@ -1215,8 +1216,8 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 			if (index < channel_RADIANCE_PER_PIXEL_NORMALIZEDs.size()) {
 				const ImagePipeline *ip = (imagePipelines.size() > 0) ? imagePipelines[0] : NULL;
 
-				float *dst = buffer;
 				parallelPixels([&](const u_int i) {
+					float *dst = &buffer[i * 3];
 					float c[3];
 					channel_RADIANCE_PER_PIXEL_NORMALIZEDs[index]->GetWeightedPixel(i, c);
 					if (ip)
@@ -1232,8 +1233,8 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 				const ImagePipeline *ip = (imagePipelines.size() > 0) ? imagePipelines[0] : NULL;
 				const double RADIANCE_PER_SCREEN_NORMALIZED_SampleCount = samplesCounts.GetSampleCount_RADIANCE_PER_SCREEN_NORMALIZED();
 
-				float *dst = buffer;
 				parallelPixels([&](const u_int i) {
+					float *dst = &buffer[i * 3];
 					float c[3];
 					channel_RADIANCE_PER_SCREEN_NORMALIZEDs[index]->GetWeightedPixel(i, c);
 					if (ip)

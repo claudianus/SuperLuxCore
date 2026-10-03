@@ -483,7 +483,9 @@ HardwareDeviceProgramUPtr MetalDevice::CompileProgram(
 
 	// ---- compiled-pipeline archive (cold PSO compilation is ~3-4s per
 	// AdvancePaths variant; archive lookups are instant) ----
-	{
+	// Shader Validation instruments live shaders and cannot use binary archives.
+	const char *shaderValidation = getenv("MTL_SHADER_VALIDATION");
+	if (!shaderValidation || strtol(shaderValidation, nullptr, 10) == 0) {
 		const string archivePath = cacheDir + "/" + cacheKey + ".archive";
 		metalDeviceProgram->archivePath = archivePath;
 
@@ -700,21 +702,20 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	// creation is thread-safe (same call pattern as Blender Cycles'
 	// Metal backend).
 	NSError *err = nil;
-	id<MTLComputePipelineState> pso;
 	MTLComputePipelineDescriptor *pd = [[MTLComputePipelineDescriptor alloc] init];
 	pd.computeFunction = fn;
+	pd.label = fn.name;
 	if (archive)
 		pd.binaryArchives = @[ archive ];
 
-	if (archive) {
+	id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithDescriptor:pd
+			options:MTLPipelineOptionNone reflection:nil error:&err];
+	if (!pso && archive) {
+		// Retry source compilation without a failed archive; retain the label.
+		pd.binaryArchives = nil;
+		err = nil;
 		pso = [dev newComputePipelineStateWithDescriptor:pd
 				options:MTLPipelineOptionNone reflection:nil error:&err];
-	}
-
-	if (!pso) {
-		// No archive, or a lookup failure: compile from source now.
-		err = nil;
-		pso = [dev newComputePipelineStateWithFunction:fn error:&err];
 	}
 	if (!pso)
 		throw runtime_error("Metal PSO creation failed for " + kernelName +
@@ -1043,14 +1044,12 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 				offset:0 atIndex:(NSUInteger)m.ptrSlots[d]];
 		}
 	}
-	// Table-slot buffers need explicit residency every dispatch (see
-	// the marshalTable comment in the arg walk), but useResource on a
-	// buffer already registered on this command buffer is a no-op at
-	// driver level - dedup via pendingResident.
+	// Indirect buffers must be declared on every compute encoder, not
+	// merely once per command buffer: the declaration covers this
+	// encoder's resource accesses and their hazard dependencies.
 	for (const MetalDeviceBuffer *mb : metalDeviceKernel.marshalTable) {
-		if (pendingResident.insert(mb).second)
-			[e useResource:(__bridge id<MTLBuffer>)mb->metalBuff
-				usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+		[e useResource:(__bridge id<MTLBuffer>)mb->metalBuff
+			usage:MTLResourceUsageRead | MTLResourceUsageWrite];
 	}
 
 	const size_t groupSize = max<size_t>(workGroupSize.sizes[0], 1);
@@ -1086,7 +1085,6 @@ void MetalDevice::CommitPendingLocked() {
 	inFlightWork.push_back({pendingCB,
 			{pendingBuffers.begin(), pendingBuffers.end()}});
 	pendingBuffers.clear();
-	pendingResident.clear();
 	[(__bridge id<MTLCommandBuffer>)pendingCB commit];
 	pendingCB = nullptr;
 	pendingEncoderCount = 0;
