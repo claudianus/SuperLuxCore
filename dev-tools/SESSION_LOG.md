@@ -1758,3 +1758,24 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
   estimators (different variance profile, same mean). Needs a
   converged render (>4kspp, both engines) to bound; tracked as the
   lt-channel noise-floor check.
+
+## Session notes (2026-10-03, ship - envRadius + connect-throughput + OpenCL fix)
+
+- Landed `94bf0bc22` (envRadius), `581d83d91` (multi-segment march
+  weight), `ebd423bbe` (`device` -> `__global` in hitpoint eval,
+  unbroke PATHOCL-OPENCL), `4426d2690` (e33 test on Release).
+- `cpu-gpu-parity.sh` re-run: cornell/caustic_many/mirror_maze/strands
+  PASS; vol_caustic +26% (64spp boundary noise, not a regression - the
+  multiscatter-off check shows the same sign, magnitude scales with
+  spp, not with the patch); spectral aborted on a Metal XPC
+  interrupt, unrelated infra flake.
+- Verified the mhsun lt-channel asymmetry survives seed changes on
+  CPU (CPU-vs-CPU seed137 gives L/R ~2%, GPU-vs-CPU gives -7/+8.6),
+  so it is a real estimator difference, not sampler noise. Audited
+  code paths (projection, lensPoint, cameraPdf, BSDF eval, volume
+  scatter/transmittance, caustic gates, ray origins, RNG seeding,
+  IsCausticPath/IsAdaptiveCausticPath) are all CPU-equivalent. The
+  remaining suspect is the estimator itself: CPU Metropolis light
+  pass (correlated accept/reject + global normalization) vs the GPU
+  i.i.d. task population. Closing it needs a converged
+  (>4kspp, deterministic-task-count) A/B, not another code diff.
