@@ -631,3 +631,15 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   isolated Metal custom-space/material-split renders passed against Cycles.
   These rolling artifacts remain pre-releases, not production certification.
 
+- Documentation-aligned bundle run 37135052545 published add-on
+  `6df58ad22211f59098ab84be1bd0784b3d7c8e36`. The final public ARM ZIP
+  matched SHA-256
+  `938547e09515bb4ffa2878a689157fa758a16dcba3fe2fb6d699f24f6997c80e`;
+  its embedded native wheel retained digest `3a6b879606199a953b973a88fb979d13616b9a783c448273e574908a5de0b8cb`.
+  Another fresh-profile install and actual CPU/Metal/Cycles render passed
+  with maximum absolute interior RGB errors 0.003404 and 0.009549.
+- Pages run 37135051555 deployed the matching manual from the add-on's
+  `main/docs`, at `https://claudianus.github.io/SuperBlendLuxCore/`.
+  Actual Chromium views verified the 2.11.9 version pair, 328-check
+  provenance, remaining coordinate limitations and loaded genuine images.
+
