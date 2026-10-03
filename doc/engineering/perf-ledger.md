@@ -679,3 +679,32 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   allocation, per-pixel buffers or layout changes were added; one redundant
   subtraction was removed. No render-speedup or cross-vendor GPU claim.
 
+### Public 2.11.10 camera artifact proof
+
+- Native run 37139385800 built and attested all four cp313 platforms from
+  source `8573d1cc9ad2a16359bd521e506b089e752b4555` and published
+  `wheels-latest`. The downloaded Apple-silicon wheel matched public SHA-256
+  `499fdb7dfaa570fff5698a267e1be611d06d0a1aeb2316e499183a34141aa93a`.
+- Factory-startup Blender 5.2.1 imported both the package and native binary
+  from an isolated downloaded-wheel site. All 15 camera renders and 328
+  coordinate/math CPU/isolated Metal checks passed. The rendering child
+  independently asserted and printed that same public native-module path.
+  Maximum camera per-row Y error was 0.018817 pixels, below the unchanged
+  0.05 gate.
+- Initial bundle run 37140601741 published add-on
+  `36f8572b9ebeb0e9b9798ba32c7c7ed8b0a82bf1`. The downloaded ARM ZIP
+  matched SHA-256
+  `4ddbf9f9582fea9c92b62a4cb9914ae4a6f5edf70fefe606aad9158622afa0c5`;
+  its embedded native wheel matched the same public wheel digest.
+- A clean, separate Blender profile installed the offline ZIP, explicitly
+  skipped the engine download, and loaded add-on/package/native paths
+  inside that profile. All 15 actual camera renders passed, with maximum
+  RGB error 0.001358 and maximum per-row Y error 0.017232 pixels.
+  SuperBlendLuxCore `docs/assets/ex_camera_raster.png` is its genuine
+  384×192 CPU equirectangular incoming-direction emission render.
+- Isolated Blender resource override directories must exist before
+  startup: a first probe with missing directories installed the package
+  but could not load its repository module. Creating the config/scripts/
+  extensions directories before startup produced the successful offline
+  installation above. These artifacts remain rolling pre-releases.
+
