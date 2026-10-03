@@ -1723,3 +1723,38 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
 - Gauntlet is slow (GPU light-traced scenes hit ~35-45s/frame for
   32spp while CPU is ~4-9s) - batching overhead dominates when
   iterations/task-collapse is short. Documented in divergence note.
+
+## Session notes (2026-10-03, envRadius + connect-throughput fixes)
+
+- `94bf0bc22`: GPU `Light_Emit` passed raw `worldRadius` to the
+  environmental `_Emit` receivers while CPU `Emit()` uses
+  `GetEnvRadius() = 1.05 * bsphere.rad`. The light-tracer sampled a 5%
+  narrower emit disc on GPU (grazing directional rays emitted outside
+  the scene sphere never generated; emissionPdfW computed over the
+  smaller domain). `Light_Emit` now takes the raw `sceneRadius` and
+  derives `envRadius` internally via `EnvLightSource_GetEnvRadius` -
+  same convention `_Illuminate` receivers already used. The
+  distant-focus block in `MK_LIGHT_INIT` follows
+  (`LightFocusEmitDistantU` parity). Verified on e33 ltemit:
+  CPU/GPU(Metal) relmean 0.0055, L/R halves symmetric.
+- Multi-segment march weight fix: `Scene_Intersect` resets its
+  `connectionThroughput` out-param to WHITE on every kernel re-entry.
+  Callers that fold the segment product per iteration (eye-path
+  throughput, direct-light illumInfo) stayed correct, but two
+  consumers carried only the LAST segment's weight: (1) the Stage-A
+  pendingSplat splat path (radiance now accumulates the per-segment
+  product into pendingSplat.radiance{R,G,B} before re-queueing) and
+  (2) the MNEE SEG2 x1->y shadow contribution (new `seg2ConnT{R,G,B}`
+  fields on MneeState accumulate on continueToTrace; the solve-end
+  contribution multiplies the accumulator). Mirrors the CPU
+  `Scene::Intersect` inner loop where one call marches the whole
+  transparent chain. Light-side LMNEE chain needs no extra state: its
+  radiance flows through pendingSplat, covered by (1).
+- Outstanding: mhsun lt-channel residual ~4x the CPU seed-baseline
+  (L -7, R +8.6 at 512-1024spp). All audited paths (projection, pdf,
+  BSDF, volume, caustic gates, RNG seeding, ray origins) are
+  CPU-equivalent; the residual is consistent with the Metropolis
+  CPU light pass vs i.i.d. GPU task population being different
+  estimators (different variance profile, same mean). Needs a
+  converged render (>4kspp, both engines) to bound; tracked as the
+  lt-channel noise-floor check.

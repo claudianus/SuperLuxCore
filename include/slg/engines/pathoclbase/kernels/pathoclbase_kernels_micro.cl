@@ -3406,7 +3406,16 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 		lpi->connectThroughShadow = connThroughShadow;
 
 		if (continueToTrace) {
-			// The visibility ray keeps marching next iteration
+			// The visibility ray keeps marching next iteration.
+			// Scene_Intersect resets connectionThroughput to WHITE on
+			// every entry, so segment transmittance/pass-through weights
+			// accumulate into the stored radiance instead - the record
+			// is rebuilt from scratch if the connect later re-blocks
+			// (fromMnee/LMNEE paths overwrite radiance), so stale
+			// accumulation never leaks into a different estimate.
+			lpi->pendingSplat.radianceR *= connectionThroughput.x;
+			lpi->pendingSplat.radianceG *= connectionThroughput.y;
+			lpi->pendingSplat.radianceB *= connectionThroughput.z;
 			task->seed = seedValue;
 			return;
 		}

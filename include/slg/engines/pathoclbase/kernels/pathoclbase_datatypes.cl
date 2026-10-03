@@ -832,6 +832,11 @@ typedef struct {
 	// Pass-through event of the x1 -> y shadow trace (hashed, kept across
 	// the launch boundary)
 	float seg2PassThrough;
+	// Accumulated x1 -> y segment transmittance: Scene_Intersect resets
+	// its connectionThroughput out-param to WHITE on every re-entry, so
+	// multi-segment marches (pass-through / transparency.shadow
+	// crossings) keep the running product here.
+	float seg2ConnTR, seg2ConnTG, seg2ConnTB;
 } MneeState;
 
 typedef struct {

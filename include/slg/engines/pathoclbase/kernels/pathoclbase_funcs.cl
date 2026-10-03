@@ -4951,6 +4951,7 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_Seg2Setup(
 	const float uSeg2 = SobolSequence_BlueNoiseHash(hashBase ^ 0xB5AD78CEu) * (1.f / 4294967296.f);
 	const float uSeg3 = SobolSequence_BlueNoiseHash(hashBase ^ 0xD6E8FEB8u) * (1.f / 4294967296.f);
 	mnee->seg2PassThrough = SobolSequence_BlueNoiseHash(hashBase ^ 0x2EB0D5B5u) * (1.f / 4294967296.f);
+	mnee->seg2ConnTR = 1.f; mnee->seg2ConnTG = 1.f; mnee->seg2ConnTB = 1.f;
 
 	float directPdfW2;
 	const float3 lightRadiance2 = Light_Illuminate(
@@ -5582,6 +5583,7 @@ OPENCL_FORCE_NOT_INLINE void Mnee_SolveEnd(
 	const float uSeg2 = SobolSequence_BlueNoiseHash(hashBase ^ 0xB5AD78CEu) * (1.f / 4294967296.f);
 	const float uSeg3 = SobolSequence_BlueNoiseHash(hashBase ^ 0xD6E8FEB8u) * (1.f / 4294967296.f);
 	mnee->seg2PassThrough = SobolSequence_BlueNoiseHash(hashBase ^ 0x2EB0D5B5u) * (1.f / 4294967296.f);
+	mnee->seg2ConnTR = 1.f; mnee->seg2ConnTG = 1.f; mnee->seg2ConnTB = 1.f;
 
 	float directPdfW2;
 	const float3 lightRadiance2 = Light_Illuminate(
@@ -5713,8 +5715,18 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 			ray, rayHit, &taskMnee->mneeBsdf, &connectionThroughput,
 			WHITE, sampleResult, seg2Phase
 			MATERIALS_PARAM);
-	if (continueToTrace)
+	if (continueToTrace) {
+		// Scene_Intersect resets connectionThroughput per segment -
+		// accumulate the multi-segment march weight on MneeState so the
+		// contribution at SEG2 resolve carries the whole x1 -> y
+		// transmittance (CPU Scene::Intersect inner loop parity).
+		if (seg2Phase) {
+			mnee->seg2ConnTR *= connectionThroughput.x;
+			mnee->seg2ConnTG *= connectionThroughput.y;
+			mnee->seg2ConnTB *= connectionThroughput.z;
+		}
 		return;
+	}
 
 	if (mnee->phase == MNEE_PHASE_SEED_TRACE) {
 		// Accept the mirrored-light seed only if it lands on the same
@@ -5891,7 +5903,10 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 					taskDirectLight->illumInfo.pickPdf);
 		float3 incomingRadiance = bsdfEval0 * specFactor *
 				(mnee->geometricTerm * weightScale) * lightRadiance2 *
-				connectionThroughput;
+				// Whole-march transmittance (per-segment products folded
+				// on each continueToTrace re-entry above)
+				connectionThroughput * MAKE_FLOAT3(mnee->seg2ConnTR,
+						mnee->seg2ConnTG, mnee->seg2ConnTB);
 #if defined(SLG_SPECTRAL)
 		if (mnee->dispersive)
 			// The manifold constraint holds at the hero wavelength only:
