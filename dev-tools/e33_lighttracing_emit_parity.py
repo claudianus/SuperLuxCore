@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
+sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Release"))
 import pysuperluxcore
 
 WIDTH, HEIGHT = 1280, 720
