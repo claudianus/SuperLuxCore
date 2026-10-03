@@ -343,3 +343,36 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   deterministic, and no extra computation was introduced.
 - Release build passed; all 10 handedness and 6 analytic bump render
   cases passed on the rebuilt CPU/isolated Metal module.
+
+### Blender procedural Math semantic cutover
+
+- Native `mathfunc.snap` uses `floor(a/b)*b`, with zero for zero
+  increments, replacing the adapter's nearest-multiple rounding.
+  Actual scalar/vector Blender export exposed and corrected a missing
+  Texture Coordinate branch header (`coord` was undefined in Vector Math).
+- Actual clamped Exponent(1) rendering emitted `6.71837` instead of `5`
+  after the test's +4 bias: helper returns bypassed the common Clamp
+  stage. All supported Math results now reach that stage without an
+  identity texture.
+- Linked Square Root emitted `5` instead of `4.5` for input `0.25`:
+  the generic power helper used `texture1/texture2`, but native power
+  reads `base/exponent`. Fixed the schema after the existing fold stage.
+- Five signed/boundary render failures against Blender 5.2 shader source:
+  Floor(-1)=-2, Ceil(1)=2, Truncate(1.75)=-1, Fraction(-1)=1,
+  Round(-1.5)=-2. Added native unary operations and removed the adapter's
+  round/shift/sign compositions. Vector Floor/Ceil/Fraction no longer
+  warn and pass through.
+- Linked scalar operation graphs now use a native unary operation plus
+  the existing float-conversion wrapper. Relative operation-node counts
+  (excluding input/constant leaves): Floor 2→2, Ceil 4→2, Truncate 7→2,
+  Fraction 3→2. Round requires the scalar conversion wrapper when linked;
+  constant Round remains native to preserve float32 half-add boundaries.
+  These are graph-cost changes, not a measured render-speedup claim.
+- Release build linked successfully. 206 actual CPU/isolated Metal
+  radiance checks passed through native SDL round-trip and real Blender
+  exports, including signed/integer/half-tie and large float32 boundaries.
+  Tolerance `0.05` deliberately covers observed GPU radiance residuals;
+  this is not evidence of bitwise numerical parity.
+- Installed Blender's actual SUPERLUXCORE Generated→signed Vector Floor
+  material rendered four distinct colour bands with flat interior
+  plateaus. The resulting PNG is published as a manual example.

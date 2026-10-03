@@ -45,7 +45,12 @@ typedef enum {
 	MATHFUNC_TANH,
 	MATHFUNC_INVSQRT,
 	MATHFUNC_FLOORMOD,	// binary: floored modulo tex1 mod tex2
-	MATHFUNC_SNAP		// binary: floor(safe_divide(tex1, tex2)) * tex2
+	MATHFUNC_SNAP,		// binary: floor(safe_divide(tex1, tex2)) * tex2
+	MATHFUNC_FLOOR,
+	MATHFUNC_CEIL,
+	MATHFUNC_TRUNC,
+	MATHFUNC_FRACT,
+	MATHFUNC_ROUND		// Blender round: floor(tex1 + 0.5)
 } MathFuncOp;
 
 inline bool MathFuncIsBinary(MathFuncOp o) {

@@ -49,11 +49,11 @@ two (found and fixed during validation).
 ## mathfunc texture — generic unary/binary math
 
 Status: implemented (CPU + GPU). Backs Cycles `ShaderNodeMath` trig/exp/log
-ops (SINE, COSINE, TANGENT, ARCSINE, ARCCOSINE, ARCTANGENT, ARCTAN2,
-EXPONENT, LOGARITHM via ln(x)/ln(b) composition).
+and integer/fractional ops, plus componentwise Vector Math Floor, Ceil,
+Fraction and Snap. LOGARITHM uses ln(x)/ln(b) composition.
 
 **Properties.** `mathfunc.op` =
-`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap`;
+`sin|cos|tan|asin|acos|atan|atan2|exp|ln|sinh|cosh|tanh|invsqrt|floormod|snap|floor|ceil|trunc|fract|round`;
 `mathfunc.texture1` is the first operand. `mathfunc.texture2` is evaluated
 for `atan2`, `floormod` and `snap` only. Scalar and float3 inputs are supported.
 
@@ -72,13 +72,22 @@ scene.textures.snapped.texture2 = 1 1 0
 The resulting vector is `(1,-2,0)`. No intermediate divide/round/multiply
 textures are needed.
 
+`floor`, `ceil` and `trunc` use their native float operations; `fract(a)`
+is `a-floor(a)`. Blender `round(a)` is `floor(a+0.5f)`, so
+`round(-1.5)=-1`, not nearest-with-ties-away-from-zero. The half-add is
+float32 even for constant inputs: `round(8388609.f)=8388610.f`.
+All five unary operations apply independently to float3 components.
+Previously serialized operation IDs remain unchanged.
+
 **Validation:** `dev-tools/e10_mathfunc_test.py` renders emission quads
 through mathfunc on PATHCPU and PATHOCL (Metal via cl2msl) — 14/14 checks.
 `dev-tools/math-snap-regression.py` additionally exercises positive/negative
-inputs, per-component and zero increments, SDL texture round-trip, and real
+and zero Snap increments, signed integer boundaries, fractional values,
+large float32 Round boundaries, SDL texture round-trip, and real
 CPU/isolated Metal rendering. The adapter's `snap_node_e2e_test.py` exports
-actual Blender nodes and feeds their graphs into the same renderer gate,
-including scalar Clamp and linked inputs.
+actual Blender nodes and feeds their graphs into the same renderer gate:
+206 checks passed, including scalar Clamp, linked inputs, and componentwise
+Vector Math Floor/Ceil/Fraction.
 
 ## gabornoise texture — sparse Gabor convolution
 

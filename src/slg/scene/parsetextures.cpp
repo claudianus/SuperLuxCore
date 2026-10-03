@@ -623,6 +623,11 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		else if (opStr == "invsqrt") op = MATHFUNC_INVSQRT;
 		else if (opStr == "floormod") op = MATHFUNC_FLOORMOD;
 		else if (opStr == "snap") op = MATHFUNC_SNAP;
+		else if (opStr == "floor") op = MATHFUNC_FLOOR;
+		else if (opStr == "ceil") op = MATHFUNC_CEIL;
+		else if (opStr == "trunc") op = MATHFUNC_TRUNC;
+		else if (opStr == "fract") op = MATHFUNC_FRACT;
+		else if (opStr == "round") op = MATHFUNC_ROUND;
 		else
 			throw runtime_error("Unknown mathfunc texture op: " + opStr);
 

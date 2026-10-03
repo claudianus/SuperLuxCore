@@ -40,6 +40,11 @@
 #define MATHFUNC_OP_INVSQRT 12
 #define MATHFUNC_OP_FLOORMOD 13
 #define MATHFUNC_OP_SNAP 14
+#define MATHFUNC_OP_FLOOR 15
+#define MATHFUNC_OP_CEIL 16
+#define MATHFUNC_OP_TRUNC 17
+#define MATHFUNC_OP_FRACT 18
+#define MATHFUNC_OP_ROUND 19
 
 OPENCL_FORCE_INLINE bool MathFuncTexture_IsBinary(const uint op) {
 	return op == MATHFUNC_OP_ATAN2 || op == MATHFUNC_OP_FLOORMOD || op == MATHFUNC_OP_SNAP;
@@ -67,6 +72,11 @@ OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
 		case MATHFUNC_OP_FLOORMOD: return (b == 0.f) ? 0.f :
 				a - b * floor(a / b);
 		case MATHFUNC_OP_SNAP: return (b == 0.f) ? 0.f : floor(a / b) * b;
+		case MATHFUNC_OP_FLOOR: return floor(a);
+		case MATHFUNC_OP_CEIL: return ceil(a);
+		case MATHFUNC_OP_TRUNC: return trunc(a);
+		case MATHFUNC_OP_FRACT: return a - floor(a);
+		case MATHFUNC_OP_ROUND: return floor(a + .5f);
 		default: return 0.f;
 	}
 }

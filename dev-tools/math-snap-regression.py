@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Render binary Snap, optionally consuming real Blender-exported graphs.
+"""Render native Math/Snap, optionally consuming real Blender-exported graphs.
 
 PYTHONPATH=out/build/src/pysuperluxcore/Release python3.13 \
     dev-tools/math-snap-regression.py --gpu-devices 010
@@ -30,6 +30,29 @@ def native_cases():
                                "scene.textures.snapped.texture1 = " + " ".join(map(str, a)) + "\n"
                                "scene.textures.snapped.texture2 = " + " ".join(map(str, b)) + "\n",
                       "expected": [snap(x, y) for x, y in zip(a, b)]})
+    values = [-1.5, -1., 1.75]
+    for op, evaluate in {
+        "floor": math.floor, "ceil": math.ceil, "trunc": math.trunc,
+        "fract": lambda value: value - math.floor(value),
+        "round": lambda value: math.floor(value + .5),
+    }.items():
+        cases.append({"label": "native-" + op, "output": "rounded",
+                      "graph": "scene.textures.rounded.type = mathfunc\n"
+                               f"scene.textures.rounded.op = {op}\n"
+                               "scene.textures.rounded.texture1 = " + " ".join(map(str, values)) + "\n",
+                      "expected": [evaluate(value) for value in values]})
+    # At float32's unit-spacing boundary, adding 0.5 rounds to the nearest
+    # even representable value before floor. Normalize before emission so
+    # the render tolerance measures a unit error, not huge radiance.
+    for value, rounded in [(8388609., 8388610.), (-8388609., -8388608.)]:
+        cases.append({"label": f"native-round-large-{value}", "output": "residual",
+                      "graph": "scene.textures.rounded.type = mathfunc\n"
+                               "scene.textures.rounded.op = round\n"
+                               f"scene.textures.rounded.texture1 = {value}\n"
+                               "scene.textures.residual.type = subtract\n"
+                               "scene.textures.residual.texture1 = rounded\n"
+                               f"scene.textures.residual.texture2 = {rounded}\n",
+                      "expected": [0.] * 3})
     return cases
 
 

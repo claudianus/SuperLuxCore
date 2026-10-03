@@ -49,6 +49,11 @@ static float ApplyFunc(MathFuncOp op, const float a, const float b) {
 		case MATHFUNC_FLOORMOD: return (b == 0.f) ? 0.f :
 				a - b * floorf(a / b);
 		case MATHFUNC_SNAP: return (b == 0.f) ? 0.f : floorf(a / b) * b;
+		case MATHFUNC_FLOOR: return floorf(a);
+		case MATHFUNC_CEIL: return ceilf(a);
+		case MATHFUNC_TRUNC: return truncf(a);
+		case MATHFUNC_FRACT: return a - floorf(a);
+		case MATHFUNC_ROUND: return floorf(a + .5f);
 		default:
 			return 0.f;
 	}
@@ -87,6 +92,11 @@ const char *MathFuncTexture::OpToString(MathFuncOp o) {
 		case MATHFUNC_INVSQRT: return "invsqrt";
 		case MATHFUNC_FLOORMOD: return "floormod";
 		case MATHFUNC_SNAP: return "snap";
+		case MATHFUNC_FLOOR: return "floor";
+		case MATHFUNC_CEIL: return "ceil";
+		case MATHFUNC_TRUNC: return "trunc";
+		case MATHFUNC_FRACT: return "fract";
+		case MATHFUNC_ROUND: return "round";
 		default: return "sin";
 	}
 }
