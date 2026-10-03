@@ -83,6 +83,17 @@ PropertiesUPtr SceneObject::ToProperties(const ExtMeshCache &extMeshCache,
 			props->Set(Property("scene.objects." + name + ".linkmode")("exclude"));
 	}
 
+	const ExtTriangleMesh *base = ExtTriangleMesh::FromMesh(&GetMesh());
+	if (base && base->HasCustomGeneratedTransformation()) {
+		if (GetMesh().GetType() != TYPE_EXT_TRIANGLE) {
+			Transform applied;
+			base->GetLocal2World(0.f, applied);
+			props->Set(Property("scene.objects." + name + ".appliedtransformation")(applied.m));
+		}
+		props->Set(Property("scene.objects." + name + ".generatedtransformation")(
+				base->GetGeneratedTransformation()));
+	}
+
 	switch (GetMesh().GetType()) {
 		case TYPE_EXT_TRIANGLE: {
 			// I have to output the applied transformation

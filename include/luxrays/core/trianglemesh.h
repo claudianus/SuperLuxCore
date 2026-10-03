@@ -116,6 +116,14 @@ public:
 	virtual size_t GetTotalTriangleCount() const { return tris.Count(); }
 
 	virtual float GetMeshArea(const luxrays::Transform &local2World) const {
+		if (area < 0.f) {
+			// Legacy mapped proxies have no stored area. Scan only when
+			// a consumer needs it, then cache it like instance meshes.
+			float sum = 0.f;
+			for (const Triangle &triangle : tris.GetObjects())
+				sum += triangle.Area(vertices);
+			area = sum;
+		}
 		return area;
 	}
 	
@@ -146,15 +154,15 @@ protected:
 
 	VertexBuffer vertices;
 	TriangleBuffer tris;
-	float area;
+	mutable float area = -1.f;
 
 	// The transformation that was applied to the vertices
 	// (needed e.g. for LocalMapping3D evaluation)
 	Transform appliedTrans;
-	bool appliedTransSwapsHandedness;
+	bool appliedTransSwapsHandedness = false;
 
 	mutable BBox cachedBBox;
-	mutable bool cachedBBoxValid;
+	mutable bool cachedBBoxValid = false;
 
 	friend class boost::serialization::access;
 

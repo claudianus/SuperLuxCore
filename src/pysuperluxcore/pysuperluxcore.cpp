@@ -1232,7 +1232,7 @@ static void Scene_DefineMesh1(
     const py::object &p, const py::object &vi,
     const py::object &n, const py::object &uv,
     const py::object &cols, const py::object &alphas,
-    const py::object &transformation) {
+    const py::object &transformation, const py::object &generatedTransformation) {
   // NOTE: I would like to use boost::scoped_array but
   // some guy has decided that boost::scoped_array must not have
   // a release() method for some ideological reason...
@@ -1326,6 +1326,11 @@ static void Scene_DefineMesh1(
   GetMatrix4x4(transformation, mat);
   mesh->ApplyTransform(luxrays::Transform(luxrays::Matrix4x4(mat).Transpose()));
   }
+  if (!generatedTransformation.is_none()) {
+    float mat[16];
+    GetMatrix4x4(generatedTransformation, mat);
+    mesh->SetGeneratedTransformation(luxrays::Matrix4x4(mat).Transpose());
+  }
 
   mesh->SetName(meshName);
   {
@@ -1334,15 +1339,6 @@ static void Scene_DefineMesh1(
   }
 }
 
-static void Scene_DefineMesh2(
-	const SceneImplPtr & scene,
-	const std::string &meshName,
-    const py::object &p, const py::object &vi,
-    const py::object &n, const py::object &uv,
-    const py::object &cols, const py::object &alphas
-) {
-  Scene_DefineMesh1(scene, meshName, p, vi, n, uv, cols, alphas, py::none());
-}
 
 static void Scene_DefineMeshExt1(
 	const SceneImplPtr & scene,
@@ -1350,7 +1346,7 @@ static void Scene_DefineMeshExt1(
     const py::object &p, const py::object &vi,
     const py::object &n, const py::object &uv,
     const py::object &cols, const py::object &alphas,
-    const py::object &transformation
+    const py::object &transformation, const py::object &generatedTransformation
 ) {
 
   // Translate all vertices
@@ -1437,6 +1433,11 @@ static void Scene_DefineMeshExt1(
 		GetMatrix4x4(transformation, mat);
 		mesh->ApplyTransform(luxrays::Transform(luxrays::Matrix4x4(mat).Transpose()));
 	}
+	if (!generatedTransformation.is_none()) {
+		float mat[16];
+		GetMatrix4x4(generatedTransformation, mat);
+		mesh->SetGeneratedTransformation(luxrays::Matrix4x4(mat).Transpose());
+	}
 
   mesh->SetName(meshName);
   {
@@ -1445,14 +1446,6 @@ static void Scene_DefineMeshExt1(
   }
 }
 
-static void Scene_DefineMeshExt2(
-	const SceneImplPtr & scene,
-	const std::string &meshName,
-    const py::object &p, const py::object &vi,
-    const py::object &n, const py::object &uv,
-    const py::object &cols, const py::object &alphas) {
-  Scene_DefineMeshExt1(scene, meshName, p, vi, n, uv, cols, alphas, py::none());
-}
 
 
 // TODO make template and move to anonymous namespace
@@ -1681,7 +1674,8 @@ static void Scene_DefineMeshExt3(
     const std::optional<std::vector<py_float_array>> uv_layers,
     const std::optional<std::vector<py_float_array>> color_layers,
     const std::optional<std::vector<py_float_array>> alpha_layers,
-    const std::optional<py_float_array> transformation
+    const std::optional<py_float_array> transformation,
+    const std::optional<py_float_array> generatedTransformation
 ) {
 	// TODO Release GIL when possible
 
@@ -1725,6 +1719,8 @@ static void Scene_DefineMeshExt3(
 		luxrays::Transform luxtrans{transval.data()};
 		newMesh->ApplyTransform(luxtrans);
 	}
+	if (generatedTransformation.has_value())
+		newMesh->SetGeneratedTransformation(luxrays::Matrix4x4(generatedTransformation->data()));
 
 
 	// Insert mesh into the scene
@@ -2848,8 +2844,12 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     // call_guard<gil_scoped_release> on the binding instead.
     .def("DefineImageMap", &Scene_DefineImageMap)
     .def("IsImageMapDefined", &luxcore::detail::SceneImpl::IsImageMapDefined)
-    .def("DefineMesh", &Scene_DefineMesh1)
-    .def("DefineMesh", &Scene_DefineMesh2)
+    .def("DefineMesh", &Scene_DefineMesh1,
+		py::arg("name"), py::arg("points"), py::arg("triangles"),
+		py::arg("normals") = py::none(), py::arg("uvs") = py::none(),
+		py::arg("colors") = py::none(), py::arg("alphas") = py::none(),
+		py::arg("transformation") = py::none(),
+		py::arg("generated_transformation") = py::none())
     .def(
 		"DefineMeshExt",
 		&Scene_DefineMeshExt3,
@@ -2861,10 +2861,15 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 		py::arg("uvs") = py::none(),
 		py::arg("colors") = py::none(),
 		py::arg("alphas") = py::none(),
-		py::arg("transformation") = py::none()
+		py::arg("transformation") = py::none(),
+		py::arg("generated_transformation") = py::none()
 	)
-	.def("DefineMeshExt", &Scene_DefineMeshExt1)
-	.def("DefineMeshExt", &Scene_DefineMeshExt2)
+	.def("DefineMeshExt", &Scene_DefineMeshExt1,
+		py::arg("name"), py::arg("points"), py::arg("triangles"),
+		py::arg("normals") = py::none(), py::arg("uvs") = py::none(),
+		py::arg("colors") = py::none(), py::arg("alphas") = py::none(),
+		py::arg("transformation") = py::none(),
+		py::arg("generated_transformation") = py::none())
     .def("SetMeshVertexAOV", &Scene_SetMeshVertexAOV)
     .def("SetMeshTriangleAOV", &Scene_SetMeshTriangleAOV)
     .def("SetMeshVertexMotion", &Scene_SetMeshVertexMotion)

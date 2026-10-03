@@ -296,7 +296,8 @@ void ExtTriangleMesh::Init(
 }
 
 void ExtTriangleMesh::Preprocess() {
-	generatedTransformValid = false;
+	if (!generatedTransformCustom)
+		generatedTransformValid = false;
 	// Compute all triangle normals — skipped when triNormals was adopted
 	// from a .lxm section (LoadProxy v3): recomputing it would fault in
 	// every vertex/triangle page, defeating ray-driven residency.
@@ -585,6 +586,35 @@ BBox ExtTriangleMesh::GetBBox() const {
 	return cachedBBox;
 }
 
+static void ComposeGeneratedTransform(std::array<float, 12> &map,
+		const Matrix4x4 &transform) {
+	for (u_int axis = 0; axis < 3; ++axis) {
+		float *row = map.data() + 4 * axis;
+		const float x = row[0], y = row[1], z = row[2], offset = row[3];
+		for (u_int col = 0; col < 3; ++col)
+			row[col] = x * transform.m[0][col] + y * transform.m[1][col] +
+					z * transform.m[2][col];
+		row[3] = x * transform.m[0][3] + y * transform.m[1][3] +
+				z * transform.m[2][3] + offset;
+	}
+}
+
+void ExtTriangleMesh::SetGeneratedTransformation(const Matrix4x4 &normalization) {
+	for (u_int axis = 0; axis < 3; ++axis)
+		for (u_int col = 0; col < 4; ++col)
+			generatedTransform[4 * axis + col] = normalization.m[axis][col];
+	ComposeGeneratedTransform(generatedTransform, appliedTrans.mInv);
+	generatedTransformCustom = generatedTransformValid = true;
+}
+
+Matrix4x4 ExtTriangleMesh::GetGeneratedTransformation() const {
+	auto map = GetGeneratedTransform();
+	ComposeGeneratedTransform(map, appliedTrans.m);
+	return Matrix4x4(map[0], map[1], map[2], map[3],
+			map[4], map[5], map[6], map[7],
+			map[8], map[9], map[10], map[11], 0.f, 0.f, 0.f, 1.f);
+}
+
 const std::array<float, 12> &ExtTriangleMesh::GetGeneratedTransform() const {
 	if (!generatedTransformValid) {
 		const Transform toAuthoring = Inverse(appliedTrans);
@@ -652,6 +682,8 @@ NormalBuffer ExtTriangleMesh::ComputeNormals() {
 }
 
 void ExtTriangleMesh::ApplyTransform(const Transform &trans) {
+	if (generatedTransformCustom)
+		ComposeGeneratedTransform(generatedTransform, trans.mInv);
 	TriangleMesh::ApplyTransform(trans);
 
 	if (normals) {
@@ -773,6 +805,10 @@ ExtTriangleMeshUPtr ExtTriangleMesh::CopyExt(
 		std::move(vs), std::move(ts), std::move(ns), us, cs, as, bRadius);
 
 	m->SetLocal2World(appliedTrans);
+	if (generatedTransformCustom) {
+		m->generatedTransform = generatedTransform;
+		m->generatedTransformCustom = m->generatedTransformValid = true;
+	}
 
 	// Curve data stays valid only when the vertex set is unchanged; callers
 	// overriding vertices (subdiv, displacement, ...) produce geometry the

@@ -567,6 +567,8 @@ ExtTriangleMeshUPtr Scene::CreateShape(const string &shapeName, const Properties
 
 	luxrays::ExtTriangleMeshUPtr mesh = shape->Refine(*this);
 	mesh->SetName(shapeName);
+	if (props.IsDefined(propName + ".generatedtransformation"))
+		mesh->SetGeneratedTransformation(props.Get(propName + ".generatedtransformation").Get<Matrix4x4>());
 
 	return mesh;
 }

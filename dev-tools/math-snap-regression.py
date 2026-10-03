@@ -9,7 +9,11 @@ import argparse
 import array
 import json
 import math
+import struct
+from contextlib import nullcontext
 import time
+import tempfile
+from pathlib import Path
 
 import pysuperluxcore as lux
 
@@ -142,11 +146,19 @@ def native_cases():
 
 
 def render(case, engine, devices):
+    temporary = (tempfile.TemporaryDirectory(prefix="generated-proxy-")
+                 if case.get("mesh_archive") else nullcontext(None))
+    with temporary as directory:
+        _render_case(case, engine, devices, directory)
+
+
+def _render_case(case, engine, devices, directory):
     scene = lux.Scene()
     colours = [tuple(value) for value in case["reference_colours"]] if "reference_colours" in case else None
-    scene.DefineMesh("plane", [(-4., -4., 0.), (4., -4., 0.), (4., 4., 0.), (-4., 4., 0.)],
+    scene.DefineMesh("plane", [tuple(point) for point in case.get("vertices",
+                     [(-4., -4., 0.), (4., -4., 0.), (4., 4., 0.), (-4., 4., 0.)])],
                      [(0, 1, 2), (0, 2, 3)], None, None, colours, None,
-                     case.get("mesh_transform"))
+                     case.get("mesh_transform"), case.get("generated_transform"))
     props = lux.Properties()
     output = case["output"]
     output_sdl = " ".join(map(str, output)) if isinstance(output, (list, tuple)) else str(output)
@@ -189,6 +201,30 @@ scene.textures.biased.texture2 = 4
     textures.SetFromString("\n".join(line for line in serialized.ToString().splitlines()
                                     if line.startswith("scene.textures.")))
     scene.Parse(textures)
+    if case.get("mesh_archive"):
+        legacy = case["mesh_archive"] == "lxm4"
+        filename = str(Path(directory) / "plane.lxm")
+        scene.SaveMesh("plane", filename)
+        if legacy:
+            # v4 has the same geometry sections, but no area/Generated metadata.
+            with open(filename, "rb") as proxy:
+                header = bytearray(proxy.read(128))
+            struct.pack_into("<I", header, 4, 4)
+            struct.pack_into("<I", header, 8, struct.unpack_from("<I", header, 8)[0] & ~16)
+            header[52:56] = bytes(4)
+            header[80:128] = bytes(48)
+            with open(filename, "r+b") as proxy:
+                proxy.write(header)
+        restored = lux.Properties()
+        restored.SetFromString(scene.ToProperties().ToString())
+        restored.Set(lux.Property("scene.objects.obj.ply", filename))
+        scene = lux.Scene()
+        scene.Parse(restored)
+    if case.get("scene_archive"):
+        with tempfile.TemporaryDirectory(prefix="generated-scene-") as directory:
+            archive = str(Path(directory) / "scene.bsc")
+            scene.Save(archive)
+            scene = lux.Scene(archive)
     props = lux.Properties()
     props.SetFromString(f"""renderengine.type = {engine}
 film.width = 32

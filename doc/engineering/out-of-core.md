@@ -38,7 +38,7 @@ Spill points (all gated by `scene.spill.enable`, size floor
 
 ## .lxm mesh proxy format
 
-`ExtTriangleMesh::SaveProxy`/`LoadProxy` (`src/luxrays/geometry/exttrianglemeshfile.cpp`)
+`ExtTriangleMesh::SaveProxy`/`LoadProxy` (`src/luxrays/core/exttrianglemeshfile.cpp`)
 — V-Ray `.vrmesh`-style binary container: 128B fixed header +
 64B-aligned raw sections (verts, tris, normals, UVs, colors, alphas,
 vertAOV, triAOV). `LoadProxy` `MAP_PRIVATE`-maps the file and adopts
@@ -49,6 +49,22 @@ parsing, no heap copy; clean pages are demand-paged and reclaimable.
 centroid + vertices renumbered first-use (spatial locality for paging;
 loader is order-independent). Robust: bad magic/truncated/OOB counts
 throw cleanly (`LxmCheckSizes` POD-layout guard).
+
+### v5: authored Generated coordinates and emissive area
+
+- The fixed header remains 128 bytes; aligned geometry/cluster sections
+  keep the v4 layout. Flag bit4 identifies an authored Generated map,
+  stored as 12 floats in the existing reserved 48 bytes. Bit3 continues
+  to identify triangle normals.
+- Mesh area occupies former header padding. v5 mapped emissive meshes
+  restore it without a full geometry scan; older files calculate it
+  lazily only when an area consumer asks for it.
+- Mapped-buffer state is set before preprocessing, so proxy loading
+  does not rebuild per-triangle UV caches and fault every geometry page.
+  Constructor defaults initialize bevel pointers and bounds state.
+- Actual Blender mesh-converter CPU/Metal renders passed with v5
+  proxies, SDL reloads, live edits and scene archives. The permanent
+  Blender-reference corpus also covers legacy v4 emissive proxy loading.
 
 ### v2-v4: cluster index + ray-driven residency
 

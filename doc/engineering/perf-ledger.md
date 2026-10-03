@@ -561,3 +561,53 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   cross-vendor GPU or production-certification claim. Rolling bundle
   releases retain their pre-release warning.
 
+### Authored Generated texture space and mapped emissive proxies
+
+- Blender 5.2 custom texture space and material partitioning exposed
+  separate normalization errors: 1000× residual emission had red values
+  59.21 and 239.43 instead of 4 on CPU, with matching Metal failures.
+- Export now builds one whole-mesh affine normalizer before material
+  splitting and passes it to each native submesh. It reuses the existing
+  48-byte cached map and GPU descriptor; no per-vertex ORCO array, per-hit
+  scan, bounds division or new texture layout is introduced. Explicit maps
+  compose with inverse baked edits and survive SDL/Boost serialization.
+- `.lxm` v5 stores that map in existing reserved header bytes, preserving
+  the 128-byte header and v4 geometry sections. Mesh area uses former
+  padding, avoiding a full scan for v5 emissive proxies. Legacy files
+  calculate area lazily when requested, matching existing instance caches.
+- Real mapped-proxy rendering exposed uninitialized bevel pointers and
+  zero/uninitialized mesh area: one load aborted in preprocessing; a
+  constant-emission control then rendered black. Constructor initialization,
+  stored/lazy area and mapped-state-before-preprocess fix those causes
+  without copying mapped geometry or rebuilding UV caches.
+- Actual Blender `mesh_converter.convert` plus native CPU/Metal rendering
+  passed 12 cases each in memory, through PLY/SDL reload and through mapped
+  v5 `.lxm`/SDL reload. Cases include custom space, material splits, live
+  edits and scene archives. The full permanent Blender export/SDL corpus
+  passed 328 CPU/isolated Metal checks, including legacy v4 emissive proxies.
+- An actual 2178-triangle auto-proxy test changed only texture-space
+  location. The cache key now includes auto/location/size; it replaced the
+  file and changed X offset from 0.5 to the expected 0.375.
+- Actual `bpy.ops.render.render` CPU and isolated Metal images of a
+  two-material custom-space mesh were compared with Cycles on Blender
+  5.2.1. Interior raw EXR maximum absolute RGB errors were 0.003396 and
+  0.007030; material-boundary continuity passed. The genuine CPU image is
+  SuperBlendLuxCore `docs/assets/ex_generated_texspace.png`.
+- These checks do not establish undeformed ORCO for deforming modifiers,
+  legacy Generated-to-UV texture mapping parity, cross-vendor GPU parity,
+  or a measured render-speedup claim.
+
+- Existing cluster smoke verified all 44,851 self-contained ranges of a
+  717,602-triangle v5 proxy and rendered both mapped and PLY inputs at
+  1280×720. Mapping added 1.3 MB in that process; this is not a controlled
+  before/after memory-speedup measurement.
+- The existing proxy compatibility smoke now compares source positions
+  and triangle multiplicities without assuming equal vertex counts across
+  cluster duplication. Incidental exact-version/flag/file-end assertions
+  were removed. Normal/UV/color/alpha/vertex-AOV/triangle-AOV preservation
+  and malformed/truncated-file rejection passed.
+- Its former indirect-lighting fixture produced 2.112% independent MC
+  image noise against a 1% bound. Constant-emission geometry isolates
+  proxy preservation instead; the same bound is now enforced, and the
+  observed image delta was 0.02038%. No tolerance was widened.
+

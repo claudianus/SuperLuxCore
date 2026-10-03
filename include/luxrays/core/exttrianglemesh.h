@@ -571,6 +571,10 @@ public:
 	// Scene preprocessing warms this cache before shading threads start.
 	const std::array<float, 12> &GetGeneratedTransform() const;
 	bool HasGeneratedTransform() const { return generatedTransformValid; }
+	// Explicit authoring-space normalization (e.g. Blender texspace).
+	void SetGeneratedTransformation(const Matrix4x4 &normalization);
+	Matrix4x4 GetGeneratedTransformation() const;
+	bool HasCustomGeneratedTransformation() const { return generatedTransformCustom; }
 
 	// Resolves instance/motion wrappers to the base ExtTriangleMesh they
 	// wrap (vertex motion and curve data live on the base mesh); returns
@@ -624,7 +628,8 @@ public:
 			triDiffCache.clear();
 		appliedTrans = t;
 		appliedTransSwapsHandedness = appliedTrans.SwapsHandedness();
-		generatedTransformValid = false;
+		if (!generatedTransformCustom)
+			generatedTransformValid = false;
 	}
 
 	virtual void ApplyTransform(const Transform &trans);
@@ -835,6 +840,10 @@ public:
 			vertAOV.Serialize(i, ar, vertCount);
 			triAOV.Serialize(i, ar, triCount);
 		}
+		ar & generatedTransformCustom;
+		if (generatedTransformCustom)
+			for (const float &value : generatedTransform)
+				ar & value;
 		// Note: curve data (curveCps/curveSegIndices/curveCpAttrs) is
 		// intentionally not serialized — serialized meshes simply fall back
 		// to triangle rendering, preserving binary scene compatibility.
@@ -862,6 +871,15 @@ public:
 			alphas.Deserialize(i, ar, vertCount);
 			vertAOV.Deserialize(i, ar, vertCount);
 			triAOV.Deserialize(i, ar, triCount);
+		}
+		generatedTransformCustom = false;
+		if (version >= 5) {
+			ar & generatedTransformCustom;
+			if (generatedTransformCustom) {
+				for (float &value : generatedTransform)
+					ar & value;
+				generatedTransformValid = true;
+			}
 		}
 
 		curveCps.clear();
@@ -908,6 +926,7 @@ public:
 	mutable std::vector<TriDifferentialCache> triDiffCache;
 	mutable std::array<float, 12> generatedTransform;
 	mutable bool generatedTransformValid = false;
+	bool generatedTransformCustom = false;
 	// Bound the additional per-triangle working set on large meshes.
 	static constexpr u_int triDiffCacheMaxTris = 2 * 1024 * 1024;
 	void BuildTriDiffCache();
@@ -950,8 +969,8 @@ public:
 	// phase 5b); shared between copies, not serialized.
 	std::shared_ptr<StrandMotionRecipe> strandMotionRecipe;
 
-	BevelCylinder *bevelCylinders;
-	BevelBoundingCylinder *bevelBoundingCylinders;
+	BevelCylinder *bevelCylinders = nullptr;
+	BevelBoundingCylinder *bevelBoundingCylinders = nullptr;
 	std::unique_ptr<luxrays::ocl::IndexBVHArrayNode[]> bevelBVHArrayNodes;
 
 	// .lxm v2 cluster index (points inside the file mapping owned by the
@@ -1197,7 +1216,7 @@ private:
 
 BOOST_SERIALIZATION_ASSUME_ABSTRACT(luxrays::ExtMesh)
 
-BOOST_CLASS_VERSION(luxrays::ExtTriangleMesh, 4)
+BOOST_CLASS_VERSION(luxrays::ExtTriangleMesh, 5)
 BOOST_CLASS_VERSION(luxrays::ExtInstanceTriangleMesh, 4)
 BOOST_CLASS_VERSION(luxrays::ExtMotionTriangleMesh, 4)
 

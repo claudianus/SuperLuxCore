@@ -435,13 +435,16 @@ namespace {
 
 struct LxmHeader {
 	char magic[4];       // "LXM1"
-	u_int version;       // 2
+	u_int version;       // 5: optional Generated normalization in reserved[]
 	u_int flags;         // bit0: per-vertex normals present
 	                     // bit1: spatially (Morton) sorted
 	                     // bit2: cluster index present
+	                     // bit3: precomputed triangle normals present (v3)
+	                     // bit4: custom Generated normalization present (v5)
 	u_longlong vertCount;
 	u_longlong triCount;
 	u_int uvsMask, colsMask, alphasMask, vertAovMask, triAovMask;
+	float meshArea;              // v5: occupies former header padding
 	u_longlong clusterIndexOffset; // v2: file offset of LxmCluster[]
 	u_int clusterIndexCount;       // v2: number of clusters
 	u_int clusterTriStride;        // v2: max triangles per cluster
@@ -604,11 +607,14 @@ void ExtTriangleMesh::SaveProxy(const string &fileName,
 	LxmHeader hdr = {};
 	hdr.magic[0] = 'L'; hdr.magic[1] = 'X';
 	hdr.magic[2] = 'M'; hdr.magic[3] = '1';
-	hdr.version = 4;
+	hdr.version = 5;
 	hdr.flags = (HasNormals() ? 1u : 0u) | 2u /* spatially sorted */ |
-			4u /* cluster index */;
+			4u /* cluster index */ | (generatedTransformCustom ? 16u : 0u);
+	if (generatedTransformCustom)
+		memcpy(hdr.reserved, generatedTransform.data(), sizeof(hdr.reserved));
 	hdr.vertCount = vertPerm.size();
 	hdr.triCount = srcTriCount;
+	hdr.meshArea = GetMeshArea(Transform::TRANS_IDENTITY);
 	hdr.clusterIndexCount = clusterCount;
 	hdr.clusterTriStride = clusterTriStride;
 	for (u_int i = 0; i < EXTMESH_MAX_DATA_COUNT; ++i) {
@@ -716,7 +722,7 @@ ExtTriangleMeshUPtr ExtTriangleMesh::LoadProxy(const string &fileName) {
 		throw runtime_error("Truncated .lxm proxy: " + fileName);
 
 	const LxmHeader &hdr = *static_cast<const LxmHeader *>(mapped.get());
-	if (memcmp(hdr.magic, "LXM1", 4) || hdr.version < 1 || hdr.version > 4)
+	if (memcmp(hdr.magic, "LXM1", 4) || hdr.version < 1 || hdr.version > 5)
 		throw runtime_error("Bad .lxm proxy header: " + fileName);
 
 	// v1 files have the cluster/triNormals fields zeroed (they sat in
@@ -849,19 +855,26 @@ ExtTriangleMeshUPtr ExtTriangleMesh::LoadProxy(const string &fileName) {
 		mesh->triNormals = NormalBuffer::Adopt(
 				base + hdr.triNormalsOffset,
 				size_t(hdr.triCount) * sizeof(Normal), mapped);
-		mesh->Preprocess(); // skips triNormals (external), does bevel
 	} else {
 		mesh = std::make_unique<ExtTriangleMesh>(
 				std::move(verts), std::move(trisBuf), std::move(norms),
 				uvs, cols, alphas);
 	}
+	if (hdr.version >= 5)
+		mesh->area = hdr.meshArea;
+	mesh->buffersFromFileMapping = true;
+	if (hasTriNormals)
+		mesh->Preprocess(); // Keep mapped vertex/UV pages cold.
 	for (u_int i = 0; i < EXTMESH_MAX_DATA_COUNT; ++i) {
 		if (vertAOVs.LayerHasValues(i))
 			mesh->SetVertexAOV(i, vertAOVs.GetLayer(i), size_t(hdr.vertCount));
 		if (triAOVs.LayerHasValues(i))
 			mesh->SetTriAOV(i, triAOVs.GetLayer(i), size_t(hdr.triCount));
 	}
-	mesh->buffersFromFileMapping = true;
+	if (hdr.version >= 5 && (hdr.flags & 16u)) {
+		memcpy(mesh->generatedTransform.data(), hdr.reserved, sizeof(hdr.reserved));
+		mesh->generatedTransformCustom = mesh->generatedTransformValid = true;
+	}
 	if (hasClusterIndex) {
 		if (hdr.version >= 4) {
 			// The index aliases the same mapping — the buffers' keeper

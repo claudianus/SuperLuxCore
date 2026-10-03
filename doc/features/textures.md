@@ -106,27 +106,35 @@ differences, componentwise Vector Math Floor/Ceil/Fraction, linked/folded
 extrema, and HDR/subnormal-input quotients. Seventy installed-package
 CPU/Metal checks also passed. Radiance tolerance is 0.05, not bitwise parity.
 
-## hitpoint Generated coordinates — transformed base-mesh bounds
+## hitpoint Generated coordinates — authored texture space
 
-`hitpoint.channel = generated` normalizes the shading point in the base
-mesh's authoring frame. A cached 3×4 map keeps translated, rotated and
-nonuniformly scaled baked meshes in the same frame as their bounds.
-Instances and object-motion wrappers use the shared base map after undoing
-their wrapper transform. Flat axes return 0.5.
+`hitpoint.channel = generated` uses a cached 3×4 baked-to-Generated map.
+Instances and object-motion wrappers undo their wrapper transform before
+using the shared base map. Flat texture-space axes return 0.5; coordinates
+are not clamped to `[0, 1]`.
 
-The cache is prepared before shading and invalidated by geometry or applied
-transform changes. Only meshes whose material reads Generated are scanned.
-Live noncommuting rotation/translation edits are checked against Blender's
-reference coordinates after scene-edit cache invalidation on CPU and Metal.
-Evaluation performs neither a full mesh scan nor bounding-box division.
-The GPU mesh descriptor stores a 48-byte map instead of a 24-byte bbox;
-texture descriptors are unchanged and no per-vertex coordinates are added.
+Blender 5.2 exports the evaluated whole mesh's texture-space location and
+size before splitting it by material. Every submesh receives the same
+authored normalizer, including custom texture space. Python `DefineMesh`
+and `DefineMeshExt` accept `generated_transformation`; SDL stores the
+column-major affine matrix as `scene.shapes.<name>.generatedtransformation`
+or `scene.objects.<name>.generatedtransformation` for inline/PLY meshes.
+The normalizer describes authoring coordinates, before applied transforms.
 
-Four transformed direct/instance Blender fixtures compare Generated with
-independently interpolated Blender texspace reference values. Their error
-is amplified 1000× before the ordinary 0.05 radiance gate. Complete
-undeformed ORCO, custom texspace and whole-object bounds across material
-submeshes are not established by this base-mesh approximation.
+Explicit maps survive preprocessing and are composed with inverse baked
+transform edits. Without a supplied normalizer, the existing inverse-baked
+base-bounds cache is prepared only for meshes that read Generated.
+Evaluation performs neither a geometry scan nor bounding-box division.
+The existing 48-byte GPU mesh map and texture layouts are unchanged;
+no per-vertex coordinates are added. SDL, Boost scene archives and `.lxm`
+v5 preserve the authored map.
+
+Blender-reference fixtures cover direct meshes, instances, custom and
+zero-sized texture-space axes, material splits, noncommuting live edits,
+scene archives, v5 proxies and legacy v4 proxy loading. Residuals are
+amplified 1000× before the unchanged 0.05 radiance gate; the full export/
+SDL/CPU/isolated Metal corpus passed 328 checks on Blender 5.2.1.
+Undeformed ORCO for deforming modifiers is not exported as a vertex layer.
 
 
 ## gabornoise texture — sparse Gabor convolution
