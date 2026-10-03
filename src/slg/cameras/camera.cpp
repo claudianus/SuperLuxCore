@@ -78,7 +78,7 @@ bool Camera::ProjectPointToFilm(const luxrays::Point &p, const float time,
 	// Camera -> raster space (the projective divide is part of Transform)
 	pr = GetCameraToRaster() * pr;
 	*filmX = pr.x;
-	*filmY = filmHeight - 1.f - pr.y;
+	*filmY = filmHeight - pr.y;
 
 	return true;
 }

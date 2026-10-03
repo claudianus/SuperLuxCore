@@ -643,3 +643,33 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   Actual Chromium views verified the 2.11.9 version pair, 328-check
   provenance, remaining coordinate limitations and loaded genuine images.
 
+### Continuous camera raster coordinates
+
+- Independent Blender 5.2.1 `Camera.view_frame` projections and a
+  world-position emission ramp reproduced a one-pixel vertical shift on
+  both PATHCPU and physical Metal for orthographic and perspective cameras.
+  An equirectangular incoming-direction ramp reproduced the same CPU shift;
+  Metal's environment ray generator was already centered correctly.
+- The samplers pass continuous positions `pixel + 0.5 + filterOffset`.
+  Camera code incorrectly reflected those coordinates as `height - y - 1`,
+  an integer-index rule. Forward rays now use `height - y`; reciprocal
+  sample-position, image projection and point-to-film paths use the same
+  convention. CPU environment PDF latitude follows the corrected ray.
+  Existing integer-index/filter clamps are unchanged.
+- Before correction, measured mean Y offsets were 0.999989 pixels for
+  orthographic CPU, 0.998188 for orthographic Metal, 1.000001 for
+  perspective CPU, 0.993567 for perspective Metal, and 0.999611 for
+  environment CPU. The independent Cycles references were within 0.001
+  mean Y pixels. Each renderer used 512 samples and raw 32-bit EXR output.
+- The permanent SuperBlendLuxCore
+  `dev-tools/camera_raster_parity_test.py` exercises centered and shifted
+  orthographic/perspective cameras plus full equirectangular projection:
+  15 actual Cycles/CPU/isolated GPU renders passed. Maximum per-row mean
+  Y error was 0.018039 pixels; every image passed the 0.003 maximum RGB
+  and 0.05 per-row pixel bounds. These gates reject the original full-pixel
+  displacement; no existing tolerance was widened.
+- The existing 328 Blender export/SDL/CPU/Metal coordinate and math checks
+  also passed with the corrected native module. No new camera fields,
+  allocation, per-pixel buffers or layout changes were added; one redundant
+  subtraction was removed. No render-speedup or cross-vendor GPU claim.
+

@@ -67,7 +67,7 @@ void OrthographicCamera::InitCameraData() {
 }
 
 void OrthographicCamera::InitRay(Ray *ray, const float filmX, const float filmY) const {
-	const Point Pras = Point(filmX, filmHeight - filmY - 1.f, 0.f);
+	const Point Pras = Point(filmX, filmHeight - filmY, 0.f);
 	const Point Pcamera = Point(camTrans.rasterToCamera * Pras);
 
 	ray->Update(Pcamera, Vector(0.f, 0.f, 1.f));
@@ -92,7 +92,7 @@ bool OrthographicCamera::ProjectToImage(Ray *ray, float *x, float *y) const {
 		pO *= motionSystem->Sample(ray->time);
 
 	*x = pO.x;
-	*y = filmHeight - 1 - pO.y;
+	*y = filmHeight - pO.y;
 
 	// Update the ray origin
 	pO.z = 0.f;
@@ -129,7 +129,7 @@ bool OrthographicCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 		pO *= motionSystem->Sample(ray->time);
 
 	*x = pO.x;
-	*y = filmHeight - 1 - pO.y;
+	*y = filmHeight - pO.y;
 
 	// Update the ray origin
 	pO.z = 0.f;

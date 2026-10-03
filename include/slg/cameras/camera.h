@@ -92,6 +92,8 @@ public:
 
 	// Rendering methods
 	float GenerateRayTime(const float u) const { return luxrays::Lerp(u, shutterOpen, shutterClose); }
+	// Film coordinates are continuous pixel-space positions: pixel centers
+	// are (x + .5, y + .5), so raster Y reflection is filmHeight - filmY.
 	virtual void GenerateRay(const float time, const float filmX, const float filmY,
 		luxrays::Ray *ray, PathVolumeInfo *volInfo,
 		const float u0, const float u1) const = 0;

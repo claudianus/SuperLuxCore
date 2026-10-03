@@ -190,10 +190,10 @@ OPENCL_FORCE_INLINE void PerspectiveCamera_GenerateRayImpl(
 	float3 Pras;
 	if (cameraPersp->enableOculusRiftBarrel) {
 		float ssx, ssy;
-		Camera_OculusRiftBarrelPostprocess(filmX / filmWidth, (filmHeight - filmY - 1.f) / filmHeight, &ssx, &ssy);
+		Camera_OculusRiftBarrelPostprocess(filmX / filmWidth, (filmHeight - filmY) / filmHeight, &ssx, &ssy);
 		Pras = MAKE_FLOAT3(min(ssx * filmWidth, (float) (filmWidth - 1)), min(ssy * filmHeight, (float) (filmHeight - 1)), 0.f);
 	} else
-		Pras = MAKE_FLOAT3(filmX, filmHeight - filmY - 1.f, 0.f);
+		Pras = MAKE_FLOAT3(filmX, filmHeight - filmY, 0.f);
 
 	float3 rayOrig = Transform_ApplyPoint(rasterToCamera, Pras);
 	float3 rayDir = rayOrig;
@@ -280,7 +280,7 @@ OPENCL_FORCE_INLINE void OrthographicCamera_GenerateRay(
 		const float dofSampleX, const float dofSampleY) {
 	PathVolumeInfo_StartVolume(volInfo, camera->base.volumeIndex);
 
-	const float3 Pras = MAKE_FLOAT3(filmX, filmHeight - filmY - 1.f, 0.f);
+	const float3 Pras = MAKE_FLOAT3(filmX, filmHeight - filmY, 0.f);
 	float3 rayOrig = Transform_ApplyPoint(&camera->base.rasterToCamera, Pras);
 	float3 rayDir = MAKE_FLOAT3(0.f, 0.f, 1.f);
 
@@ -577,7 +577,7 @@ OPENCL_FORCE_INLINE bool PerspectiveCamera_GetSamplePosition(
 			Transform_InvApplyPoint(&cameraBase->cameraToWorld, pO));
 
 	*x = pO.x;
-	*y = filmHeight - 1.f - pO.y;
+	*y = filmHeight - pO.y;
 
 	// Check if we are inside the image plane
 	if ((*x < filmSubRegion0) || (*x >= filmSubRegion1 + 1.f) ||
@@ -630,7 +630,7 @@ OPENCL_FORCE_INLINE bool OrthographicCamera_GetSamplePosition(
 	}
 
 	*x = pO.x;
-	*y = filmHeight - 1.f - pO.y;
+	*y = filmHeight - pO.y;
 
 	// Update the ray origin and direction: the projection on the image
 	// plane moves the origin in raster space
@@ -758,7 +758,7 @@ OPENCL_FORCE_INLINE bool Camera_ProjectWorldPointToFilm(
 	// transform)
 	p = Transform_InvApplyPoint(&cameraBase->rasterToCamera, p);
 	*filmX = p.x;
-	*filmY = filmHeight - 1.f - p.y;
+	*filmY = filmHeight - p.y;
 
 	return true;
 }
