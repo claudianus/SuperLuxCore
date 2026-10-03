@@ -362,11 +362,11 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   Round(-1.5)=-2. Added native unary operations and removed the adapter's
   round/shift/sign compositions. Vector Floor/Ceil/Fraction no longer
   warn and pass through.
-- Linked scalar operation graphs now use a native unary operation plus
-  the existing float-conversion wrapper. Relative operation-node counts
-  (excluding input/constant leaves): Floor 2→2, Ceil 4→2, Truncate 7→2,
-  Fraction 3→2. Round requires the scalar conversion wrapper when linked;
-  constant Round remains native to preserve float32 half-add boundaries.
+- The unary cutover initially kept the existing float-conversion wrapper.
+  Relative operation-node counts at that stage (excluding input/constant
+  leaves): Floor 2→2, Ceil 4→2, Truncate 7→2, Fraction 3→2.
+  The typed socket cutover below removes redundant scalar wrappers.
+  Constant Round stays native to preserve float32 half-add boundaries.
   These are graph-cost changes, not a measured render-speedup claim.
 - Release build linked successfully. 206 actual CPU/isolated Metal
   radiance checks passed through native SDL round-trip and real Blender
@@ -376,3 +376,26 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
 - Installed Blender's actual SUPERLUXCORE Generated→signed Vector Floor
   material rendered four distinct colour bands with flat interior
   plateaus. The resulting PNG is published as a manual example.
+
+### Typed scalar sockets without identity powers
+
+- Blender Vector→Float averages the evaluated RGB components; Color→Float
+  uses the active OpenColorIO luminance coefficients. Sine incorrectly
+  evaluated channelwise: actual CPU biased emission was `[4,4.99753,4]`
+  for both Vector/Color `(0,1.5,0)`, instead of `[4.47943]*3` for the
+  vector and `[4.87854]*3` for default-config colour.
+- The adapter now converts at scalar socket boundaries with the existing
+  native dot product. Scalar outputs pass through without a wrapper;
+  group boundaries and third operands follow the same rule. RGB to BW
+  reads active-config coefficients instead of fixed legacy weights.
+- Removed `power(x,1)` conversion and all its callers. An actual paired
+  export against the previous committed adapter counted Value→scalar
+  Floor/Ceil/Truncate/Fraction graphs at 3→2 explicit textures, including
+  the Value leaf. Round→Subtract also changes 3→2. Vector/Color→Sine
+  changes 2→3 because a real conversion is required; the old smaller
+  graph produced wrong radiance. No native object/layout or separate
+  GPU-buffer changes; no measured end-to-end speedup is claimed.
+- 222 actual CPU/isolated Metal SDL round-trip/render checks passed,
+  including evaluated vector products, colour luminance, third operands
+  and both scalar group boundaries. The existing `0.05` radiance tolerance
+  does not establish bitwise math parity.
