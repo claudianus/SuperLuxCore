@@ -260,6 +260,15 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   Nonuniform object scale `(0.5, 1, 2)` produced `(242, 0, 81)` on both,
   matching the normalized inverse-transpose normal within 2 bytes.
   Existing backend parity runner passed all four cases.
-- Scope limits: these probes establish interpolated-normal behavior, not
-  varying-normal derivative parity, reflected/motion transforms, or a
-  performance improvement. No speedup or bitwise-equivalence claim.
+- A linked Release C++ probe compared cached fusion against explicitly
+  qualified `ExtMesh::GetDifferentials` for raw corner normals
+  `(1.2,0,1.6)`, `(0,3,4)`, `(0,0,7)` on a unit UV triangle.
+  All position/normal derivative components matched within `1e-6`;
+  `dndu=(-0.6,0.6,0)`, `dndv=(-0.6,0,0.2)`.
+- Single-triangle, warm-cache microbenchmark (10 million varying
+  barycentric hits per pass): fused 8.07/8.15 ns per hit, separate
+  interpolation plus cached differentials 8.03/8.12 ns per hit.
+  This probe demonstrated no speedup; it does not measure scattered
+  normal traffic or end-to-end render throughput.
+- Scope limits: GPU varying-normal derivative parity and reflected/motion
+  transforms remain unverified. No speedup or bitwise-equivalence claim.
