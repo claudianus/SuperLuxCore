@@ -588,11 +588,12 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
 - An actual 2178-triangle auto-proxy test changed only texture-space
   location. The cache key now includes auto/location/size; it replaced the
   file and changed X offset from 0.5 to the expected 0.375.
-- Actual `bpy.ops.render.render` CPU and isolated Metal images of a
-  two-material custom-space mesh were compared with Cycles on Blender
-  5.2.1. Interior raw EXR maximum absolute RGB errors were 0.003396 and
-  0.007030; material-boundary continuity passed. The genuine CPU image is
-  SuperBlendLuxCore `docs/assets/ex_generated_texspace.png`.
+- The public 2.11.9 offline bundle's actual `bpy.ops.render.render` CPU
+  and isolated Metal images of a two-material custom-space mesh were
+  compared with Cycles on Blender 5.2.1. Interior raw EXR maximum absolute
+  RGB errors were 0.003421 and 0.007908; material-boundary continuity passed.
+  Its genuine CPU image is SuperBlendLuxCore
+  `docs/assets/ex_generated_texspace.png`.
 - These checks do not establish undeformed ORCO for deforming modifiers,
   legacy Generated-to-UV texture mapping parity, cross-vendor GPU parity,
   or a measured render-speedup claim.
@@ -610,4 +611,23 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   image noise against a 1% bound. Constant-emission geometry isolates
   proxy preservation instead; the same bound is now enforced, and the
   observed image delta was 0.02038%. No tolerance was widened.
+
+### Public 2.11.9 authored-coordinate artifact proof
+
+- Wheel run 37131924537 built all four cp313 platforms and published
+  native source `e4801e234b0a0bbfba890e65800c67a2831f0cfe`.
+  The downloaded Apple-silicon wheel matched public SHA-256
+  `3a6b879606199a953b973a88fb979d13616b9a783c448273e574908a5de0b8cb`.
+- Factory-startup Blender 5.2.1 imported that wheel from an isolated site
+  and passed all 328 CPU/isolated Metal renders. The existing 0.05
+  radiance gate and 1000× coordinate amplification were unchanged.
+- Initial bundle run 37133389528 published add-on `f0b9bfb6` with the
+  matching 2.11.9 wheel. Its ARM ZIP matched public SHA-256
+  `1580e21be564e96df6b986aad0c49ccb6b369bd67bba2352a4ceae27b65646c4`;
+  the embedded wheel matched the same public wheel digest.
+- Blender's extension installer installed that public ZIP into a separate
+  profile and explicitly skipped the engine download. Runtime module and
+  add-on paths were asserted to remain inside that profile. Actual CPU/
+  isolated Metal custom-space/material-split renders passed against Cycles.
+  These rolling artifacts remain pre-releases, not production certification.
 
