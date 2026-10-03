@@ -1791,3 +1791,17 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
   BSDF_Sample, SplatLight, GetPDF, SunEmit, LightFocusEmitDistant)
   found bit-equivalent ports. Verdict + closure notes in
   dev-tools/volume-gpu-divergence.md.
+
+## Session notes (2026-10-03, rayinfo viewdepth)
+
+- `rayinfo.viewdepth` channel landed (`ba65bbc9c`) - Cycles Camera
+  Data "View Z Depth" closes its last warn tier. HitPoint gains
+  rayViewDepth = dot(p - camPos, camDir), stamped in Scene::Intersect
+  (CPU) and Scene_Intersect (GPU) next to rayLength; volume-scatter
+  and the two ReSTIR candidate paths fill it too. GPU Scene struct
+  carries a baked cameraPosition/cameraDirection via
+  BakeSceneCamera(); CAMERA_EDIT re-bakes + re-uploads per thread.
+  Verified vs expected: plane at 3.0, linear scale .25 -> 191 on
+  CPU+GPU bit-parity; cornell PATHOCL smoke clean.
+- SuperBlendLuxCore `9f3ff694`: ShaderNodeCameraData View Z Depth ->
+  rayinfo.viewdepth; coverage doc synced.
