@@ -2044,7 +2044,10 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				case HITPOINT_OBJECTSPACE: {
 					// p_obj = localToWorld^-1 * p
 					const float4 p4 = (float4)(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z, 1.f);
-					const device float (*mi)[4] = hitPoint->localToWorld.mInv.m;
+					// hitPoint lives in __global: keep the qualifier so
+					// pure-OpenCL parses (the cl2msl pass maps __global
+					// to device)
+					__global const float (*mi)[4] = hitPoint->localToWorld.mInv.m;
 					f3val = (float3)(
 						mi[0][0] * p4.x + mi[0][1] * p4.y + mi[0][2] * p4.z + mi[0][3] * p4.w,
 						mi[1][0] * p4.x + mi[1][1] * p4.y + mi[1][2] * p4.z + mi[1][3] * p4.w,
@@ -2053,7 +2056,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				}
 				case HITPOINT_GENERATED: {
 					const float4 p4 = (float4)(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z, 1.f);
-					const device float (*mi)[4] = hitPoint->localToWorld.mInv.m;
+					__global const float (*mi)[4] = hitPoint->localToWorld.mInv.m;
 					const float px = mi[0][0] * p4.x + mi[0][1] * p4.y + mi[0][2] * p4.z + mi[0][3] * p4.w;
 					const float py = mi[1][0] * p4.x + mi[1][1] * p4.y + mi[1][2] * p4.z + mi[1][3] * p4.w;
 					const float pz = mi[2][0] * p4.x + mi[2][1] * p4.y + mi[2][2] * p4.z + mi[2][3] * p4.w;
