@@ -320,3 +320,26 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
 - No additional renderer change was needed at this gate. Motion-varying
   normal derivatives and native CUDA/OpenCL/Vulkan executions are not
   covered by this Apple Metal run.
+
+### Static shading working-set probe and padding removal
+
+- Linked Release microbenchmark: independent triangles with normals/UVs,
+  xorshift-indexed random hits, varying barycentrics, 3 million calls per
+  pass, three alternating fused/separate passes for 64/4096/65536/262144
+  triangles. Separate evaluation uses interpolation plus the existing
+  cached differential path, not an artificially uncached baseline.
+- Before padding removal, 262144 triangles: fused 54.17/81.12/88.74 ns
+  per hit; separate 104.95/110.44/112.80. Small working sets were noisy
+  and did not consistently favor fusion. This supports fusion for
+  scattered normal traffic, not an end-to-end renderer speedup claim.
+- Removed the unused `TriDifferentialCache::pad` float. Clang's actual
+  record-layout dump confirms the resulting private cache is 88 bytes,
+  alignment 4 (previous field layout 92 bytes): 4 bytes saved per cached
+  triangle, or 8 MiB at the existing 2M-triangle per-mesh cap.
+  No derivative arithmetic, serialization fields or GPU layout changes.
+- After removal, 262144 triangles: fused 88.58/75.99/94.14 ns per hit;
+  separate 119.79/129.90/131.89. Cross-run timing varied substantially;
+  no speedup is attributed to padding removal. The memory reduction is
+  deterministic, and no extra computation was introduced.
+- Release build passed; all 10 handedness and 6 analytic bump render
+  cases passed on the rebuilt CPU/isolated Metal module.

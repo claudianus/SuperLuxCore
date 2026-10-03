@@ -898,7 +898,6 @@ public:
 		// Signed raw normals for interpolation; differential evaluation
 		// normalizes each corner, matching the uncached path.
 		Normal n0, n1, n2;
-		float pad;
 	};
 	mutable std::vector<TriDifferentialCache> triDiffCache;
 	// Bound the additional per-triangle working set on large meshes.
