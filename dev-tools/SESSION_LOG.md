@@ -1696,3 +1696,30 @@ unresolved; the gate wants a higher SPP or a tolerance floor bump.
   EFonApprox). LightBVH NodeImportance is already the dot-space
   rewrite. Remaining real work: deferred splat queue (M-H), GPU PGIC
   KD-tree, ray-differential transport (S6 enabler), displacement space.
+
+## Session notes (2026-10-03, volume-fast-gate + GPU light-tracing divergence)
+
+- Committed `0dd8d6ee7`: per-hit `PathVolumeInfo` state machine now
+  early-outs when the material carries no volume and the path has no
+  current volume. CPU+GPU: `Material::HasAnyVolume`/`IsIdle` predicates
+  inline, `BSDF::Init`/`Scene::Intersect`/`Material_GetInteriorVolume`
+  all gate on it. Verified cornell 7.506 -> 7.567 Ms/s (neutral under
+  noise), parity 4/4, media GPU relmean vs CPU 13.1 -> 7.1 (NULLMAT
+  parity on `ContinueToTrace` condition #2).
+- Isolated `dense-volume`/`portal-interior` GPU divergence to the
+  light-tracing connect channel: `mhsun` (glass shell + heterogeneous
+  + camera-on-boundary) diverges only when `path.lighttracing.enable=1`
+  with tasks >0; `taskfraction=0` and `lt=0` match. `archglass`,
+  `roughglass`, `null` shells all fine on GPU; `transparency.shadow=1`
+  on the glass also equalizes. Dump infra committed
+  (`0b2fbab26` - `LUX_TASKSTATE_VOL_DUMP` writes EyePathInfo +
+  directLightVolInfos to `taskstate_vol_<t>.bin`,
+  `dev-tools/taskstate_parse.py` decodes). Pending: find where the
+  GPU `connectVolInfo` loses the boundary crossing that CPU tolerates
+  (likely inside `LMnee_*`/`LMneeChain_*` ProcessState - the connect
+  ray is issued with `PathVolumeInfo_Update` already applied on the
+  solved BSDF but the enter case for `pendingSplat.fromMnee==1` is
+  asymmetric).
+- Gauntlet is slow (GPU light-traced scenes hit ~35-45s/frame for
+  32spp while CPU is ~4-9s) - batching overhead dominates when
+  iterations/task-collapse is short. Documented in divergence note.
