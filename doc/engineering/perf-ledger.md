@@ -668,6 +668,12 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   Y error was 0.018039 pixels; every image passed the 0.003 maximum RGB
   and 0.05 per-row pixel bounds. These gates reject the original full-pixel
   displacement; no existing tolerance was widened.
+- A deterministic native API smoke additionally checked independent center
+  rays and world-point projections, 48 fractional/first/last-pixel reciprocal
+  sample positions, orthographic image projections, and environment ray/PDF
+  latitude with a 0.001 bound. It exposed a separate 0.018608-pixel longitude
+  error in the environment inverse's `acos`/sine reconstruction. `atan2`
+  now recovers azimuth directly without the meridian precision loss.
 - The existing 328 Blender export/SDL/CPU/Metal coordinate and math checks
   also passed with the corrected native module. No new camera fields,
   allocation, per-pixel buffers or layout changes were added; one redundant

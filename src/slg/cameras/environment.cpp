@@ -120,12 +120,10 @@ bool EnvironmentCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 	const float cosTheta = w.y;
 	const float theta = acosf(Min(1.f, cosTheta));
 	*y = filmHeight - (theta * filmHeight * INV_PI);
-	const float sinTheta = sqrtf(Clamp(1.f - cosTheta * cosTheta, 1e-5f, 1.f));
-
-	const float cosPhi = -w.z / sinTheta;
-	float phi = acosf(Clamp(cosPhi, -1.f, 1.f));
-	if (w.x >= 0.f)
-		phi = 2.f * M_PI - phi;
+	// atan2 preserves longitude precision near the seam and meridians.
+	float phi = atan2f(-w.x, -w.z);
+	if (phi < 0.f)
+		phi += 2.f * M_PI;
 	*x = (phi - Radians((360.f - degrees) * .5f)) * filmWidth / Radians(degrees);
 	
 	return true;
