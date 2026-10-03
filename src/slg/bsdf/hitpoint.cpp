@@ -54,39 +54,38 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 	triangleBariCoord1 = b1;
 	triangleBariCoord2 = b2;
 
-	// Interpolate face normal
+	// Interpolate face normal and (unless this is a throughShadow hit)
+	// geometry differentials. Both reuse the same triangle vertex
+	// normals; GetShadingInfo shares the fetch on meshes with the
+	// per-triangle cache and applies the same degenerate fallback as
+	// the separate InterpolateTriNormal (geometryN when the
+	// interpolated normal is non-finite).
 	geometryN = mesh->GetGeometryNormal(localToWorld, triangleIndex);
-	interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
 	// Non-finite geometry (NaN vertices, degenerate transforms) can also
 	// produce a NaN geometric normal; last resort: face the ray
 	const float gnl2 = Dot(geometryN, geometryN);
 	if (!isfinite(gnl2) || (gnl2 < 1e-20f))
 		geometryN = Normal(-fixedDir.x, -fixedDir.y, -fixedDir.z);
-	// Degenerate vertex-normal fields (opposing normals cancelling to a
-	// zero barycentric sum, or non-finite data) normalize to NaN and
-	// poison the whole shading frame; fall back to the geometric normal
-	const float inl2 = Dot(interpolatedN, interpolatedN);
-	if (!isfinite(inl2) || (inl2 < 1e-20f))
-		interpolatedN = geometryN;
-	shadeN = interpolatedN;
-	intoObject = (Dot(-fixedDir, geometryN) < 0.f);
-
-	// Interpolate UV coordinates: needed by transparent-shadow checks
-	// (transparency textures read `defaultUV`). For a shadow hit we do
-	// not need dpdu/dpdv or the normal differentials - skip the
-	// GetDifferentials() inverse and synthesize a canonical frame.
 	if (throughShadowTransparency) {
+		// No differentials needed: keep the cheap canonical frame and
+		// skip the fused fetch - the UV interpolation still fetches the
+		// layer-0 corners once.
+		interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
+		const float inl2 = Dot(interpolatedN, interpolatedN);
+		if (!isfinite(inl2) || (inl2 < 1e-20f))
+			interpolatedN = geometryN;
+		shadeN = interpolatedN;
+		intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 		defaultUV = mesh->InterpolateTriUV(triangleIndex, b1, b2, 0);
 		CoordinateSystem(Vector(shadeN), &dpdu, &dpdv);
 		dndu = Normal();
 		dndv = Normal();
 	} else {
-		// Compute geometry differentials (always with the first set of UVs)
-		mesh->GetDifferentials(localToWorld,
-				triangleIndex, shadeN,
-				0, // The UV set to use, always the first
-				&dpdu, &dpdv, &dndu, &dndv,
+		mesh->GetShadingInfo(localToWorld, triangleIndex, geometryN, 0,
+				&interpolatedN, &dpdu, &dpdv, &dndu, &dndv,
 				b1, b2, &defaultUV);
+		shadeN = interpolatedN;
+		intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 	}
 
 	// Note: I'm not initializing volume related information here
@@ -165,26 +164,26 @@ void HitPoint::Init(const bool fixedFromLight, const bool throughShadowTransp,
 
 	// Caller already fetched the geometric normal (for fixedDir) - reuse it.
 	geometryN = geoN;
-	interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
 	const float gnl2 = Dot(geometryN, geometryN);
 	if (!isfinite(gnl2) || (gnl2 < 1e-20f))
 		geometryN = Normal(-fixedDir.x, -fixedDir.y, -fixedDir.z);
-	const float inl2 = Dot(interpolatedN, interpolatedN);
-	if (!isfinite(inl2) || (inl2 < 1e-20f))
-		interpolatedN = geometryN;
-	shadeN = interpolatedN;
-	intoObject = (Dot(-fixedDir, geometryN) < 0.f);
-
 	if (throughShadowTransparency) {
+		interpolatedN = mesh->InterpolateTriNormal(localToWorld, triangleIndex, b1, b2);
+		const float inl2 = Dot(interpolatedN, interpolatedN);
+		if (!isfinite(inl2) || (inl2 < 1e-20f))
+			interpolatedN = geometryN;
+		shadeN = interpolatedN;
+		intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 		defaultUV = mesh->InterpolateTriUV(triangleIndex, b1, b2, 0);
 		CoordinateSystem(Vector(shadeN), &dpdu, &dpdv);
 		dndu = Normal();
 		dndv = Normal();
 	} else {
-		mesh->GetDifferentials(localToWorld,
-				triangleIndex, shadeN,
-				0, &dpdu, &dpdv, &dndu, &dndv,
+		mesh->GetShadingInfo(localToWorld, triangleIndex, geometryN, 0,
+				&interpolatedN, &dpdu, &dpdv, &dndu, &dndv,
 				b1, b2, &defaultUV);
+		shadeN = interpolatedN;
+		intoObject = (Dot(-fixedDir, geometryN) < 0.f);
 	}
 
 	interiorVolume = nullptr;

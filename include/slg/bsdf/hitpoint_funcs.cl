@@ -57,27 +57,45 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 	const bool isCurveHit = (triIndex & RAYHIT_CURVE_FLAG) != 0u;
 
 	// Interpolate face normal (curve hits: round-tube normal from the hit
-	// point and the Catmull-Rom centerline)
+	// point and the Catmull-Rom centerline). Non-curve hits fuse the
+	// normal/UV/differential fetches in ExtMesh_GetShadingInfo - one
+	// triangle + one normal-triple load feeds interpolatedN, dndu/dndv
+	// and the hit UV (was 2x triangle + 6 normals + 1x UV-triple).
 	float3 geometryN, interpolatedN;
+	float3 dndu, dndv, dpdu, dpdv;
+	float2 defaultUV;
 	if (isCurveHit) {
 		geometryN = Curve_GetNormal(&hitPoint->localToWorld, meshIndex, triIndex, pnt, b1 EXTMESH_PARAM);
 		interpolatedN = geometryN;
+		// Non-finite geometry (NaN vertices, degenerate transforms) can
+		// also produce a NaN geometric normal; last resort: face the ray
+		const float gnl2 = dot(geometryN, geometryN);
+		if (!(isfinite(gnl2) && (gnl2 > 1e-20f)))
+			geometryN = -fixedDir;
 	} else {
 		geometryN = ExtMesh_GetGeometryNormal(&hitPoint->localToWorld, meshIndex, triIndex EXTMESH_PARAM);
-		interpolatedN = ExtMesh_GetInterpolateNormal(&hitPoint->localToWorld, meshIndex, triIndex, b1, b2 EXTMESH_PARAM);
+		const float gnl2 = dot(geometryN, geometryN);
+		if (!(isfinite(gnl2) && (gnl2 > 1e-20f)))
+			geometryN = -fixedDir;
+
+		ExtMesh_GetShadingInfo(&hitPoint->localToWorld, meshIndex,
+				triIndex, geometryN, 0,
+				&interpolatedN,
+				&dpdu, &dpdv, &dndu, &dndv,
+				b1, b2, &defaultUV
+				EXTMESH_PARAM);
 	}
-	// Non-finite geometry (NaN vertices, degenerate transforms) can also
-	// produce a NaN geometric normal; last resort: face the ray
-	const float gnl2 = dot(geometryN, geometryN);
-	if (!(isfinite(gnl2) && (gnl2 > 1e-20f)))
-		geometryN = -fixedDir;
-	// Degenerate vertex-normal fields (opposing normals cancelling to a
-	// zero barycentric sum, or non-finite data) normalize to NaN and
-	// poison the whole shading frame; fall back to the geometric normal
-	const float inl2 = dot(interpolatedN, interpolatedN);
-	if (!(isfinite(interpolatedN.x + interpolatedN.y + interpolatedN.z) &&
-			(inl2 > 1e-20f)))
-		interpolatedN = geometryN;
+
+	if (isCurveHit) {
+		// Degenerate vertex-normal fields (opposing normals cancelling
+		// to a zero barycentric sum, or non-finite data) normalize to
+		// NaN and poison the whole shading frame; fall back to the
+		// geometric normal
+		const float inl2 = dot(interpolatedN, interpolatedN);
+		if (!(isfinite(interpolatedN.x + interpolatedN.y + interpolatedN.z) &&
+				(inl2 > 1e-20f)))
+			interpolatedN = geometryN;
+	}
 	VSTORE3F(geometryN,  &hitPoint->geometryN.x);
 	VSTORE3F(interpolatedN,  &hitPoint->interpolatedN.x);
 	const float3 shadeN = interpolatedN;
@@ -86,7 +104,9 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 	hitPoint->intoObject = (dot(-fixedDir, geometryN) < 0.f);
 
 	// Interpolate UV coordinates (curve branch handled inside)
-	const float2 defaultUV = ExtMesh_GetInterpolateUV(meshIndex, triIndex, b1, b2, 0 EXTMESH_PARAM);
+	if (isCurveHit) {
+		defaultUV = ExtMesh_GetInterpolateUV(meshIndex, triIndex, b1, b2, 0 EXTMESH_PARAM);
+	}
 	VSTORE2F(defaultUV, &hitPoint->defaultUV.u);
 
 	hitPoint->meshIndex = meshIndex;
@@ -95,7 +115,6 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 	hitPoint->triangleBariCoord2 = b2;
 
 	// Compute geometry differentials
-	float3 dndu, dndv, dpdu, dpdv;
 	if (isCurveHit) {
 		// For a round tube: dpdu ~ world-space strand tangent, dpdv ~
 		// shading normal, normal curvature ignored (sufficient for hair).
@@ -119,15 +138,6 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 		dpdv = cross(shadeN, dpdu);
 		dndu = ZERO;
 		dndv = ZERO;
-	} else {
-		ExtMesh_GetDifferentials(
-				&hitPoint->localToWorld,
-				meshIndex,
-				triIndex,
-				shadeN, 0,
-				&dpdu, &dpdv,
-				&dndu, &dndv
-				EXTMESH_PARAM);
 	}
 	VSTORE3F(dpdu, &hitPoint->dpdu.x);
 	VSTORE3F(dpdv, &hitPoint->dpdv.x);

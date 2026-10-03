@@ -130,6 +130,27 @@ void ExtMesh::GetDifferentials(const Transform &local2World,
 	}
 }
 
+void ExtMesh::GetShadingInfo(const Transform &local2World,
+		const u_int triIndex, const Normal &geometryN,
+		const u_int dataIndex,
+		Normal *shadingN,
+		Vector *dpdu, Vector *dpdv,
+		Normal *dndu, Normal *dndv,
+		const float hitB1, const float hitB2, UV *hitUV) const {
+	// Default composition of InterpolateTriNormal + GetDifferentials.
+	// ExtTriangleMesh overrides it to reuse the per-triangle cache for
+	// both results; instance/motion meshes stay here because their
+	// local2World transforms differ per call anyway.
+	// Same degenerate fallback the caller applies on the separate
+	// path: a non-finite interpolated normal uses geometryN.
+	*shadingN = InterpolateTriNormal(local2World, triIndex, hitB1, hitB2);
+	const float inl2 = Dot(*shadingN, *shadingN);
+	if (!isfinite(inl2) || (inl2 < 1e-20f))
+		*shadingN = geometryN;
+	GetDifferentials(local2World, triIndex, *shadingN, dataIndex,
+			dpdu, dpdv, dndu, dndv, hitB1, hitB2, hitUV);
+}
+
 //------------------------------------------------------------------------------
 // ExtTriangleMesh
 //------------------------------------------------------------------------------
@@ -304,7 +325,6 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 		return;
 
 	const auto &uvLayer = uvs[0];
-	const bool hasNormals = bool(normals);
 
 	triDiffCache.resize(tris.Count());
 	#pragma omp parallel for
@@ -316,6 +336,10 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 		c.uv0 = uvLayer[v0];
 		c.uv1 = uvLayer[v1];
 		c.uv2 = uvLayer[v2];
+		// Shading normals remain meaningful even when the UV chart is singular.
+		c.n0 = GetShadeNormal(Transform::TRANS_IDENTITY, v0);
+		c.n1 = GetShadeNormal(Transform::TRANS_IDENTITY, v1);
+		c.n2 = GetShadeNormal(Transform::TRANS_IDENTITY, v2);
 
 		const float du1 = c.uv0.u - c.uv2.u;
 		const float du2 = c.uv1.u - c.uv2.u;
@@ -327,8 +351,6 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 			c.invdet = 0.f;
 			c.geometryDpDu = Vector();
 			c.geometryDpDv = Vector();
-			c.dn1 = Normal();
-			c.dn2 = Normal();
 		} else {
 			c.invdet = 1.f / determinant;
 
@@ -340,16 +362,6 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 			c.geometryDpDu = (dv2 * dp1 - dv1 * dp2) * c.invdet;
 			c.geometryDpDv = (-du2 * dp1 + du1 * dp2) * c.invdet;
 
-			if (hasNormals) {
-				const Normal n0 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v0));
-				const Normal n1 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v1));
-				const Normal n2 = Normalize(GetShadeNormal(Transform::TRANS_IDENTITY, v2));
-				c.dn1 = n0 - n2;
-				c.dn2 = n1 - n2;
-			} else {
-				c.dn1 = Normal();
-				c.dn2 = Normal();
-			}
 		}
 	}
 }
@@ -386,13 +398,62 @@ void ExtTriangleMesh::GetDifferentials(const Transform &local2World,
 			const float dv2 = c.uv1.v - c.uv2.v;
 			*dpdu = Cross(shadeNormal, Cross(c.geometryDpDu, shadeNormal));
 			*dpdv = Cross(shadeNormal, Cross(c.geometryDpDv, shadeNormal));
-			*dndu = ( dv2 * c.dn1 - dv1 * c.dn2) * c.invdet;
-			*dndv = (-du2 * c.dn1 + du1 * c.dn2) * c.invdet;
+			// Preserve the base path's per-vertex normalization.
+			const Normal n2 = Normalize(c.n2);
+			const Normal dn1 = Normalize(c.n0) - n2;
+			const Normal dn2 = Normalize(c.n1) - n2;
+			*dndu = ( dv2 * dn1 - dv1 * dn2) * c.invdet;
+			*dndv = (-du2 * dn1 + du1 * dn2) * c.invdet;
 		}
 		return;
 	}
 	ExtMesh::GetDifferentials(local2World, triIndex, shadeNormal, dataIndex,
 			dpdu, dpdv, dndu, dndv, hitB1, hitB2, hitUV);
+}
+
+void ExtTriangleMesh::GetShadingInfo(const Transform &local2World,
+		const u_int triIndex, const Normal &geometryN,
+		const u_int dataIndex,
+		Normal *shadingN,
+		Vector *dpdu, Vector *dpdv, Normal *dndu, Normal *dndv,
+		const float hitB1, const float hitB2, UV *hitUV) const {
+	// Interpolation and derivatives share the cached corner normals.
+	if (!triDiffCache.empty() && (dataIndex == 0)) {
+		const TriDifferentialCache &c = triDiffCache[triIndex];
+
+		const float b0 = 1.f - hitB1 - hitB2;
+		// Interpolate raw normals, then normalize the weighted result.
+		*shadingN = Normalize(b0 * c.n0 + hitB1 * c.n1 + hitB2 * c.n2);
+		// Same degenerate fallback the caller applies on the separate
+		// path: a non-finite interpolated normal uses geometryN.
+		const float inl2 = Dot(*shadingN, *shadingN);
+		if (!isfinite(inl2) || (inl2 < 1e-20f))
+			*shadingN = geometryN;
+
+		if (hitUV)
+			*hitUV = b0 * c.uv0 + hitB1 * c.uv1 + hitB2 * c.uv2;
+
+		if (c.invdet == 0.f) {
+			CoordinateSystem(Vector(*shadingN), dpdu, dpdv);
+			*dndu = Normal();
+			*dndv = Normal();
+		} else {
+			const float du1 = c.uv0.u - c.uv2.u;
+			const float du2 = c.uv1.u - c.uv2.u;
+			const float dv1 = c.uv0.v - c.uv2.v;
+			const float dv2 = c.uv1.v - c.uv2.v;
+			*dpdu = Cross(*shadingN, Cross(c.geometryDpDu, *shadingN));
+			*dpdv = Cross(*shadingN, Cross(c.geometryDpDv, *shadingN));
+			const Normal n2 = Normalize(c.n2);
+			const Normal dn1 = Normalize(c.n0) - n2;
+			const Normal dn2 = Normalize(c.n1) - n2;
+			*dndu = ( dv2 * dn1 - dv1 * dn2) * c.invdet;
+			*dndv = (-du2 * dn1 + du1 * dn2) * c.invdet;
+		}
+		return;
+	}
+	ExtMesh::GetShadingInfo(local2World, triIndex, geometryN, dataIndex,
+			shadingN, dpdu, dpdv, dndu, dndv, hitB1, hitB2, hitUV);
 }
 
 // Spills every buffer over minBytes to `dir` and remaps it file-backed

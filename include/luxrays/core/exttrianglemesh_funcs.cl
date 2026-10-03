@@ -282,6 +282,190 @@ OPENCL_FORCE_INLINE float3 ExtMesh_GetInterpolateNormal(
 	return interpolatedN;
 }
 
+
+//------------------------------------------------------------------------------
+// Fused ExtMesh_GetInterpolateNormal + ExtMesh_GetInterpolateUV +
+// ExtMesh_GetDifferentials: the interpolated shading normal and the
+// dndu/dndv differentials share the same triangle + vertex normals, so
+// one fetch set feeds everything (was 2x triangle + 6 normal loads).
+// The CPU twin is ExtMesh::GetShadingInfo - keep semantics in
+// lockstep, including the degenerate fallback (non-finite
+// interpolated normal -> geometryN) and the handedness flip on the
+// vertex normals (the old GPU differential path missed the swap sign
+// and the per-vertex normalize - a parity bug on swapped and
+// non-unit-normal meshes).
+OPENCL_FORCE_INLINE void ExtMesh_GetShadingInfo(
+		__global const Transform* restrict localToWorld,
+		const uint meshIndex, const uint triangleIndex,
+		const float3 geometryN,
+		const uint dataIndex,
+		float3 *shadingN,
+		float3 *dpdu, float3 *dpdv,
+		float3 *dndu, float3 *dndv,
+		const float hitB1, const float hitB2,
+		float2 *hitUV
+		EXTMESH_PARAM_DECL) {
+	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
+	__global const Triangle* restrict iTriangles = &triangles[meshDesc->trisOffset];
+
+	__global const Triangle* restrict tri = &iTriangles[triangleIndex];
+	const uint vi0 = tri->v[0];
+	const uint vi1 = tri->v[1];
+	const uint vi2 = tri->v[2];
+
+	//------------------------------------------------------------------
+	// UVs (also needed for the differentials determinant)
+	//------------------------------------------------------------------
+	float2 uv0, uv1, uv2;
+	if (meshDesc->uvsOffset[dataIndex] != NULL_INDEX) {
+		__global const UV* restrict iVertUVs = &vertUVs[meshDesc->uvsOffset[dataIndex]];
+		uv0 = VLOAD2F(&iVertUVs[vi0].u);
+		uv1 = VLOAD2F(&iVertUVs[vi1].u);
+		uv2 = VLOAD2F(&iVertUVs[vi2].u);
+	} else {
+		uv0 = MAKE_FLOAT2(0.f, 0.f);
+		uv1 = MAKE_FLOAT2(0.f, 0.f);
+		uv2 = MAKE_FLOAT2(0.f, 0.f);
+	}
+
+	if (hitUV) {
+		const float b0 = 1.f - hitB1 - hitB2;
+		*hitUV = Triangle_InterpolateUV(uv0, uv1, uv2, b0, hitB1, hitB2);
+	}
+
+	// Compute deltas for triangle partial derivatives
+	const float du1 = uv0.x - uv2.x;
+	const float du2 = uv1.x - uv2.x;
+	const float dv1 = uv0.y - uv2.y;
+	const float dv2 = uv1.y - uv2.y;
+	const float determinant = du1 * dv2 - dv1 * du2;
+
+	const bool hasNormals = (meshDesc->normalsOffset != NULL_INDEX);
+
+	//------------------------------------------------------------------
+	// Vertex normals: one fetch feeds both the interpolated shading
+	// normal and the dndu/dndv differentials.
+	//------------------------------------------------------------------
+	float3 n0, n1, n2;
+	if (hasNormals) {
+		__global const Normal* restrict iVertNormals = &vertNormals[meshDesc->normalsOffset];
+		n0 = VLOAD3F(&iVertNormals[vi0].x);
+		n1 = VLOAD3F(&iVertNormals[vi1].x);
+		n2 = VLOAD3F(&iVertNormals[vi2].x);
+	}
+
+	//------------------------------------------------------------------
+	// Interpolated shading normal (ExtMesh_GetInterpolateNormal clone,
+	// vertex normals already in registers)
+	//------------------------------------------------------------------
+	float3 interpolatedN;
+	if (hasNormals) {
+		const float b0 = 1.f - hitB1 - hitB2;
+		const float3 localN = normalize(b0 * n0 + hitB1 * n1 + hitB2 * n2);
+
+		switch (meshDesc->type) {
+			case TYPE_EXT_TRIANGLE:
+				// localN is already in world coordinates for
+				// TYPE_EXT_TRIANGLE
+				interpolatedN = (meshDesc->triangle.appliedTransSwapsHandedness ?
+						-1.f : 1.f) * localN;
+				break;
+			case TYPE_EXT_TRIANGLE_INSTANCE:
+				interpolatedN = (meshDesc->instance.transSwapsHandedness ?
+						-1.f : 1.f) * normalize(Transform_ApplyNormal(localToWorld, localN));
+				break;
+			case TYPE_EXT_TRIANGLE_MOTION: {
+				const bool swapsHandedness = Transform_SwapsHandedness(localToWorld);
+				interpolatedN = (swapsHandedness ? -1.f : 1.f) *
+						normalize(Transform_ApplyNormal(localToWorld, localN));
+				break;
+			}
+			default:
+				interpolatedN = localN;
+				break;
+		}
+	} else {
+		interpolatedN = ExtMesh_GetGeometryNormal(localToWorld, meshIndex,
+				triangleIndex EXTMESH_PARAM);
+	}
+
+	// Same degenerate fallback the caller applies on the separate path
+	{
+		const float inl2 = dot(interpolatedN, interpolatedN);
+		if (!(isfinite(interpolatedN.x + interpolatedN.y + interpolatedN.z) &&
+				(inl2 > 1e-20f)))
+			interpolatedN = geometryN;
+	}
+	*shadingN = interpolatedN;
+
+	//------------------------------------------------------------------
+	// Differentials (ExtMesh_GetDifferentials clone)
+	//------------------------------------------------------------------
+	if (determinant == 0.f) {
+		// Handle 0 determinant for triangle partial derivative matrix
+		CoordinateSystem(interpolatedN, dpdu, dpdv);
+		*dndu = ZERO;
+		*dndv = ZERO;
+	} else {
+		const float invdet = 1.f / determinant;
+
+		// Vertices expressed in local coordinates
+		__global const Point* restrict iVertices = &vertices[meshDesc->vertsOffset];
+		const float3 p0 = VLOAD3F(&iVertices[vi0].x);
+		const float3 p1 = VLOAD3F(&iVertices[vi1].x);
+		const float3 p2 = VLOAD3F(&iVertices[vi2].x);
+
+		float3 dp1 = p0 - p2;
+		float3 dp2 = p1 - p2;
+
+		// dp1 and dp2 are already in world coordinates for TYPE_EXT_TRIANGLE
+		if (meshDesc->type != TYPE_EXT_TRIANGLE) {
+			dp1 = Transform_ApplyVector(localToWorld, dp1);
+			dp2 = Transform_ApplyVector(localToWorld, dp2);
+		}
+
+		const float3 geometryDpDu = ( dv2 * dp1 - dv1 * dp2) * invdet;
+		const float3 geometryDpDv = (-du2 * dp1 + du1 * dp2) * invdet;
+
+		*dpdu = cross(interpolatedN, cross(geometryDpDu, interpolatedN));
+		*dpdv = cross(interpolatedN, cross(geometryDpDv, interpolatedN));
+
+		if (hasNormals) {
+			// World-space per-vertex normals matching the CPU
+			// GetShadeNormal convention (sign flip + normalize); the
+			// old path differenced raw local normals and skipped the
+			// handedness swap, diverging from the CPU on swapped and
+			// non-unit-normal meshes.
+			float3 n0w, n1w, n2w;
+			if (meshDesc->type == TYPE_EXT_TRIANGLE) {
+				const float s = meshDesc->triangle.appliedTransSwapsHandedness ?
+						-1.f : 1.f;
+				n0w = s * normalize(n0);
+				n1w = s * normalize(n1);
+				n2w = s * normalize(n2);
+			} else {
+				// TYPE_EXT_TRIANGLE_INSTANCE / MOTION: CPU applies
+				// local2World * normal then normalizes
+				const float s = (meshDesc->type == TYPE_EXT_TRIANGLE_INSTANCE) ?
+						(meshDesc->instance.transSwapsHandedness ? -1.f : 1.f) :
+						(Transform_SwapsHandedness(localToWorld) ? -1.f : 1.f);
+				n0w = s * normalize(Transform_ApplyNormal(localToWorld, n0));
+				n1w = s * normalize(Transform_ApplyNormal(localToWorld, n1));
+				n2w = s * normalize(Transform_ApplyNormal(localToWorld, n2));
+			}
+
+			const float3 dn1 = n0w - n2w;
+			const float3 dn2 = n1w - n2w;
+
+			*dndu = ( dv2 * dn1 - dv1 * dn2) * invdet;
+			*dndv = (-du2 * dn1 + du1 * dn2) * invdet;
+		} else {
+			*dndu = ZERO;
+			*dndv = ZERO;
+		}
+	}
+}
+
 OPENCL_FORCE_INLINE float2 ExtMesh_GetInterpolateUV(
 		const uint meshIndex, const uint triangleIndex,
 		const float b1, const float b2, const uint dataIndex
@@ -397,119 +581,6 @@ OPENCL_FORCE_INLINE float ExtMesh_GetTriAOV(
 	}
 
 	return t;
-}
-
-OPENCL_FORCE_INLINE void ExtMesh_GetDifferentials(
-		__global const Transform* restrict localToWorld,
-		const uint meshIndex,
-		const uint triangleIndex,
-		float3 shadeNormal,
-		const uint dataIndex,
-		float3 *dpdu, float3 *dpdv,
-        float3 *dndu, float3 *dndv
-		EXTMESH_PARAM_DECL) {
-	// Curve hits get their differentials in HitPoint_Init; never index with
-	// a flagged index.
-	if (triangleIndex & RAYHIT_CURVE_FLAG) {
-		*dpdu = MAKE_FLOAT3(0.f, 0.f, 0.f);
-		*dpdv = MAKE_FLOAT3(0.f, 0.f, 0.f);
-		*dndu = MAKE_FLOAT3(0.f, 0.f, 0.f);
-		*dndv = MAKE_FLOAT3(0.f, 0.f, 0.f);
-		return;
-	}
-
-	__global const ExtMesh* restrict meshDesc = &meshDescs[meshIndex];
-	__global const Point* restrict iVertices = &vertices[meshDesc->vertsOffset];
-	__global const Triangle* restrict iTriangles = &triangles[meshDesc->trisOffset];
-
-	// Compute triangle partial derivatives
-	__global const Triangle* restrict tri = &iTriangles[triangleIndex];
-	const uint vi0 = tri->v[0];
-	const uint vi1 = tri->v[1];
-	const uint vi2 = tri->v[2];
-
-	float2 uv0, uv1, uv2;
-	if (meshDesc->uvsOffset[dataIndex] != NULL_INDEX) {
-		// Ok, UV coordinates are available, use them to build the reference
-		// system around the shading normal.
-
-		__global const UV* restrict iVertUVs = &vertUVs[meshDesc->uvsOffset[dataIndex]];
-		uv0 = VLOAD2F(&iVertUVs[vi0].u);
-		uv1 = VLOAD2F(&iVertUVs[vi1].u);
-		uv2 = VLOAD2F(&iVertUVs[vi2].u);
-	} else {
-		uv0 = MAKE_FLOAT2(.5f, .5f);
-		uv1 = MAKE_FLOAT2(.5f, .5f);
-		uv2 = MAKE_FLOAT2(.5f, .5f);
-	}
-
-	// Compute deltas for triangle partial derivatives
-	const float du1 = uv0.x - uv2.x;
-	const float du2 = uv1.x - uv2.x;
-	const float dv1 = uv0.y - uv2.y;
-	const float dv2 = uv1.y - uv2.y;
-	const float determinant = du1 * dv2 - dv1 * du2;
-
-	if (determinant == 0.f) {
-		// Handle 0 determinant for triangle partial derivative matrix
-		CoordinateSystem(shadeNormal, dpdu, dpdv);
-		*dndu = ZERO;
-		*dndv = ZERO;
-	} else {
-		const float invdet = 1.f / determinant;
-
-		// Vertices expressed in local coordinates
-		const float3 p0 = VLOAD3F(&iVertices[vi0].x);
-		const float3 p1 = VLOAD3F(&iVertices[vi1].x);
-		const float3 p2 = VLOAD3F(&iVertices[vi2].x);
-		
-		float3 dp1 = p0 - p2;
-		float3 dp2 = p1 - p2;
-
-		// dp1 and dp2 are already in world coordinates for TYPE_EXT_TRIANGLE
-		if (meshDesc->type != TYPE_EXT_TRIANGLE) {
-			// Transform to global coordinates
-			dp1 = Transform_ApplyVector(localToWorld, dp1);
-			dp2 = Transform_ApplyVector(localToWorld, dp2);
-		}
-
-		//------------------------------------------------------------------
-		// Compute dpdu and dpdv
-		//------------------------------------------------------------------
-
-		const float3 geometryDpDu = ( dv2 * dp1 - dv1 * dp2) * invdet;
-		const float3 geometryDpDv = (-du2 * dp1 + du1 * dp2) * invdet;
-
-		*dpdu = cross(shadeNormal, cross(geometryDpDu, shadeNormal));
-		*dpdv = cross(shadeNormal, cross(geometryDpDv, shadeNormal));
-
-		//------------------------------------------------------------------
-		// Compute dndu and dndv
-		//------------------------------------------------------------------
-
-		if (meshDesc->normalsOffset != NULL_INDEX) {
-			__global const Normal* restrict iVertNormals = &vertNormals[meshDesc->normalsOffset];
-			// Shading normals expressed in local coordinates
-			const float3 n0 = VLOAD3F(&iVertNormals[tri->v[0]].x);
-			const float3 n1 = VLOAD3F(&iVertNormals[tri->v[1]].x);
-			const float3 n2 = VLOAD3F(&iVertNormals[tri->v[2]].x);
-			const float3 dn1 = n0 - n2;
-			const float3 dn2 = n1 - n2;
-
-			*dndu = ( dv2 * dn1 - dv1 * dn2) * invdet;
-			*dndv = (-du2 * dn1 + du1 * dn2) * invdet;
-			
-			// dndu and dndv are already in world coordinates for TYPE_EXT_TRIANGLE
-			if (meshDesc->type != TYPE_EXT_TRIANGLE) {
-				// Transform to global coordinates
-				*dndu = Transform_ApplyNormal(localToWorld, *dndu);
-				*dndv = Transform_ApplyNormal(localToWorld, *dndv);
-			}
-		} else {
-			*dndu = ZERO;
-			*dndv = ZERO;
-		}
-	}
 }
 
 OPENCL_FORCE_INLINE void ExtMesh_Sample(

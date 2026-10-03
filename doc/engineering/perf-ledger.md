@@ -242,3 +242,24 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   replay are algorithmic floors, not accidental cost — next
   structural win is per-thread splat buffers or SampleResult
   footprint (serialization risk).
+
+### HitPoint shading fusion: correctness gate
+
+- `GetShadingInfo` shares normal/UV inputs with differential evaluation;
+  instance and motion CPU meshes retain the transform-aware base path.
+- Corrected two fusion regressions: singular UV charts must retain corner
+  normals in the static cache; missing GPU UVs must remain `(0, 0)`, not
+  the differential-only helper's former arbitrary `(0.5, 0.5)`.
+- Cached normal derivatives normalize each corner before differencing,
+  matching the uncached CPU contract. GPU fusion likewise normalizes
+  transformed corners before differencing.
+- Removed the uncalled GPU `ExtMesh_GetDifferentials` helper.
+- Release build passed. Actual PATHCPU/Metal PATHOCL renders of a
+  smooth-normal emissive plane passed for regular, singular and absent UVs:
+  central linear RGB bytes within 2 of `(153, 0, 204)`.
+  Nonuniform object scale `(0.5, 1, 2)` produced `(242, 0, 81)` on both,
+  matching the normalized inverse-transpose normal within 2 bytes.
+  Existing backend parity runner passed all four cases.
+- Scope limits: these probes establish interpolated-normal behavior, not
+  varying-normal derivative parity, reflected/motion transforms, or a
+  performance improvement. No speedup or bitwise-equivalence claim.
