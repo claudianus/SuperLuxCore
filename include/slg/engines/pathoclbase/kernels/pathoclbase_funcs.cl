@@ -3453,11 +3453,12 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 					taskConfig->pathTracer.hybridBackForward.terminalGlossiness,
 					taskConfig->pathTracer.hybridBackForward.connectProb,
 					Light_ConnectionSolidAngle(&lights[info->lightIndex],
-							VLOAD3F(&bsdf->hitPoint.p.x)), bsdf->isVolume) :
+							VLOAD3F(&bsdf->hitPoint.p.x)),
+							BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM)) :
 				EyePathInfo_IsCausticPathWithEvent(pathInfo, event,
 					BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
 					taskConfig->pathTracer.hybridBackForward.glossinessThreshold,
-					bsdf->isVolume)))
+					BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM))))
 			)
 		return false;
 

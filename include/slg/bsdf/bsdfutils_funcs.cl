@@ -30,6 +30,18 @@ OPENCL_FORCE_INLINE bool BSDF_IsDelta(__global const BSDF *bsdf
 			MATERIALS_PARAM);
 }
 
+// CPU BSDF::IsChainTransparentMedium(): media are transparent to the
+// caustic chain bookkeeping, except a dense subsurface random walk
+// (albedo-parametrized homogeneous volume), which breaks it
+OPENCL_FORCE_INLINE bool BSDF_IsChainTransparentMedium(__global const BSDF *bsdf
+		MATERIALS_PARAM_DECL) {
+	if (!bsdf->isVolume)
+		return false;
+	__global const Material *m = &mats[bsdf->materialIndex];
+	return !((m->type == HOMOGENEOUS_VOL) &&
+			(m->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX));
+}
+
 OPENCL_FORCE_INLINE uint BSDF_GetObjectID(__global const BSDF *bsdf, __global const SceneObject* restrict sceneObjs) {
 	const uint sceneObjectIndex = bsdf->sceneObjectIndex;
 

@@ -2811,7 +2811,8 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 	// Same order as CPU PathInfo::AddVertex(): SDS before SD before S.
 	// Media-transparent chains: a medium scattering vertex neither
 	// extends nor breaks the run (doc/features/caustics-sota.md).
-	const bool chainSpec = isNewVertexNearlySpecular || bsdf->isVolume;
+	const bool chainMedium = BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM);
+	const bool chainSpec = isNewVertexNearlySpecular || chainMedium;
 	lpi->isNearlySDS = (lpi->isNearlySD || lpi->isNearlySDS) && chainSpec;
 	lpi->isNearlySD = lpi->isNearlyS && !chainSpec;
 	lpi->isNearlyS = ((lpi->depth.depth == 1) || lpi->isNearlyS) && chainSpec;
@@ -2820,8 +2821,8 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 	// chain alive; the first NON-MEDIUM vertex is the terminal of the
 	// eye-side connection-difficulty test.
 	lpi->isAdaptiveS = ((lpi->depth.depth == 1) || lpi->isAdaptiveS) &&
-			(((event & (SPECULAR | GLOSSY)) != 0) || bsdf->isVolume);
-	if (!bsdf->isVolume && !lpi->firstVertSeen) {
+			(((event & (SPECULAR | GLOSSY)) != 0) || chainMedium);
+	if (!chainMedium && !lpi->firstVertSeen) {
 		lpi->firstVertSeen = true;
 		const float3 hp = VLOAD3F(&bsdf->hitPoint.p.x);
 		lpi->firstVertPX = hp.x;

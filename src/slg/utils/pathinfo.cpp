@@ -107,7 +107,7 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	// unchanged (a medium vertex is a valid non-delta receiver).
 	//
 	// Note: depth.depth has been already incremented by 1 with the depth.IncDepths(event);
-	const bool isVol = bsdf.IsVolume();
+	const bool isVol = bsdf.IsChainTransparentMedium();
 	isNearlyCaustic = (depth.depth == 1) ?
 		// First vertex must a nearly diffuse
 		(!isNewVertexNearlySpecular) :
@@ -182,7 +182,7 @@ void LightPathInfo::AddVertex(const BSDF &bsdf, const BSDFEvent event,
 	// Media-transparent chain: a medium scattering vertex is invisible
 	// to the specular bookkeeping — it neither extends nor breaks the
 	// run (doc/features/caustics-sota.md).
-	const bool isVol = bsdf.IsVolume();
+	const bool isVol = bsdf.IsChainTransparentMedium();
 	const bool chainSpec = isNewVertexNearlySpecular || isVol;
 
 	// Update isNearlySDS (must be done before isNearlySD)

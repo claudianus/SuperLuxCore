@@ -120,7 +120,8 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 		// First vertex must a nearly diffuse
 		(!isNewVertexNearlySpecular) :
 		// All other vertices must be nearly specular or medium
-		(pathInfo->isNearlyCaustic && (isNewVertexNearlySpecular || bsdf->isVolume));
+		(pathInfo->isNearlyCaustic && (isNewVertexNearlySpecular ||
+			BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM)));
 
 	// Adaptive partition: the receiver (first vertex) only has to be
 	// non-delta (a glossy receiver can still connect to the lens); every
@@ -128,10 +129,11 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	// concentrates light.
 	pathInfo->isAdaptiveCaustic = (pathInfo->depth.depth == 1) ?
 		!(event & SPECULAR) :
-		(pathInfo->isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) || bsdf->isVolume));
+		(pathInfo->isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) ||
+			BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM)));
 
 	// Chain touched a surface beyond the receiver
-	if (!bsdf->isVolume && (pathInfo->depth.depth > 1))
+	if (!BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM) && (pathInfo->depth.depth > 1))
 		pathInfo->causticHasSurface = true;
 
 	// Update last path vertex information

@@ -309,13 +309,17 @@ RenderEngineUPtr RenderEngine::FromProperties(RenderConfigRef rcfg) {
 	// (PATHOCL/TILEPATHOCL/RTPATHOCL; -D SLG_SPECTRAL, wavelengths ride in
 	// SampleResult/HitPoint). Engines without kernel support are rejected.
 	if (rcfg.GetConfig().Get(Property("path.spectral.enable")(false)).Get<bool>()) {
-		const RenderEngineType engineType = String2RenderEngineType(type);
+		// FILESAVER only writes the scene: validate the engine it saves for
+		const string checkedType = (type == "FILESAVER") ?
+				rcfg.GetConfig().Get(Property("filesaver.renderengine.type")("PATHCPU")).Get<string>() :
+				type;
+		const RenderEngineType engineType = String2RenderEngineType(checkedType);
 		if ((engineType != PATHCPU) && (engineType != TILEPATHCPU) &&
 				(engineType != RTPATHCPU) && (engineType != LIGHTCPU) &&
 				(engineType != BIDIRCPU) &&
 				(engineType != PATHOCL) && (engineType != TILEPATHOCL) &&
 				(engineType != RTPATHOCL))
-			throw runtime_error("path.spectral.enable is supported only by PATHCPU, TILEPATHCPU, RTPATHCPU, LIGHTCPU, BIDIRCPU, PATHOCL, TILEPATHOCL and RTPATHOCL engines: " + type);
+			throw runtime_error("path.spectral.enable is supported only by PATHCPU, TILEPATHCPU, RTPATHCPU, LIGHTCPU, BIDIRCPU, PATHOCL, TILEPATHOCL and RTPATHOCL engines: " + checkedType);
 
 		// PhotonGI caches store RGB photon radiance: under spectral
 		// transport the cache values are (silently) multiplied by

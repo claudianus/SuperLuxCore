@@ -164,6 +164,13 @@ EnvLightVisibilityCache::~EnvLightVisibilityCache() {
 }
 
 bool EnvLightVisibilityCache::IsCacheEnabled(const BSDF &bsdf) const {
+	// Unbounded world medium (Cycles world volume fog): its scatter points
+	// fill the whole visible space, the visibility pass collected millions
+	// of entries and the cache build took tens of minutes. Plain env
+	// sampling is used there instead.
+	if (bsdf.IsVolume() && scene.HasDefaultWorldVolume() &&
+			(bsdf.GetMaterial() == &scene.GetDefaultWorldVolume()))
+		return false;
 	return !bsdf.IsDelta();
 }
 

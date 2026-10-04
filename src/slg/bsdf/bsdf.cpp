@@ -16,6 +16,7 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include "slg/volumes/homogenous.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
 #include "slg/lights/lightsourcedefs.h"
@@ -455,6 +456,14 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 	}
 
 	return result;
+}
+
+bool BSDF::IsChainTransparentMedium() const {
+	if (!IsVolume())
+		return false;
+	if (material->GetType() == HOMOGENEOUS_VOL)
+		return !static_cast<const HomogeneousVolume *>(material.get())->IsSSSParametrized();
+	return true;
 }
 
 void BSDF::Pdf(const Vector &sampledDir, float *directPdfW, float *reversePdfW) const {

@@ -133,6 +133,13 @@ public:
 		// on media-heavy scenes - RTTI string walks on every bounce.
 		return material && material->IsVolume();
 	}
+	// A medium vertex the caustic chain bookkeeping treats as transparent
+	// (thin fog / clear media: caustics focus through them). A dense
+	// subsurface random walk (albedo-parametrized homogeneous volume) is
+	// the material's diffuse interaction instead and breaks the chain -
+	// counting it as transparent made rough SSS paths "caustic", the eye
+	// side suppressed them and the light/photon side mis-estimated them.
+	bool IsChainTransparentMedium() const;
 	bool IsPhotonGIEnabled() const { return material->IsPhotonGIEnabled(); }
 	bool IsHoldout() const { return material->IsHoldout(); }
 	bool IsAlbedoEndPoint(const AlbedoSpecularSetting albedoSpecularSetting,
