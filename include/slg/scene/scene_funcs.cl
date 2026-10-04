@@ -84,6 +84,14 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 #endif
 
 	if (hit) {
+		// Pixel footprint for the bump filter width: camera distance *
+		// pixel spread angle (cameraPosition.w, 0 = no perspective camera)
+		{
+			const float3 hitP = VLOAD3F(&ray->o.x) + VLOAD3F(&ray->d.x) * rayHit->t;
+			const float3 camP = MAKE_FLOAT3(scene->cameraPosition[0],
+					scene->cameraPosition[1], scene->cameraPosition[2]);
+			bsdf->hitPoint.bumpFootprint = length(hitP - camP) * scene->cameraPosition[3];
+		}
 		// Initialize the BSDF of the hit point
 		BSDF_Init(bsdf,
 				*throughShadowTransparency,

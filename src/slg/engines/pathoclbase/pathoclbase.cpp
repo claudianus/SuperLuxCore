@@ -223,6 +223,8 @@ void PathOCLBaseRenderEngine::BakeSceneCamera() {
 		taskConfig.scene.cameraPosition[0] = camPos.x;
 		taskConfig.scene.cameraPosition[1] = camPos.y;
 		taskConfig.scene.cameraPosition[2] = camPos.z;
+		// w: pixel spread angle for the bump filter-width footprint
+		taskConfig.scene.cameraPosition[3] = cam.GetPixelSpreadAngle();
 		taskConfig.scene.cameraDirection[0] = camDir.x;
 		taskConfig.scene.cameraDirection[1] = camDir.y;
 		taskConfig.scene.cameraDirection[2] = camDir.z;

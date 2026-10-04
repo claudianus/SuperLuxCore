@@ -61,6 +61,10 @@ public:
 
 	// Used for compiling camera information for OpenCL (and more)
 	float GetPixelArea() const { return pixelArea; }
+	virtual float GetPixelSpreadAngle() const {
+		return (filmWidth > 0) ? tanf(luxrays::Radians(fieldOfView) * .5f) *
+				(screenWindow[1] - screenWindow[0]) / filmWidth : 0.f;
+	}
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 

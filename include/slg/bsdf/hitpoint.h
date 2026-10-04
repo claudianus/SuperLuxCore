@@ -108,6 +108,11 @@ typedef struct HitPoint_t {
 	// Camera Data "View Z Depth" output. Keep aligned with
 	// hitpoint_types.cl.
 	float rayViewDepth;
+	// Camera distance * pixel spread angle at this hit (0 = unknown), set
+	// before bump mapping; the material bump filter width scales it into
+	// the finite-difference step (Cycles Bump "Filter Width"). Keep
+	// aligned with hitpoint_types.cl.
+	float bumpFootprint;
 
 	// Path-space regularization: effective microfacet-alpha inflation
 	// for this vertex (0 = disabled). Gated from

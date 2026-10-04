@@ -187,6 +187,26 @@ OPENCL_FORCE_INLINE float3 BSDF_Albedo(__global const BSDF *bsdf
 			MATERIALS_PARAM);
 }
 
+// Cycles bump_shadowing_term() (Conty Estevez et al. 2019), BSDF.cpp
+OPENCL_FORCE_INLINE float BSDF_ContyBumpShadowingTerm(const float3 Ni, const float3 Ns,
+		const float3 lightDir) {
+	const float cos_i = dot(Ni, lightDir);
+	if (cos_i < 0.f)
+		return 0.f;
+	const float cos_d = fmin(fabs(dot(Ni, Ns)), 1.f);
+	if (cos_d <= 0.f)
+		return 0.f;
+	const float tan2_d = (1.f - cos_d * cos_d) / (cos_d * cos_d);
+	const float alpha2 = clamp(.125f * tan2_d, 0.f, 1.f);
+	const float cos2_i = fmax(cos_i * cos_i, 1e-12f);
+	const float tan2_i = (1.f - cos2_i) / cos2_i;
+	return 2.f / (1.f + sqrt(1.f + alpha2 * tan2_i));
+}
+
+#if !defined(SLG_SHADOW_TERMINATOR_MODE)
+#define SLG_SHADOW_TERMINATOR_MODE 0
+#endif
+
 //------------------------------------------------------------------------------
 // "Taming the Shadow Terminator"
 // by Matt Jen-Yuan Chiang, Yining Karl Li and Brent Burley
@@ -298,10 +318,17 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
 		if ((*event & REFLECT) &&
-				(*event & (DIFFUSE | GLOSSY)) &&
-				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z)))
-			result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
-					BSDF_GetLandingShadeN(bsdf), lightDir);
+				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
+#if (SLG_SHADOW_TERMINATOR_MODE == 0)
+			if (*event & (DIFFUSE | GLOSSY))
+				result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
+						BSDF_GetLandingShadeN(bsdf), lightDir);
+#elif (SLG_SHADOW_TERMINATOR_MODE == 1)
+			if (*event & DIFFUSE)
+				result *= BSDF_ContyBumpShadowingTerm(BSDF_GetLandingInterpolatedN(bsdf),
+						BSDF_GetLandingShadeN(bsdf), lightDir);
+#endif
+		}
 
 		// Adjoint BSDF (not for volumes)
 		if (fromLight)
@@ -372,10 +399,17 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 		const float3 lightDir = fromLight ?
 				VLOAD3F(&bsdf->hitPoint.fixedDir.x) : *sampledDir;
 		if ((*event & REFLECT) &&
-				(*event & (DIFFUSE | GLOSSY)) &&
-				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z)))
-			result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
-					BSDF_GetLandingShadeN(bsdf), lightDir);
+				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
+#if (SLG_SHADOW_TERMINATOR_MODE == 0)
+			if (*event & (DIFFUSE | GLOSSY))
+				result *= BSDF_ShadowTerminatorAvoidanceFactor(BSDF_GetLandingInterpolatedN(bsdf),
+						BSDF_GetLandingShadeN(bsdf), lightDir);
+#elif (SLG_SHADOW_TERMINATOR_MODE == 1)
+			if (*event & DIFFUSE)
+				result *= BSDF_ContyBumpShadowingTerm(BSDF_GetLandingInterpolatedN(bsdf),
+						BSDF_GetLandingShadeN(bsdf), lightDir);
+#endif
+		}
 	}
 
 	// Adjoint BSDF (CPU bsdf.cpp:399-403): BSDF::Sample multiplies the

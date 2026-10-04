@@ -403,16 +403,53 @@ OPENCL_FORCE_NOT_INLINE float CyclesNoise_Select(const float4 p, const uint dims
 		return CyclesNoise_FBM(p, dims, detail, roughness, lacunarity, normalize);
 }
 
+// Cycles svm_wave() (CyclesNoiseTexture::Wave)
+OPENCL_FORCE_NOT_INLINE float CyclesNoise_Wave(const float4 pIn, const uint waveMode,
+		const float distortion, const float detail, const float detailScale,
+		const float detailRoughness, const float phase) {
+	const float4 p = (pIn + 1e-6f) * .999999f;
+	const uint dir = (waveMode >> 1) & 3u;
+	float n;
+	if (!(waveMode & 1u)) {
+		n = (dir == 0u) ? p.x * 20.f : (dir == 1u) ? p.y * 20.f :
+				(dir == 2u) ? p.z * 20.f : (p.x + p.y + p.z) * 10.f;
+	} else {
+		const float rx = (dir == 0u) ? 0.f : p.x;
+		const float ry = (dir == 1u) ? 0.f : p.y;
+		const float rz = (dir == 2u) ? 0.f : p.z;
+		n = sqrt(rx * rx + ry * ry + rz * rz) * 20.f;
+	}
+	n += phase;
+	if (distortion != 0.f) {
+		const float4 q = MAKE_FLOAT4(p.x * detailScale, p.y * detailScale, p.z * detailScale, 0.f);
+		n += distortion * (CyclesNoise_FBM(q, 3u, clamp(detail, 0.f, 15.f),
+				fmax(detailRoughness, 0.f), 2.f, 1u) * 2.f - 1.f);
+	}
+	const uint profile = (waveMode >> 3) & 3u;
+	if (profile == 0u)
+		return .5f + .5f * sin(n - .5f * M_PI_F);
+	n *= .5f * M_1_PI_F;
+	if (profile == 1u)
+		return n - floor(n);
+	return fabs(n - floor(n + .5f)) * 2.f;
+}
+
 // Returns the Color output (x = Value) when colorNeeded, else (Value, 0, 0)
 OPENCL_FORCE_NOT_INLINE float3 CyclesNoise_Evaluate(const float4 pIn,
 		const float scale, const float detailIn, const float roughnessIn,
 		const float lacunarity, const float offset, const float gain,
 		const float distortion, const uint type, const uint dims,
-		const uint normalize, const uint colorNeeded) {
+		const uint normalize, const uint colorNeeded, const uint waveMode) {
 	const float detail = clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmax(roughnessIn, 0.f);
 
 	float4 p = pIn * scale;
+
+	if (type == 5u) {
+		const float v = CyclesNoise_Wave(p, waveMode, distortion, detail, gain,
+				roughness, offset);
+		return MAKE_FLOAT3(v, v, v);
+	}
 
 	if (distortion != 0.f) {
 		// Distortion seeds 0..dims-1, computed from the undistorted p
@@ -471,7 +508,8 @@ OPENCL_FORCE_NOT_INLINE void CyclesNoiseTexture_EvalOp(
 			const float3 eval = CyclesNoise_Evaluate(p, scale, detail,
 					roughness, lacunarity, offset, gain, distortion,
 					texture->cyclesNoiseTex.noiseType, dims,
-					texture->cyclesNoiseTex.normalize, colorOutput);
+					texture->cyclesNoiseTex.normalize, colorOutput,
+					texture->cyclesNoiseTex.waveMode);
 
 			if (evalType == EVAL_FLOAT) {
 				EvalStack_PushFloat(colorOutput ? Spectrum_Y(eval) : eval.x);

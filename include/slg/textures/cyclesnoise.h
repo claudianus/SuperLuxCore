@@ -36,7 +36,12 @@ typedef enum {
 	CYCLESNOISE_MULTIFRACTAL,
 	CYCLESNOISE_HYBRID_MULTIFRACTAL,
 	CYCLESNOISE_RIDGED_MULTIFRACTAL,
-	CYCLESNOISE_HETERO_TERRAIN
+	CYCLESNOISE_HETERO_TERRAIN,
+	// Cycles "Wave Texture" (kernel/svm/wave.h): offset = Phase Offset,
+	// gain = Detail Scale, roughness = Detail Roughness; waveMode packs
+	// type (bit 0: rings), direction (bits 1-2: X/Y/Z/diagonal-spherical)
+	// and profile (bits 3-4: sin/saw/tri)
+	CYCLESNOISE_WAVE
 } CyclesNoiseType;
 
 class CyclesNoiseTexture : public Texture {
@@ -45,7 +50,8 @@ public:
 			TextureRef detail, TextureRef roughness, TextureRef lacunarity,
 			TextureRef offset, TextureRef gain, TextureRef distortion,
 			const CyclesNoiseType noiseType, const u_int dimensions,
-			const bool normalize, const bool colorOutput, const bool isColor);
+			const bool normalize, const bool colorOutput, const bool isColor,
+			const u_int waveMode = 0);
 	virtual ~CyclesNoiseTexture() { }
 
 	virtual TextureType GetType() const { return CYCLESNOISE_TEX; }
@@ -76,6 +82,7 @@ public:
 	bool GetNormalize() const { return normalize; }
 	bool IsColorOutput() const { return colorOutput; }
 	bool IsColor() const { return isColor; }
+	u_int GetWaveMode() const { return waveMode; }
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
@@ -86,7 +93,10 @@ public:
 			const float offset, const float gain, const float distortion,
 			const CyclesNoiseType noiseType, const u_int dimensions,
 			const bool normalize, const bool colorNeeded,
-			float &value, float color[3]);
+			float &value, float color[3], const u_int waveMode = 0);
+	static float Wave(const float p[3], const u_int waveMode, const float distortion,
+			const float detail, const float detailScale, const float detailRoughness,
+			const float phase);
 
 private:
 	void EvalInputs(const HitPoint &hitPoint, float &value, float color[3],
@@ -97,6 +107,7 @@ private:
 	const CyclesNoiseType noiseType;
 	const u_int dimensions;
 	const bool normalize, colorOutput, isColor;
+	const u_int waveMode;
 };
 
 }

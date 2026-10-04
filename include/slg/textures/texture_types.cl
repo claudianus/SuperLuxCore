@@ -572,6 +572,8 @@ typedef struct {
 			gainTexIndex, distortionTexIndex;
 	// CyclesNoiseType, 1..4, bools
 	unsigned int noiseType, dimensions, normalize, colorOutput, isColor;
+	// CYCLESNOISE_WAVE: type/direction/profile bits (CyclesNoiseTexture)
+	unsigned int waveMode;
 } CyclesNoiseTexParam;
 
 typedef struct {

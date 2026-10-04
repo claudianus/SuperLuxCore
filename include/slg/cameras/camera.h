@@ -44,6 +44,11 @@ class PathVolumeInfo;
 
 class Camera {
 public:
+	// Angular size of one film pixel at unit distance (perspective
+	// cameras); 0 when not meaningful. Drives the footprint of the bump
+	// filter width (Cycles Bump "Filter Width").
+	virtual float GetPixelSpreadAngle() const { return 0.f; }
+
 	typedef enum {
 		PERSPECTIVE, ORTHOGRAPHIC, STEREO, ENVIRONMENT
 	} CameraType;

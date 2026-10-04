@@ -19,6 +19,7 @@
 #include "slg/volumes/homogenous.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
+#include "slg/cameras/camera.h"
 #include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/sceneobjectdefs.h"
 #include "slg/materials/glass.h"
@@ -96,8 +97,17 @@ void BSDF::Init(
 		// Apply bump or normal mapping. Materials that carry no bump
 		// texture return early - skip the virtual call entirely since
 		// Material::Bump is a null-test on 99% of hits.
-		if (material->GetBumpTexture())
+		if (material->GetBumpTexture()) {
+			// Pixel footprint for the bump filter width (Cycles Bump
+			// "Filter Width"): camera distance * pixel spread angle
+			hitPoint.bumpFootprint = 0.f;
+			if ((material->GetBumpFilterWidth() > 0.f) && scene.HasCamera()) {
+				const Camera &cam = scene.GetCamera();
+				const Point camPos = cam.GetCameraToWorld() * Point(0.f, 0.f, 0.f);
+				hitPoint.bumpFootprint = Distance(hitPoint.p, camPos) * cam.GetPixelSpreadAngle();
+			}
 			material->Bump(&hitPoint);
+		}
 
 		// Build the local reference system
 		frame = hitPoint.GetFrame();
@@ -168,6 +178,7 @@ void BSDF::Init(
 		triangleLightSource = nullptr;
 
 	// Apply bump or normal mapping
+	hitPoint.bumpFootprint = 0.f;
 	material->Bump(&hitPoint);
 
 	// Build the local reference system
@@ -300,26 +311,27 @@ Spectrum BSDF::GetBakeMapValue() const {
 // http://www.aconty.com/pdf/bump-terminator-nvidia2019.pdf
 //------------------------------------------------------------------------------
 
-// Return alpha ^2 parameter from normal divergence
-//static float ShadowTerminatorAvoidanceAlpha2(const Normal &Ni, const Normal &Ns) {
-//	const float cos_d = Min(fabsf(Dot(Ni , Ns)), 1.f);
-//	const float tan2_d = (1.f - cos_d * cos_d) / (cos_d * cos_d);
-//
-//	return Clamp(.125f * tan2_d, 0.f, 1.f);
-//}
+static u_int g_shadowTerminatorMode = 0;
 
-// Shadowing factor
-//static float ShadowTerminatorAvoidanceFactor(const Normal &Ni, const Normal &Ns,
-//		const Vector &lightDir) {
-//	const float alpha2 = ShadowTerminatorAvoidanceAlpha2(Ni, Ns);
-//	if (alpha2 > 0.f) {
-//		const float cos_i = Max(fabsf(Dot(Ni , lightDir)), 1e-6f);
-//		const float tan2_i = (1.f - cos_i * cos_i) / (cos_i * cos_i);
-//
-//		return 2.f / (1.f + sqrtf(1.f + alpha2 * tan2_i));
-//	} else
-//		return 1.f;
-//}
+void BSDF::SetShadowTerminatorMode(const u_int mode) { g_shadowTerminatorMode = mode; }
+u_int BSDF::GetShadowTerminatorMode() { return g_shadowTerminatorMode; }
+
+// Cycles bump_shadowing_term(): a GGX-like masking with the roughness
+// derived from the shading/interpolated normal divergence
+static float ContyBumpShadowingTerm(const Normal &Ni, const Normal &Ns,
+		const Vector &lightDir) {
+	const float cos_i = Dot(Ni, lightDir);
+	if (cos_i < 0.f)
+		return 0.f;
+	const float cos_d = Min(fabsf(Dot(Ni, Ns)), 1.f);
+	if (cos_d <= 0.f)
+		return 0.f;
+	const float tan2_d = (1.f - cos_d * cos_d) / (cos_d * cos_d);
+	const float alpha2 = Clamp(.125f * tan2_d, 0.f, 1.f);
+	const float cos2_i = Max(cos_i * cos_i, 1e-12f);
+	const float tan2_i = (1.f - cos2_i) / cos2_i;
+	return 2.f / (1.f + sqrtf(1.f + alpha2 * tan2_i));
+}
 
 //------------------------------------------------------------------------------
 // "Taming the Shadow Terminator"
@@ -389,11 +401,15 @@ Spectrum BSDF::Evaluate(const Vector &generatedDir,
 
 	if (!IsVolume()) {
 		// Shadow terminator artefact avoidance
-		if ((*event & REFLECT) &&
-				(*event & (DIFFUSE | GLOSSY)) &&
-				(hitPoint.shadeN != hitPoint.interpolatedN))
-			result *= ShadowTerminatorAvoidanceFactor(hitPoint.GetLandingInterpolatedN(),
-					hitPoint.GetLandingShadeN(), lightDir);
+		if ((*event & REFLECT) && (hitPoint.shadeN != hitPoint.interpolatedN)) {
+			if (g_shadowTerminatorMode == 0) {
+				if (*event & (DIFFUSE | GLOSSY))
+					result *= ShadowTerminatorAvoidanceFactor(hitPoint.GetLandingInterpolatedN(),
+							hitPoint.GetLandingShadeN(), lightDir);
+			} else if ((g_shadowTerminatorMode == 1) && (*event & DIFFUSE))
+				result *= ContyBumpShadowingTerm(hitPoint.GetLandingInterpolatedN(),
+						hitPoint.GetLandingShadeN(), lightDir);
+		}
 
 		// Adjoint BSDF (not for volumes)
 		if (hitPoint.fromLight)
@@ -439,13 +455,16 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 	*sampledDir = frame.ToWorld(localSampledDir);
 
 	// Shadow terminator artefact avoidance
-	if ((*event & REFLECT) &&
-			(*event & (DIFFUSE | GLOSSY))
-			&& (hitPoint.shadeN != hitPoint.interpolatedN)) {
+	if ((*event & REFLECT) && (hitPoint.shadeN != hitPoint.interpolatedN)) {
 		const Vector &lightDir = hitPoint.fromLight ? hitPoint.fixedDir : (*sampledDir);
 
-		result *= ShadowTerminatorAvoidanceFactor(hitPoint.GetLandingInterpolatedN(),
-				hitPoint.GetLandingShadeN(), lightDir);
+		if (g_shadowTerminatorMode == 0) {
+			if (*event & (DIFFUSE | GLOSSY))
+				result *= ShadowTerminatorAvoidanceFactor(hitPoint.GetLandingInterpolatedN(),
+						hitPoint.GetLandingShadeN(), lightDir);
+		} else if ((g_shadowTerminatorMode == 1) && (*event & DIFFUSE))
+			result *= ContyBumpShadowingTerm(hitPoint.GetLandingInterpolatedN(),
+					hitPoint.GetLandingShadeN(), lightDir);
 	}
 
 	// Adjoint BSDF

@@ -2530,6 +2530,7 @@ void CompiledScene::CompileTextures() {
 				tex->cyclesNoiseTex.normalize = cnt.GetNormalize() ? 1u : 0u;
 				tex->cyclesNoiseTex.colorOutput = cnt.IsColorOutput() ? 1u : 0u;
 				tex->cyclesNoiseTex.isColor = cnt.IsColor() ? 1u : 0u;
+				tex->cyclesNoiseTex.waveMode = cnt.GetWaveMode();
 				break;
 			}
 			case WIREFRAME_TEX: {

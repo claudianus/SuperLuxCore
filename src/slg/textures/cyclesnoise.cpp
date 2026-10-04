@@ -417,17 +417,58 @@ inline void AddSeedOffset(const float p[4], const u_int dims, const float seed,
 
 }
 
+// Cycles svm_wave()
+float CyclesNoiseTexture::Wave(const float pIn[3], const u_int waveMode,
+		const float distortion, const float detail, const float detailScale,
+		const float detailRoughness, const float phase) {
+	// Prevent precision issues on unit coordinates
+	const float p[3] = { (pIn[0] + 1e-6f) * .999999f, (pIn[1] + 1e-6f) * .999999f,
+			(pIn[2] + 1e-6f) * .999999f };
+	const u_int dir = (waveMode >> 1) & 3u;
+	float n;
+	if (!(waveMode & 1u)) {
+		// Bands
+		n = (dir == 0u) ? p[0] * 20.f : (dir == 1u) ? p[1] * 20.f :
+				(dir == 2u) ? p[2] * 20.f : (p[0] + p[1] + p[2]) * 10.f;
+	} else {
+		// Rings (dir 3 = spherical)
+		const float rx = (dir == 0u) ? 0.f : p[0];
+		const float ry = (dir == 1u) ? 0.f : p[1];
+		const float rz = (dir == 2u) ? 0.f : p[2];
+		n = sqrtf(rx * rx + ry * ry + rz * rz) * 20.f;
+	}
+	n += phase;
+	if (distortion != 0.f) {
+		float q[4] = { p[0] * detailScale, p[1] * detailScale, p[2] * detailScale, 0.f };
+		n += distortion * (NoiseFBM(q, 3, Clamp(detail, 0.f, 15.f),
+				fmaxf(detailRoughness, 0.f), 2.f, true) * 2.f - 1.f);
+	}
+	const u_int profile = (waveMode >> 3) & 3u;
+	if (profile == 0u)
+		return .5f + .5f * sinf(n - .5f * M_PI);
+	n *= .5f * INV_PI;
+	if (profile == 1u)
+		return n - floorf(n);
+	return fabsf(n - floorf(n + .5f)) * 2.f;
+}
+
 void CyclesNoiseTexture::Evaluate(const float pIn[4], const float scale,
 		const float detailIn, const float roughnessIn, const float lacunarity,
 		const float offset, const float gain, const float distortion,
 		const CyclesNoiseType noiseType, const u_int dims,
 		const bool normalize, const bool colorNeeded,
-		float &value, float color[3]) {
+		float &value, float color[3], const u_int waveMode) {
 	const float detail = Clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmaxf(roughnessIn, 0.f);
 
 	float p[4];
 	Scale4(pIn, scale, p);
+
+	if (noiseType == CYCLESNOISE_WAVE) {
+		value = Wave(p, waveMode, distortion, detail, gain, roughness, offset);
+		color[0] = color[1] = color[2] = value;
+		return;
+	}
 
 	if (distortion != 0.f) {
 		// Distortion seeds 0..dims-1, computed from the undistorted p
@@ -458,11 +499,11 @@ void CyclesNoiseTexture::Evaluate(const float pIn[4], const float scale,
 CyclesNoiseTexture::CyclesNoiseTexture(TextureRef v, TextureRef wt,
 		TextureRef s, TextureRef d, TextureRef r, TextureRef l, TextureRef o,
 		TextureRef g, TextureRef dist, const CyclesNoiseType t, const u_int dims,
-		const bool norm, const bool colOut, const bool isCol) :
+		const bool norm, const bool colOut, const bool isCol, const u_int wm) :
 		vec(v), w(wt), scale(s), detail(d), roughness(r), lacunarity(l),
 		offset(o), gain(g), distortion(dist), noiseType(t),
 		dimensions(Clamp(dims, 1u, 4u)), normalize(norm), colorOutput(colOut),
-		isColor(isCol) { }
+		isColor(isCol), waveMode(wm) { }
 
 void CyclesNoiseTexture::EvalInputs(const HitPoint &hitPoint, float &value,
 		float color[3], const bool colorNeeded) const {
@@ -486,7 +527,7 @@ void CyclesNoiseTexture::EvalInputs(const HitPoint &hitPoint, float &value,
 			offset.get().GetFloatValue(hitPoint),
 			gain.get().GetFloatValue(hitPoint),
 			distortion.get().GetFloatValue(hitPoint),
-			noiseType, dimensions, normalize, colorNeeded, value, color);
+			noiseType, dimensions, normalize, colorNeeded, value, color, waveMode);
 }
 
 float CyclesNoiseTexture::GetFloatValue(const HitPoint &hitPoint) const {
@@ -552,8 +593,10 @@ PropertiesUPtr CyclesNoiseTexture::ToProperties(const ImageMapCache &imgMapCache
 	props->Set(Property(prefix + ".gain")(gain.get().GetSDLValue()));
 	props->Set(Property(prefix + ".distortion")(distortion.get().GetSDLValue()));
 	static const char *types[] = { "fbm", "multifractal", "hybrid_multifractal",
-			"ridged_multifractal", "hetero_terrain" };
+			"ridged_multifractal", "hetero_terrain", "wave" };
 	props->Set(Property(prefix + ".noisetype")(types[noiseType]));
+	if (noiseType == CYCLESNOISE_WAVE)
+		props->Set(Property(prefix + ".wavemode")(waveMode));
 	props->Set(Property(prefix + ".dimensions")(dimensions));
 	props->Set(Property(prefix + ".normalize")(normalize));
 	props->Set(Property(prefix + ".output")(colorOutput ? "color" : "fac"));

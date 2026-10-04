@@ -106,6 +106,8 @@ typedef struct {
 	// contexts. Read by the "rayinfo" "viewdepth" channel - the Cycles
 	// Camera Data "View Z Depth" output.
 	float rayViewDepth;
+	// Camera distance * pixel spread angle (HitPoint::bumpFootprint)
+	float bumpFootprint;
 
 	// Path-space regularization: effective microfacet-alpha inflation
 	// for this vertex (0 = disabled), gated into place by

@@ -44,6 +44,7 @@
 #include "slg/kernels/kernels.h"
 #include "slg/renderconfig.h"
 #include "slg/engines/pathoclbase/pathoclbase.h"
+#include "slg/bsdf/bsdf.h"
 #include "slg/samplers/sobol.h"
 
 using namespace std;
@@ -66,6 +67,7 @@ void PathOCLBaseOCLRenderThread::GetKernelParamters(
 	params.push_back("-D RENDER_ENGINE_" + renderEngineType);
 	params.push_back("-D PARAM_RAY_EPSILON_MIN=" + ToString(epsilonMin) + "f");
 	params.push_back("-D PARAM_RAY_EPSILON_MAX=" + ToString(epsilonMax) + "f");
+	params.push_back("-D SLG_SHADOW_TERMINATOR_MODE=" + ToString(BSDF::GetShadowTerminatorMode()));
 	if (spectralEnable) {
 		params.push_back("-D SLG_SPECTRAL");
 		// Estimator normalization constants (host-computed from the same

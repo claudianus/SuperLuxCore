@@ -75,8 +75,45 @@ OPENCL_FORCE_INLINE void Material_Bump(const uint matIndex, __global HitPoint *h
 		bumpTexIndex = material->bumpTexIndex;
 
 	if (bumpTexIndex != NULL_INDEX) {
-		const float3 shadeN = Texture_Bump(bumpTexIndex, hitPoint, material->bumpSampleDistance
+		float dist = material->bumpSampleDistance;
+		if ((material->bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
+			// Footprint-scaled step (CPU Material::Bump)
+			const float cosV = fmax(fabs(dot(VLOAD3F(&hitPoint->fixedDir.x),
+					VLOAD3F(&hitPoint->geometryN.x))), .05f);
+			dist = fmax(dist, material->bumpFilterWidth * hitPoint->bumpFootprint / sqrt(cosV));
+		}
+		float3 shadeN = Texture_Bump(bumpTexIndex, hitPoint, dist
 			TEXTURES_PARAM);
+
+#if defined(SLG_SHADOW_TERMINATOR_MODE) && (SLG_SHADOW_TERMINATOR_MODE == 1)
+		// Cycles ensure_valid_specular_reflection() (CPU Material::Bump)
+		{
+			const float3 I = VLOAD3F(&hitPoint->fixedDir.x);
+			const float3 Ng0 = VLOAD3F(&hitPoint->geometryN.x);
+			const float3 Ng = (dot(I, Ng0) >= 0.f) ? Ng0 : -Ng0;
+			const float nSide = (dot(shadeN, Ng) >= 0.f) ? 1.f : -1.f;
+			const float3 N = nSide * shadeN;
+			const float3 R = 2.f * dot(N, I) * N - I;
+			const float Iz = dot(I, Ng);
+			const float threshold = fmin(.9f * Iz, .01f);
+			if (dot(Ng, R) < threshold) {
+				float3 X = N - dot(N, Ng) * Ng;
+				const float xl = length(X);
+				X = (xl > 0.f) ? X / xl : N;
+				const float Ix = dot(I, X);
+				const float a = Ix * Ix + Iz * Iz;
+				if (a > 0.f) {
+					const float b = 2.f * (a + Iz * threshold);
+					const float c = (threshold + Iz) * (threshold + Iz);
+					const float disc = sqrt(fmax(b * b - 4.f * a * c, 0.f));
+					const float Nz2 = (Ix < 0.f) ? .25f * (b + disc) / a : .25f * (b - disc) / a;
+					const float Nx = sqrt(fmax(1.f - Nz2, 0.f));
+					const float Nz = sqrt(fmax(Nz2, 0.f));
+					shadeN = nSide * normalize(Nx * X + Nz * Ng);
+				}
+			}
+		}
+#endif
 
 		// Update dpdu and dpdv so they are still orthogonal to shadeN
 		float3 dpdu = VLOAD3F(&hitPoint->dpdu.x);

@@ -466,7 +466,7 @@ typedef struct {
 typedef struct {
 	MaterialType type;
 	unsigned int matID, lightID;
-	float bumpSampleDistance;
+	float bumpSampleDistance, bumpFilterWidth;
 	Spectrum emittedFactor;
 	float emittedCosThetaMax;
 	// Directional emission map (e.g. IES) for light tracing: the

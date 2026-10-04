@@ -149,6 +149,10 @@ public:
 
     void SetBumpSampleDistance(const float dist) { bumpSampleDistance = dist; }
     float GetBumpSampleDistance() const { return bumpSampleDistance; }
+    // Cycles Bump "Filter Width": the bump finite-difference step grows to
+    // filterWidth * pixel footprint (0 = fixed bumpSampleDistance)
+    void SetBumpFilterWidth(const float fw) { bumpFilterWidth = fw; }
+    float GetBumpFilterWidth() const { return bumpFilterWidth; }
 
 	virtual bool IsDelta() const { return false; }
 	// PSR delta->lobe promotion: materials that can answer
@@ -309,7 +313,7 @@ protected:
 	bool passThroughShadowTransparencyOverride;
 	TextureConstPtr emittedTex;
 	TextureConstPtr bumpTex;
-    float bumpSampleDistance;
+    float bumpSampleDistance, bumpFilterWidth;
 
 	ImageMapConstPtr emissionMap;
 	SampleableSphericalFunctionUPtr emissionFunc;

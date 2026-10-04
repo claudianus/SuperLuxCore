@@ -745,7 +745,9 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				typeStr == "hybrid_multifractal" ? CYCLESNOISE_HYBRID_MULTIFRACTAL :
 				typeStr == "ridged_multifractal" ? CYCLESNOISE_RIDGED_MULTIFRACTAL :
 				typeStr == "hetero_terrain" ? CYCLESNOISE_HETERO_TERRAIN :
+				typeStr == "wave" ? CYCLESNOISE_WAVE :
 				throw runtime_error("Unknown cyclesnoise texture type: " + typeStr);
+		const u_int waveMode = props.Get(Property(propName + ".wavemode")(0u)).Get<u_int>();
 		const int dims = props.Get(Property(propName + ".dimensions")(3)).Get<int>();
 		if (dims < 1 || dims > 4)
 			throw runtime_error("Invalid cyclesnoise dimensions: " + ToString(dims));
@@ -757,7 +759,8 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 
 		tex = std::make_unique<CyclesNoiseTexture>(vec, w, scale, detail,
 				roughness, lacunarity, offset, gain, distortion, noiseType,
-				static_cast<u_int>(dims), normalize, outStr == "color", isColor);
+				static_cast<u_int>(dims), normalize, outStr == "color", isColor,
+				waveMode);
 	} else if (texType == "gabornoise") {
 		auto& vec = GetTexture(props.Get(Property(propName + ".vector")(0.f, 0.f, 0.f)));
 		const float scale = props.Get(Property(propName + ".scale")(1.f)).Get<float>();

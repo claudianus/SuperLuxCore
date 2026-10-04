@@ -51,6 +51,14 @@ class Scene;
 
 class BSDF {
 public:
+	// Shading-normal (bump) terminator softening, path.shadowterminator:
+	//   0 = "chiang": Chiang/Li/Burley 2019 on diffuse + glossy (legacy)
+	//   1 = "conty": Conty Estevez et al. 2019 on diffuse only (Cycles'
+	//       bump_shadowing_term)
+	//   2 = "none"
+	static void SetShadowTerminatorMode(const u_int mode);
+	static u_int GetShadowTerminatorMode();
+
 	// An empty BSDF
 	BSDF() { };
 

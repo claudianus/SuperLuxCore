@@ -43,7 +43,7 @@ Material::Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 		emittedPowerNormalize(true), emittedGainNormalize(false),
 		emittedTemperature(-1.f), emittedNormalizeTemperature(false),
 		frontTransparencyTex(frontTransp), backTransparencyTex(backTransp),
-		emittedTex(emitted), bumpTex(bump), bumpSampleDistance(.001f),
+		emittedTex(emitted), bumpTex(bump), bumpSampleDistance(.001f), bumpFilterWidth(0.f),
 		emissionMap(nullptr), emissionFunc(nullptr),
 		interiorVolume(nullptr), exteriorVolume(nullptr),
 		glossiness(0.f),
@@ -127,9 +127,57 @@ float Material::GetEmittedRadianceY(const float oneOverPrimitiveArea) const {
 		return 0.f;
 }
 
+// Cycles ensure_valid_specular_reflection() (kernel/closure/bsdf_util.h):
+// bends a bumped/normal-mapped N toward Ng until the mirror reflection of
+// the incoming direction I stays above the surface, so grazing views of
+// bumped surfaces do not turn black (normals facing away from the eye)
+static Normal EnsureValidSpecularReflection(const Vector &Ng, const Vector &I,
+		const Normal &Nn) {
+	const Vector N(Nn);
+	const Vector R = 2.f * Dot(N, I) * N - I;
+	const float Iz = Dot(I, Ng);
+	const float threshold = Min(.9f * Iz, .01f);
+	if (Dot(Ng, R) >= threshold)
+		return Nn;
+
+	Vector X = N - Dot(N, Ng) * Ng;
+	const float xl = X.Length();
+	X = (xl > 0.f) ? X / xl : N;
+	const float Ix = Dot(I, X);
+	const float a = Ix * Ix + Iz * Iz;
+	const float b = 2.f * (a + Iz * threshold);
+	const float c = (threshold + Iz) * (threshold + Iz);
+	if (!(a > 0.f))
+		return Nn;
+	const float disc = sqrtf(Max(b * b - 4.f * a * c, 0.f));
+	const float Nz2 = (Ix < 0.f) ? .25f * (b + disc) / a : .25f * (b - disc) / a;
+	const float Nx = sqrtf(Max(1.f - Nz2, 0.f));
+	const float Nz = sqrtf(Max(Nz2, 0.f));
+	return Normal(Normalize(Nx * X + Nz * Ng));
+}
+
 void Material::Bump(HitPoint *hitPoint) const {
     if (bumpTex) {
-		hitPoint->shadeN = bumpTex->Bump(*hitPoint, bumpSampleDistance);
+		float dist = bumpSampleDistance;
+		if ((bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
+			// Isotropic stand-in for Cycles' screen-space bump offsets: the
+			// footprint stretches by 1/cos along the view on a slanted
+			// surface, take the geometric mean of the two axes
+			const float cosV = Max(fabsf(Dot(hitPoint->fixedDir, hitPoint->geometryN)), .05f);
+			dist = Max(dist, bumpFilterWidth * hitPoint->bumpFootprint / sqrtf(cosV));
+		}
+		hitPoint->shadeN = bumpTex->Bump(*hitPoint, dist);
+
+		// Cycles bump semantics (path.shadowterminator = conty)
+		if (BSDF::GetShadowTerminatorMode() == 1) {
+			const Vector I = hitPoint->fixedDir;
+			const Vector Ng0(hitPoint->geometryN);
+			const float side = (Dot(I, Ng0) >= 0.f) ? 1.f : -1.f;
+			const Vector Ng = side * Ng0;
+			const float nSide = (Dot(Vector(hitPoint->shadeN), Ng) >= 0.f) ? 1.f : -1.f;
+			hitPoint->shadeN = nSide * EnsureValidSpecularReflection(Ng, I,
+					nSide * hitPoint->shadeN);
+		}
 
 		// Update dpdu and dpdv so they are still orthogonal to shadeN 
 		hitPoint->dpdu = Cross(hitPoint->shadeN, Cross(hitPoint->dpdu, hitPoint->shadeN));
@@ -257,6 +305,8 @@ PropertiesUPtr Material::ToProperties(const ImageMapCache &imgMapCache, const bo
 	if (bumpTex)
 		props.Set(Property("scene.materials." + name + ".bumptex")(bumpTex->GetSDLValue()));
 	props.Set(Property("scene.materials." + name + ".bumpsamplingdistance")(bumpSampleDistance));
+	if (bumpFilterWidth > 0.f)
+		props.Set(Property("scene.materials." + name + ".bumpfilterwidth")(bumpFilterWidth));
 
 	if (interiorVolume)
 		props.Set(Property("scene.materials." + name + ".volume.interior")(interiorVolume->GetName()));

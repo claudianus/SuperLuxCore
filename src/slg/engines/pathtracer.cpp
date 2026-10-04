@@ -3158,6 +3158,19 @@ void PathTracer::ParseOptions(
 			"(expected \"smits\" or \"jh2019\"): " + upsamplingModel);
 	Spectral::SetUpsamplingModel(spectralUpsamplingJH2019 ?
 			Spectral::UPSAMPLING_JH2019 : Spectral::UPSAMPLING_SMITS);
+
+	{
+		const string st = cfg.Get(defaultProps.Get("path.shadowterminator")).Get<string>();
+		if (st == "chiang")
+			BSDF::SetShadowTerminatorMode(0);
+		else if (st == "conty")
+			BSDF::SetShadowTerminatorMode(1);
+		else if (st == "none")
+			BSDF::SetShadowTerminatorMode(2);
+		else
+			throw runtime_error("Unknown path.shadowterminator value "
+				"(expected \"chiang\", \"conty\" or \"none\"): " + st);
+	}
 	if (spectralUpsamplingJH2019 && !spectralEnable)
 		SLG_LOG("WARNING: path.spectral.upsampling=jh2019 has no effect "
 			"without path.spectral.enable=1");
@@ -3450,6 +3463,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.restir.pt.spatial.enable")(true) <<
 			Property("path.spectral.enable")(false) <<
 			Property("path.spectral.upsampling")("smits") <<
+			Property("path.shadowterminator")("chiang") <<
 			Property("path.pathdepth.total")(6) <<
 			Property("path.pathdepth.diffuse")(4) <<
 			Property("path.pathdepth.glossy")(4) <<

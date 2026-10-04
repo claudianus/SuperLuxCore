@@ -1627,6 +1627,7 @@ OPENCL_FORCE_NOT_INLINE void RestirGI_Bounce(
 		// trip). The volume info copy keeps BSDF_Init's interior/
 		// exterior updates off the path's live PathVolumeInfo.
 		*scratchVolInfo = pathInfo->volume;
+		tmpBsdf->hitPoint.bumpFootprint = 0.f;
 		BSDF_Init(tmpBsdf, false, bRay, &candHits[i],
 				RestirGI_Hash(baseSeed ^ (i * 0x9E3779B9u), 0x03u),
 				scratchVolInfo
@@ -2249,6 +2250,7 @@ OPENCL_FORCE_NOT_INLINE void RestirPT_Bounce(
 		// trip). The volume info copy keeps BSDF_Init's interior/
 		// exterior updates off the path's live PathVolumeInfo.
 		*scratchVolInfo = pathInfo->volume;
+		tmpBsdf->hitPoint.bumpFootprint = 0.f;
 		BSDF_Init(tmpBsdf, false, bRay, &candHits[i],
 				RestirGI_Hash(baseSeed ^ (i * 0x9E3779B9u), 0x03u),
 				scratchVolInfo
