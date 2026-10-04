@@ -760,20 +760,19 @@ OPENCL_FORCE_INLINE float RemapTexture_Remap(const float value,
 OPENCL_FORCE_INLINE float RemapTexture_ConstEvaluateFloat(
 		const float value, const float sourceMin, const float sourceMax,
 		const float targetMin, const float targetMax) {
-	const float clampedValue = clamp(value, sourceMin, sourceMax);
-	const float result = RemapTexture_Remap(clampedValue, sourceMin, sourceMax, targetMin, targetMax);
-	return clamp(result, targetMin, targetMax);
+	// Output clamp in either range orientation (RemapTexture::ClampedRemap)
+	const float result = RemapTexture_Remap(value, sourceMin, sourceMax, targetMin, targetMax);
+	return clamp(result, fmin(targetMin, targetMax), fmax(targetMin, targetMax));
 }
 
 OPENCL_FORCE_INLINE float3 RemapTexture_ConstEvaluateSpectrum(
 		const float3 value, const float sourceMin, const float sourceMax,
 		const float targetMin, const float targetMax) {
-	const float3 clampedValue = clamp(value, sourceMin, sourceMax);
 	float3 result;
-	result.x = RemapTexture_Remap(clampedValue.x, sourceMin, sourceMax, targetMin, targetMax);
-	result.y = RemapTexture_Remap(clampedValue.y, sourceMin, sourceMax, targetMin, targetMax);
-	result.z = RemapTexture_Remap(clampedValue.z, sourceMin, sourceMax, targetMin, targetMax);
-	return clamp(result, targetMin, targetMax);
+	result.x = RemapTexture_Remap(value.x, sourceMin, sourceMax, targetMin, targetMax);
+	result.y = RemapTexture_Remap(value.y, sourceMin, sourceMax, targetMin, targetMax);
+	result.z = RemapTexture_Remap(value.z, sourceMin, sourceMax, targetMin, targetMax);
+	return clamp(result, fmin(targetMin, targetMax), fmax(targetMin, targetMax));
 }
 
 //------------------------------------------------------------------------------

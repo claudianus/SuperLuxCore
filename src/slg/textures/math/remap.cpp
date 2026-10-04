@@ -83,17 +83,18 @@ PropertiesUPtr RemapTexture::ToProperties(const ImageMapCache &imgMapCache, cons
 float RemapTexture::ClampedRemap(float value,
 		const float sourceMin, const float sourceMax,
 		const float targetMin, const float targetMax) {
-	value = Clamp(value, sourceMin, sourceMax);
+	// Clamp the output to the target range in either orientation (a
+	// descending range like Cycles Map Range 0..14 -> 0.065..0.006 used to
+	// collapse to a constant)
 	const float result = Remap(value, sourceMin, sourceMax, targetMin, targetMax);
-	return Clamp(result, targetMin, targetMax);
+	return Clamp(result, Min(targetMin, targetMax), Max(targetMin, targetMax));
 }
 
 Spectrum RemapTexture::ClampedRemap(Spectrum value,
 		const float sourceMin, const float sourceMax,
 		const float targetMin, const float targetMax) {
-	value = value.Clamp(sourceMin, sourceMax);
 	for (int i = 0; i < 3; ++i)
 		value.c[i] = Remap(value.c[i], sourceMin, sourceMax, targetMin, targetMax);
-	return value.Clamp(targetMin, targetMax);
+	return value.Clamp(Min(targetMin, targetMax), Max(targetMin, targetMax));
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
