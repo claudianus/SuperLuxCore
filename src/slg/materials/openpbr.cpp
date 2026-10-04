@@ -451,7 +451,23 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	const float Fspec = FresnelDielectricModulated(muF, etaS, p.specWeight);
 	const float wDiel = rem * (1.f - p.metalness);
 
-	weights[LOBE_SPEC] = Spectrum(wDiel) * darkening * p.specColor;
+	// Multiple-scattering energy compensation of the transmissive interface
+	// (Cycles multiscatter GGX glass): the refraction share of the
+	// dielectric (transmission + subsurface) scales its reflection and
+	// refraction lobes by 1/E. A rough (r=1) IOR 1.4 subsurface boundary
+	// otherwise lost half the energy (white furnace 0.50).
+	const float refrFrac = p.transWeight + (1.f - p.transWeight) * p.sssWeight;
+	float msScale = 1.f;
+	if (refrFrac > 0.f) {
+		float alphaT, alphaB;
+		OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
+		const float nInt = InteriorIor(hitPoint, p);
+		msScale = GgxGlassEnergyScale(alphaT, alphaB, muF,
+				(wFixed.z > 0.f) ? nInt / p.extIor : p.extIor / nInt);
+	}
+
+	weights[LOBE_SPEC] = Spectrum(wDiel * (1.f + refrFrac * (msScale - 1.f))) *
+			darkening * p.specColor;
 	const float impSpec = weights[LOBE_SPEC].Filter() * Fspec;
 
 	// Refraction lobe: transmission and subsurface share the interface; the
@@ -469,7 +485,7 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	const Spectrum sssTint = sssAlbedoMedium ? Spectrum(1.f) : p.sssColor;
 	const Spectrum refrTint = p.transWeight * transTint +
 			(1.f - p.transWeight) * p.sssWeight * sssTint;
-	weights[LOBE_BTDF] = Spectrum(wDiel) * darkening * refrTint;
+	weights[LOBE_BTDF] = Spectrum(wDiel * msScale) * darkening * refrTint;
 	const float impBtdf = weights[LOBE_BTDF].Filter() * (1.f - Fspec);
 
 	// Opaque diffuse share (attenuated by interface transmission at eval)

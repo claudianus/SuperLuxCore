@@ -29,6 +29,7 @@
 //   - F82 metal Fresnel: Kutz 2021 / OpenPBR spec
 //   - Zeltner SGGX-LTC fuzz/sheen: Zeltner 2022 (MaterialX pbrlib impl.)
 
+#include "slg/materials/ggxglass_energy_table.h"
 #include "luxrays/core/geometry/vector_normal.h"
 #include "luxrays/core/color/color.h"
 #include "slg/materials/material.h"
@@ -197,6 +198,48 @@ inline luxrays::Spectrum GgxDirAlbedo(const float mu, const float alpha,
 inline luxrays::Spectrum GgxFresnelAverage(const luxrays::Spectrum &F0,
 		const luxrays::Spectrum &F90) {
 	return F0 + (F90 - F0) * (1.f / 21.f);
+}
+
+// GGX dielectric (glass) multiple-scattering energy compensation, the
+// Cycles "multiscatter GGX" convention: the single-scatter reflection +
+// refraction lobes of an interface are scaled by 1/E, E = their directional
+// albedo E(rough = alpha^(1/2), mu, z = sqrt((ior-1)/(ior+1))). Table [0] is
+// the entering side (relative ior n_t/n_i >= 1), [1] the exiting side
+// (relative ior 1/ior). Precomputed by Monte Carlo (VNDF sampling, exact
+// Fresnel, height-correlated Smith) - dev-tools/gen_ggx_glass_energy.py.
+inline float GgxGlassEnergyTableLookup(const u_int side, const float rough,
+		const float mu, const float z) {
+	const int N = SLG_GGX_GLASS_E_N;
+	const float fr = luxrays::Clamp(rough, 0.f, 1.f) * (N - 1);
+	const float fm = luxrays::Clamp(mu, 0.f, 1.f) * (N - 1);
+	const float fz = luxrays::Clamp(z, 0.f, 1.f) * (N - 1);
+	const int r0 = luxrays::Min((int)fr, N - 2), m0 = luxrays::Min((int)fm, N - 2),
+			z0 = luxrays::Min((int)fz, N - 2);
+	const float tr = fr - r0, tm = fm - m0, tz = fz - z0;
+	const float *T = &GgxGlassETable[side * N * N * N];
+	auto at = [&](const int iz, const int im, const int ir) {
+		return T[(iz * N + im) * N + ir];
+	};
+	float v = 0.f;
+	for (int dz = 0; dz < 2; ++dz)
+		for (int dm = 0; dm < 2; ++dm)
+			for (int dr = 0; dr < 2; ++dr)
+				v += (dz ? tz : 1.f - tz) * (dm ? tm : 1.f - tm) * (dr ? tr : 1.f - tr) *
+						at(z0 + dz, m0 + dm, r0 + dr);
+	return v;
+}
+
+// 1/E for a dielectric interface seen from mu with relative ior n_t/n_i
+inline float GgxGlassEnergyScale(const float alphaT, const float alphaB,
+		const float mu, const float iorRel) {
+	if (!(iorRel > 0.f) || fabsf(iorRel - 1.f) < 1e-4f)
+		return 1.f;
+	const bool inv = iorRel < 1.f;
+	const float ior = inv ? 1.f / iorRel : iorRel;
+	const float z = sqrtf((ior - 1.f) / (ior + 1.f));
+	const float rough = sqrtf(sqrtf(alphaT * alphaB));
+	const float E = GgxGlassEnergyTableLookup(inv ? 1u : 0u, rough, mu, z);
+	return 1.f / luxrays::Max(E, .05f);
 }
 
 // Turquin multiple-scattering compensation multiplier (eq. 14/16):

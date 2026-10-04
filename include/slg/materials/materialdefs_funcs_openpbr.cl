@@ -483,7 +483,20 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 	const float Fspec = Microfacet_FresnelDielectricModulated(muF, etaS, p->specWeight);
 	const float wDiel = rem * (1.f - p->metalness);
 
-	weights[OPENPBR_LOBE_SPEC] = wDiel * darkening * p->specColor;
+	// Multiple-scattering energy compensation of the transmissive
+	// interface (CPU OpenPBRMaterial::ComputeWeights)
+	const float refrFrac = p->transWeight + (1.f - p->transWeight) * p->sssWeight;
+	float msScale = 1.f;
+	if (refrFrac > 0.f) {
+		float alphaT, alphaB;
+		Microfacet_OpenPBRAnisoAlphas(p->specRoughness, p->specAniso, &alphaT, &alphaB);
+		const float nInt = OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
+		msScale = Microfacet_GgxGlassEnergyScale(alphaT, alphaB, muF,
+				(wFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt);
+	}
+
+	weights[OPENPBR_LOBE_SPEC] = (wDiel * (1.f + refrFrac * (msScale - 1.f))) *
+			darkening * p->specColor;
 	const float impSpec = Spectrum_Filter(weights[OPENPBR_LOBE_SPEC]) * Fspec;
 
 	// Refraction: transmission + subsurface share the interface
@@ -494,7 +507,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 	const float3 sssTint = p->sssAlbedoMedium ? WHITE : p->sssColor;
 	const float3 refrTint = p->transWeight * transTint +
 			(1.f - p->transWeight) * p->sssWeight * sssTint;
-	weights[OPENPBR_LOBE_BTDF] = wDiel * darkening * refrTint;
+	weights[OPENPBR_LOBE_BTDF] = (wDiel * msScale) * darkening * refrTint;
 	const float impBtdf = Spectrum_Filter(weights[OPENPBR_LOBE_BTDF]) * (1.f - Fspec);
 
 	const float wDiff = wDiel * (1.f - p->transWeight) * (1.f - p->sssWeight);
