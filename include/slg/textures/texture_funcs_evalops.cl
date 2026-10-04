@@ -1230,7 +1230,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 
 					const float3 eval = MakeFloat3Texture_ConstEvaluateSpectrum(tex1,
 							tex2, tex3);
-					EvalStack_PushFloat3(eval);
+					// Combine Color: authored RGB, upsample like the RGB
+					// leaves; Combine XYZ vectors pass through.
+					if (texture->makeFloat3Tex.isColor) {
+						EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
+					} else {
+						EvalStack_PushFloat3(eval);
+					}
 					break;
 				}
 				case EVAL_BUMP_GENERIC_OFFSET_U:

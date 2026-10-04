@@ -2423,6 +2423,7 @@ void CompiledScene::CompileTextures() {
 				tex->makeFloat3Tex.tex2Index = scene.GetTextures().GetTextureIndex(t2);
 				auto& t3 = mf3t.GetTexture3();
 				tex->makeFloat3Tex.tex3Index = scene.GetTextures().GetTextureIndex(t3);
+				tex->makeFloat3Tex.isColor = mf3t.IsColor() ? 1u : 0u;
 				break;
 			}
 			case BRIGHT_CONTRAST_TEX: {

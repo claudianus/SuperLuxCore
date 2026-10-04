@@ -29,8 +29,12 @@ namespace slg {
 
 class MakeFloat3Texture : public Texture {
 public:
-	MakeFloat3Texture(TextureRef tex1, TextureRef tex2, TextureRef tex3) 
-		: tex1(tex1), tex2(tex2), tex3(tex3) { }
+	// isColor: the three channels are an authored RGB color (Cycles Combine
+	// Color) rather than a vector (Combine XYZ), so spectral transport must
+	// upsample the result like any other RGB leaf.
+	MakeFloat3Texture(TextureRef tex1, TextureRef tex2, TextureRef tex3,
+			const bool isColor = false)
+		: tex1(tex1), tex2(tex2), tex3(tex3), isColor(isColor) { }
 	virtual ~MakeFloat3Texture() { }
 
 	virtual TextureType GetType() const { return MAKE_FLOAT3; }
@@ -63,6 +67,10 @@ public:
 	TextureConstRef GetTexture1() const { return tex1; }
 	TextureConstRef GetTexture2() const { return tex2; }
 	TextureConstRef GetTexture3() const { return tex3; }
+	bool IsColor() const { return isColor; }
+
+	virtual luxrays::Spectrum EvalSpectralValue(const HitPoint &hitPoint,
+			const luxrays::PathWavelengths &sw, const bool emission) const;
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
@@ -70,6 +78,7 @@ private:
 	std::reference_wrapper<Texture> tex1;
 	std::reference_wrapper<Texture> tex2;
 	std::reference_wrapper<Texture> tex3;
+	bool isColor;
 };
 
 }

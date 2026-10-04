@@ -530,6 +530,8 @@ typedef struct {
 
 typedef struct {
 	unsigned int tex1Index, tex2Index, tex3Index;
+	// Authored RGB color (Combine Color): upsampled under SLG_SPECTRAL
+	unsigned int isColor;
 } MakeFloat3TexParam;
 
 typedef struct {

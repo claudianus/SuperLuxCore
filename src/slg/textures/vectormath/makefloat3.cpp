@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "slg/textures/vectormath/makefloat3.h"
+#include "luxrays/core/color/spectral.h"
 
 using namespace std;
 using namespace luxrays;
@@ -37,6 +38,14 @@ Spectrum MakeFloat3Texture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(v1, v2, v3);
 }
 
+Spectrum MakeFloat3Texture::EvalSpectralValue(const HitPoint &hitPoint,
+		const PathWavelengths &sw, const bool emission) const {
+	const Spectrum v = EvalSpectrumValue(hitPoint);
+	if (!isColor)
+		return v;
+	return emission ? Spectral::Emission(v, sw) : Spectral::Reflectance(v, sw);
+}
+
 PropertiesUPtr MakeFloat3Texture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
 	auto props = std::make_unique<Properties>();
 
@@ -45,6 +54,7 @@ PropertiesUPtr MakeFloat3Texture::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.textures." + name + ".texture1")(GetTexture1().GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".texture2")(GetTexture2().GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".texture3")(GetTexture3().GetSDLValue()));
+	props->Set(Property("scene.textures." + name + ".color")(isColor));
 
 	return props;
 }

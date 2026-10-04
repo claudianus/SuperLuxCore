@@ -696,7 +696,8 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& t1 = GetTexture(props.Get(Property(propName + ".texture1")(1.f)));
 		auto& t2 = GetTexture(props.Get(Property(propName + ".texture2")(1.f)));
 		auto& t3 = GetTexture(props.Get(Property(propName + ".texture3")(1.f)));
-		tex = std::make_unique<MakeFloat3Texture>(t1, t2, t3);
+		const bool isColor = props.Get(Property(propName + ".color")(false)).Get<bool>();
+		tex = std::make_unique<MakeFloat3Texture>(t1, t2, t3, isColor);
     } else if (texType == "rounding") {
         auto& texture = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
         auto& increment = GetTexture(props.Get(Property(propName + ".increment")(0.5f)));
