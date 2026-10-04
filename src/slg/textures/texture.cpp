@@ -105,6 +105,10 @@ static bool IsSpectralLeafRGB(const TextureType t) {
 		case BLENDER_MAGIC:
 		case BLENDER_MUSGRAVE:
 		case BLENDER_VORONOI:
+		// Color ramp: the stop colors are authored RGB (the amount input
+		// is a scalar), so the interpolated value must be upsampled -
+		// passing it through as bins swapped red and blue.
+		case BAND_TEX:
 			return true;
 		default:
 			return false;

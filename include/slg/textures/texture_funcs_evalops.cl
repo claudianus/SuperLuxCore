@@ -1775,7 +1775,9 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 							texture->band.interpType, texture->band.size,
 							texture->band.offsets, texture->band.values,
 							tex1);
-					EvalStack_PushFloat3(eval);
+					// Authored RGB stops: upsample like the other RGB
+					// leaves (CPU IsSpectralLeafRGB).
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}
 				case EVAL_BUMP_GENERIC_OFFSET_U:
