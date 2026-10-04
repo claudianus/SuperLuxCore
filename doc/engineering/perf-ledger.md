@@ -830,4 +830,25 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   checks. That profile rendered the genuine Metal transparent-film PNG
   used in the manual; a separate Blender image-data read verified its
   1024×512 dimensions, finite RGBA values and opaque/transparent interiors.
+- Final documentation-inclusive SDK
+  [37163516569](https://github.com/claudianus/SuperBlendLuxCore/actions/runs/37163516569)
+  published source `44f8833357e6887c8e9d6b4fa0aff213bb88ee54`.
+  Attestation-verified ARM ZIP SHA-256:
+  `bbc57981097ac1669ea65b91cfd0f44f56c966848c462d21b27d6842e2d6de01`.
+  All 261 runtime Python files are byte-identical to the 352-check SDK;
+  the embedded native wheel retains the proven hash above. The archive
+  includes the updated 2.11.11 installation manual and exact rendered PNG.
+  Another fresh offline profile verified its own add-on/native paths and
+  completed an actual Metal half-plane render. Blender confirmed finite
+  1024×512 RGBA pixels and the expected alpha interiors.
+- Pages deployment
+  [37163515589](https://github.com/claudianus/SuperBlendLuxCore/actions/runs/37163515589)
+  succeeded from the same documentation source. Actual headless Chromium
+  verified the public installation version and loaded 1024×512 image;
+  a screenshot confirmed the page checkerboard appears through the
+  transparent half. Both browser tabs were closed.
+- The final fresh-profile render also emitted a compositor warning
+  predicting black saved output, although the inspected PNG and alpha
+  checks were correct. This Blender 5.2 state-interpretation mismatch
+  is recorded as a separate investigation, not dismissed or suppressed.
 
