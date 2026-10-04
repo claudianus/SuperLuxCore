@@ -411,6 +411,11 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 	if (wh.z < 0.f)
 		wh = -wh;
 
+	// Walter et al.: each direction must see the microfacet from its own
+	// side of the macrosurface (CPU OpenPBRMaterial::EvalBtdf)
+	if ((dot(wor, wh) * wor.z <= 0.f) || (dot(wir, wh) * wir.z <= 0.f))
+		return BLACK;
+
 	const float D = Microfacet_GgxD(wh, alphaT, alphaB);
 	const float woH = fabs(dot(wor, wh));
 	const float wiH = dot(wir, wh);
@@ -794,6 +799,11 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 			if (wh.z < 0.f)
 				wh = -wh;
 			const float3 wir = 2.f * dot(wor, wh) * wh - wor;
+			// Masked VNDF reflection below the surface: no energy (CPU
+			// OpenPBRMaterial::Sample)
+			if (wir.z <= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
 			sampledDir = Microfacet_RotateXY(wir, cosA, -sinA);
 			if (wo.z < 0.f)
 				sampledDir = -sampledDir;
@@ -838,6 +848,9 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 				// Total internal reflection: reflect off the microfacet;
 				// the specular lobe of the mixture scores the direction.
 				const float3 wirR = 2.f * c * wh - wor;
+				if (wirR.z <= 0.f) {
+					MATERIAL_SAMPLE_RETURN_BLACK;
+				}
 				sampledDir = Microfacet_RotateXY(wirR, cosA, -sinA);
 				if (wo.z < 0.f)
 					sampledDir = -sampledDir;
@@ -847,6 +860,9 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 			if (wor.z > 0.f)
 				cosT = -cosT;
 			const float3 wir = (eta * c + cosT) * wh - eta * wor;
+			if (wir.z * wor.z >= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
 			sampledDir = Microfacet_RotateXY(wir, cosA, -sinA);
 			if (wo.z < 0.f)
 				sampledDir = -sampledDir;

@@ -394,6 +394,12 @@ Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 	if (wh.z < 0.f)
 		wh = -wh;
 
+	// Walter et al.: each direction must see the microfacet from its own
+	// side of the macrosurface (a backfacing configuration has no energy;
+	// without this test rough glass exceeded the GGX directional albedo)
+	if ((Dot(wor, wh) * wor.z <= 0.f) || (Dot(wir, wh) * wir.z <= 0.f))
+		return Spectrum(0.f);
+
 	const float D = GgxD(wh, alphaT, alphaB);
 	const float woH = fabsf(Dot(wor, wh));
 	const float wiH = Dot(wir, wh);
@@ -731,6 +737,13 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 			if (wh.z < 0.f)
 				wh = -wh;
 			const Vector wir = 2.f * Dot(wor, wh) * wh - wor;
+			// A VNDF reflection can point below the surface (a masked
+			// direction): it carries no energy. Scoring it with the mixture
+			// would let the BTDF lobe claim it with a pdf that misses this
+			// sampler's density - rough glass gained energy (furnace 1.3 at
+			// roughness 1 with the multiscatter compensation).
+			if (wir.z <= 0.f)
+				return Spectrum();
 			*localSampledDir = RotateXY(wir, cosA, -sinA);
 			if (wo.z < 0.f)
 				*localSampledDir = -*localSampledDir;
@@ -768,6 +781,8 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 				// specular lobe of the mixture (Fresnel = 1 at TIR) and its
 				// pdf is counted by EvalBtdf's same-hemisphere branch.
 				const Vector wirR = 2.f * c * wh - wor;
+				if (wirR.z <= 0.f)
+					return Spectrum(); // masked, see the specular lobe
 				*localSampledDir = RotateXY(wirR, cosA, -sinA);
 				if (wo.z < 0.f)
 					*localSampledDir = -*localSampledDir;
@@ -777,6 +792,10 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 			if (wor.z > 0.f)
 				cosT = -cosT;
 			const Vector wir = (eta * c + cosT) * wh - eta * wor;
+			// A refraction off a steep microfacet can stay on the incident
+			// side: masked, no energy (as the specular lobe above)
+			if (wir.z * wor.z >= 0.f)
+				return Spectrum();
 			*localSampledDir = RotateXY(wir, cosA, -sinA);
 			if (wo.z < 0.f)
 				*localSampledDir = -*localSampledDir;
