@@ -291,9 +291,12 @@ static bool RunCL2MSL(const Context &ctx,
 		const string &programSource, const string &programName,
 		string &mslSource, string &layoutJson,
 		string &outCacheDir, string &outCacheKey) {
-	const string srcFile = "/tmp/luxcore_metal_src.cl";
-	const string mslFile = "/tmp/luxcore_metal_src.msl";
-	const string jsonFile = "/tmp/luxcore_metal_layout.json";
+	// Per-process temp names: two sessions translating at the same time
+	// must not read each other's half-written files.
+	const string tmpBase = "/tmp/luxcore_metal_" + to_string((long)getpid());
+	const string srcFile = tmpBase + "_src.cl";
+	const string mslFile = tmpBase + "_src.msl";
+	const string jsonFile = tmpBase + "_layout.json";
 
 	// The translator path resolution order:
 	// 1. LUXCORE_CL2MSL_PATH env (relocated installs)
@@ -377,14 +380,29 @@ static bool RunCL2MSL(const Context &ctx,
 	string keySrc = programSource;
 	for (const string &p : programParameters)
 		keySrc += "\x1f" + p;
+	// The translator is snapshotted once per process: the installed file
+	// can vanish while Blender runs (an extension wheel re-sync removes
+	// and re-unpacks site-packages). Without the snapshot every later
+	// program hashed to a NEW key (no translator content), missed the
+	// cache, and failed to translate - an uncaught error that aborted
+	// Blender at the end of a render (image pipeline tone map).
+	static std::mutex translatorMutex;
+	static string translatorSnapshot;
+	string translator;
 	{
-		ifstream tf(translatorPath, ios::binary);
-		if (tf) {
-			stringstream ss;
-			ss << tf.rdbuf();
-			keySrc += "\x1f" + ss.str();
+		std::lock_guard<std::mutex> lock(translatorMutex);
+		if (translatorSnapshot.empty()) {
+			ifstream tf(translatorPath, ios::binary);
+			if (tf) {
+				stringstream ss;
+				ss << tf.rdbuf();
+				translatorSnapshot = ss.str();
+			}
 		}
+		translator = translatorSnapshot;
 	}
+	if (!translator.empty())
+		keySrc += "\x1f" + translator;
 	char keyBuf[32];
 	snprintf(keyBuf, sizeof(keyBuf), "%016llx",
 			(unsigned long long)Fnv1a64(keySrc));
@@ -406,8 +424,28 @@ static bool RunCL2MSL(const Context &ctx,
 		f << programSource;
 	}
 
+	// Run the snapshot, not the (possibly gone) installed file: keep a
+	// content-addressed copy beside the cache.
+	string translatorRunPath = translatorPath;
+	if (!translator.empty()) {
+		char tkBuf[32];
+		snprintf(tkBuf, sizeof(tkBuf), "%016llx",
+				(unsigned long long)Fnv1a64(translator));
+		const string copyPath = cacheDir + "/cl2msl-" + tkBuf + ".py";
+		struct stat st;
+		if (stat(copyPath.c_str(), &st) != 0 || st.st_size != (off_t)translator.size()) {
+			const string tmpCopy = copyPath + ".tmp" + to_string((long)getpid());
+			{
+				ofstream cf(tmpCopy, ios::binary);
+				cf << translator;
+			}
+			rename(tmpCopy.c_str(), copyPath.c_str());
+		}
+		translatorRunPath = copyPath;
+	}
+
 	stringstream cmd;
-	cmd << "python3 \"" << translatorPath << "\""
+	cmd << "python3 \"" << translatorRunPath << "\""
 		<< " \"" << mslFile << "\" \"" << jsonFile << "\"";
 	for (const string &p : programParameters)
 		cmd << " \"" << p << "\"";
@@ -428,6 +466,9 @@ static bool RunCL2MSL(const Context &ctx,
 	js << jf.rdbuf();
 	mslSource = ms.str();
 	layoutJson = js.str();
+	unlink(srcFile.c_str());
+	unlink(mslFile.c_str());
+	unlink(jsonFile.c_str());
 	StoreCachedTranslation(cacheDir, key, mslSource, layoutJson);
 	return true;
 }

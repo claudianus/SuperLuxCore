@@ -168,12 +168,29 @@ void ImagePipeline::Apply(Film &film, const u_int index) {
 			}
 		}
 
+		bool hwApplied = false;
 		if (useHWApply) {
-			plugin->ApplyHW(film, index);
-			imageInCPURam = false;
-		} else {
+			try {
+				plugin->ApplyHW(film, index);
+				hwApplied = true;
+				imageInCPURam = false;
+			} catch (std::exception &e) {
+				// A device kernel that fails to build (e.g. the Metal
+				// translator missing at runtime) must not kill the host
+				// application at the end of a render: run the CPU version
+				// of the plugin instead. The buffer was already uploaded,
+				// so bring the device copy back first.
+				if (!plugin->CanUseNative())
+					throw;
+				SLG_LOG("ImagePipeline: hardware plugin failed (" << e.what()
+						<< "), applying it on the CPU");
+				film.ReadHWBuffer_IMAGEPIPELINE(index);
+				film.hardwareDevice->FinishQueue();
+			}
+		}
+		if (!hwApplied) {
 			plugin->Apply(film, index);
-			imageInCPURam = true;			
+			imageInCPURam = true;
 		}
 		
 		//const double p2 = WallClockTime();
