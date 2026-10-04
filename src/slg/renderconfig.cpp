@@ -296,6 +296,23 @@ void RenderConfig::ApplyAutoLightTracing() {
 		SDL_LOG("path.lighttracing.only: enabled light tracing"
 				" (explicit light-only request)");
 	}
+	// Vertex connection (GPU BDPT connects) is not yet consistent in
+	// scattering media: its MIS with the hybrid eye/light estimators
+	// overestimated a furnace fog sphere by ~40% (subsurface too). Keep
+	// those scenes on the verified estimators; VC stays on elsewhere.
+	if (GetConfig().Get(Property("path.vertexconnection.enable")(false)).Get<bool>()) {
+		const auto &mats = GetScene().GetMaterials();
+		for (u_int i = 0; i < mats.GetSize(); ++i) {
+			const auto &m = mats.GetMaterial(i);
+			if (m.IsVolume() && (m.GetType() != CLEAR_VOL)) {
+				GetConfig().Set(Property("path.vertexconnection.enable")(false));
+				SDL_LOG("path.vertexconnection.enable: disabled - the scene has"
+						" scattering media, where vertex connection is not"
+						" yet unbiased");
+				break;
+			}
+		}
+	}
 	if (!SceneHasCausticCapablePaths(GetScene()))
 		return;
 	if (ltCapable &&

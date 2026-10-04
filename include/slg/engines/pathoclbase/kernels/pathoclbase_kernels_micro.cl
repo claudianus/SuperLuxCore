@@ -359,9 +359,12 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		// t is measured from the clip start).
 		const float t_MIS = rayHits[gid].t +
 				((pathInfo->depth.depth == 0) ? camera->base.hither : 0.f);
-		const float factor = 1.f / VCMis(fabs(dot(
+		// A medium vertex has no surface: its area measure carries no
+		// cosine (pdfA = pdfW / d^2) - a fake shading-normal cosine made the
+		// strategy weights of one path not sum to 1 (dense media 3x bright)
+		const float factor = bsdf->isVolume ? 1.f : (1.f / VCMis(fabs(dot(
 				VLOAD3F(&bsdf->hitPoint.shadeN.x),
-				VLOAD3F(&rays[gid].d.x))));
+				VLOAD3F(&rays[gid].d.x)))));
 		pathInfo->vcFoldVCM = VCMis(t_MIS * t_MIS) * factor;
 		pathInfo->vcFoldVC = factor;
 		pathInfo->dVCM *= pathInfo->vcFoldVCM;
@@ -2413,11 +2416,11 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 							MATERIALS_PARAM);
 				if (bsdfEvent & SPECULAR) {
 					pathInfo->dVCM = 0.f;
-					const float specFactor = VCMis(cosSampledDir);
+					const float specFactor = bsdf->isVolume ? 1.f : VCMis(cosSampledDir);
 					pathInfo->dVC *= specFactor;
 					pathInfo->dVM *= specFactor;
 				} else {
-					const float w = VCMis(cosSampledDir / bsdfPdfW);
+					const float w = VCMis((bsdf->isVolume ? 1.f : cosSampledDir) / bsdfPdfW);
 					pathInfo->dVC = w * (pathInfo->dVC *
 							VCMis(bsdfRevPdfW) + pathInfo->dVCM + vcMisVmW);
 					pathInfo->dVM = w * (pathInfo->dVM *
@@ -2767,6 +2770,7 @@ OPENCL_FORCE_INLINE void LightPathInfo_Init(__global LightPathInfo *lpi) {
 
 	lpi->connectThroughShadow = false;
 	lpi->lastBSDFEvent = SPECULAR; // SPECULAR is required to avoid MIS
+	lpi->lastFromVolume = false;
 	lpi->isNearlyS = false;
 	lpi->isNearlySD = false;
 	lpi->isNearlySDS = false;
@@ -2812,6 +2816,8 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 	// Media-transparent chains: a medium scattering vertex neither
 	// extends nor breaks the run (doc/features/caustics-sota.md).
 	const bool chainMedium = BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM);
+	// The next flight starts at this vertex (beam deposit gate)
+	lpi->lastFromVolume = bsdf->isVolume;
 	const bool chainSpec = isNewVertexNearlySpecular || chainMedium;
 	lpi->isNearlySDS = (lpi->isNearlySD || lpi->isNearlySDS) && chainSpec;
 	lpi->isNearlySD = lpi->isNearlyS && !chainSpec;
@@ -3636,7 +3642,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 
 					// Beam deposit: homogeneous flight volume, chunked so
 					// segment AABBs stay tight (CPU tracephotonsthread.cpp:196)
+					// Direct flights only (CPU tracephotonsthread.cpp
+					// flightFromMedium): lpi->lastFromVolume marks a flight
+					// starting at a medium scattering vertex
 					if (pathTracer->pgic.causticVolumeBeams && pgicDepositBeams &&
+							!lpi->lastFromVolume &&
 							(flightVolIdx != NULL_INDEX) &&
 							(mats[flightVolIdx].type == HOMOGENEOUS_VOL) &&
 							(segLen > DEFAULT_EPSILON_STATIC)) {
@@ -3681,7 +3691,10 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 					// Point deposit: receiver material + film frustum
 					// (deposit mode only runs with frustum culling - no
 					// device visibility map exists)
+					// Medium vertices only receive the direct flight (CPU
+					// TracePhotonsThread): eye paths query every medium vertex
 					if ((lpi->depth.depth > 0) && pgicDepositPhotons &&
+							!(bsdf->isVolume && lpi->lastFromVolume) &&
 							PhotonGICache_IsPhotonGIEnabled(bsdf,
 								pathTracer->pgic.glossinessUsageThreshold,
 								pathTracer->pgic.causticVolumeBeams
@@ -3739,9 +3752,10 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						&lights[lpi->lightIndex];
 				if ((lpi->depth.depth > 0) || !Light_IsEnvironmental(emitLight))
 					lpi->dVCM *= VCMis(rayHits[gid].t * rayHits[gid].t);
-				const float factor = 1.f / VCMis(fabs(dot(
+				// Medium vertex: no cosine in the area measure
+				const float factor = bsdf->isVolume ? 1.f : (1.f / VCMis(fabs(dot(
 						VLOAD3F(&bsdf->hitPoint.shadeN.x),
-						VLOAD3F(&rays[gid].d.x))));
+						VLOAD3F(&rays[gid].d.x)))));
 				lpi->dVCM *= factor;
 				lpi->dVC *= factor;
 				lpi->dVM *= factor;
@@ -3917,7 +3931,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 										bsdfRevPdfW *= RussianRouletteProb(
 												pathTracer->rrImportanceCap,
 												bsdfEval);
-									const float cosToCamera = dot(
+									const float cosToCamera = bsdf->isVolume ? 1.f : dot(
 											VLOAD3F(&bsdf->hitPoint.shadeN.x),
 											-eyeRayD);
 									const float cameraPdfA = PdfWtoA(pdfW,
@@ -4055,11 +4069,11 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 								misVmWeightFactor;
 						if (bsdfEvent & SPECULAR) {
 							lpi->dVCM = 0.f;
-							const float specFactor = VCMis(cosSampledDir);
+							const float specFactor = bsdf->isVolume ? 1.f : VCMis(cosSampledDir);
 							lpi->dVC *= specFactor;
 							lpi->dVM *= specFactor;
 						} else {
-							const float w = VCMis(cosSampledDir / bsdfPdfW);
+							const float w = VCMis((bsdf->isVolume ? 1.f : cosSampledDir) / bsdfPdfW);
 							lpi->dVC = w * (lpi->dVC * VCMis(bsdfRevPdfW) +
 									lpi->dVCM + lMisVmW);
 							lpi->dVM = w * (lpi->dVM * VCMis(bsdfRevPdfW) +
@@ -4517,10 +4531,11 @@ __kernel void AdvancePaths_MK_VC_CONNECT(
 				lightRevPdfW *= prob;
 			}
 
+			// Medium vertices: no cosine in the area measure
 			const float eyeBsdfPdfA = PdfWtoA(eyePdfW, p2pDistance,
-					cosThetaAtLight);
+					lv->bsdf.isVolume ? 1.f : cosThetaAtLight);
 			const float lightBsdfPdfA = PdfWtoA(lightPdfW, p2pDistance,
-					cosThetaAtCamera);
+					eyeBsdf->isVolume ? 1.f : cosThetaAtCamera);
 
 			const float vcMisVmW = taskConfig->pathTracer.vertexConnect.
 					misVmWeightFactor;

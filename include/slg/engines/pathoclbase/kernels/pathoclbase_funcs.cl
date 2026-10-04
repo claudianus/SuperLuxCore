@@ -3575,7 +3575,8 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 			wLightNum *= prob;
 			bsdfRevPdfW *= prob;
 		}
-		const float cosThetaToLight = fabs(dot(shadowRayDir,
+		// Medium vertex: no cosine in the area measure
+		const float cosThetaToLight = bsdf->isVolume ? 1.f : fabs(dot(shadowRayDir,
 				VLOAD3F(&bsdf->hitPoint.shadeN.x)));
 		const float weightLight = VCMis(wLightNum / directLightSamplingPdfW);
 		const float denom = info->directPdfW * info->cosThetaAtLight;
