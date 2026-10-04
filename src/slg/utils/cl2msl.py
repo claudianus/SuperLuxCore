@@ -634,6 +634,39 @@ def rule_scalar_ptr_params(body: str) -> str:
     return "".join(pieces)
 
 
+def _strip_line_comments(src: str) -> str:
+    """Drop // comments outside block comments and string/char literals.
+
+    macOS cpp(1) runs clang in traditional mode, which does not know //
+    comments: a function-like macro name inside one (e.g. "// ... mix()")
+    is expanded and a wrong argument count fails the whole pass."""
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(src[i:j])
+            i = j
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            # Keep backslash line continuations of macro bodies intact
+            if j > 0 and src[j - 1] == "\\":
+                out.append("\\")
+            i = n if j < 0 else j
+        elif c in "\"'":
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            out.append(src[i:j + 1])
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def expand_macros(body: str, extra_defs: list = None, iterations: int = 10) -> str:
     """Expand the source's own parameter macros via cpp(1).
 
@@ -658,7 +691,7 @@ def expand_macros(body: str, extra_defs: list = None, iterations: int = 10) -> s
             defines.append("-D" + d)
         proc = subprocess.run(
             ["cpp", "-P", "-nostdinc", "-undef"] + defines,
-            input=body,
+            input=_strip_line_comments(body),
             capture_output=True,
             text=True,
             timeout=120,
@@ -666,8 +699,11 @@ def expand_macros(body: str, extra_defs: list = None, iterations: int = 10) -> s
         if proc.returncode == 0 and proc.stdout:
             # drop the now-expanded #line artifacts (cpp -P has none)
             return proc.stdout
-    except Exception:
-        pass
+        errors = [l for l in proc.stderr.splitlines() if "error" in l]
+        sys.stderr.write("cl2msl: cpp macro pass failed, using the raw "
+                         "source: " + "; ".join(errors[:3]) + "\n")
+    except Exception as e:
+        sys.stderr.write(f"cl2msl: cpp macro pass failed: {e}\n")
     return body
 
 
