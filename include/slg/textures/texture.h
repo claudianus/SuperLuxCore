@@ -79,7 +79,9 @@ typedef enum {
 	// Ray context information (Cycles LightPath equivalent)
 	RAYINFO_TEX,
 	// Raw HitPoint field reads (Geometry-node remaining outputs)
-	HITPOINT_TEX
+	HITPOINT_TEX,
+	// Cycles Noise Texture node (exact kernel port)
+	CYCLESNOISE_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

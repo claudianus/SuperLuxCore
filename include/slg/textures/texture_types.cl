@@ -88,7 +88,9 @@ typedef enum {
 	// Ray context information (Cycles LightPath equivalent)
 	RAYINFO_TEX,
 	// Raw HitPoint field reads (Geometry-node remaining outputs)
-	HITPOINT_TEX
+	HITPOINT_TEX,
+	// Cycles Noise Texture node (exact kernel port)
+	CYCLESNOISE_TEX
 } TextureType;
 
 // Note: keep aligned with the copy in rayinfo.h
@@ -565,6 +567,14 @@ typedef struct {
 } GaborNoiseTexParam;
 
 typedef struct {
+	unsigned int vecTexIndex, wTexIndex, scaleTexIndex, detailTexIndex,
+			roughnessTexIndex, lacunarityTexIndex, offsetTexIndex,
+			gainTexIndex, distortionTexIndex;
+	// CyclesNoiseType, 1..4, bools
+	unsigned int noiseType, dimensions, normalize, colorOutput, isColor;
+} CyclesNoiseTexParam;
+
+typedef struct {
 	float width;
 	unsigned int borderTexIndex, insideTexIndex;
 } WireFrameTexParam;
@@ -661,6 +671,7 @@ typedef struct {
 		RandomTexParam randomTex;
 		WhiteNoiseTexParam whiteNoiseTex;
 		GaborNoiseTexParam gaborNoiseTex;
+		CyclesNoiseTexParam cyclesNoiseTex;
 		WireFrameTexParam wireFrameTex;
 		BevelTexParam bevelTex;
 		DistortTexParam distortTex;

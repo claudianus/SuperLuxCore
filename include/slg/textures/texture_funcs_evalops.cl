@@ -2133,6 +2133,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
+		// CYCLESNOISE_TEX
+		//----------------------------------------------------------------------
+		case CYCLESNOISE_TEX:
+			CyclesNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		default:
 			// Something wrong here
 			break;

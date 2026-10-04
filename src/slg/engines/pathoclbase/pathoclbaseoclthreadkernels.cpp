@@ -206,6 +206,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_texture_random_funcs <<
 			slg::ocl::KernelSource_texture_whitenoise_funcs <<
 			slg::ocl::KernelSource_texture_gabor_funcs <<
+			slg::ocl::KernelSource_texture_cyclesnoise_funcs <<
 			slg::ocl::KernelSource_texture_funcs_evalops <<
 			slg::ocl::KernelSource_texture_funcs;
 

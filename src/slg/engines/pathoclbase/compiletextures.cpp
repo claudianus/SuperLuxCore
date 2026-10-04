@@ -46,6 +46,7 @@
 #include "slg/textures/densitygrid.h"
 #include "slg/textures/whitenoise.h"
 #include "slg/textures/gabor.h"
+#include "slg/textures/cyclesnoise.h"
 #include "slg/textures/distort.h"
 #include "slg/textures/dots.h"
 #include "slg/textures/fbm.h"
@@ -1146,6 +1147,34 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
 					// The evaluation vector is a 3D point: push as a spectrum
 					evalOpStackSize += CompileTextureOps(tex->gaborNoiseTex.vecTexIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					break;
+				}
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
+					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+					break;
+				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::CYCLESNOISE_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					// The coordinates are a vector: evaluate them in raw RGB
+					// (CPU Spectral::ScopePause equivalent)
+					PushSpectralPauseStartOp(texIndex);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.vecTexIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.wTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.scaleTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.detailTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.roughnessTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.lacunarityTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.offsetTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.gainTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize += CompileTextureOps(tex->cyclesNoiseTex.distortionTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -2480,6 +2509,27 @@ void CompiledScene::CompileTextures() {
 				tex->gaborNoiseTex.orientation = gnt.GetOrientation();
 				tex->gaborNoiseTex.output = (u_int)gnt.GetOutput();
 				tex->gaborNoiseTex.sigmaInv = GaborNoiseTexture::SigmaInv(gnt.GetFrequency());
+				break;
+			}
+			case CYCLESNOISE_TEX: {
+				auto& cnt = dynamic_cast<const CyclesNoiseTexture &>(t);
+				const auto &texs = scene.GetTextures();
+
+				tex->type = slg::ocl::CYCLESNOISE_TEX;
+				tex->cyclesNoiseTex.vecTexIndex = texs.GetTextureIndex(cnt.GetVec());
+				tex->cyclesNoiseTex.wTexIndex = texs.GetTextureIndex(cnt.GetW());
+				tex->cyclesNoiseTex.scaleTexIndex = texs.GetTextureIndex(cnt.GetScale());
+				tex->cyclesNoiseTex.detailTexIndex = texs.GetTextureIndex(cnt.GetDetail());
+				tex->cyclesNoiseTex.roughnessTexIndex = texs.GetTextureIndex(cnt.GetRoughness());
+				tex->cyclesNoiseTex.lacunarityTexIndex = texs.GetTextureIndex(cnt.GetLacunarity());
+				tex->cyclesNoiseTex.offsetTexIndex = texs.GetTextureIndex(cnt.GetOffset());
+				tex->cyclesNoiseTex.gainTexIndex = texs.GetTextureIndex(cnt.GetGain());
+				tex->cyclesNoiseTex.distortionTexIndex = texs.GetTextureIndex(cnt.GetDistortion());
+				tex->cyclesNoiseTex.noiseType = (u_int)cnt.GetNoiseType();
+				tex->cyclesNoiseTex.dimensions = cnt.GetDimensions();
+				tex->cyclesNoiseTex.normalize = cnt.GetNormalize() ? 1u : 0u;
+				tex->cyclesNoiseTex.colorOutput = cnt.IsColorOutput() ? 1u : 0u;
+				tex->cyclesNoiseTex.isColor = cnt.IsColor() ? 1u : 0u;
 				break;
 			}
 			case WIREFRAME_TEX: {

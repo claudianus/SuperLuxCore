@@ -79,6 +79,7 @@
 #include "slg/textures/math/random.h"
 #include "slg/textures/whitenoise.h"
 #include "slg/textures/gabor.h"
+#include "slg/textures/cyclesnoise.h"
 #include "slg/textures/math/remap.h"
 #include "slg/textures/math/rounding.h"
 #include "slg/textures/math/scale.h"
@@ -726,6 +727,37 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& texture = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const u_int seedOffset = props.Get(Property(propName + ".seed")(0u)).Get<u_int>();
 		tex = std::make_unique<WhiteNoiseTexture>(texture, seedOffset);
+	} else if (texType == "cyclesnoise") {
+		auto& vec = GetTexture(props.Get(Property(propName + ".vector")("0 0 0")));
+		auto& w = GetTexture(props.Get(Property(propName + ".w")(0.f)));
+		auto& scale = GetTexture(props.Get(Property(propName + ".scale")(5.f)));
+		auto& detail = GetTexture(props.Get(Property(propName + ".detail")(2.f)));
+		auto& roughness = GetTexture(props.Get(Property(propName + ".roughness")(.5f)));
+		auto& lacunarity = GetTexture(props.Get(Property(propName + ".lacunarity")(2.f)));
+		auto& offset = GetTexture(props.Get(Property(propName + ".offset")(0.f)));
+		auto& gain = GetTexture(props.Get(Property(propName + ".gain")(1.f)));
+		auto& distortion = GetTexture(props.Get(Property(propName + ".distortion")(0.f)));
+
+		const string typeStr = props.Get(Property(propName + ".noisetype")("fbm")).Get<string>();
+		const CyclesNoiseType noiseType =
+				typeStr == "fbm" ? CYCLESNOISE_FBM :
+				typeStr == "multifractal" ? CYCLESNOISE_MULTIFRACTAL :
+				typeStr == "hybrid_multifractal" ? CYCLESNOISE_HYBRID_MULTIFRACTAL :
+				typeStr == "ridged_multifractal" ? CYCLESNOISE_RIDGED_MULTIFRACTAL :
+				typeStr == "hetero_terrain" ? CYCLESNOISE_HETERO_TERRAIN :
+				throw runtime_error("Unknown cyclesnoise texture type: " + typeStr);
+		const int dims = props.Get(Property(propName + ".dimensions")(3)).Get<int>();
+		if (dims < 1 || dims > 4)
+			throw runtime_error("Invalid cyclesnoise dimensions: " + ToString(dims));
+		const bool normalize = props.Get(Property(propName + ".normalize")(true)).Get<bool>();
+		const string outStr = props.Get(Property(propName + ".output")("fac")).Get<string>();
+		if (outStr != "fac" && outStr != "color")
+			throw runtime_error("Unknown cyclesnoise output: " + outStr);
+		const bool isColor = props.Get(Property(propName + ".color")(true)).Get<bool>();
+
+		tex = std::make_unique<CyclesNoiseTexture>(vec, w, scale, detail,
+				roughness, lacunarity, offset, gain, distortion, noiseType,
+				static_cast<u_int>(dims), normalize, outStr == "color", isColor);
 	} else if (texType == "gabornoise") {
 		auto& vec = GetTexture(props.Get(Property(propName + ".vector")(0.f, 0.f, 0.f)));
 		const float scale = props.Get(Property(propName + ".scale")(1.f)).Get<float>();
