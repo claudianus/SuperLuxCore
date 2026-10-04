@@ -29,6 +29,7 @@
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/utils/ocl.h"
 #include "luxrays/devices/ocldevice.h"
+#include "luxrays/core/color/spectral.h"
 #if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
 #include "luxrays/devices/metaldevice.h"
 #endif
@@ -65,8 +66,13 @@ void PathOCLBaseOCLRenderThread::GetKernelParamters(
 	params.push_back("-D RENDER_ENGINE_" + renderEngineType);
 	params.push_back("-D PARAM_RAY_EPSILON_MIN=" + ToString(epsilonMin) + "f");
 	params.push_back("-D PARAM_RAY_EPSILON_MAX=" + ToString(epsilonMax) + "f");
-	if (spectralEnable)
+	if (spectralEnable) {
 		params.push_back("-D SLG_SPECTRAL");
+		// Estimator normalization constants (host-computed from the same
+		// tables the kernels sample - see Spectral::KernelDefines()).
+		for (const std::string &d : Spectral::KernelDefines())
+			params.push_back(d);
+	}
 
 	try {
 		const auto& oclDeviceDesc =

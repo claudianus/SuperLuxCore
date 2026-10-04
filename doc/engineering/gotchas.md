@@ -402,3 +402,21 @@
   kernel in isolation, compile a single function from the cached
   `<key>.metallib` with `newComputePipelineStateWithFunction:` - the
   in-engine timings only cover the parallel batch.
+- **Spectral film projection is an unbiased estimator** (2026-10-04).
+  The hero-wavelength pipeline used to self-normalize every sample over
+  its own 3 drawn wavelengths: Smits upsampling rescaled the bins to the
+  input luminance of those 3 wavelengths, and the RGB projector divided
+  each channel by the drawn white. Gray stayed exact, but saturated
+  colors were biased (pure red albedo 0.8 rendered 1.19; orange lights
+  drifted blue) and the D65 illuminant basis tinted colored emitters.
+  Now: `ProjectToRGB` weights each bin by stratum width / range white
+  response (constants, `Spectral::KernelDefines()` passes them to the
+  GPU as `-D`), with a mean-bin control variate so flat spectra stay
+  exact per sample; upsampling matches luminance with a per-RGB constant
+  (expected basis luminance); emission uses the E-relative Smits basis
+  like reflectance; blackbody/irregular-data SPDs match luminance by
+  integrating the SPD (`ExpectedLuminance`, 5 nm, same as the GPU).
+  Chromatic surfaces now carry converging wavelength noise instead of a
+  fixed bias. Spectral vs RGB agrees within ~2% on non-saturated colors;
+  CPU and GPU projections are identical. Unit round-trip checks must
+  compare the mean of many draws, not single draws.

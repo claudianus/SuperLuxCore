@@ -22,6 +22,9 @@
 #include "luxrays/core/color/color.h"
 #include "luxrays/core/color/spd.h"
 
+#include <string>
+#include <vector>
+
 namespace luxrays {
 
 // Hero-wavelength spectral transport: SPECTRAL_BINS wavelengths per path ride
@@ -171,10 +174,15 @@ Spectrum Emission(const Spectrum &rgb, const PathWavelengths &sw);
 Spectrum EvaluateSPD(const SPD &spd);
 Spectrum EvaluateSPD(const SPD &spd, const PathWavelengths &sw);
 
-// Rescale spectral bins so their sampled CIE-Y sum equals yTarget (metameric
-// luminance parity with the RGB fallback of the same source data).
-Spectrum WithLuminance(const Spectrum &bins, const PathWavelengths &sw,
-		const float yTarget);
+// Expected film luminance of an SPD under ProjectToRGB (integrated over the
+// sampled wavelength range - a constant of the SPD, not of the drawn bins).
+float ExpectedLuminance(const SPD &spd);
+
+// Rescale bins evaluated from `spd` so the SPD's expected film luminance
+// equals yTarget (luminance parity with the RGB fallback of the same source
+// data). The scale is a constant of the SPD: rescaling by the luminance of
+// the drawn bins themselves biased saturated spectra.
+Spectrum WithLuminance(const Spectrum &bins, const SPD &spd, const float yTarget);
 
 // Dispersive event (S2): terminate the secondary wavelengths, keeping only
 // the hero bin. Returns the Monte-Carlo weight for the wavelength selection
@@ -184,18 +192,27 @@ Spectrum WithLuminance(const Spectrum &bins, const PathWavelengths &sw,
 float CollapseToHero();
 
 // Project spectral bins to film RGB using CIE matching functions and the
-// default color system, self-normalized so a flat spectrum reproduces its
-// scalar value exactly (achromatic-invariant projector).
+// default color system. Each bin is weighted by its stratum width over the
+// white response of the whole sampled range (a constant), so the estimate is
+// unbiased: E[rgb] = integral of the spectrum against the white-normalized
+// matching functions. A control variate on the mean bin value removes the
+// wavelength noise of flat spectra (a flat spectrum reproduces its scalar
+// exactly in every sample, as before).
 Spectrum ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw);
+
+// -D definitions carrying the projection / upsampling normalization
+// constants to the spectral GPU kernels (one source of truth: computed on
+// the host from the same tables the kernels sample).
+std::vector<std::string> KernelDefines();
 
 // Per-wavelengths projection context: the CIE matching values and the
 // sampled white point depend only on the drawn wavelengths, so a sample's
 // ~15 spectral fields share one evaluation instead of re-sampling the
 // CIE SPDs and re-normalizing per field (bit-identical results).
 struct RGBProjector {
-	// Per-bin RGB contribution: r_i = XYZToRGB · c_i (CIE at bin i,
-	// normalized by the drawn-white). Projection is then a per-field
-	// 3-dot instead of 3-dot + 3x3 matmul + 3 divides.
+	// Per-bin RGB contribution: r_i = XYZToRGB · c_i (CIE at bin i) times
+	// the stratum-width / range-white constant of the channel. Defined for
+	// every drawn bin (dead bins enter the control variate).
 	float cr[SPECTRAL_BINS], cg[SPECTRAL_BINS], cb[SPECTRAL_BINS];
 	u_int aliveMask;
 	bool valid;

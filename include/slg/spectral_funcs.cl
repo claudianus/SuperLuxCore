@@ -53,6 +53,23 @@
 // hero=0, all alive
 #define SLG_SW_DEFAULT (SLG_SW_ALIVE_MASK)
 
+// Estimator normalization constants. The host computes them from the same
+// tables and passes them as -D options with -D SLG_SPECTRAL
+// (Spectral::KernelDefines() in spectral.cpp); these fallbacks only keep
+// non-spectral builds compiling (the spectral helpers are unused there).
+#ifndef SLG_SPECTRAL_PROJ_KR
+#define SLG_SPECTRAL_PROJ_KR 1.f
+#define SLG_SPECTRAL_PROJ_KG 1.f
+#define SLG_SPECTRAL_PROJ_KB 1.f
+#define SLG_SPECTRAL_YREFL_WHITE 1.f
+#define SLG_SPECTRAL_YREFL_CYAN 1.f
+#define SLG_SPECTRAL_YREFL_MAGENTA 1.f
+#define SLG_SPECTRAL_YREFL_YELLOW 1.f
+#define SLG_SPECTRAL_YREFL_RED 1.f
+#define SLG_SPECTRAL_YREFL_GREEN 1.f
+#define SLG_SPECTRAL_YREFL_BLUE 1.f
+#endif
+
 __constant float slgSpectralRefl_WHITE[32] = {
 	1.061895857e+00f, 1.061501998e+00f, 1.061433538e+00f, 1.062271165e+00f, 1.062203622e+00f, 1.062505997e+00f,
 	1.062393849e+00f, 1.062470645e+00f, 1.062504814e+00f, 1.062436613e+00f, 1.062069424e+00f, 1.061316759e+00f,
@@ -604,42 +621,45 @@ OPENCL_FORCE_INLINE float3 Spectral_Upsample(const float3 rgb,
 		return MAKE_FLOAT3(outv[0], outv[1], outv[2]);
 	}
 
-	__constant float *white, *cyan, *magenta, *yellow, *red, *green, *blue;
-	if (emission) {
-		white = slgSpectralIllum_WHITE; cyan = slgSpectralIllum_CYAN;
-		magenta = slgSpectralIllum_MAGENTA; yellow = slgSpectralIllum_YELLOW;
-		red = slgSpectralIllum_RED; green = slgSpectralIllum_GREEN;
-		blue = slgSpectralIllum_BLUE;
-	} else {
-		white = slgSpectralRefl_WHITE; cyan = slgSpectralRefl_CYAN;
-		magenta = slgSpectralRefl_MAGENTA; yellow = slgSpectralRefl_YELLOW;
-		red = slgSpectralRefl_RED; green = slgSpectralRefl_GREEN;
-		blue = slgSpectralRefl_BLUE;
-	}
+	// Reflectance and emission share the E-relative Smits basis: the film
+	// projection is white-normalized to the flat spectrum (the D65
+	// illuminant basis projected to a blue cast and desaturated lights).
+	// `emission` is kept for the call sites; the basis no longer depends
+	// on it.
+	__constant float *white = slgSpectralRefl_WHITE, *cyan = slgSpectralRefl_CYAN,
+			*magenta = slgSpectralRefl_MAGENTA, *yellow = slgSpectralRefl_YELLOW,
+			*red = slgSpectralRefl_RED, *green = slgSpectralRefl_GREEN,
+			*blue = slgSpectralRefl_BLUE;
+
+	// Expected film luminance of each basis (host constants, see
+	// Spectral::KernelDefines()): the upsample keeps the input luminance
+	// with a constant scale of this RGB.
+	const float yW = SLG_SPECTRAL_YREFL_WHITE, yC = SLG_SPECTRAL_YREFL_CYAN,
+			yM = SLG_SPECTRAL_YREFL_MAGENTA, yY = SLG_SPECTRAL_YREFL_YELLOW,
+			yR = SLG_SPECTRAL_YREFL_RED, yG = SLG_SPECTRAL_YREFL_GREEN,
+			yB = SLG_SPECTRAL_YREFL_BLUE;
 
 	float wW; __constant float *sec; float wSec; __constant float *prim; float wPrim;
+	float ySec, yPrim;
 	if (r <= g && r <= b) {
 		wW = r;
-		sec = cyan;
-		if (g <= b) { wSec = g - r; prim = blue;  wPrim = b - g; }
-		else        { wSec = b - r; prim = green; wPrim = g - b; }
+		sec = cyan; ySec = yC;
+		if (g <= b) { wSec = g - r; prim = blue;  yPrim = yB; wPrim = b - g; }
+		else        { wSec = b - r; prim = green; yPrim = yG; wPrim = g - b; }
 	} else if (g <= r && g <= b) {
 		wW = g;
-		sec = magenta;
-		if (r <= b) { wSec = r - g; prim = blue; wPrim = b - r; }
-		else        { wSec = b - g; prim = red;  wPrim = r - b; }
+		sec = magenta; ySec = yM;
+		if (r <= b) { wSec = r - g; prim = blue; yPrim = yB; wPrim = b - r; }
+		else        { wSec = b - g; prim = red;  yPrim = yR; wPrim = r - b; }
 	} else {
 		wW = b;
-		sec = yellow;
-		if (r <= g) { wSec = r - b; prim = green; wPrim = g - r; }
-		else        { wSec = g - b; prim = red;   wPrim = r - g; }
+		sec = yellow; ySec = yY;
+		if (r <= g) { wSec = r - b; prim = green; yPrim = yG; wPrim = g - r; }
+		else        { wSec = g - b; prim = red;   yPrim = yR; wPrim = r - g; }
 	}
 
-	const float yTarget = 0.212671f * r + 0.715160f * g + 0.072169f * b;
-	float lum = 0.f, nY = 0.f;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
 		const float lambda = w[i];
-		const float cy = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
 		float v = wW * Spectral_SampleTable(white, SLG_SPECTRAL_BASIS_N,
 					SLG_SPECTRAL_BASIS_START, SLG_SPECTRAL_BASIS_END, lambda)
 			+ wSec * Spectral_SampleTable(sec, SLG_SPECTRAL_BASIS_N,
@@ -647,16 +667,17 @@ OPENCL_FORCE_INLINE float3 Spectral_Upsample(const float3 rgb,
 			+ wPrim * Spectral_SampleTable(prim, SLG_SPECTRAL_BASIS_N,
 					SLG_SPECTRAL_BASIS_START, SLG_SPECTRAL_BASIS_END, lambda);
 		v = max(v, 0.f);
-		lum += v * cy;
-		nY += cy;
 		outv[i] = (aliveMask & (1u << i)) ? v : 0.f;
 	}
-	const float s = (lum > 0.f && yTarget > 0.f && nY > 0.f) ? (yTarget * nY) / lum : 1.f;
+	const float yTarget = 0.212671f * r + 0.715160f * g + 0.072169f * b;
+	const float yExp = wW * yW + wSec * ySec + wPrim * yPrim;
+	const float s = (yExp > 0.f && yTarget > 0.f) ? yTarget / yExp : 1.f;
 	return MAKE_FLOAT3(outv[0] * s, outv[1] * s, outv[2] * s);
 }
 
-// Same self-normalized CIE projection as spectral.cpp ProjectToRGB():
-// per-bin RGB coefficients folded once, then one masked dot per field.
+// Same unbiased projection as spectral.cpp ProjectToRGB(): per-bin RGB
+// coefficients (stratum width / range white response, a host constant),
+// then a control-variate dot per field.
 typedef struct {
 	float cr[SLG_SPECTRAL_BINS], cg[SLG_SPECTRAL_BINS], cb[SLG_SPECTRAL_BINS];
 	uint aliveMask;
@@ -667,37 +688,15 @@ OPENCL_FORCE_INLINE void Spectral_PrepareRGBProjection(
 		__global const float *w, const uint heroAlive,
 		__private SpectralRGBProjector *p) {
 	p->aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
-	float cx[SLG_SPECTRAL_BINS], cy[SLG_SPECTRAL_BINS], cz[SLG_SPECTRAL_BINS];
-	float nX = 0.f, nY = 0.f, nZ = 0.f;
+	p->valid = true;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
 		const float lambda = w[i];
-		cx[i] = Spectral_SampleCIE(slgSpectralCIE_X, lambda);
-		cy[i] = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
-		cz[i] = Spectral_SampleCIE(slgSpectralCIE_Z, lambda);
-		nX += cx[i];
-		nY += cy[i];
-		nZ += cz[i];
-	}
-	p->valid = (nY > 0.f);
-	if (!p->valid) {
-		for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
-			p->cr[i] = 0.f;
-			p->cg[i] = 0.f;
-			p->cb[i] = 0.f;
-		}
-		return;
-	}
-	const float wR = slgSpectralXYZToRGB[0][0] * nX + slgSpectralXYZToRGB[0][1] * nY + slgSpectralXYZToRGB[0][2] * nZ;
-	const float wG = slgSpectralXYZToRGB[1][0] * nX + slgSpectralXYZToRGB[1][1] * nY + slgSpectralXYZToRGB[1][2] * nZ;
-	const float wB = slgSpectralXYZToRGB[2][0] * nX + slgSpectralXYZToRGB[2][1] * nY + slgSpectralXYZToRGB[2][2] * nZ;
-	const float invR = (wR != 0.f) ? (1.f / wR) : 0.f;
-	const float invG = (wG != 0.f) ? (1.f / wG) : 0.f;
-	const float invB = (wB != 0.f) ? (1.f / wB) : 0.f;
-
-	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
-		p->cr[i] = (slgSpectralXYZToRGB[0][0] * cx[i] + slgSpectralXYZToRGB[0][1] * cy[i] + slgSpectralXYZToRGB[0][2] * cz[i]) * invR;
-		p->cg[i] = (slgSpectralXYZToRGB[1][0] * cx[i] + slgSpectralXYZToRGB[1][1] * cy[i] + slgSpectralXYZToRGB[1][2] * cz[i]) * invG;
-		p->cb[i] = (slgSpectralXYZToRGB[2][0] * cx[i] + slgSpectralXYZToRGB[2][1] * cy[i] + slgSpectralXYZToRGB[2][2] * cz[i]) * invB;
+		const float cx = Spectral_SampleCIE(slgSpectralCIE_X, lambda);
+		const float cy = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
+		const float cz = Spectral_SampleCIE(slgSpectralCIE_Z, lambda);
+		p->cr[i] = (slgSpectralXYZToRGB[0][0] * cx + slgSpectralXYZToRGB[0][1] * cy + slgSpectralXYZToRGB[0][2] * cz) * SLG_SPECTRAL_PROJ_KR;
+		p->cg[i] = (slgSpectralXYZToRGB[1][0] * cx + slgSpectralXYZToRGB[1][1] * cy + slgSpectralXYZToRGB[1][2] * cz) * SLG_SPECTRAL_PROJ_KG;
+		p->cb[i] = (slgSpectralXYZToRGB[2][0] * cx + slgSpectralXYZToRGB[2][1] * cy + slgSpectralXYZToRGB[2][2] * cz) * SLG_SPECTRAL_PROJ_KB;
 	}
 }
 
@@ -705,14 +704,19 @@ OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGBWith(const float3 bins,
 		const __private SpectralRGBProjector *p) {
 	if (!p->valid || (bins.x == 0.f && bins.y == 0.f && bins.z == 0.f))
 		return BLACK;
-	float r = 0.f, g = 0.f, b = 0.f;
+	// rgb = mean + sum_i coeff_i * (bin_i - mean): unbiased, and exact
+	// for a flat spectrum (control variate). Dead bins hold 0.
+	float v[SLG_SPECTRAL_BINS];
+	v[0] = (p->aliveMask & 1u) ? bins.x : 0.f;
+	v[1] = (p->aliveMask & 2u) ? bins.y : 0.f;
+	v[2] = (p->aliveMask & 4u) ? bins.z : 0.f;
+	const float mean = (v[0] + v[1] + v[2]) * (1.f / SLG_SPECTRAL_BINS);
+	float r = mean, g = mean, b = mean;
 	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
-		if (!(p->aliveMask & (1u << i)))
-			continue;
-		const float bv = (i == 0) ? bins.x : ((i == 1) ? bins.y : bins.z);
-		r += bv * p->cr[i];
-		g += bv * p->cg[i];
-		b += bv * p->cb[i];
+		const float d = v[i] - mean;
+		r += d * p->cr[i];
+		g += d * p->cg[i];
+		b += d * p->cb[i];
 	}
 	return MAKE_FLOAT3(r, g, b);
 }
@@ -726,34 +730,35 @@ OPENCL_FORCE_INLINE float3 Spectral_ProjectToRGB(const float3 bins,
 	return Spectral_ProjectToRGBWith(bins, &p);
 }
 
-// Same luminance renormalization as Spectral::WithLuminance(): scale the
-// alive bins so the projected luminance equals yTarget (normalized over the
-// full drawn wavelength set -- dead bins are zeros, not missing samples).
-OPENCL_FORCE_INLINE float3 Spectral_WithLuminance(const float3 bins,
-		__global const float *w, const uint heroAlive, const float yTarget) {
-	const uint aliveMask = heroAlive & SLG_SW_ALIVE_MASK;
-	float lum = 0.f, nY = 0.f;
-	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
-		const float cy = Spectral_SampleCIE(slgSpectralCIE_Y, w[i]);
-		nY += cy;
-		if (aliveMask & (1u << i)) {
-			const float b = (i == 0) ? bins.x : ((i == 1) ? bins.y : bins.z);
-			lum += b * cy;
-		}
-	}
-	if (lum <= 0.f || yTarget <= 0.f || nY <= 0.f)
-		return bins;
-	return bins * (yTarget * nY / lum);
-}
-
 // Planckian emission at lambda (meters->nm conversion inline; the same
 // constants as BlackbodySPD::init()). The 0.4e-9 prefactor and the SPD cache
-// normalization cancel inside Spectral_WithLuminance().
+// normalization cancel in the luminance match (Spectral_PlanckExpectedY).
 OPENCL_FORCE_INLINE float Spectral_Planck(const float lambdaNm,
 		const float temperature) {
 	const float wm = lambdaNm * 1e-9f;
 	const float w5 = wm * wm * wm * wm * wm;
 	return (3.74183e-16f / w5) / (exp(1.4388e-2f / (wm * temperature)) - 1.f);
+}
+
+// Expected film luminance of the Planck SPD at T under the projector:
+// the same 5 nm midpoint quadrature as Spectral::ExpectedLuminance().
+OPENCL_FORCE_INLINE float Spectral_PlanckExpectedY(const float temperature) {
+	const float step = 5.f;
+	const uint steps = (uint)((SLG_SPECTRAL_END - SLG_SPECTRAL_START) / step);
+	float y = 0.f;
+	for (uint k = 0; k < steps; ++k) {
+		const float lambda = SLG_SPECTRAL_START + (k + 0.5f) * step;
+		const float cx = Spectral_SampleCIE(slgSpectralCIE_X, lambda);
+		const float cy = Spectral_SampleCIE(slgSpectralCIE_Y, lambda);
+		const float cz = Spectral_SampleCIE(slgSpectralCIE_Z, lambda);
+		const float rr = slgSpectralXYZToRGB[0][0] * cx + slgSpectralXYZToRGB[0][1] * cy + slgSpectralXYZToRGB[0][2] * cz;
+		const float gg = slgSpectralXYZToRGB[1][0] * cx + slgSpectralXYZToRGB[1][1] * cy + slgSpectralXYZToRGB[1][2] * cz;
+		const float bb = slgSpectralXYZToRGB[2][0] * cx + slgSpectralXYZToRGB[2][1] * cy + slgSpectralXYZToRGB[2][2] * cz;
+		const float gw = (0.212671f * rr * SLG_SPECTRAL_PROJ_KR + 0.715160f * gg * SLG_SPECTRAL_PROJ_KG +
+				0.072169f * bb * SLG_SPECTRAL_PROJ_KB) / SLG_SPECTRAL_BIN_WIDTH;
+		y += gw * Spectral_Planck(lambda, temperature) * step;
+	}
+	return y;
 }
 
 // Native-SPD blackbody eval (BlackBodyTexture::EvalSpectralValue): bins are
@@ -769,8 +774,8 @@ OPENCL_FORCE_INLINE float3 Spectral_BlackbodyEval(const float temperature,
 		}
 	}
 	const float yTarget = 0.212671f * rgb.x + 0.715160f * rgb.y + 0.072169f * rgb.z;
-	return Spectral_WithLuminance(bins, hitPoint->spectralW,
-			hitPoint->spectralHeroAlive, yTarget);
+	const float yExp = Spectral_PlanckExpectedY(temperature);
+	return (yExp > 0.f && yTarget > 0.f) ? bins * (yTarget / yExp) : bins;
 }
 
 // Hero-bin collapse for dispersive events (glass transmit). Returns the MC

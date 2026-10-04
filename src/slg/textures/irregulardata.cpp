@@ -52,7 +52,7 @@ IrregularDataTexture::IrregularDataTexture(const u_int n,
 // upsample), normalized to the same luminance as the RGB fallback.
 Spectrum IrregularDataTexture::EvalSpectralValue(const HitPoint &hitPoint,
 		const PathWavelengths &sw, const bool em) const {
-	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), sw, rgb.Y());
+	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), spd, rgb.Y());
 }
 
 PropertiesUPtr IrregularDataTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

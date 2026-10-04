@@ -18,6 +18,8 @@
 
 #include <cmath>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 #include "luxrays/core/color/spectral.h"
 #include "luxrays/core/color/spectrumwavelengths.h"
@@ -51,12 +53,86 @@ namespace {
 		refrgb2spect_yellow, refrgb2spect_red, refrgb2spect_green, refrgb2spect_blue,
 		refrgb2spect_bins, refrgb2spect_start, refrgb2spect_end
 	};
-	const BasisSet illumBasis = {
-		illumrgb2spect_white, illumrgb2spect_cyan, illumrgb2spect_magenta,
-		illumrgb2spect_yellow, illumrgb2spect_red, illumrgb2spect_green,
-		illumrgb2spect_blue,
-		illumrgb2spect_bins, illumrgb2spect_start, illumrgb2spect_end
+	// Rec.709 luminance weights (RGBColor::Y()).
+	const float kLum[3] = { 0.212671f, 0.715160f, 0.072169f };
+
+	// XYZToRGB(CIE matching functions) at lambda: the film RGB response.
+	inline void RGBResponse(const float lambda, float out[3]) {
+		const float x = SpectrumWavelengths::spd_ciex.Sample(lambda);
+		const float y = SpectrumWavelengths::spd_ciey.Sample(lambda);
+		const float z = SpectrumWavelengths::spd_ciez.Sample(lambda);
+		const float (&m)[3][3] = ColorSystem::DefaultColorSystem.XYZToRGB;
+		for (u_int c = 0; c < 3; ++c)
+			out[c] = m[c][0] * x + m[c][1] * y + m[c][2] * z;
+	}
+
+	// Constants of the unbiased hero-wavelength estimator, integrated once
+	// over the sampled range [SPECTRAL_START, SPECTRAL_END]:
+	//  projK[c] = SPECTRAL_BIN_WIDTH / integral of the channel-c response:
+	//            bin i is drawn uniformly over its stratum (pdf 1/width), so
+	//            sum_i response_c(w_i) * L(w_i) * projK[c] has expectation
+	//            integral(response_c * L) / integral(response_c) - a flat
+	//            spectrum projects to exactly its value in expectation.
+	//  yRefl[b] = expected film luminance of each Smits basis
+	//            spectrum, so upsampled RGB keeps its luminance with a
+	//            constant (per-RGB) scale instead of a per-sample one.
+	struct Normalization {
+		float projK[3];
+		float yRefl[7];
 	};
+
+	inline const float *BasisTable(const BasisSet &b, const u_int i) {
+		switch (i) {
+			case 0: return b.white;
+			case 1: return b.cyan;
+			case 2: return b.magenta;
+			case 3: return b.yellow;
+			case 4: return b.red;
+			case 5: return b.green;
+			default: return b.blue;
+		}
+	}
+
+	const Normalization &Norm() {
+		static const Normalization norm = [] {
+			Normalization n;
+			const double step = 0.25;
+			const u_int steps = (u_int)((SPECTRAL_END - SPECTRAL_START) / step);
+			double white[3] = { 0.0, 0.0, 0.0 };
+			double refl[7][3] = {};
+			for (u_int k = 0; k < steps; ++k) {
+				const float lambda = (float)(SPECTRAL_START + (k + 0.5) * step);
+				float r[3];
+				RGBResponse(lambda, r);
+				for (u_int c = 0; c < 3; ++c) {
+					white[c] += r[c] * step;
+					for (u_int b = 0; b < 7; ++b) {
+						refl[b][c] += r[c] * step * SampleTable(BasisTable(reflBasis, b),
+								reflBasis.n, reflBasis.start, reflBasis.end, lambda);
+					}
+				}
+			}
+			for (u_int c = 0; c < 3; ++c)
+				n.projK[c] = (white[c] != 0.0) ? (float)(SPECTRAL_BIN_WIDTH / white[c]) : 0.f;
+			for (u_int b = 0; b < 7; ++b) {
+				double yr = 0.0;
+				for (u_int c = 0; c < 3; ++c)
+					yr += kLum[c] * refl[b][c] / white[c];
+				n.yRefl[b] = (float)yr;
+			}
+			return n;
+		}();
+		return norm;
+	}
+
+	// Expected film luminance of one basis table under the projector.
+	inline float BasisY(const BasisSet &basis, const float *table) {
+		const Normalization &n = Norm();
+		for (u_int b = 0; b < 7; ++b)
+			if (BasisTable(basis, b) == table)
+				return n.yRefl[b];
+		return 0.f;
+	}
 
 	// Smits RGB->SPD decomposition evaluated directly at the path wavelengths:
 	// rgb is decomposed into (white, secondary, primary) basis weights, then
@@ -99,29 +175,24 @@ namespace {
 		}
 
 		Spectrum out;
-		float lum = 0.f, nY = 0.f;
 		for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
 			const float lambda = sw.w[i];
-			const float cy = SpectrumWavelengths::spd_ciey.Sample(lambda);
-			// The basis is evaluated and the luminance matched over the
-			// FULL drawn wavelength set — the material's spectral shape is
-			// a property of the material, not of the path state. After a
-			// dispersive collapse only the write is masked.
 			float v = wW * SampleTable(basis.white, basis.n, basis.start, basis.end, lambda)
 				+ wSec * SampleTable(sec, basis.n, basis.start, basis.end, lambda)
 				+ wPrim * SampleTable(prim, basis.n, basis.start, basis.end, lambda);
 			v = std::max(v, 0.f);
-			lum += v * cy;
-			nY += cy;
 			out.c[i] = (sw.aliveMask & (1U << i)) ? v : 0.f;
 		}
 
-		// Normalize so the projected luminance (sum bins*ciey / sum ciey)
-		// matches the input luminance. Note the CIE SPDs are pre-scaled by
-		// 683*range/samples, so the raw sum must be divided by nY to keep
-		// the bins in the same magnitude range as the RGB input.
-		if (lum > 0.f && yTarget > 0.f && nY > 0.f) {
-			const float s = (yTarget * nY) / lum;
+		// Match the input luminance with a constant of this RGB: the
+		// expected film luminance of the decomposition is linear in the
+		// basis weights. (Normalizing by the luminance of the 3 drawn
+		// wavelengths instead made the scale wavelength-dependent and
+		// biased saturated colors - pure red rendered ~+50% too bright.)
+		const float yExp = wW * BasisY(basis, basis.white) +
+				wSec * BasisY(basis, sec) + wPrim * BasisY(basis, prim);
+		if (yExp > 0.f && yTarget > 0.f) {
+			const float s = yTarget / yExp;
 			for (u_int i = 0; i < SPECTRAL_BINS; ++i)
 				out.c[i] *= s;
 		}
@@ -289,8 +360,12 @@ Spectrum Spectral::Reflectance(const Spectrum &rgb, const PathWavelengths &sw) {
 		UpsampleJH2019(rgb, sw) : Upsample(rgb, sw, reflBasis, rgb.Y());
 }
 Spectrum Spectral::Emission(const Spectrum &rgb, const PathWavelengths &sw) {
+	// The film projection is white-normalized to the flat (CIE E) spectrum,
+	// so emitted colors use the E-relative Smits basis too. The D65
+	// illuminant basis (illumrgb2spect_*) projects its own white to a blue
+	// cast (0.88, 1.13, 1.17) here and desaturated every colored light.
 	return (g_upsampling == UPSAMPLING_JH2019) ?
-		UpsampleJH2019(rgb, sw) : Upsample(rgb, sw, illumBasis, rgb.Y());
+		UpsampleJH2019(rgb, sw) : Upsample(rgb, sw, reflBasis, rgb.Y());
 }
 
 Spectrum Spectral::EvaluateSPD(const SPD &spd) {
@@ -305,56 +380,42 @@ Spectrum Spectral::EvaluateSPD(const SPD &spd, const PathWavelengths &sw) {
 	return out;
 }
 
-Spectrum Spectral::WithLuminance(const Spectrum &bins, const PathWavelengths &sw,
-		const float yTarget) {
-	float lum = 0.f, nY = 0.f;
-	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
-		const float cy = SpectrumWavelengths::spd_ciey.Sample(sw.w[i]);
-		nY += cy; // full drawn set (dead bins are zeros, not missing samples)
-		if (sw.aliveMask & (1U << i))
-			lum += bins.c[i] * cy;
+float Spectral::ExpectedLuminance(const SPD &spd) {
+	// 5 nm midpoint rule: the same quadrature as the GPU kernel
+	// (Spectral_PlanckExpectedY) so CPU/GPU agree.
+	const Normalization &n = Norm();
+	const float step = 5.f;
+	const u_int steps = (u_int)((SPECTRAL_END - SPECTRAL_START) / step);
+	float y = 0.f;
+	for (u_int k = 0; k < steps; ++k) {
+		const float lambda = SPECTRAL_START + (k + 0.5f) * step;
+		float r[3];
+		RGBResponse(lambda, r);
+		const float g = (kLum[0] * r[0] * n.projK[0] + kLum[1] * r[1] * n.projK[1] +
+				kLum[2] * r[2] * n.projK[2]) / SPECTRAL_BIN_WIDTH;
+		y += g * spd.Sample(lambda) * step;
 	}
-	if (lum <= 0.f || yTarget <= 0.f || nY <= 0.f)
+	return y;
+}
+
+Spectrum Spectral::WithLuminance(const Spectrum &bins, const SPD &spd,
+		const float yTarget) {
+	const float y = ExpectedLuminance(spd);
+	if (!(y > 0.f) || !(yTarget > 0.f))
 		return bins;
-	return bins * (yTarget * nY / lum);
+	return bins * (yTarget / y);
 }
 
 void Spectral::PrepareRGBProjection(const PathWavelengths &sw, RGBProjector &p) {
-	// Accumulate the sampled white point over the full drawn wavelength
-	// set so a post-collapse single bin keeps its chromaticity.
-	float nX = 0.f, nY = 0.f, nZ = 0.f;
-	float cx[SPECTRAL_BINS], cy[SPECTRAL_BINS], cz[SPECTRAL_BINS];
-	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
-		const float lambda = sw.w[i];
-		cx[i] = SpectrumWavelengths::spd_ciex.Sample(lambda);
-		cy[i] = SpectrumWavelengths::spd_ciey.Sample(lambda);
-		cz[i] = SpectrumWavelengths::spd_ciez.Sample(lambda);
-		nX += cx[i];
-		nY += cy[i];
-		nZ += cz[i];
-	}
+	const Normalization &n = Norm();
 	p.aliveMask = sw.aliveMask;
-	p.valid = (nY > 0.f);
-	if (!p.valid) {
-		for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
-			p.cr[i] = p.cg[i] = p.cb[i] = 0.f;
-		}
-		return;
-	}
-	const RGBColor whiteRGB =
-			ColorSystem::DefaultColorSystem.ToRGB(XYZColor(nX, nY, nZ));
-	const float invR = (whiteRGB.c[0] != 0.f) ? (1.f / whiteRGB.c[0]) : 0.f;
-	const float invG = (whiteRGB.c[1] != 0.f) ? (1.f / whiteRGB.c[1]) : 0.f;
-	const float invB = (whiteRGB.c[2] != 0.f) ? (1.f / whiteRGB.c[2]) : 0.f;
-
-	// Fold the XYZ→RGB matrix + white normalization into per-bin
-	// coefficients: ProjectToRGB becomes r = Σ bins·cr, g = Σ bins·cg,
-	// b = Σ bins·cb (alive-masked).
-	const float (&m)[3][3] = ColorSystem::DefaultColorSystem.XYZToRGB;
+	p.valid = true;
 	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
-		p.cr[i] = (m[0][0] * cx[i] + m[0][1] * cy[i] + m[0][2] * cz[i]) * invR;
-		p.cg[i] = (m[1][0] * cx[i] + m[1][1] * cy[i] + m[1][2] * cz[i]) * invG;
-		p.cb[i] = (m[2][0] * cx[i] + m[2][1] * cy[i] + m[2][2] * cz[i]) * invB;
+		float r[3];
+		RGBResponse(sw.w[i], r);
+		p.cr[i] = r[0] * n.projK[0];
+		p.cg[i] = r[1] * n.projK[1];
+		p.cb[i] = r[2] * n.projK[2];
 	}
 }
 
@@ -362,13 +423,25 @@ Spectrum Spectral::ProjectToRGB(const Spectrum &bins, const RGBProjector &p) {
 	if (!p.valid || bins.Black())
 		return Spectrum(0.f);
 
-	float r = 0.f, g = 0.f, b = 0.f;
+	// Unbiased projection with a control variate on the mean bin value:
+	// rgb = mean + sum_i coeff_i * (bin_i - mean). The coefficients of a
+	// flat spectrum sum to 1 in expectation, so the control term only
+	// removes noise; for a flat spectrum it is exact in every sample.
+	// Dead bins (after a hero collapse) hold 0 and still enter the sum.
+	float v[SPECTRAL_BINS];
+	float mean = 0.f;
 	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
-		if (!(p.aliveMask & (1U << i)))
-			continue;
-		r += bins.c[i] * p.cr[i];
-		g += bins.c[i] * p.cg[i];
-		b += bins.c[i] * p.cb[i];
+		v[i] = (p.aliveMask & (1U << i)) ? bins.c[i] : 0.f;
+		mean += v[i];
+	}
+	mean *= 1.f / SPECTRAL_BINS;
+
+	float r = mean, g = mean, b = mean;
+	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+		const float d = v[i] - mean;
+		r += d * p.cr[i];
+		g += d * p.cg[i];
+		b += d * p.cb[i];
 	}
 
 	return Spectrum(r, g, b);
@@ -378,4 +451,23 @@ Spectrum Spectral::ProjectToRGB(const Spectrum &bins, const PathWavelengths &sw)
 	RGBProjector p;
 	PrepareRGBProjection(sw, p);
 	return ProjectToRGB(bins, p);
+}
+
+std::vector<std::string> Spectral::KernelDefines() {
+	const Normalization &n = Norm();
+	std::vector<std::string> defs;
+	auto add = [&defs](const std::string &name, const float v) {
+		std::ostringstream o;
+		o.imbue(std::locale::classic());
+		o << "-D " << name << "=" << std::scientific << std::setprecision(9) << v << "f";
+		defs.push_back(o.str());
+	};
+	add("SLG_SPECTRAL_PROJ_KR", n.projK[0]);
+	add("SLG_SPECTRAL_PROJ_KG", n.projK[1]);
+	add("SLG_SPECTRAL_PROJ_KB", n.projK[2]);
+	static const char *names[7] = { "WHITE", "CYAN", "MAGENTA", "YELLOW", "RED", "GREEN", "BLUE" };
+	for (u_int b = 0; b < 7; ++b) {
+		add(std::string("SLG_SPECTRAL_YREFL_") + names[b], n.yRefl[b]);
+	}
+	return defs;
 }

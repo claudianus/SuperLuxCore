@@ -41,7 +41,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "out/build/src/pysuperluxcore/Debug"))
 
 WIDTH, HEIGHT = 160, 120
-SPP = 32
+# 128: the unbiased spectral projection carries chromatic MC noise; the
+# default-vs-explicit smits gate compares two noisy renders.
+SPP = 128
 RENDER_TIMEOUT_S = 240
 
 results = []

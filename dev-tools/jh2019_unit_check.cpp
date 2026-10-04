@@ -94,9 +94,14 @@ int main() {
 	check(nonfinite == 0 && minV >= 0.f && maxV <= 1.f,
 			"jh2019.energy-conservation", buf);
 
-	// ---- round-trip stats for both models (3-bin sampling error) ------
+	// ---- round-trip stats for both models ------------------------------
+	// The film projection is an unbiased estimator: one wavelength draw is
+	// noisy by design, its expectation is what must reproduce the input.
+	// Average a dense stratified set of draws (it converges to the
+	// integral) and measure the error of that mean.
 	float maxErr[2] = {0.f, 0.f}, sumErr[2] = {0.f, 0.f};
 	int cnt = 0;
+	const int draws = 256;
 	for (int m = 0; m < 2; ++m) {
 		Spectral::SetUpsamplingModel(m ? Spectral::UPSAMPLING_JH2019
 				: Spectral::UPSAMPLING_SMITS);
@@ -105,18 +110,21 @@ int main() {
 				for (int bi = 0; bi <= N; ++bi) {
 					const float r = ri / float(N), g = gi / float(N),
 						b = bi / float(N);
-					for (int s = 0; s < 8; ++s) {
-						sw.Sample(s / 8.f + 0.5f / 8.f);
+					float mean[3] = {0.f, 0.f, 0.f};
+					for (int s = 0; s < draws; ++s) {
+						sw.Sample((s + 0.5f) / draws);
 						const Spectrum sp =
 							Spectral::Reflectance(Spectrum(r, g, b), sw);
 						const Spectrum pr = Spectral::ProjectToRGB(sp, sw);
-						for (int i = 0; i < 3; ++i) {
-							const float in = (i == 0) ? r : ((i == 1) ? g : b);
-							const float e = std::fabs(pr.c[i] - in);
-							sumErr[m] += e;
-							maxErr[m] = std::max(maxErr[m], e);
-							++cnt;
-						}
+						for (int i = 0; i < 3; ++i)
+							mean[i] += pr.c[i] / draws;
+					}
+					for (int i = 0; i < 3; ++i) {
+						const float in = (i == 0) ? r : ((i == 1) ? g : b);
+						const float e = std::fabs(mean[i] - in);
+						sumErr[m] += e;
+						maxErr[m] = std::max(maxErr[m], e);
+						++cnt;
 					}
 				}
 	}

@@ -84,7 +84,7 @@ Spectrum BlackBodyTexture::EvalSpectralValue(const HitPoint &hitPoint,
 	const Spectrum ref = temperatureTex ?
 			BlackBodyLutRGB(temp, normalize) : rgb;
 	const BlackbodySPD spd(temp);
-	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), sw, ref.Y());
+	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), spd, ref.Y());
 }
 
 PropertiesUPtr BlackBodyTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
