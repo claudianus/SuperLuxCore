@@ -3075,7 +3075,8 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 								light->notIntersectable.spot.cosTotalWidth,
 								light->notIntersectable.spot.cosFalloffStart,
 								light->notIntersectable.spot.falloffMode) /
-								fabs(CosTheta(localDir)));
+								(light->notIntersectable.spot.cosineCompensation ?
+									fabs(CosTheta(localDir)) : 1.f));
 					} else {
 						// Cosine-hemisphere area emitter: emittedRad *
 						// cos(theta) off the surface normal (0 below the

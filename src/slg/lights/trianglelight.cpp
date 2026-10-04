@@ -57,6 +57,10 @@ bool TriangleLight::IsDirectLightSamplingEnabled() const {
 float TriangleLight::GetPower(SceneConstRef scene) const {
 	const float emittedRadianceY = lightMaterial->GetEmittedRadianceY(invMeshArea);
 
+	// An emission map is a unit-integral per-area intensity profile
+	if (lightMaterial->GetEmissionFunc())
+		return triangleArea * emittedRadianceY;
+
 	if (lightMaterial->GetEmittedTheta() == 0.f)
 		return triangleArea * emittedRadianceY;
 	else if (lightMaterial->GetEmittedTheta() < 90.f)
@@ -160,7 +164,10 @@ Spectrum TriangleLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * Spectral::Emission(emissionColor) * fabsf(localDirOut.z);
+	// An emission map is a per-area intensity profile (Illuminate() uses
+	// a pdf without the light cosine): the flux carries no extra cosine
+	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * Spectral::Emission(emissionColor) *
+			(emissionFunc ? 1.f : fabsf(localDirOut.z));
 }
 
 Spectrum TriangleLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -318,13 +325,17 @@ Spectrum TriangleLight::GetRadiance(const HitPoint &hitPoint,
 				return Spectrum();
 			*emissionPdfW = emissionFuncPdf * invTriangleArea;
 		}
-		emissionColor = static_cast<SphericalFunctionConstRef>(*emissionFunc).Evaluate(localFromLight) / emissionFunc->Average();
+		// The map is a per-area intensity profile: the radiance seen along
+		// the direction is the intensity over the projected area (the
+		// same convention Illuminate() uses through its pdf)
+		emissionColor = static_cast<SphericalFunctionConstRef>(*emissionFunc).Evaluate(localFromLight) /
+				(emissionFunc->Average() * Max(fabsf(cosOutLight), DEFAULT_COS_EPSILON_STATIC));
 	} else {
 		if (emissionPdfW) {
 			if (lightMaterial->GetEmittedTheta() == 0.f)
-				*emissionPdfW = 1.f;
+				*emissionPdfW = invTriangleArea;
 			else if (lightMaterial->GetEmittedTheta() < 90.f)
-				*emissionPdfW = UniformConePdf(lightMaterial->GetEmittedCosThetaMax());
+				*emissionPdfW = invTriangleArea * UniformConePdf(lightMaterial->GetEmittedCosThetaMax());
 			else
 				*emissionPdfW = invTriangleArea * fabsf(cosOutLight) * INV_PI;
 		}

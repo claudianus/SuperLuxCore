@@ -69,6 +69,9 @@ public:
 	//   0 = pow(delta, 4)           (LuxCore legacy)
 	//   1 = smoothstep in cos-space (Cycles-compatible curve)
 	int falloffMode;
+	// Legacy LuxCore spots divide the intensity by the cosine to the spot
+	// axis. Off: a point light masked by the cone (Cycles spot).
+	bool cosineCompensation;
 
 protected:
 	luxrays::Spectrum emittedFactor;

@@ -170,7 +170,8 @@ Spectrum InfiniteLight::Emit(SceneConstRef scene,
 	if (cosThetaAtLight)
 		*cosThetaAtLight = Dot(Normalize(worldCenter - rayOrig), rayDir);
 
-	const Spectrum result = temperatureScale * gain * imageMap->GetSpectrum(uv);
+	// RGB -> emission spectrum, as GetRadiance() (spectral mode)
+	const Spectrum result = Spectral::Emission(temperatureScale * gain * imageMap->GetSpectrum(uv));
 	assert (!result.IsNaN() && !result.IsInf() && !result.IsNeg());
 
 	ray.Update(rayOrig, rayDir, time);
@@ -224,7 +225,8 @@ Spectrum InfiniteLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	if (emissionPdfW)
 		*emissionPdfW = distPdf * latLongMappingPdf / (M_PI * envRadius * envRadius);
 
-	const Spectrum result = temperatureScale * gain * imageMap->GetSpectrum(UV(uv[0], uv[1]));
+	// RGB -> emission spectrum, as GetRadiance() (spectral mode)
+	const Spectrum result = Spectral::Emission(temperatureScale * gain * imageMap->GetSpectrum(UV(uv[0], uv[1])));
 	assert (!result.IsNaN() && !result.IsInf() && !result.IsNeg());
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);

@@ -76,6 +76,9 @@ typedef struct {
 	// Falloff curve selector (SpotLight::falloffMode): 0 = power4 legacy,
 	// 1 = smoothstep in cos-space (Cycles-compatible).
 	unsigned int falloffMode;
+	// SpotLight::cosineCompensation: legacy LuxCore divides the intensity
+	// by the cosine to the spot axis; 0 = a masked point light (Cycles)
+	unsigned int cosineCompensation;
 } SpotLightParam;
 
 typedef struct {

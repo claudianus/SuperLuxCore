@@ -521,10 +521,13 @@ OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource 
 		// Retrieve the image map information
 		__global const ImageMap *imageMap = &imageMapDescs[triLight->triangle.imageMapIndex];
 		const float2 uv = MAKE_FLOAT2(SphericalPhi(localFromLight) * (1.f / (2.f * M_PI_F)), SphericalTheta(localFromLight) * M_1_PI_F);
+		// Per-area intensity profile: radiance = intensity over the
+		// projected area (CPU TriangleLight::GetRadiance)
 		emissionColor = ImageMap_GetSpectrum(
 				imageMap,
 				uv.x, uv.y
-				IMAGEMAPS_PARAM) / triLight->triangle.average;
+				IMAGEMAPS_PARAM) / (triLight->triangle.average *
+				fmax(fabs(cosOutLight), DEFAULT_COS_EPSILON_STATIC));
 
 		if (emissionPdfW) {
 			// Vertex connection (M6): CPU TriangleLight::GetRadiance
@@ -545,13 +548,11 @@ OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource 
 				*emissionPdfW = 0.f;
 		}
 	} else if (emissionPdfW) {
-		// Vertex connection (M6): CPU emittedTheta branches (note: CPU
-		// GetRadiance does NOT multiply by invTriangleArea in the first
-		// two cases - mirrored as-is for parity)
+		// Vertex connection (M6): CPU emittedTheta branches
 		if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC)
-			*emissionPdfW = 1.f;
+			*emissionPdfW = triLight->triangle.invTriangleArea;
 		else if (cosThetaMax > 0.f)
-			*emissionPdfW = UniformConePdf(cosThetaMax);
+			*emissionPdfW = triLight->triangle.invTriangleArea * UniformConePdf(cosThetaMax);
 		else
 			*emissionPdfW = triLight->triangle.invTriangleArea *
 					fabs(cosOutLight) * M_1_PI_F;
@@ -1092,7 +1093,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Illuminate(__global const LightSource *spot
 	Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
 	return VLOAD3F(spotLight->notIntersectable.spot.emittedFactor.c) *
-			(falloff / fabs(CosTheta(localFromLight)));
+			(falloff / (spotLight->notIntersectable.spot.cosineCompensation ?
+				fabs(CosTheta(localFromLight)) : 1.f));
 }
 
 //------------------------------------------------------------------------------
@@ -1799,7 +1801,8 @@ OPENCL_FORCE_INLINE float3 SpotLight_Emit(
 	return VLOAD3F(spotLight->notIntersectable.spot.emittedFactor.c) *
 			(SpotLight_LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart,
 			spotLight->notIntersectable.spot.falloffMode) /
-			fabs(CosTheta(localFromLight)));
+			(spotLight->notIntersectable.spot.cosineCompensation ?
+				fabs(CosTheta(localFromLight)) : 1.f));
 }
 
 // Port of LaserLight::Emit(): uniform disk over the aperture radius,
@@ -1940,7 +1943,10 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 
 	return Material_GetEmittedRadiance(materialIndex,
 			tmpHitPoint, triLight->triangle.invMeshArea
-			MATERIALS_PARAM) * emissionFuncColor * fabs(localDirOut.z);
+			MATERIALS_PARAM) * emissionFuncColor *
+			// A directional map is a per-area intensity profile: no
+			// extra light cosine (CPU TriangleLight::Emit)
+			((material->emissionFuncDistOffset != NULL_INDEX) ? 1.f : fabs(localDirOut.z));
 }
 
 OPENCL_FORCE_INLINE float3 Light_Emit(

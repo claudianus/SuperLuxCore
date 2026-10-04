@@ -106,7 +106,7 @@ Spectrum LaserLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return emittedFactor;
+	return Spectral::Emission(emittedFactor);
 }
 
 Spectrum LaserLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -152,7 +152,7 @@ Spectrum LaserLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(bsdf.GetRayOrigin(shadowRayDir), shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return emittedFactor;
+	return Spectral::Emission(emittedFactor);
 }
 
 bool LaserLight::IsAlwaysInShadow(SceneConstRef scene,

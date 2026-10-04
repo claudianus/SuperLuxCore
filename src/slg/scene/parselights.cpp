@@ -175,6 +175,98 @@ ImageMapPtr Scene::CreateEmissionMap(
 	}
 
 	//--------------------------------------------------------------------------
+	// Cycles area light "Spread" profile (emission.spread, full angle in
+	// radians). Cycles models a soft-box grid: radiance is
+	//   L(a) = L0 * max(tan(s/2) - tan(a), 0) * normalize_spread
+	// with normalize_spread = 1 / (tan(s/2) - s/2) (power preserving), see
+	// Cycles area_light_spread_attenuation(). An emission map is a
+	// per-area intensity profile, so the map holds L(a) * cos(a).
+	//--------------------------------------------------------------------------
+
+	const float spread = props.Get(Property(propName + ".spread")(M_PI)).Get<float>();
+	if (spread < M_PI - 1e-4f) {
+		const u_int xRes = 8, yRes = 1024;
+		auto spreadMap = ImageMap::AllocImageMap(1, xRes, yRes, ImageMapConfig());
+		float *img = (float *)spreadMap->GetStorage().GetPixelsData();
+
+		const float halfSpread = Max(.5f * spread, 0.f);
+		const float tanHalfSpread = tanf(halfSpread);
+		// Third-order Taylor expansion at small angles (as Cycles)
+		const float normalizeSpread = (halfSpread > .05f) ?
+			1.f / (tanHalfSpread - halfSpread) :
+			3.f / Max(halfSpread * halfSpread * halfSpread, 1e-12f);
+
+		for (u_int y = 0; y < yRes; ++y) {
+			const float theta = M_PI * (y + .5f) / yRes;
+			const float cosA = cosf(theta);
+			float value = 0.f;
+			if (cosA > 0.f) {
+				const float tanA = sqrtf(Max(1.f - cosA * cosA, 0.f)) / cosA;
+				value = Max((tanHalfSpread - tanA) * normalizeSpread, 0.f) * cosA;
+			}
+			// A spread narrower than one row would vanish: keep the
+			// forward row lit
+			if ((y == 0) && (value == 0.f))
+				value = 1.f;
+			for (u_int x = 0; x < xRes; ++x)
+				img[x + y * xRes] = value;
+		}
+		spreadMap->Preprocess();
+
+		const string name ="LUXCORE_EMISSIONMAP_SPREAD_" + propName;
+		spreadMap->SetName(name);
+
+		if (iesMap) {
+			auto merged = ImageMap::Merge(*iesMap, *spreadMap, 1);
+			merged->Preprocess();
+			merged->SetName(iesMap->GetName());
+			iesMap = std::move(merged);
+		} else
+			iesMap = std::move(spreadMap);
+	}
+
+	//--------------------------------------------------------------------------
+	// Cycles sized spot light (emission.spot.angle = full cone angle in
+	// radians, emission.spot.blend): a point light masked by the cone, so
+	// the per-area intensity is flat inside the cone with Cycles'
+	// cos-space smoothstep penumbra (spot_light_attenuation()).
+	//--------------------------------------------------------------------------
+
+	if (props.IsDefined(propName + ".spot.angle")) {
+		const float spotAngle = Clamp(props.Get(propName + ".spot.angle").Get<float>(), 0.f, (float)M_PI);
+		const float spotBlend = Clamp(props.Get(Property(propName + ".spot.blend")(0.f)).Get<float>(), 0.f, 1.f);
+		const float cosHalf = cosf(.5f * spotAngle);
+		const float smoothWidth = spotBlend * (1.f - cosHalf);
+
+		const u_int xRes = 8, yRes = 1024;
+		auto spotMap = ImageMap::AllocImageMap(1, xRes, yRes, ImageMapConfig());
+		float *img = (float *)spotMap->GetStorage().GetPixelsData();
+		for (u_int y = 0; y < yRes; ++y) {
+			const float cosA = cosf(M_PI * (y + .5f) / yRes);
+			float value;
+			if (smoothWidth > 0.f) {
+				const float t = Clamp((cosA - cosHalf) / smoothWidth, 0.f, 1.f);
+				value = t * t * (3.f - 2.f * t);
+			} else
+				value = (cosA > cosHalf) ? 1.f : 0.f;
+			if ((y == 0) && (value == 0.f))
+				value = 1.f;
+			for (u_int x = 0; x < xRes; ++x)
+				img[x + y * xRes] = value;
+		}
+		spotMap->Preprocess();
+		spotMap->SetName("LUXCORE_EMISSIONMAP_SPOT_" + propName);
+
+		if (iesMap) {
+			auto merged = ImageMap::Merge(*iesMap, *spotMap, 1);
+			merged->Preprocess();
+			merged->SetName(iesMap->GetName());
+			iesMap = std::move(merged);
+		} else
+			iesMap = std::move(spotMap);
+	}
+
+	//--------------------------------------------------------------------------
 	// Define the light source image map
 	//--------------------------------------------------------------------------
 
@@ -386,6 +478,7 @@ LightSourceUPtr Scene::CreateLightSource(const string &name, const luxrays::Prop
 			else if (m == "smoothstep") sl->falloffMode = 1;
 			else throw runtime_error("Unknown spot falloff mode: " + m);
 		}
+		sl->cosineCompensation = props.Get(Property(propName + ".cosinecompensation")(true)).Get<bool>();
 		sl->color = GetColor(props.Get(Property(propName + ".color")(Spectrum(1.f))));
 		sl->power = Max(0.0, props.Get(Property(propName + ".power")(0.0)).Get<double>());
 		sl->emittedPowerNormalize = props.Get(Property(propName + ".normalizebycolor")(true)).Get<bool>();

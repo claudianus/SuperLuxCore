@@ -31,6 +31,7 @@
 #include "slg/materials/materialdefs.h"
 #include "slg/lights/lightsourcedefs.h"
 #include "slg/scene/scene.h"
+#include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/scene/sceneobjectdefs.h"
 #include "slg/textures/texturedefs.h"
 #include "slg/textures/constfloat.h"
@@ -1143,6 +1144,24 @@ MaterialUPtr Scene::CreateMaterial(
 	if (emissionMap) {
 		// There is one
 		mat->SetEmissionMap(*emissionMap);
+
+		// An emission map is normalized to a unit integral over the
+		// sphere while a plain Lambertian emitter integrates cos() to pi.
+		// The spread profile is a drop-in for the Lambertian lobe (equal
+		// power at equal gain), so restore the pi.
+		if (!props.IsDefined(propName + ".emission.mapfile") &&
+				!props.IsDefined(propName + ".emission.iesfile") &&
+				!props.IsDefined(propName + ".emission.iesblob") &&
+				(props.Get(Property(propName + ".emission.spread")(M_PI)).Get<float>() < M_PI - 1e-4f))
+			mat->SetEmittedGain(mat->GetEmittedGain() * M_PI);
+
+		// The spot profile is 1 on the axis: scale by its integral so the
+		// gain is the on-axis intensity per unit emitter area
+		if (props.IsDefined(propName + ".emission.spot.angle") &&
+				!props.IsDefined(propName + ".emission.mapfile") &&
+				!props.IsDefined(propName + ".emission.iesfile") &&
+				!props.IsDefined(propName + ".emission.iesblob"))
+			mat->SetEmittedGain(mat->GetEmittedGain() * mat->GetEmissionFunc()->Average());
 	}
 
 	// Interior volumes

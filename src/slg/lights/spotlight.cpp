@@ -30,7 +30,7 @@ using namespace slg;
 SpotLight::SpotLight() :
 	color(1.f), power(0.f), efficiency(0.f), emittedPowerNormalize(true),
 	localPos(Point()), localTarget(Point(0.f, 0.f, 1.f)),
-	coneAngle(30.f), coneDeltaAngle(5.f), falloffMode(0) {
+	coneAngle(30.f), coneDeltaAngle(5.f), falloffMode(0), cosineCompensation(true) {
 }
 
 SpotLight::~SpotLight() {
@@ -133,7 +133,8 @@ Spectrum SpotLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return Spectral::Emission(emittedFactor) * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart, falloffMode) / fabsf(CosTheta(localFromLight)));
+	return Spectral::Emission(emittedFactor) * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart, falloffMode) /
+			(cosineCompensation ? fabsf(CosTheta(localFromLight)) : 1.f));
 }
 
 Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -161,7 +162,8 @@ Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return Spectral::Emission(emittedFactor) * (falloff / fabsf(CosTheta(localFromLight)));
+	return Spectral::Emission(emittedFactor) * (falloff /
+			(cosineCompensation ? fabsf(CosTheta(localFromLight)) : 1.f));
 }
 
 bool SpotLight::IsAlwaysInShadow(SceneConstRef scene,
@@ -190,6 +192,7 @@ PropertiesUPtr SpotLight::ToProperties(const ImageMapCache &imgMapCache, const b
 	props->Set(Property(prefix + ".coneangle")(coneAngle));
 	props->Set(Property(prefix + ".conedeltaangle")(coneDeltaAngle));
 	props->Set(Property(prefix + ".falloff")(falloffMode == 1 ? "smoothstep" : "power4"));
+	props->Set(Property(prefix + ".cosinecompensation")(cosineCompensation));
 
 	return props;
 }
