@@ -444,6 +444,17 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 #define OPENPBR_LOBE_DIFF 5u
 #define OPENPBR_LOBE_COUNT 6u
 
+// Same as openpbr.cpp SpecLayerAlbedo(): GGX directional albedo of the
+// dielectric specular layer (interface F0, specular_weight scaled).
+OPENCL_FORCE_INLINE float OpenPBRMat_SpecLayerAlbedo(const float mu,
+		const float etaS, const float specWeight, const float roughness) {
+	const float r0 = (etaS - 1.f) / (etaS + 1.f);
+	const float rr = clamp(roughness, 0.f, 1.f);
+	float A, B;
+	Microfacet_GgxDirAlbedoAB(clamp(mu, 0.f, 1.f), fmax(rr * rr, 1e-4f), &A, &B);
+	return clamp(specWeight * (r0 * r0 * A + B), 0.f, 1.f);
+}
+
 OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const float3 wFixed,
 		float3 weights[OPENPBR_LOBE_COUNT], float probs[OPENPBR_LOBE_COUNT]
@@ -489,7 +500,8 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 	const float wDiff = wDiel * (1.f - p->transWeight) * (1.f - p->sssWeight);
 	weights[OPENPBR_LOBE_DIFF] = wDiff * darkening * p->baseWeight * p->baseColor;
 	const float impDiff = (wFixed.z > 0.f) ?
-			Spectrum_Filter(weights[OPENPBR_LOBE_DIFF]) * (1.f - Fspec) : 0.f;
+			Spectrum_Filter(weights[OPENPBR_LOBE_DIFF]) *
+			(1.f - OpenPBRMat_SpecLayerAlbedo(muF, etaS, p->specWeight, p->specRoughness)) : 0.f;
 
 	float imp[OPENPBR_LOBE_COUNT];
 	imp[OPENPBR_LOBE_FUZZ] = impFuzz;
@@ -601,10 +613,11 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitP
 			pdfF += probs[OPENPBR_LOBE_BTDF] * pdf;
 		}
 		if (frontSide && probs[OPENPBR_LOBE_DIFF] > 0.f) {
-			// Diffuse crosses the dielectric interface twice
+			// Albedo scaling (openpbr.cpp): the base gets what the rough
+			// specular layer does not reflect toward the fixed direction.
 			const float etaS = OpenPBRMat_EtaS(p, hitPoint);
-			const float att = (1.f - Microfacet_FresnelDielectricModulated(muI, etaS, p->specWeight)) *
-					(1.f - Microfacet_FresnelDielectricModulated(fabs(wo.z), etaS, p->specWeight));
+			const float att = 1.f - OpenPBRMat_SpecLayerAlbedo(fabs(wFixed.z), etaS,
+					p->specWeight, p->specRoughness);
 			result += weights[OPENPBR_LOBE_DIFF] * att *
 					(EON_Eval(WHITE, p->diffuseRoughness, wi, wo) * muI);
 			pdfF += probs[OPENPBR_LOBE_DIFF] * OpenPBRMat_LobePdf(hitPoint, p,

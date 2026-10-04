@@ -408,6 +408,18 @@ Spectrum OpenPBRMaterial::EvalBtdf(const HitPoint &hitPoint, const Params &p,
 // lobe's directional albedo so selection follows actual reflectance.
 //------------------------------------------------------------------------------
 
+// Directional albedo of the dielectric specular layer seen from mu: GGX
+// single-scatter fit (Kulla-Conty/MaterialX coefficients) with the
+// interface F0, scaled by specular_weight. The base layer underneath gets
+// the rest (OpenPBR albedo scaling, same as Cycles' Principled).
+static float SpecLayerAlbedo(const float mu, const float etaS,
+		const float specWeight, const float roughness) {
+	const float r0 = (etaS - 1.f) / (etaS + 1.f);
+	float A, B;
+	GgxDirAlbedoAB(Clamp(mu, 0.f, 1.f), Max(Sqr(Clamp(roughness, 0.f, 1.f)), 1e-4f), A, B);
+	return Clamp(specWeight * (r0 * r0 * A + B), 0.f, 1.f);
+}
+
 void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 		const Vector &wFixed,
 		Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT]) const {
@@ -464,7 +476,8 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	const float wDiff = wDiel * (1.f - p.transWeight) * (1.f - p.sssWeight);
 	weights[LOBE_DIFF] = Spectrum(wDiff) * darkening * p.baseWeight * p.baseColor;
 	const float impDiff = (wFixed.z > 0.f) ?
-			weights[LOBE_DIFF].Filter() * (1.f - Fspec) : 0.f;
+			weights[LOBE_DIFF].Filter() *
+			(1.f - SpecLayerAlbedo(muF, etaS, p.specWeight, p.specRoughness)) : 0.f;
 
 	weights[LOBE_SSS] = Spectrum(0.f);
 
@@ -568,10 +581,13 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 			pdfF += probs[LOBE_BTDF] * pdf;
 		}
 		if (frontSide && probs[LOBE_DIFF] > 0.f) {
-			// Diffuse is attenuated crossing the dielectric interface twice
+			// Albedo scaling: the base gets what the rough specular layer
+			// does not reflect toward the fixed (view) direction. The former
+			// smooth-Fresnel product over both directions ignored roughness
+			// and halved rough plastics under grazing light.
 			const float etaS = EtaS(p, p.disp);
-			const float att = (1.f - FresnelDielectricModulated(muI, etaS, p.specWeight)) *
-					(1.f - FresnelDielectricModulated(fabsf(wo.z), etaS, p.specWeight));
+			const float att = 1.f - SpecLayerAlbedo(fabsf(wFixed.z), etaS,
+					p.specWeight, p.specRoughness);
 			result += weights[LOBE_DIFF] * att *
 					(eon::Eval(Spectrum(1.f), p.diffuseRoughness, wi, wo) * muI);
 			pdfF += probs[LOBE_DIFF] * LobePdf(hitPoint, p, LOBE_DIFF, wFixed, wSmp);
