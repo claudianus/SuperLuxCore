@@ -158,8 +158,8 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 			const BSDFEvent eventTypes = BSDF_GetEventTypes(&taskState->bsdf
 					MATERIALS_PARAM);
 
-			sampleResult->lastPathVertex = PathDepthInfo_IsLastPathVertex(&pathInfo->depth, 
-					&taskConfig->pathTracer.maxPathDepth, eventTypes);
+			sampleResult->lastPathVertex = PathDepthInfo_IsLastPathVertexVol(&pathInfo->depth,
+					&taskConfig->pathTracer.maxPathDepth, eventTypes, taskState->bsdf.isVolume);
 
 			taskState->state = MK_HIT_OBJECT;
 		}
@@ -2805,7 +2805,7 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 		__global const BSDF *bsdf, const BSDFEvent event,
 		const float glossinessThreshold
 		MATERIALS_PARAM_DECL) {
-	PathDepthInfo_IncDepths(&lpi->depth, event);
+	PathDepthInfo_IncDepthsVol(&lpi->depth, event, bsdf->isVolume);
 	PathVolumeInfo_Update(&lpi->volume, event, bsdf MATERIALS_PARAM);
 
 	const float glossiness = BSDF_GetGlossiness(bsdf MATERIALS_PARAM);

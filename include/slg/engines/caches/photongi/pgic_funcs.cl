@@ -51,7 +51,7 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 	// specular bounce
 	// Only bounces the caustic photons model (CPU IsDirectLightHitVisible)
 	if (taskConfig->pathTracer.pgic.causticEnabled &&
-			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth > 0) &&
+			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth + pathInfo->depth.volumeDepth > 0) &&
 			((pathInfo->lastBSDFEvent & SPECULAR) ||
 				(pathInfo->lastGlossiness < taskConfig->pathTracer.pgic.glossinessUsageThreshold)))
 		return false;

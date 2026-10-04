@@ -344,7 +344,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					
 					// Create a new PathDepthInfo for the path to the light source
 					PathDepthInfo directLightDepthInfo = pathInfo.depth;
-					directLightDepthInfo.IncDepths(event);
+					directLightDepthInfo.IncDepths(event, bsdf.IsVolume());
 					
 					RayHit shadowRayHit;
 					BSDF shadowBsdf;
@@ -1102,7 +1102,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				ComputeFirstHitMotionVector(scene, eyeRay.time,
 						&bsdf.hitPoint, eyeRay, sampleResult.motionVector);
 		}
-		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes());
+		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolume());
 
 		//----------------------------------------------------------------------
 		// Check if it is a baked material
@@ -2992,6 +2992,8 @@ void PathTracer::ParseOptions(
 	maxPathDepth.diffuseDepth = Max(0, cfg.Get(defaultProps.Get("path.pathdepth.diffuse")).Get<int>());
 	maxPathDepth.glossyDepth = Max(0, cfg.Get(defaultProps.Get("path.pathdepth.glossy")).Get<int>());
 	maxPathDepth.specularDepth = Max(0, cfg.Get(defaultProps.Get("path.pathdepth.specular")).Get<int>());
+	// 0 = volume scatters count against the diffuse depth (legacy)
+	maxPathDepth.volumeDepth = Max(0, cfg.Get(defaultProps.Get("path.pathdepth.volume")).Get<int>());
 
 	// For compatibility with the past
 	if (cfg.IsDefined("path.maxdepth") &&
@@ -3270,6 +3272,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 				cfg.Get(GetDefaultProps()->Get("path.pathdepth.glossy")) <<
 				cfg.Get(GetDefaultProps()->Get("path.pathdepth.specular"));
 	}
+	props << cfg.Get(GetDefaultProps()->Get("path.pathdepth.volume"));
 
 	props <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.enable")) <<
@@ -3451,6 +3454,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.pathdepth.diffuse")(4) <<
 			Property("path.pathdepth.glossy")(4) <<
 			Property("path.pathdepth.specular")(6) <<
+			Property("path.pathdepth.volume")(0) <<
 			Property("path.russianroulette.depth")(3) <<
 			Property("path.russianroulette.cap")(.5f) <<
 			Property("path.clamping.variance.maxvalue")(0.f) <<

@@ -36,6 +36,7 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.maxPathDepth.diffuseDepth = pathTracer->maxPathDepth.diffuseDepth;
 	compiledPathTracer.maxPathDepth.glossyDepth = pathTracer->maxPathDepth.glossyDepth;
 	compiledPathTracer.maxPathDepth.specularDepth = pathTracer->maxPathDepth.specularDepth;
+	compiledPathTracer.maxPathDepth.volumeDepth = pathTracer->maxPathDepth.volumeDepth;
 	
 	compiledPathTracer.rrDepth = pathTracer->rrDepth;
 	compiledPathTracer.rrImportanceCap = pathTracer->rrImportanceCap;

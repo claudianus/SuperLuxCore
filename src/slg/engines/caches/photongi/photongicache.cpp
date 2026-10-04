@@ -205,7 +205,7 @@ bool PhotonGICache::IsDirectLightHitVisible(const EyePathInfo &pathInfo,
 	// nothing else estimates it (a rough subsurface boundary rendered the
 	// whole SSS interior black).
 	if (params.caustic.enabled && !(pathInfo.lastBSDFEvent & DIFFUSE) &&
-			(pathInfo.depth.diffuseDepth > 0) &&
+			(pathInfo.depth.diffuseDepth + pathInfo.depth.volumeDepth > 0) &&
 			((pathInfo.lastBSDFEvent & SPECULAR) ||
 				(pathInfo.lastGlossiness < params.glossinessUsageThreshold)))
 		return false;

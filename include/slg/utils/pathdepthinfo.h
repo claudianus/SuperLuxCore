@@ -36,9 +36,14 @@ public:
 	PathDepthInfo();
 	~PathDepthInfo() { }
 
-	void IncDepths(const BSDFEvent event);
+	void IncDepths(const BSDFEvent event, const bool isVolume = false);
 	bool IsLastPathVertex(const PathDepthInfo &maxPathDepth,
-		const BSDFEvent event) const;
+		const BSDFEvent event, const bool isVolume = false) const;
+	// Diffuse depth as the depth limits see it: volume scatters count as
+	// diffuse unless the maximum has its own volume limit
+	u_int GetDiffuseDepth(const PathDepthInfo &maxPathDepth) const {
+		return diffuseDepth + ((maxPathDepth.volumeDepth > 0) ? 0 : volumeDepth);
+	}
 	u_int GetRRDepth() const;
 
 	u_int depth, diffuseDepth, glossyDepth, specularDepth;
@@ -50,6 +55,10 @@ public:
 	// updated by Scene::Intersect() while stepping through pass-through
 	// materials (Cycles LightPath "Transparent Depth").
 	u_int transparentDepth;
+	// Volume scattering vertices, counted apart from diffuseDepth. As a
+	// maximum: 0 = legacy (volume scatters count against diffuseDepth),
+	// > 0 = their own limit (Cycles "Volume" bounces).
+	u_int volumeDepth;
 
 	// Path-space regularization (PSR, path.regularization.*): the
 	// engine seeds sigma/minDepth at path init; HitPoint::SetRayContext

@@ -25,6 +25,10 @@ typedef struct {
 	// while stepping through pass-through materials). Exposed to shading
 	// through the "rayinfo" texture.
 	unsigned int transmitDepth, transparentDepth;
+	// Volume scattering vertices (counted apart from diffuseDepth). As a
+	// maximum: 0 = legacy, volume scatters count against diffuseDepth;
+	// > 0 = their own limit (Cycles "Volume" bounces).
+	unsigned int volumeDepth;
 
 	// Path-space regularization (PSR, path.regularization.*): the
 	// engine seeds sigma/minDepth at path init; HitPoint_SetRayContext

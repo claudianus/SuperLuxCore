@@ -34,12 +34,17 @@ PathDepthInfo::PathDepthInfo() {
 	specularDepth = 0;
 	transmitDepth = 0;
 	transparentDepth = 0;
+	volumeDepth = 0;
 	regularization = 0.f;
 	regularizationMinDepth = 0;
 }
 
-void PathDepthInfo::IncDepths(const BSDFEvent event) {
+void PathDepthInfo::IncDepths(const BSDFEvent event, const bool isVolume) {
 	++depth;
+	if (isVolume) {
+		++volumeDepth;
+		return;
+	}
 	if (event & DIFFUSE)
 		++diffuseDepth;
 	if (event & GLOSSY)
@@ -50,14 +55,19 @@ void PathDepthInfo::IncDepths(const BSDFEvent event) {
 		++transmitDepth;
 }
 
-bool PathDepthInfo::IsLastPathVertex(const PathDepthInfo &maxPathDepth, const BSDFEvent possibleEvents) const {
-	return (depth + 1 >= maxPathDepth.depth) ||
-			((possibleEvents & DIFFUSE) && (diffuseDepth + 1 >= maxPathDepth.diffuseDepth)) ||
+bool PathDepthInfo::IsLastPathVertex(const PathDepthInfo &maxPathDepth, const BSDFEvent possibleEvents,
+		const bool isVolume) const {
+	if (depth + 1 >= maxPathDepth.depth)
+		return true;
+	if (isVolume && (maxPathDepth.volumeDepth > 0))
+		return (volumeDepth + 1 >= maxPathDepth.volumeDepth);
+
+	return ((possibleEvents & DIFFUSE) && (GetDiffuseDepth(maxPathDepth) + 1 >= maxPathDepth.diffuseDepth)) ||
 			((possibleEvents & GLOSSY) && (glossyDepth + 1 >= maxPathDepth.glossyDepth)) ||
 			((possibleEvents & SPECULAR) && (specularDepth + 1 >= maxPathDepth.specularDepth));
 }
 
 u_int PathDepthInfo::GetRRDepth() const {
-	return diffuseDepth + glossyDepth;
+	return diffuseDepth + glossyDepth + volumeDepth;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

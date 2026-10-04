@@ -29,12 +29,18 @@ OPENCL_FORCE_INLINE void PathDepthInfo_Init(__global PathDepthInfo *depthInfo) {
 	depthInfo->specularDepth = 0;
 	depthInfo->transmitDepth = 0;
 	depthInfo->transparentDepth = 0;
+	depthInfo->volumeDepth = 0;
 	depthInfo->regularization = 0.f;
 	depthInfo->regularizationMinDepth = 0;
 }
 
-OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthInfo, const BSDFEvent event) {
+OPENCL_FORCE_INLINE void PathDepthInfo_IncDepthsVol(__global PathDepthInfo *depthInfo, const BSDFEvent event,
+		const bool isVolume) {
 	++(depthInfo->depth);
+	if (isVolume) {
+		++(depthInfo->volumeDepth);
+		return;
+	}
 	if (event & DIFFUSE)
 		++(depthInfo->diffuseDepth);
 	if (event & GLOSSY)
@@ -45,12 +51,29 @@ OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthIn
 		++(depthInfo->transmitDepth);
 }
 
-OPENCL_FORCE_INLINE bool PathDepthInfo_IsLastPathVertex(__global PathDepthInfo *depthInfo,
-		__constant const PathDepthInfo* restrict maxDepthInfo, const BSDFEvent event) {
-	return (depthInfo->depth + 1 >= maxDepthInfo->depth) ||
-			((event & DIFFUSE) && (depthInfo->diffuseDepth + 1 >= maxDepthInfo->diffuseDepth)) ||
+OPENCL_FORCE_INLINE void PathDepthInfo_IncDepths(__global PathDepthInfo *depthInfo, const BSDFEvent event) {
+	PathDepthInfo_IncDepthsVol(depthInfo, event, false);
+}
+
+// PathDepthInfo::IsLastPathVertex(): volume scatters have their own limit
+// when maxDepthInfo->volumeDepth > 0, else they count as diffuse
+OPENCL_FORCE_INLINE bool PathDepthInfo_IsLastPathVertexVol(__global PathDepthInfo *depthInfo,
+		__constant const PathDepthInfo* restrict maxDepthInfo, const BSDFEvent event,
+		const bool isVolume) {
+	if (depthInfo->depth + 1 >= maxDepthInfo->depth)
+		return true;
+	if (isVolume && (maxDepthInfo->volumeDepth > 0))
+		return (depthInfo->volumeDepth + 1 >= maxDepthInfo->volumeDepth);
+	const uint diffuseDepth = depthInfo->diffuseDepth +
+			((maxDepthInfo->volumeDepth > 0) ? 0 : depthInfo->volumeDepth);
+	return ((event & DIFFUSE) && (diffuseDepth + 1 >= maxDepthInfo->diffuseDepth)) ||
 			((event & GLOSSY) && (depthInfo->glossyDepth + 1 >= maxDepthInfo->glossyDepth)) ||
 			((event & SPECULAR) && (depthInfo->specularDepth + 1 >= maxDepthInfo->specularDepth));
+}
+
+OPENCL_FORCE_INLINE bool PathDepthInfo_IsLastPathVertex(__global PathDepthInfo *depthInfo,
+		__constant const PathDepthInfo* restrict maxDepthInfo, const BSDFEvent event) {
+	return PathDepthInfo_IsLastPathVertexVol(depthInfo, maxDepthInfo, event, false);
 }
 
 OPENCL_FORCE_INLINE bool PathDepthInfo_CheckComponentDepths(
@@ -62,6 +85,6 @@ OPENCL_FORCE_INLINE bool PathDepthInfo_CheckComponentDepths(
 }
 
 OPENCL_FORCE_INLINE uint PathDepthInfo_GetRRDepth(__global PathDepthInfo *depthInfo) {
-	return depthInfo->diffuseDepth + depthInfo->glossyDepth;
+	return depthInfo->diffuseDepth + depthInfo->glossyDepth + depthInfo->volumeDepth;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

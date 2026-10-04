@@ -86,7 +86,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	//--------------------------------------------------------------------------
 
 	// Increment path depth information
-	PathDepthInfo_IncDepths(&pathInfo->depth, event);
+	PathDepthInfo_IncDepthsVol(&pathInfo->depth, event, bsdf->isVolume);
 
 	// Update volume information
 	PathVolumeInfo_Update(&pathInfo->volume, event, bsdf MATERIALS_PARAM);
