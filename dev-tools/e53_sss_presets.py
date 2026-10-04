@@ -253,9 +253,18 @@ path.pathdepth.specular = 64
             engine, sel))
         ratio = np.abs(img - gpu) / np.maximum(np.maximum(img, gpu), 1e-3)
         ratio = ratio[np.isfinite(ratio)]
+        # Per-pixel error at this spp is SSS sampling noise; gate on
+        # 8x8 block averages and the per-channel means
+        h, w = img.shape[0] // 8 * 8, img.shape[1] // 8 * 8
+        blk = lambda im: im[:h, :w].reshape(h // 8, 8, w // 8, 8, 3).mean((1, 3))
+        cb, gb = blk(img), blk(gpu)
+        bratio = np.abs(cb - gb) / np.maximum(np.maximum(cb, gb), 1e-3)
+        cm, gm = img.mean((0, 1)), gpu.mean((0, 1))
+        chan = np.max(np.abs(cm - gm) / np.maximum(cm, 1e-3))
         print(f"preset parity {name}-vs-{ref_name}: mean rel. error "
-              f"{ratio.mean():.4f}, p95 {np.percentile(ratio, 95):.4f}")
-        if ratio.mean() > 0.15:
+              f"{ratio.mean():.4f}, p95 {np.percentile(ratio, 95):.4f}, "
+              f"block {bratio.mean():.4f}, channel means {cm} vs {gm}")
+        if bratio.mean() > 0.075 or chan > 0.05:
             print(f"FAIL: {name}/{ref_name} parity out of tolerance")
             sys.exit(1)
 

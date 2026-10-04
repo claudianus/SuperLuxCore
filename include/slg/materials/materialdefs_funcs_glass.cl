@@ -296,7 +296,9 @@ OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material
 				(fromLight ? fabs(cosThetaIH) :
 						(fabs(cosThetaOH) * eta * eta)) / lengthSquared;
 
-		*result = (fabs(cosThetaOH) * cosThetaIH * D *
+		// Radiance scaling of the delta glass (CPU GlassMicrofacet_Evaluate)
+		const float radianceScale = fromLight ? 1.f : (eta * eta);
+		*result = (radianceScale * fabs(cosThetaOH) * cosThetaIH * D *
 				G / (cosThetaI * lengthSquared)) *
 				kt * (WHITE - F);
 		*event = GLOSSY | TRANSMIT;
@@ -416,6 +418,21 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 #endif
 		const float ntc = ntEff / nc;
 
+		// Index-matched interface: invisible boundary, delta pass-through
+		// (the eta = 1 refraction Jacobian is singular). Mirrors CPU
+		// GlassMicrofacet_Sample.
+		if (!isKtBlack && (fabs(ntc - 1.f) < 1e-5f)) {
+			const float3 result = kt;
+			EvalStack_PushFloat3(result);
+			const float3 sampledDir = -fixedDir;
+			EvalStack_PushFloat3(sampledDir);
+			const float pdfW = 1.f;
+			EvalStack_PushFloat(pdfW);
+			const BSDFEvent event = SPECULAR | TRANSMIT;
+			EvalStack_PushBSDFEvent(event);
+			return;
+		}
+
 		float3 wh = Microfacet_GgxSampleVNDF(fixedDir, alpha, alpha, u0, u1);
 		const float specPdf = Microfacet_GgxVNDFHalfPdf(fixedDir, wh, alpha, alpha);
 		if (specPdf <= 0.f) {
@@ -478,6 +495,9 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 					FresnelCauchy_Evaluate(ntc, fromLight ? cosThetaOH : cosThetaIH));
 #endif
 			result = kt * (WHITE - F) * (g2 / (g1 * threshold));
+			// Radiance scaling of the delta glass (CPU GlassMicrofacet_Sample)
+			if (!fromLight)
+				result *= eta2;
 
 			pdfW *= threshold;
 			event = GLOSSY | TRANSMIT;

@@ -153,10 +153,20 @@ def parity(name, props, tol=0.15):
             print(f"FAIL: {name} rendered black")
             sys.exit(1)
         ratio = np.abs(cl[mask] - gl[mask]) / np.maximum(cl[mask], gl[mask])
+        # Per-pixel relative error of two independent caustic renders is
+        # dominated by sampling noise (it moved with PSR/firefly changes
+        # while the images agreed): gate on 8x8 block averages + the mean
+        h, w = cl.shape[0] // 8 * 8, cl.shape[1] // 8 * 8
+        blk = lambda im: im[:h, :w].reshape(h // 8, 8, w // 8, 8).mean((1, 3))
+        cb, gb = blk(cl), blk(gl)
+        bmask = (cb > 1e-3) & (gb > 1e-3)
+        bratio = np.abs(cb[bmask] - gb[bmask]) / np.maximum(cb[bmask], gb[bmask])
+        mean_rel = abs(cl[mask].mean() - gl[mask].mean()) / cl[mask].mean()
         print(f"{name}: {ref_name} mean {cl[mask].mean():.4f} {leg_name} "
               f"{gl[mask].mean():.4f} rel.mean {ratio.mean():.4f} "
-              f"p95 {np.percentile(ratio, 95):.4f}")
-        if ratio.mean() > tol:
+              f"p95 {np.percentile(ratio, 95):.4f} block rel.mean "
+              f"{bratio.mean():.4f} mean rel {mean_rel:.4f}")
+        if bratio.mean() > tol / 2 or mean_rel > 0.05:
             print(f"FAIL: {name} {leg_name}/{ref_name} parity out of "
                   "tolerance")
             sys.exit(1)
@@ -229,9 +239,16 @@ scene.materials.ball.sellmeierc = 0.0134871947 0.0569318095 118.557185
 """)
     img_bc = parity("glass sellmeier B/C", sellBC)
     # The two renderings are statistically identical; compare color stats
+    # (independent renders: per-pixel differences are sampling noise, so
+    # compare per-channel means and the 8x8 block-averaged image)
     diff = np.abs(img_bc - img_sell)
-    print(f"preset-vs-explicit: mean abs diff {diff.mean():.4f}")
-    if diff.mean() > 0.05 * img_sell.mean():
+    h, w = img_sell.shape[0] // 8 * 8, img_sell.shape[1] // 8 * 8
+    blk = lambda im: im[:h, :w].reshape(h // 8, 8, w // 8, 8, -1).mean((1, 3))
+    chan = np.abs(img_bc.mean((0, 1)) - img_sell.mean((0, 1))).max()
+    bdiff = np.abs(blk(img_bc) - blk(img_sell)).mean()
+    print(f"preset-vs-explicit: pixel abs diff {diff.mean():.4f} "
+          f"block abs diff {bdiff:.4f} channel mean diff {chan:.4f}")
+    if chan > 0.02 * img_sell.mean() or bdiff > 0.05 * img_sell.mean():
         print("FAIL: named preset vs explicit B/C diverge")
         sys.exit(1)
 

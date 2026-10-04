@@ -78,7 +78,16 @@ inline luxrays::Spectrum GlassMicrofacet_Evaluate(
 					(hitPoint.fromLight ? (fabsf(cosThetaOH) * eta * eta) :
 							fabsf(cosThetaIH)) / lengthSquared;
 
-		const luxrays::Spectrum result = (fabsf(cosThetaOH) * cosThetaIH * D *
+		// Radiance (eye path) scaling of the delta GlassMaterial this lobe
+		// stands in for: the delta glass multiplies by eta_fixed^2 per
+		// crossing, so a path mixing an exact entry (mindepth) with a
+		// regularized exit must see the same factor here. eta is taken on
+		// the light side in Evaluate (= 1 / the Sample-side eta), and the
+		// GGX BTDF below already carries 1/eta^2: together eta^2.
+		// Verified in a white furnace (IOR 1.5 sphere, sigma 0.01-0.1):
+		// 1.00/0.995/0.97 vs 0.54/0.97/1.47 before.
+		const float radianceScale = hitPoint.fromLight ? 1.f : (eta * eta);
+		const luxrays::Spectrum result = (radianceScale * fabsf(cosThetaOH) * cosThetaIH * D *
 				G / (cosThetaI * lengthSquared)) *
 				kt * (luxrays::Spectrum(1.f) - F);
 
@@ -154,6 +163,18 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 	const float ntEff = DispersiveIOR(nt, disp);
 	const float ntc = ntEff / nc;
 
+	// Index-matched interface (nt == nc): the boundary is invisible. The
+	// microfacet refraction Jacobian is singular at eta = 1 (every half
+	// vector maps to -wo, pdf -> inf, NaN MIS) and killed every path
+	// through it - SSS/volume containers at IOR 1 rendered black. Pass
+	// straight through as a delta event (F = 0, no reflection).
+	if (!isKtBlack && fabsf(ntc - 1.f) < 1e-5f) {
+		*localSampledDir = -localFixedDir;
+		*pdfW = 1.f;
+		*event = SPECULAR | TRANSMIT;
+		return kt;
+	}
+
 	luxrays::Vector wh = GgxSampleVNDF(localFixedDir, alpha, alpha, u0, u1);
 	const float specPdf = GgxVNDFHalfPdf(localFixedDir, wh, alpha, alpha);
 	if (specPdf <= 0.f)
@@ -206,6 +227,9 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 		const luxrays::Spectrum F = DispersiveFresnelR(nt, nc, disp,
 				hitPoint.fromLight ? cosThetaOH : cosThetaIH);
 		result = kt * (luxrays::Spectrum(1.f) - F) * (g2 / (g1 * threshold));
+		// Radiance scaling of the delta glass (see Evaluate)
+		if (!hitPoint.fromLight)
+			result *= eta2;
 
 		*pdfW *= threshold;
 		*event = GLOSSY | TRANSMIT;

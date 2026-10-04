@@ -3494,7 +3494,18 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			// cheap single-vertex solve first, falling back to the chain
 			// when it cannot start (LMNEE, doc/features/gpu_lighttracing.md).
 			int lmRet = 0;
-			if (lpi->pendingSplat.fromMnee == 1)
+			// Disjoint from the eye paths (CPU ConnectToEye LMNEE gate):
+			// lights an eye path can hit by BSDF sampling are already
+			// counted through the refracting blocker. (The caustic
+			// light-path condition is applied when the probe is queued:
+			// lpi has advanced past the receiver by now.)
+			// lighttracing.only (no eye tasks) owns every connection.
+			const bool lmneeOwned =
+					(pathTracer->lightTracing.eyeTaskCount == 0) ||
+					!Light_IsEnvOrIntersectable(&lights[lpi->lightIndex]);
+			if (!lmneeOwned)
+				lmRet = 0;
+			else if (lpi->pendingSplat.fromMnee == 1)
 				lmRet = LMneeChain_Start(taskConfig, task,
 						&tasksDirectLight[gid], &tasksMnee[gid], taskState, visRay, lpi
 						MATERIALS_PARAM) ? 1 : 0;
@@ -3854,8 +3865,14 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						// (e.g. a table top seen only through a glass
 						// sphere). Queue the visibility ray as an LMNEE
 						// probe so a delta occluder can start a solve.
+						// Caustic light paths only (L S+ D): otherwise the
+						// eye path's NEE at the receiver covers it
 						const bool mneeProbe = evalBlack &&
-								taskConfig->pathTracer.mnee.enabled;
+								taskConfig->pathTracer.mnee.enabled &&
+								((pathTracer->lightTracing.eyeTaskCount == 0) ||
+								LightPathInfo_IsCausticPath(lpi, event,
+										BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
+										pathTracer->hybridBackForward.glossinessThreshold));
 						// Vertex connection (M6): in BDPT mode the camera
 						// connect is the s=0 strategy - CPU ConnectToEye
 						// splats every non-delta connection (the caustic

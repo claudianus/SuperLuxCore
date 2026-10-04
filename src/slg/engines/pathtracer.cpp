@@ -2108,8 +2108,13 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 		const Spectrum &flux, const LightPathInfo &pathInfo,
 		const SspTail *sspTail,
 		vector<SampleResult> &sampleResults, u_int &used) const {
-	// I don't connect camera invisible objects with the eye
-	if (bsdf.IsCameraInvisible() || bsdf.IsDelta())
+	// I don't connect camera invisible objects with the eye. Delta
+	// materials are skipped by their static flag: a PSR-regularized glass
+	// vertex reports non-delta, but the eye path already covers it (its
+	// camera-visible vertex is exact and the vertices behind are
+	// regularized), so connecting here double counted (GPU parity:
+	// BSDF_IsDelta reads the material flag).
+	if (bsdf.IsCameraInvisible() || bsdf.GetMaterial()->IsDelta())
 		return;
 
 	float filmX, filmY;
@@ -2225,6 +2230,21 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 				}
 			} else {
 				if (mneeEnable && !bsdfConn.IsVolume() &&
+					// Disjoint from the eye paths: an eye path refracts
+					// through the same blocker and reaches any light it can
+					// hit by BSDF sampling (environment, mesh emitters) -
+					// solving the manifold toward the lens for those lights
+					// counted E-S-D-...-L twice (a diffuse ball inside a
+					// glass sphere rendered 2.6x bright in a furnace). Only
+					// lights an eye path can never hit (point/spot/
+					// projection/distant) need the light-side solve, and
+					// only for caustic light paths (L S+ D): otherwise the
+					// eye path's NEE at D covers the connection.
+					// (Pure light tracing - no hybrid eye paths - owns every
+					// connection.)
+					(!hybridBackForwardEnable ||
+						(!light.IsEnvironmental() && !light.IsIntersectable() &&
+						pathInfo.IsCausticChain())) &&
 					// PSR: a regularized delta blocker still routes to the
 					// specular-manifold solver - regularization widens the
 					// shading lobe, the transport chain stays delta, so the

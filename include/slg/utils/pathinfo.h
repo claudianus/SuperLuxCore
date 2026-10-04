@@ -226,6 +226,9 @@ public:
 	// stay non-nearly-specular; a medium vertex satisfies that. The
 	// firstVertexSeen guard keeps pure-medium prefixes eye-owned.
 	bool IsCausticPath(const BSDFEvent event, const float glossiness, const float glossinessThreshold) const;
+	// The light path so far is a (nearly) specular chain from a surface:
+	// the receiver vertex being connected closes a caustic (L S+ D)
+	bool IsCausticChain() const { return isNearlyS && firstVertexSeen && (depth.depth > 0); }
 
 	// Adaptive counterpart: all-non-diffuse chain (isAdaptiveS),
 	// non-delta receiver, hard light-adjacent terminal (v1).
