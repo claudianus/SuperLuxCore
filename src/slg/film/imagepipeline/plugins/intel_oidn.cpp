@@ -466,6 +466,27 @@ void IntelOIDN::ApplyComponents(Film &film, const u_int index) {
 		compData[c] = std::move(out);
 	}
 
+	// Residual: whatever the components do not account for (screen-
+	// normalized light tracing / caustic splats, uncounted paths). It is
+	// often the noisiest part of the image, so its positive part is
+	// denoised as one more component; the negative part (component vs
+	// beauty filtering mismatch) passes through so energy stays exact.
+	float_buffer residualPos(3 * pixelCount), residualNeg(3 * pixelCount);
+	bool hasResidual = false;
+	for (u_int i = 0; i < pixelCount; ++i)
+		for (u_int j = 0; j < 3; ++j) {
+			const float r = pixels[i].c[j] - compSum[i * 3 + j];
+			residualPos[i * 3 + j] = Max(r, 0.f);
+			residualNeg[i * 3 + j] = Min(r, 0.f);
+			hasResidual |= (r > 0.f);
+		}
+	if (hasResidual) {
+		float_buffer out(3 * pixelCount);
+		FilterImage("Residual", &residualPos[0], &out[0], &albedoBuffer[0],
+				&normalBuffer[0], width, height, enablePrefiltering);
+		residualPos = std::move(out);
+	}
+
 	// Recombine: beauty' = sum(denoised components) + passthrough emission
 	// + residual (beauty - sum of all components), keeping total energy exact
 	tbb::affinity_partitioner aff_p;
@@ -478,8 +499,7 @@ void IntelOIDN::ApplyComponents(Film &film, const u_int index) {
 						v += compData[c][i * 3 + j];
 					if (!emissionRaw.empty())
 						v += emissionRaw[i * 3 + j];
-					// Residual: whatever the components did not account for
-					v += pixels[i].c[j] - compSum[i * 3 + j];
+					v += residualPos[i * 3 + j] + residualNeg[i * 3 + j];
 					pixels[i].c[j] = std::lerp(v, pixels[i].c[j], sharpness);
 				}
 			}

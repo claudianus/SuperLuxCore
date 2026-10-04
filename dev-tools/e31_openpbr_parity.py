@@ -88,6 +88,7 @@ def main():
     props.SetFromString("""
 scene.camera.lookat.orig = 0 0 3
 scene.camera.lookat.target = 0 0 0
+scene.camera.up = 0 1 0
 scene.camera.fieldofview = 30
 scene.materials.white.type = openpbr
 scene.materials.white.basecolor = 1.0 1.0 1.0
