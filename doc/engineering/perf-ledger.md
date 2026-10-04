@@ -798,4 +798,36 @@ From gauntlet v2 + audit (`dev-tools/sota-acceleration-audit.md`):
   camera-reference renders, and the existing 328 coordinate/math checks.
   Camera maximum row-Y residual was 0.0172316 pixels; no acceptance
   tolerance, renderer default, or diagnostic shader override was changed.
+- Public native publication subsequently passed all four cp313 platform
+  builds, attestations and rolling-wheel upload:
+  [run 37160075827](https://github.com/claudianus/SuperLuxCore/actions/runs/37160075827),
+  source `2ba32d940ac45c97b73756598155a69e60a18359`.
+  Downloaded ARM wheel SHA-256:
+  `f68f87f38cd6dcd055942d0278677652a3388441bde34b949e8b27433eb9d4fc`.
+  `gh attestation verify --repo claudianus/SuperLuxCore` accepted that file.
+- A separately installed public wheel repeated nine actual Blender
+  large-film EXR renders, 15 camera renders and 328 coordinate/math
+  renders. Large-film maximum RGB residual was `3.865361213684082e-5`;
+  maximum alpha residual was `5.960464477539063e-8`. Both the package and
+  compiled `.so` paths were checked under the isolated wheel installation.
+  An ancillary throwaway guard incorrectly matched the add-on's
+  `operators.pysuperluxcoretools` module after those successful checks;
+  it was corrected to the native package namespace. The corrected guard
+  and genuine 1024×512 Metal RGBA manual-image render then exited cleanly.
+  Blender image-data verification confirmed finite pixels and the
+  expected opaque/transparent interiors. These are Apple M5 Pro runtime
+  results; successful CI builds do not certify other vendors' GPU runtime.
+- The matching offline SDK publication also succeeded:
+  [run 37162209415](https://github.com/claudianus/SuperBlendLuxCore/actions/runs/37162209415),
+  add-on source `b26ffb048c192a29ad80d555b3cfdbc5f4fd5b8c`.
+  ARM ZIP SHA-256:
+  `62d2d25a4ab038533515d110b990d0879a694a16c3519a27e4d35d299ff05261`;
+  its manifest is 2.11.11 and its embedded wheel hashes exactly to the
+  public native wheel above. Bundle attestation verification succeeded.
+  A fresh Blender profile installed it with `PIP_NO_INDEX=1`, skipped
+  engine downloading, verified isolated add-on and compiled-module paths,
+  and passed all nine large-film, 15 camera and 328 coordinate/math
+  checks. That profile rendered the genuine Metal transparent-film PNG
+  used in the manual; a separate Blender image-data read verified its
+  1024×512 dimensions, finite RGBA values and opaque/transparent interiors.
 
