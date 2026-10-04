@@ -43,6 +43,12 @@
 #include <unistd.h>
 // dladdr() to find cl2msl.py next to this loaded module
 #include <dlfcn.h>
+// opendir()/utimes() for the cache size budget
+#include <dirent.h>
+#include <sys/time.h>
+#include <algorithm>
+#include <map>
+#include <vector>
 
 using namespace std;
 
@@ -169,6 +175,76 @@ static uint64_t Fnv1a64(const string &s, uint64_t h = 1469598103934665603ULL) {
 		h *= 1099511628211ULL;
 	}
 	return h;
+}
+
+// Every distinct program (scene feature set x translator version) leaves
+// a translation, an offline metallib and a compiled-pipeline archive
+// (tens of MB together) and nothing ever removed them: a working install
+// accumulated 22GB. Treat the cache as LRU by key: the key in use is
+// touched, keys unused for 30 days are dropped, then the oldest keys go
+// until the directory fits the budget (SUPERLUXCORE_METAL_CACHE_MAX_GB,
+// default 4, 0 disables pruning). Stale temp files from crashed sessions
+// are removed too. Never fatal: a pruned key only means a recompile.
+static void PruneMetalCache(const string &cacheDir, const string &keepKey) {
+	const string keepMsl = cacheDir + "/" + keepKey + ".msl";
+	utimes(keepMsl.c_str(), nullptr);
+
+	double maxGB = 4.0;
+	const char *envMax = getenv("SUPERLUXCORE_METAL_CACHE_MAX_GB");
+	if (envMax && envMax[0])
+		maxGB = atof(envMax);
+	if (maxGB <= 0.0)
+		return;
+	const unsigned long long budget = (unsigned long long)(maxGB * 1024.0 * 1024.0 * 1024.0);
+
+	struct Group {
+		time_t lastUse = 0;
+		unsigned long long bytes = 0;
+		vector<string> files;
+	};
+	map<string, Group> groups;
+	unsigned long long total = 0;
+	const time_t now = time(nullptr);
+
+	DIR *dir = opendir(cacheDir.c_str());
+	if (!dir)
+		return;
+	while (struct dirent *e = readdir(dir)) {
+		const string name = e->d_name;
+		// Cache entries are "<16 hex key><suffix>"
+		if (name.size() < 17 || name.find_first_not_of("0123456789abcdef") < 16)
+			continue;
+		const string path = cacheDir + "/" + name;
+		struct stat st;
+		if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+			continue;
+		if ((name.find(".tmp") != string::npos) && (now - st.st_mtime > 24 * 3600)) {
+			unlink(path.c_str());
+			continue;
+		}
+		Group &g = groups[name.substr(0, 16)];
+		g.lastUse = max(g.lastUse, st.st_mtime);
+		g.bytes += (unsigned long long)st.st_size;
+		g.files.push_back(path);
+		total += (unsigned long long)st.st_size;
+	}
+	closedir(dir);
+
+	vector<pair<time_t, string>> order;
+	for (const auto &kv : groups)
+		if (kv.first != keepKey)
+			order.push_back({kv.second.lastUse, kv.first});
+	sort(order.begin(), order.end());
+
+	for (const auto &o : order) {
+		const Group &g = groups[o.second];
+		const bool expired = (now - o.first) > 30 * 24 * 3600;
+		if (!expired && total <= budget)
+			break;
+		for (const string &f : g.files)
+			unlink(f.c_str());
+		total -= g.bytes;
+	}
 }
 
 static bool LoadCachedTranslation(const string &cacheDir, const string &key,
@@ -317,6 +393,7 @@ static bool RunCL2MSL(const Context &ctx,
 	// archive kept next to the translation files
 	outCacheDir = cacheDir;
 	outCacheKey = key;
+	PruneMetalCache(cacheDir, key);
 
 	if (LoadCachedTranslation(cacheDir, key, mslSource, layoutJson)) {
 		LR_LOG(ctx, "[" << programName << "] cl2msl translation cache hit ("
@@ -418,10 +495,15 @@ MetalDeviceProgram::~MetalDeviceProgram() {
 			id<MTLBinaryArchive> archive =
 					(__bridge_transfer id<MTLBinaryArchive>)binaryArchive;
 			if (archiveDirty && !archivePath.empty()) {
+				// The archive may have been loaded from archivePath itself:
+				// serialize beside it and rename over it atomically.
 				NSString *path = [NSString stringWithUTF8String:archivePath.c_str()];
+				NSString *tmpPath = [path stringByAppendingString:@".tmp"];
 				NSError *err = nil;
-				if ([archive serializeToURL:[NSURL fileURLWithPath:path]
-						error:&err]) {
+				if ([archive serializeToURL:[NSURL fileURLWithPath:tmpPath]
+						error:&err] &&
+						rename(tmpPath.fileSystemRepresentation,
+							path.fileSystemRepresentation) == 0) {
 					fprintf(stderr, "[Metal] binary archive written: %s\n",
 							archivePath.c_str());
 				} else {
@@ -708,12 +790,19 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	if (archive)
 		pd.binaryArchives = @[ archive ];
 
-	id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithDescriptor:pd
-			options:MTLPipelineOptionNone reflection:nil error:&err];
-	if (!pso && archive) {
-		// Retry source compilation without a failed archive; retain the label.
+	// Archive hit first: FailOnBinaryArchiveMiss tells a hit apart from a
+	// silent source compile, so only pipelines that were really compiled
+	// are added and mark the archive dirty.
+	id<MTLComputePipelineState> pso = nil;
+	if (archive)
+		pso = [dev newComputePipelineStateWithDescriptor:pd
+				options:MTLPipelineOptionFailOnBinaryArchiveMiss
+				reflection:nil error:nil];
+	const bool archiveHit = (pso != nil);
+	if (!pso) {
+		// Source compile, without the archive (a stale or failing archive
+		// must not fail the compile); retain the label.
 		pd.binaryArchives = nil;
-		err = nil;
 		pso = [dev newComputePipelineStateWithDescriptor:pd
 				options:MTLPipelineOptionNone reflection:nil error:&err];
 	}
@@ -721,17 +810,18 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 		throw runtime_error("Metal PSO creation failed for " + kernelName +
 			": " + (err ? err.localizedDescription.UTF8String : "?"));
 
-	// Populate the archive. NOTE: pd.binaryArchives is only a HINT - a
-	// miss silently compiles from source, so every pipeline must be added
-	// explicitly or the archive stays empty ("Nothing to serialize").
-	// Entries already present report an error here: ignored.
-	if (archive) {
+	// Populate the archive with every pipeline compiled from source. This
+	// also covers a LOADED archive: a session whose cold compile failed
+	// part-way serialized only the PSOs it built, and the kernels compiled
+	// by the next session must be written back or they would recompile
+	// cold forever.
+	if (archive && !archiveHit) {
 		NSError *aerr = nil;
 		// MTLBinaryArchive is not thread-safe: serialize the add across
 		// the parallel GetKernel workers (near-instant vs the compile).
-		// The result is deliberately ignored for the reasons above.
 		std::lock_guard<std::mutex> lock(metalDeviceProgram.archiveMutex);
-		[archive addComputePipelineFunctionsWithDescriptor:pd error:&aerr];
+		if ([archive addComputePipelineFunctionsWithDescriptor:pd error:&aerr])
+			metalDeviceProgram.archiveDirty = true;
 	}
 
 	metalDeviceKernel.function = (__bridge_retained void *)fn;

@@ -456,19 +456,37 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		for (const KernelCompileJob &job : jobs)
 			futures.push_back(std::async(std::launch::async, compileJob, std::cref(job)));
 
-		// Join EVERY worker before propagating a failure: a still-running
-		// async holds a reference to program and must not outlive it.
-		std::exception_ptr firstException;
+		// Join EVERY worker before retrying or propagating a failure: a
+		// still-running async holds a reference to program and must not
+		// outlive it.
+		vector<size_t> failed;
+		vector<string> failedWhat;
 		for (size_t i = 0; i < futures.size(); ++i) {
 			try {
 				results[i] = futures[i].get();
+			} catch (std::exception &e) {
+				failed.push_back(i);
+				failedWhat.push_back(e.what());
 			} catch (...) {
-				if (!firstException)
-					firstException = std::current_exception();
+				failed.push_back(i);
+				failedWhat.push_back("unknown error");
 			}
 		}
-		if (firstException)
-			std::rethrow_exception(firstException);
+
+		// A parallel cold compile can lose individual kernels to the
+		// backend compiler rather than to the source: Apple's
+		// MTLCompilerService gives up on a request that runs too long
+		// (XPC_ERROR_CONNECTION_INTERRUPTED "after multiple retries"), and
+		// sharing it with the other kernels stretches a heavy kernel past
+		// that limit. Retry only the failed kernels one at a time - a real
+		// compile error fails again here.
+		for (size_t f = 0; f < failed.size(); ++f) {
+			const size_t i = failed[f];
+			SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Parallel compile of "
+					<< jobs[i].name << " failed (" << failedWhat[f]
+					<< "), retrying sequentially");
+			results[i] = compileJob(jobs[i]);
+		}
 	} else {
 		for (size_t i = 0; i < jobs.size(); ++i)
 			results[i] = compileJob(jobs[i]);

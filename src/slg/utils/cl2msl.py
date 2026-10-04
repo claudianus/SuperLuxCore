@@ -1335,6 +1335,12 @@ def translate(cl_source: str, params: list) -> str:
         # hit-point setup evaluates UV/alpha textures
         "Material_Bump",
         "HitPoint_Init",
+        # Spectral leaf upsampling (Smits basis + JH2019): SLG_SPECTRAL
+        # expands it at every texture leaf producer, and inlined into all
+        # of them the spectral AdvancePaths_MK_RT_NEXT_VERTEX took ~280s
+        # alone and timed out MTLCompilerService on every first spectral
+        # GPU render (the add-on default). As a call target: ~10s.
+        "Spectral_Upsample",
     ]
     # Keep the small texture-reader loops inline. Forcing a separate
     # call boundary produced rare black VM results on Apple M5 Pro;

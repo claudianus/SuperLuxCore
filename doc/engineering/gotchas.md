@@ -386,3 +386,19 @@
   `CUDADevice::CompileProgram` — feed the dump to
   `dev-tools/nvrtc_probe.exe` (`sass` mode) to experiment with NVRTC
   options (e.g. split-compile counts) without a 20min render loop.
+- **Spectral Metal first render timed out MTLCompilerService** (fixed
+  2026-10-04). The add-on defaults to spectral, and under `SLG_SPECTRAL`
+  every texture leaf producer expands the force-inlined
+  `Spectral_Upsample` (Smits + JH2019) - `EvalStack_PushFloat3` even
+  expanded its argument once per component. Inlined everywhere,
+  `AdvancePaths_MK_RT_NEXT_VERTEX` took ~280s on its own and, sharing
+  the compiler with the other 23 kernels, hit the service's limit:
+  `XPC_ERROR_CONNECTION_INTERRUPTED ... after multiple retries`, no
+  render. RGB builds were unaffected (all 24 kernels ~13s), which is
+  why RGB/test-scene GPU proofs never saw it. Fix: `Spectral_Upsample`
+  is a noinline call target in cl2msl (RT_NEXT_VERTEX ~10s, cold
+  spectral first render ~39s total, CPU/GPU block parity equal to RGB)
+  and `EvalStack_PushFloat3` evaluates its argument once. To time one
+  kernel in isolation, compile a single function from the cached
+  `<key>.metallib` with `newComputePipelineStateWithFunction:` - the
+  in-engine timings only cover the parallel batch.

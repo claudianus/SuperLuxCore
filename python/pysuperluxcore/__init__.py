@@ -13,6 +13,8 @@ from ctypes import CDLL, RTLD_GLOBAL, byref, c_int, ARRAY
 import os
 
 from .pysuperluxcore import *
+# A star import skips dunder names: re-export the extension's version.
+from .pysuperluxcore import __version__
 
 _LUXFOLDER = Path(pysuperluxcore.__file__).parent
 

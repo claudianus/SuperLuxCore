@@ -28,7 +28,12 @@
 
 #define EvalStack_PushFloat(a) { evalStack[*evalStackOffset] = a; *evalStackOffset = *evalStackOffset + 1; }
 #define EvalStack_PushFloat2(a) { EvalStack_PushFloat(a.x); EvalStack_PushFloat(a.y); }
-#define EvalStack_PushFloat3(a) { EvalStack_PushFloat(a.x); EvalStack_PushFloat(a.y); EvalStack_PushFloat(a.z); }
+// Evaluate the argument ONCE: under SLG_SPECTRAL it is often the
+// SLG_SPECTRAL_LEAF_EVAL upsample (force-inlined), and expanding it per
+// component tripled that code at every texture site - the spectral
+// AdvancePaths_MK_RT_NEXT_VERTEX took minutes to build and timed out the
+// Metal compiler service on the first GPU render.
+#define EvalStack_PushFloat3(a) { const float3 evalStackPushV = (a); EvalStack_PushFloat(evalStackPushV.x); EvalStack_PushFloat(evalStackPushV.y); EvalStack_PushFloat(evalStackPushV.z); }
 #define EvalStack_PopFloat(a) { *evalStackOffset = *evalStackOffset - 1; a = evalStack[*evalStackOffset]; }
 #define EvalStack_PopFloat2(a) { EvalStack_PopFloat(a.y); EvalStack_PopFloat(a.x); }
 #define EvalStack_PopFloat3(a) { EvalStack_PopFloat(a.z); EvalStack_PopFloat(a.y); EvalStack_PopFloat(a.x); }
