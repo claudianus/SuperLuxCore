@@ -137,6 +137,8 @@ public:
 	TextureConstPtr GetFilmIor() const { return FilmIor; }
 
 private:
+	void UpdateGlossiness();
+
 	// Per-hitpoint evaluated parameter set, shared by Evaluate/Sample/Pdf
 	struct Params {
 		luxrays::Spectrum baseColor, specColor, transColor, transScatter;

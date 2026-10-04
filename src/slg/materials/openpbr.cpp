@@ -74,6 +74,22 @@ OpenPBRMaterial::OpenPBRMaterial(
 	CoatDarkening(coatDarkening),
 	FuzzWeight(fuzzWeight), FuzzColor(fuzzColor), FuzzRoughness(fuzzRoughness),
 	FilmWeight(filmWeight), FilmThickness(filmThickness), FilmIor(filmIor) {
+	UpdateGlossiness();
+}
+
+// Glossiness classifies the material's GLOSSY events for the caustic /
+// hybrid back-forward / PhotonGI logic (IsNearlySpecular). Left at the
+// Material default (0) every OpenPBR glossy bounce counted as nearly
+// specular whatever its roughness: light paths through a rough subsurface
+// boundary became "caustic" and each random-walk vertex added the caustic
+// beam estimate (white furnace SSS sphere 12-87x too bright). Same
+// mapping as Disney (sqrt of the perceptual roughness); a coat adds its own
+// (sharper) lobe.
+void OpenPBRMaterial::UpdateGlossiness() {
+	float g = sqrtf(Clamp(SpecularRoughness->Filter(), 0.f, 1.f));
+	if (CoatWeight->Filter() > 0.f)
+		g = Min(g, sqrtf(Clamp(CoatRoughness->Filter(), 0.f, 1.f)));
+	glossiness = g;
 }
 
 //------------------------------------------------------------------------------
@@ -903,6 +919,8 @@ void OpenPBRMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef
 	if (FilmWeight == &oldTex) FilmWeight = &newTex;
 	if (FilmThickness == &oldTex) FilmThickness = &newTex;
 	if (FilmIor == &oldTex) FilmIor = &newTex;
+
+	UpdateGlossiness();
 }
 
 PropertiesUPtr OpenPBRMaterial::ToProperties(const ImageMapCache &imgMapCache,

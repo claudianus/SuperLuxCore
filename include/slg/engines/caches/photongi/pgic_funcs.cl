@@ -49,7 +49,11 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 		const bool photonGICausticCacheUsed) {
 	// This is a specific check to cut fireflies created by some glossy or
 	// specular bounce
-	if (!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth > 0))
+	// Only bounces the caustic photons model (CPU IsDirectLightHitVisible)
+	if (taskConfig->pathTracer.pgic.causticEnabled &&
+			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth > 0) &&
+			((pathInfo->lastBSDFEvent & SPECULAR) ||
+				(pathInfo->lastGlossiness < taskConfig->pathTracer.pgic.glossinessUsageThreshold)))
 		return false;
 	else if (!taskConfig->pathTracer.pgic.causticEnabled || !photonGICausticCacheUsed)
 		return true;
