@@ -3028,7 +3028,11 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 		bool isTri = false;
 		if ((focusN > 0) && !isPositional && (light->type == TYPE_TRIANGLE)) {
 			const uint triMatIndex = sceneObjs[light->triangle.meshIndex].materialIndex;
-			if (Material_GetEmittedCosThetaMax(triMatIndex MATERIALS_PARAM) <= 0.f) {
+			// An emission map (IES, area light spread, sized spot cone)
+			// is not a cosine hemisphere: re-aiming it would emit outside
+			// its profile (058's 70-degree niche lights lit the walls)
+			if ((Material_GetEmittedCosThetaMax(triMatIndex MATERIALS_PARAM) <= 0.f) &&
+					(mats[triMatIndex].emissionFuncDistOffset == NULL_INDEX)) {
 				isTri = true;
 				HitPoint_GetFrame(&task->tmpHitPoint, &emitFrame);
 				// Recover the direction-independent emitted radiance:

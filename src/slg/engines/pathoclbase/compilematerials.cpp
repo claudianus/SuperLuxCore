@@ -1127,6 +1127,7 @@ void CompiledScene::CompileMaterials() {
 				mat->openpbr.filmWeightTexIndex = ti(om.GetFilmWeight());
 				mat->openpbr.filmThicknessTexIndex = ti(om.GetFilmThickness());
 				mat->openpbr.filmIorTexIndex = ti(om.GetFilmIor());
+				mat->openpbr.coatAffectsBaseIor = om.GetCoatAffectsBaseIor() ? 1u : 0u;
 				break;
 			}
 			case DIFFRACTION: {

@@ -41,6 +41,7 @@ typedef struct {
 	float fuzzWeight, fuzzRoughness;
 	float filmWeight, filmThickness, filmIor;
 	float extIor;
+	uint coatAffectsBaseIor;
 	// Non-zero when the material's interior volume is a homogeneous
 	// albedo-parametrized SSS medium (its albedo already reproduces
 	// subsurface_color, so the interface tint must stay white).
@@ -87,6 +88,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->coatAniso = clamp(Texture_GetFloatValue(material->openpbr.coatAnisotropyTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
 	p->coatRotation = Texture_GetFloatValue(material->openpbr.coatRotationTexIndex, hitPoint TEXTURES_PARAM);
 	p->coatIor = fmax(Texture_GetFloatValue(material->openpbr.coatIorTexIndex, hitPoint TEXTURES_PARAM), 1.f);
+	p->coatAffectsBaseIor = material->openpbr.coatAffectsBaseIor;
 	p->coatDarkening = clamp(Texture_GetFloatValue(material->openpbr.coatDarkeningTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
 
 	p->fuzzWeight = clamp(Texture_GetFloatValue(material->openpbr.fuzzWeightTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
@@ -117,6 +119,8 @@ OPENCL_FORCE_INLINE float OpenPBRMat_EtaS(__private const OpenPBRParams *p,
 #else
 		Spectral_RefIOR(p->specIor, p->dispersion, p->sellB, p->sellC);
 #endif
+	if (!p->coatAffectsBaseIor)
+		return nS / p->extIor;
 	const float etaSC = nS / p->coatIor;
 	const float coatTerm = (etaSC < 1.f) ? 1.f / etaSC : etaSC;
 	return Lerp(p->coatWeight, nS / p->extIor, coatTerm);

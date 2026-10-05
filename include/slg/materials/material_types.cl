@@ -380,6 +380,8 @@ typedef struct {
 	unsigned int filmWeightTexIndex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
+	// OpenPBRMaterial::coatAffectsBaseIor
+	unsigned int coatAffectsBaseIor;
 } OpenPBRParam;
 
 typedef struct {

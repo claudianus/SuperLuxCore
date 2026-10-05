@@ -135,6 +135,11 @@ public:
 	TextureConstPtr GetFilmWeight() const { return FilmWeight; }
 	TextureConstPtr GetFilmThickness() const { return FilmThickness; }
 	TextureConstPtr GetFilmIor() const { return FilmIor; }
+	// OpenPBR specular_ior_ratio: under a coat the base specular IOR is
+	// relative to the coat (default). Off: the base keeps its IOR against
+	// the exterior medium, as Cycles' Principled BSDF does.
+	void SetCoatAffectsBaseIor(const bool v) { coatAffectsBaseIor = v; }
+	bool GetCoatAffectsBaseIor() const { return coatAffectsBaseIor; }
 
 private:
 	void UpdateGlossiness();
@@ -153,6 +158,7 @@ private:
 		float fuzzWeight, fuzzRoughness;
 		float filmWeight, filmThickness, filmIor;
 		float extIor;
+		bool coatAffectsBaseIor;
 	};
 
 	// Lobe ids matching the OpenPBR reference lobe list
@@ -205,6 +211,7 @@ private:
 		return (fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
 	}
 
+	bool coatAffectsBaseIor = true;
 	TextureConstPtr BaseColor, BaseWeight, BaseMetalness, BaseDiffuseRoughness;
 	TextureConstPtr SpecularWeight, SpecularColor, SpecularRoughness,
 			SpecularAnisotropy, SpecularRotation, SpecularIor;

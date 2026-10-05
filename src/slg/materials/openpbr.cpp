@@ -128,6 +128,7 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 	p.coatAniso = Clamp(CoatAnisotropy->GetFloatValue(hitPoint), 0.f, 1.f);
 	p.coatRotation = CoatRotation->GetFloatValue(hitPoint);
 	p.coatIor = Max(CoatIor->GetFloatValue(hitPoint), 1.f);
+	p.coatAffectsBaseIor = coatAffectsBaseIor;
 	p.coatDarkening = Clamp(CoatDarkening->GetFloatValue(hitPoint), 0.f, 1.f);
 
 	p.fuzzWeight = Clamp(FuzzWeight->GetFloatValue(hitPoint), 0.f, 1.f);
@@ -148,6 +149,8 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 // wavelength.
 float OpenPBRMaterial::EtaS(const Params &p, const Dispersion &disp) const {
 	const float nS = DispersiveIOR(p.specIor, disp);
+	if (!p.coatAffectsBaseIor)
+		return nS / p.extIor;
 	const float etaSC = nS / p.coatIor;
 	const float coatTerm = (etaSC < 1.f) ? 1.f / etaSC : etaSC;
 	return Lerp(p.coatWeight, nS / p.extIor, coatTerm);
@@ -1019,6 +1022,7 @@ PropertiesUPtr OpenPBRMaterial::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.materials." + name + ".coatrotation")(CoatRotation->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".coatior")(CoatIor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".coatdarkening")(CoatDarkening->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".coataffectsbaseior")(coatAffectsBaseIor));
 	props->Set(Property("scene.materials." + name + ".fuzzweight")(FuzzWeight->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".fuzzcolor")(FuzzColor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".fuzzroughness")(FuzzRoughness->GetSDLValue()));

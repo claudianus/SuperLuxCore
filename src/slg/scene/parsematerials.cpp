@@ -916,6 +916,8 @@ MaterialUPtr Scene::CreateMaterial(
 			fuzzWeight, fuzzColor, fuzzRoughness,
 			filmWeight, filmThickness, filmIor
 		);
+		static_cast<OpenPBRMaterial *>(mat.get())->SetCoatAffectsBaseIor(
+				parseBool("coataffectsbaseior", true));
 
 		// Implicit interior volume: subsurface scattering (dense medium)
 		// wins over the transmission medium when both are active - the
