@@ -125,6 +125,10 @@ public:
 	u_int lightSceneIndex;
 	VolumeConstPtr volume;
 	u_longlong linkMask = 0;
+	// Environment lights: multiplier for camera rays that see the light
+	// directly (Cycles world Mix on Light Path "Is Camera Ray": a backdrop
+	// brighter or darker than the lighting it casts)
+	luxrays::Spectrum cameraGain = luxrays::Spectrum(1.f);
 };
 
 //------------------------------------------------------------------------------

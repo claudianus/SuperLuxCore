@@ -259,10 +259,13 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 
 		float directPdfW;
 		float emissionPdfW = 0.f;
-		const float3 envRadianceRGB = EnvLight_GetRadiance(light, sceneRadius, bsdf,
+		float3 envRadianceRGB = EnvLight_GetRadiance(light, sceneRadius, bsdf,
 				-VLOAD3F(&ray->d.x), &directPdfW,
 				vcEnabled ? &emissionPdfW : NULL
 				LIGHTS_PARAM);
+		// Camera rays (no bounce yet) see the backdrop with cameraGain
+		if (pathInfo->depth.depth == 0)
+			envRadianceRGB *= MAKE_FLOAT3(light->cameraGain[0], light->cameraGain[1], light->cameraGain[2]);
 #if defined(SLG_SPECTRAL)
 		// Env lights carry baked RGB radiance: upsample to the path bins
 		// with the illuminant basis at this funnel (bsdf may be a miss

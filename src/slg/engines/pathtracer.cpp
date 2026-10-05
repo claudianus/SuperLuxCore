@@ -768,7 +768,10 @@ void PathTracer::DirectHitInfiniteLight(SceneConstRef scene,
 			continue;
 
 		float directPdfW;
-		const Spectrum envRadiance = envLight.GetRadiance(scene, bsdf, -ray.d, &directPdfW);
+		Spectrum envRadiance = envLight.GetRadiance(scene, bsdf, -ray.d, &directPdfW);
+		// Camera rays (no bounce yet) see the backdrop with cameraGain
+		if (pathInfo.depth.depth == 0)
+			envRadiance *= Spectral::Emission(envLight.cameraGain);
 		if (!envRadiance.Black()) {
 			float weight;
 			if (!(pathInfo.lastBSDFEvent & SPECULAR)) {

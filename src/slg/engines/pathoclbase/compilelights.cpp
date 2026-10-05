@@ -416,6 +416,9 @@ void CompiledScene::CompileLights() {
 		// Light linking group mask (TriangleLight already inherited the
 		// owning object's groups in DefineIntersectableLights)
 		oclLight->linkMask = l.linkMask;
+		oclLight->cameraGain[0] = l.cameraGain.c[0];
+		oclLight->cameraGain[1] = l.cameraGain.c[1];
+		oclLight->cameraGain[2] = l.cameraGain.c[2];
 
 		switch (l.GetType()) {
 			case TYPE_TRIANGLE: {

@@ -180,6 +180,8 @@ typedef struct {
 #else
 	u_longlong linkMask;
 #endif
+	// LightSource::cameraGain (environment lights, camera rays)
+	float cameraGain[3];
 
 	union {
 		NotIntersectableLightSource notIntersectable;
