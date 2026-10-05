@@ -500,8 +500,12 @@ OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource 
 	const float cosOutLight = dot(hitPointNormal, dir);
 	const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex
 			MATERIALS_PARAM);
+	// Two-sided emitters (CPU TriangleLight::GetRadiance) accept the back face
+	const bool twoSided = (triLight->triangle.imageMapIndex == NULL_INDEX) &&
+			mats[materialIndex].emissionTwoSided;
 	// emissionFunc can emit light even backward, this is for compatibility with classic Lux
-	if (((triLight->triangle.imageMapIndex == NULL_INDEX) && (cosOutLight < cosThetaMax + DEFAULT_COS_EPSILON_STATIC)) ||
+	if (((triLight->triangle.imageMapIndex == NULL_INDEX) &&
+			((twoSided ? fabs(cosOutLight) : cosOutLight) < cosThetaMax + DEFAULT_COS_EPSILON_STATIC)) ||
 			// A safety check to avoid NaN/Inf
 			(triLight->triangle.invTriangleArea == 0.f) || (triLight->triangle.invMeshArea == 0.f))
 		return BLACK;
@@ -556,6 +560,8 @@ OPENCL_FORCE_INLINE float3 TriangleLight_GetRadiance(__global const LightSource 
 		else
 			*emissionPdfW = triLight->triangle.invTriangleArea *
 					fabs(cosOutLight) * M_1_PI_F;
+		if (twoSided)
+			*emissionPdfW *= .5f;
 	}
 
 	return Material_GetEmittedRadiance(materialIndex,
@@ -620,8 +626,12 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 	const float cosAtLight = dot(geometryN, -sampleDir);
 	const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex
 		MATERIALS_PARAM);
+	// Two-sided emitters (CPU TriangleLight::Illuminate) accept the back face
+	const bool twoSided = (triLight->triangle.imageMapIndex == NULL_INDEX) &&
+			mats[materialIndex].emissionTwoSided;
 	// emissionFunc can emit light even backward, this is for compatibility with classic Lux
-	if ((triLight->triangle.imageMapIndex == NULL_INDEX) && (cosAtLight < cosThetaMax + DEFAULT_COS_EPSILON_STATIC))
+	if ((triLight->triangle.imageMapIndex == NULL_INDEX) &&
+			((twoSided ? fabs(cosAtLight) : cosAtLight) < cosThetaMax + DEFAULT_COS_EPSILON_STATIC))
 		return BLACK;
 
 	// Vertex connection (M6): CPU TriangleLight::Illuminate contract
@@ -694,6 +704,8 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 			else
 				*emissionPdfW = triLight->triangle.invTriangleArea *
 						fabs(cosAtLight) * M_1_PI_F;
+			if (twoSided)
+				*emissionPdfW *= .5f;
 		}
 
 		*directPdfW = triLight->triangle.invTriangleArea * shadowRayDistanceSquared / fabs(cosAtLight);
@@ -1878,24 +1890,33 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Emit(
 		emissionFuncColor = ImageMap_GetSpectrum(imgMap, uv.x, uv.y
 				IMAGEMAPS_PARAM) * (1.f / material->emissionFuncAverage);
 	} else {
+		// Two-sided: pick a face with the first half of u2 (CPU twin)
+		const bool twoSided = material->emissionTwoSided;
+		const bool backFace = twoSided && (u2 >= .5f);
+		const float uu2 = twoSided ? (backFace ? (2.f * u2 - 1.f) : (2.f * u2)) : u2;
 		const float cosThetaMax = Material_GetEmittedCosThetaMax(materialIndex MATERIALS_PARAM);
 		if (cosThetaMax >= 1.f - DEFAULT_COS_EPSILON_STATIC) {
 			// emittedTheta == 0: pure forward emission
 			localDirOut = MAKE_FLOAT3(0.f, 0.f, 1.f);
 			dirPdfW = 1.f;
 		} else if (cosThetaMax > 0.f) {
-			localDirOut = UniformSampleCone(u2, u3, cosThetaMax,
+			localDirOut = UniformSampleCone(uu2, u3, cosThetaMax,
 						MAKE_FLOAT3(1.f, 0.f, 0.f), MAKE_FLOAT3(0.f, 1.f, 0.f), MAKE_FLOAT3(0.f, 0.f, 1.f));
 			dirPdfW = UniformConePdf(cosThetaMax);
 		} else {
 			float pdf;
-			localDirOut = CosineSampleHemisphereWithPdf(u2, u3, &pdf);
+			localDirOut = CosineSampleHemisphereWithPdf(uu2, u3, &pdf);
 			dirPdfW = pdf;
 		}
 		// Cannot really not emit the particle, so just bias it to the
 		// correct angle (same clamp as CPU TriangleLight::Emit; a
 		// directional map may emit backward so it is not clamped)
 		localDirOut.z = max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
+		if (twoSided) {
+			dirPdfW *= .5f;
+			if (backFace)
+				localDirOut.z = -localDirOut.z;
+		}
 	}
 
 	if (dirPdfW == 0.f)

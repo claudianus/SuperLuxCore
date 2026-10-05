@@ -275,6 +275,7 @@ PropertiesUPtr Material::ToProperties(const ImageMapCache &imgMapCache, const bo
 	props.Set(Property("scene.materials." + name + ".emission.normalizebycolor")(emittedPowerNormalize));
 	props.Set(Property("scene.materials." + name + ".emission.efficiency")(emittedEfficiency));
 	props.Set(Property("scene.materials." + name + ".emission.theta")(emittedTheta));
+	props.Set(Property("scene.materials." + name + ".emission.twosided")(emissionTwoSided));
 	props.Set(Property("scene.materials." + name + ".emission.id")(lightID));
 	props.Set(Property("scene.materials." + name + ".emission.importance")(emittedImportance));
 	if (emittedTex)

@@ -645,6 +645,7 @@ void CompiledScene::CompileMaterials() {
 			mat->emitTexIndex = NULL_INDEX;
 		ASSIGN_SPECTRUM(mat->emittedFactor, m.GetEmittedFactor());
 		mat->emittedCosThetaMax = m.GetEmittedCosThetaMax();
+		mat->emissionTwoSided = m.IsEmissionTwoSided() ? 1 : 0;
 
 		// Directional emission map (IES): upload the spherical-function
 		// sampling distribution so the device Emit() can light-trace

@@ -471,6 +471,8 @@ typedef struct {
 	float bumpSampleDistance, bumpFilterWidth;
 	Spectrum emittedFactor;
 	float emittedCosThetaMax;
+	// Both faces emit (Cycles mesh emission, Material::IsEmissionTwoSided)
+	int emissionTwoSided;
 	// Directional emission map (e.g. IES) for light tracing: the
 	// SampleableSphericalFunction sampling distribution (offset into
 	// envLightDistribution), its spherical average and the source map.

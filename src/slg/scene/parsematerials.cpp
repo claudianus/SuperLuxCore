@@ -1108,6 +1108,7 @@ MaterialUPtr Scene::CreateMaterial(
 		)
 	);
 	mat->SetEmittedTheta(std::clamp(parseFloat("emission.theta", 90.0), 0.f, 90.f));
+	mat->SetEmissionTwoSided(parseBool("emission.twosided", false));
 	mat->SetLightID(props.Get(Property(propName + ".emission.id")(0u)).Get<u_int>());
 	mat->SetEmittedImportance(parseFloat("emission.importance", 1.0));
 	mat->SetEmittedTemperature(parseFloat("emission.temperature", -1.f));

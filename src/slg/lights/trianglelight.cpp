@@ -61,12 +61,14 @@ float TriangleLight::GetPower(SceneConstRef scene) const {
 	if (lightMaterial->GetEmissionFunc())
 		return triangleArea * emittedRadianceY;
 
+	// A two-sided emitter radiates the same lobe from both faces
+	const float sides = lightMaterial->IsEmissionTwoSided() ? 2.f : 1.f;
 	if (lightMaterial->GetEmittedTheta() == 0.f)
-		return triangleArea * emittedRadianceY;
+		return sides * triangleArea * emittedRadianceY;
 	else if (lightMaterial->GetEmittedTheta() < 90.f)
-		return triangleArea * (2.f * M_PI) * (1.f - lightMaterial->GetEmittedCosThetaMax()) * emittedRadianceY;
+		return sides * triangleArea * (2.f * M_PI) * (1.f - lightMaterial->GetEmittedCosThetaMax()) * emittedRadianceY;
 	else
-		return triangleArea * M_PI * emittedRadianceY;
+		return sides * triangleArea * M_PI * emittedRadianceY;
 }
 
 void TriangleLight::Preprocess() {
@@ -107,18 +109,27 @@ Spectrum TriangleLight::Emit(SceneConstRef scene,
 		emissionFunc->Sample(u2, u3, &localDirOut, &emissionPdfW);
 		emissionColor = static_cast<const SphericalFunction&>(*emissionFunc).Evaluate(localDirOut) / emissionFunc->Average();
 	} else {
+		// Two-sided: pick a face with the first half of u2 (GPU twin)
+		const bool twoSided = lightMaterial->IsEmissionTwoSided();
+		const bool backFace = twoSided && (u2 >= .5f);
+		const float uu2 = twoSided ? (backFace ? (2.f * u2 - 1.f) : (2.f * u2)) : u2;
 		if (lightMaterial->GetEmittedTheta() == 0.f) {
 			localDirOut = Vector(0.f, 0.f, 1.f);
 			emissionPdfW = 1.f;
 		} else if (lightMaterial->GetEmittedTheta() < 90.f) {
 			const float cosThetaMax = lightMaterial->GetEmittedCosThetaMax();
-			localDirOut = UniformSampleCone(u2, u3, cosThetaMax);
+			localDirOut = UniformSampleCone(uu2, u3, cosThetaMax);
 			emissionPdfW = UniformConePdf(cosThetaMax);
 		} else
-			localDirOut = CosineSampleHemisphere(u2, u3, &emissionPdfW);
+			localDirOut = CosineSampleHemisphere(uu2, u3, &emissionPdfW);
 
 		// Cannot really not emit the particle, so just bias it to the correct angle
 		localDirOut.z = Max(localDirOut.z, DEFAULT_COS_EPSILON_STATIC);
+		if (twoSided) {
+			emissionPdfW *= .5f;
+			if (backFace)
+				localDirOut.z = -localDirOut.z;
+		}
 	}
 
 	if (emissionPdfW == 0.f)
@@ -209,7 +220,9 @@ Spectrum TriangleLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	const auto& emissionFunc = lightMaterial->GetEmissionFunc();
 
 	// emissionFunc can emit light even backward, this is for compatibility with classic Lux
-	if (!emissionFunc && (cosAtLight < lightMaterial->GetEmittedCosThetaMax() + DEFAULT_COS_EPSILON_STATIC))
+	const bool twoSided = !emissionFunc && lightMaterial->IsEmissionTwoSided();
+	if (!emissionFunc && ((twoSided ? fabsf(cosAtLight) : cosAtLight) <
+			lightMaterial->GetEmittedCosThetaMax() + DEFAULT_COS_EPSILON_STATIC))
 		return Spectrum();
 
 	if (cosThetaAtLight)
@@ -258,6 +271,9 @@ Spectrum TriangleLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 				*emissionPdfW = invTriangleArea * UniformConePdf(lightMaterial->GetEmittedCosThetaMax());
 			else
 				*emissionPdfW = invTriangleArea * fabsf(cosAtLight) * INV_PI;
+	
+			if (twoSided)
+				*emissionPdfW *= .5f;
 		}
 
 		directPdfW = invTriangleArea * distanceSquared / fabsf(cosAtLight);
@@ -287,6 +303,9 @@ bool TriangleLight::IsAlwaysInShadow(SceneConstRef scene,
 	//	It is to hard to say if motion blur is enabled
 	if ((mesh.GetType() == TYPE_TRIANGLE_MOTION) || (mesh.GetType() == TYPE_EXT_TRIANGLE_MOTION))
 		return false;
+	// Both faces emit: nothing is behind a two-sided emitter
+	if (lightMaterial->IsEmissionTwoSided())
+		return false;
 
 	Transform localToWorld;
 	mesh.GetLocal2World(0.f, localToWorld);
@@ -308,8 +327,10 @@ Spectrum TriangleLight::GetRadiance(const HitPoint &hitPoint,
 
 	const float cosOutLight = Dot(hitPoint.shadeN, hitPoint.fixedDir);
 	const auto& emissionFunc = lightMaterial->GetEmissionFunc();
+	const bool twoSided = !emissionFunc && lightMaterial->IsEmissionTwoSided();
 	// emissionFunc can emit light even backward, this is for compatibility with classic Lux
-	if (!emissionFunc && (cosOutLight < lightMaterial->GetEmittedCosThetaMax() + DEFAULT_COS_EPSILON_STATIC))
+	if (!emissionFunc && ((twoSided ? fabsf(cosOutLight) : cosOutLight) <
+			lightMaterial->GetEmittedCosThetaMax() + DEFAULT_COS_EPSILON_STATIC))
 		return Spectrum();
 
 	if (directPdfA)
@@ -338,6 +359,9 @@ Spectrum TriangleLight::GetRadiance(const HitPoint &hitPoint,
 				*emissionPdfW = invTriangleArea * UniformConePdf(lightMaterial->GetEmittedCosThetaMax());
 			else
 				*emissionPdfW = invTriangleArea * fabsf(cosOutLight) * INV_PI;
+	
+			if (twoSided)
+				*emissionPdfW *= .5f;
 		}
 	}
 

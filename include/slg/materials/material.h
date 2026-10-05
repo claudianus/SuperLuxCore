@@ -95,6 +95,11 @@ public:
 	void SetEmittedTheta(const float theta);
 	float GetEmittedTheta() const { return emittedTheta; }
 	float GetEmittedCosThetaMax() const { return emittedCosThetaMax; }
+	// Emission from both faces (Cycles mesh emission: the emission
+	// closure uses |N.w|); triangle lights then emit, illuminate and are
+	// seen from either side with the same radiance
+	void SetEmissionTwoSided(const bool v) { emissionTwoSided = v; }
+	bool IsEmissionTwoSided() const { return emissionTwoSided; }
 	void SetEmittedTemperature(const float v) { emittedTemperature = v; UpdateEmittedFactor(); }
 	void SetEmittedTemperatureNormalize(const bool v) { emittedNormalizeTemperature = v; UpdateEmittedFactor(); }
 	bool IsUsingPrimitiveArea() const { return usePrimitiveArea; }
@@ -303,6 +308,7 @@ protected:
 	float emittedImportance;
 	luxrays::Spectrum emittedGain, emittedFactor;
 	float emittedPower, emittedEfficiency, emittedTheta, emittedCosThetaMax;
+	bool emissionTwoSided = false;
 	bool emittedPowerNormalize, emittedGainNormalize;
 	float emittedTemperature;
 	bool emittedNormalizeTemperature;

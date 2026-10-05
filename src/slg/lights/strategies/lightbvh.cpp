@@ -391,6 +391,9 @@ void LightStrategyLightBVH::Preprocess(SceneConstRef scene,
 						rawPower *= M_PI * ef->GetMaxValue() / ef->Average();
 						e.thetaO = Min(ef->GetSupportTheta(), (float)M_PI);
 						e.focused = (e.thetaO < (float)M_PI);
+					} else if (tl.lightMaterial->IsEmissionTwoSided()) {
+						// Both faces emit: no orientation bound
+						e.thetaO = M_PI;
 					} else {
 						const float et = tl.lightMaterial->GetEmittedTheta();
 						e.thetaO = (et == 0.f) ? 0.f :
