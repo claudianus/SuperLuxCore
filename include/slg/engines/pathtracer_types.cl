@@ -43,6 +43,9 @@ typedef struct {
 
 	int forceBlackBackground;
 
+	// Cycles sample clamp (path.clamping.cycles.direct/indirect, 0 = off)
+	float cyclesClampDirect, cyclesClampIndirect;
+
 	// ReSTIR DI direct light resampling: RIS reservoir over the light
 	// picking distribution (the proposal q). The target function is the
 	// estimated direct contribution (radiance x geometry / (q * pdfW)).

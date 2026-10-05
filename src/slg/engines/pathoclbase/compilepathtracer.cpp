@@ -94,6 +94,8 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.lightTracing.focusCasterCount = lightFocusCasters.size() / 4;
 	
 	compiledPathTracer.forceBlackBackground = pathTracer->forceBlackBackground;
+	compiledPathTracer.cyclesClampDirect = pathTracer->cyclesClampDirect;
+	compiledPathTracer.cyclesClampIndirect = pathTracer->cyclesClampIndirect;
 
 	// Hero-wavelength spectral transport: the kernel-side path wavelengths
 	// live in SampleResult/HitPoint; the extra boot dimension comes from

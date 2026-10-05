@@ -66,6 +66,8 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 
 	sampleResult->firstPathVertexEvent = NONE;
 	sampleResult->firstPathVertex = true;
+	sampleResult->clampEmission = 0.f;
+	sampleResult->clampDirect = 0.f;
 	// sampleResult->lastPathVertex can not be really initialized here without knowing
 	// the max. path depth.
 	sampleResult->lastPathVertex = true;
@@ -78,10 +80,22 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 	sampleResult->spectralHeroAlive = SLG_SW_DEFAULT;
 }
 
+// Cycles film_clamp_light(): scale the contribution so the sum of its
+// channels stays under the limit (CPU ClampContribution twin)
+OPENCL_FORCE_INLINE float3 SampleResult_ClampContribution(const float3 r, const float limit) {
+	if (limit > 0.f) {
+		const float sum = fabs(r.x) + fabs(r.y) + fabs(r.z);
+		if (sum > limit)
+			return r * (limit / sum);
+	}
+	return r;
+}
+
 OPENCL_FORCE_INLINE void SampleResult_AddEmission(__constant const Film* restrict film,
 		__global SampleResult *sampleResult, const uint lightID,
 		const float3 pathThroughput, const float3 incomingRadiance) {
-	const float3 radiance = pathThroughput * incomingRadiance;
+	const float3 radiance = SampleResult_ClampContribution(pathThroughput * incomingRadiance,
+			sampleResult->clampEmission);
 
 	// Avoid out of bound access if the light group doesn't exist. This can happen
 	// with RT modes.
@@ -114,7 +128,8 @@ OPENCL_FORCE_INLINE void SampleResult_AddDirectLight(__constant const Film* rest
 		__global SampleResult *sampleResult, const uint lightID,
 		const BSDFEvent bsdfEvent, const float3 pathThroughput, const float3 incomingRadiance,
 		const float lightScale) {
-	const float3 radiance = pathThroughput * incomingRadiance;
+	const float3 radiance = SampleResult_ClampContribution(pathThroughput * incomingRadiance,
+			sampleResult->clampDirect);
 
 	// Avoid out of bound access if the light group doesn't exist. This can happen
 	// with RT modes.

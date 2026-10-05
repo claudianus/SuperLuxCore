@@ -115,6 +115,8 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		restirPTTemporalEnable(true), restirPTSpatialEnable(true),
 		sspEnable(false), regularizationSigma(0.f), regularizationMinDepth(1),
 		regularizationHalflife(0.f) {
+	cyclesClampDirect = 0.f;
+	cyclesClampIndirect = 0.f;
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -1002,6 +1004,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	BSDF bsdf;
 	for (;;) {
 		sampleResult.firstPathVertex = (pathInfo.depth.depth == 0);
+		// Cycles sample clamp: an emitter hit counts as the bounce the
+		// hitting ray left from (direct up to depth 1), next-event
+		// estimation as this vertex's bounce (direct at depth 0)
+		sampleResult.clampEmission = (pathInfo.depth.depth <= 1) ?
+				cyclesClampDirect : cyclesClampIndirect;
+		sampleResult.clampDirect = (pathInfo.depth.depth == 0) ?
+				cyclesClampDirect : cyclesClampIndirect;
 		const u_int sampleOffset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
 
 		RayHit eyeRayHit;
@@ -3052,6 +3061,9 @@ void PathTracer::ParseOptions(
 	regularizationHalflife = Max(0.f, cfg.Get(defaultProps.Get("path.regularization.halflife")).Get<float>());
 
 	forceBlackBackground = cfg.Get(defaultProps.Get("path.forceblackbackground.enable")).Get<bool>();
+
+	cyclesClampDirect = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.cycles.direct")).Get<float>());
+	cyclesClampIndirect = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.cycles.indirect")).Get<float>());
 	
 	hybridBackForwardEnable = cfg.Get(defaultProps.Get("path.hybridbackforward.enable")).Get<bool>();
 	// hybridBackForwardGlossinessThreshold is used by LIGHTCPU when PSR is enabled
@@ -3365,6 +3377,8 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.cap")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.variance.maxvalue")) <<
 			cfg.Get(GetDefaultProps()->Get("path.forceblackbackground.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.direct")) <<
+			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.indirect")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.type")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.glossinessthreshold")) <<
 			*Sampler::ToProperties(cfg);
@@ -3498,6 +3512,8 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.regularization.mindepth")(1) <<
 			Property("path.regularization.halflife")(0.f) <<
 			Property("path.forceblackbackground.enable")(false) <<
+			Property("path.clamping.cycles.direct")(0.f) <<
+			Property("path.clamping.cycles.indirect")(0.f) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);
 

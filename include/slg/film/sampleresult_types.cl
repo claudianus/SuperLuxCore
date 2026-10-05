@@ -68,6 +68,10 @@ typedef struct {
 
 	int firstPathVertex, lastPathVertex;
 
+	// Cycles sample clamp (slg::SampleResult::clampEmission/clampDirect
+	// twin): per-contribution RGB-sum limit at the current vertex, 0 = off
+	float clampEmission, clampDirect;
+
 	// Hero-wavelength spectral state (SLG_SPECTRAL builds): wavelengths in
 	// nm for the 3 bins packed into Spectrum channels, plus the packed
 	// alive-mask/hero/emission flag (see SLG_SW_* in spectral_funcs.cl).

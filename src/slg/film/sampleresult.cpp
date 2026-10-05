@@ -135,6 +135,8 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 	// lastPathVertex can not be really initialized here without knowing
 	// the max. path depth.
 	lastPathVertex = false;
+	clampEmission = 0.f;
+	clampDirect = 0.f;
 
 	isHoldout = false;
 	isCaustic = false;
@@ -152,9 +154,20 @@ float SampleResult::GetY(const vector<RadianceChannelScale> &radianceChannelScal
 	return GetSpectrum(radianceChannelScales).Y();
 }
 
+// Cycles film_clamp_light(): scale the contribution so the sum of its
+// channels stays under the limit
+static inline Spectrum ClampContribution(const Spectrum &r, const float limit) {
+	if (limit > 0.f) {
+		const float sum = fabsf(r.c[0]) + fabsf(r.c[1]) + fabsf(r.c[2]);
+		if (sum > limit)
+			return r * (limit / sum);
+	}
+	return r;
+}
+
 void SampleResult::AddEmission(const u_int lightID, const Spectrum &pathThroughput,
 		const Spectrum &incomingRadiance) {
-	const Spectrum r = pathThroughput * incomingRadiance;
+	const Spectrum r = ClampContribution(pathThroughput * incomingRadiance, clampEmission);
 	radiance[lightID] += r;
 
 	if (firstPathVertex)
@@ -179,7 +192,7 @@ void SampleResult::AddEmission(const u_int lightID, const Spectrum &pathThroughp
 
 void SampleResult::AddDirectLight(const u_int lightID, const BSDFEvent bsdfEvent,
 		const Spectrum &pathThroughput, const Spectrum &incomingRadiance, const float lightScale) {
-	const Spectrum r = pathThroughput * incomingRadiance;
+	const Spectrum r = ClampContribution(pathThroughput * incomingRadiance, clampDirect);
 	radiance[lightID] += r;
 
 	if (firstPathVertex) {
@@ -270,6 +283,8 @@ void SampleResult::CopyFrom(const SampleResult &o) {
 	isHoldout = o.isHoldout; isCaustic = o.isCaustic;
 	firstPathVertex = o.firstPathVertex;
 	lastPathVertex = o.lastPathVertex;
+	clampEmission = o.clampEmission;
+	clampDirect = o.clampDirect;
 	useFilmSplat = o.useFilmSplat;
 
 	// Deep-copy the owned LPE buffer - reuse the allocation when the
@@ -325,6 +340,8 @@ void SampleResult::MoveFrom(SampleResult &&o) {
 	isHoldout = o.isHoldout; isCaustic = o.isCaustic;
 	firstPathVertex = o.firstPathVertex;
 	lastPathVertex = o.lastPathVertex;
+	clampEmission = o.clampEmission;
+	clampDirect = o.clampDirect;
 	useFilmSplat = o.useFilmSplat;
 
 	lpeRadiance = o.lpeRadiance;

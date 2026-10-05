@@ -45,6 +45,9 @@ OPENCL_FORCE_INLINE void InitSampleResult(
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
 	SampleResult_Init(&taskConfig->film, sampleResult);
+	// Cycles sample clamp at depth 0: both contributions are direct
+	sampleResult->clampEmission = taskConfig->pathTracer.cyclesClampDirect;
+	sampleResult->clampDirect = taskConfig->pathTracer.cyclesClampDirect;
 
 	float filmX = Sampler_GetSample(taskConfig, IDX_SCREEN_X SAMPLER_PARAM);
 	float filmY = Sampler_GetSample(taskConfig, IDX_SCREEN_Y SAMPLER_PARAM);

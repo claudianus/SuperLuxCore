@@ -2370,6 +2370,14 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			LPE_PARAM
 			MATERIALS_PARAM);
 
+	// Cycles sample clamp for the next vertex (CPU RenderEyePath twin): an
+	// emitter hit counts as the bounce the hitting ray left from (direct
+	// up to depth 1), next-event estimation as the vertex's own bounce
+	sampleResult->clampEmission = (pathInfo->depth.depth <= 1) ?
+			taskConfig->pathTracer.cyclesClampDirect : taskConfig->pathTracer.cyclesClampIndirect;
+	sampleResult->clampDirect = (pathInfo->depth.depth == 0) ?
+			taskConfig->pathTracer.cyclesClampDirect : taskConfig->pathTracer.cyclesClampIndirect;
+
 	// SSP tail recorder (path.ssp.enable): the leading delta-specular
 	// run is remembered so a paired light task's blocked camera connect
 	// can replay this topology instead of discovering it. The depth-1

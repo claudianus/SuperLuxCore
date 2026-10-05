@@ -281,6 +281,10 @@ public:
 	AlbedoSpecularSetting albedoSpecularSetting;
 	float albedoSpecularGlossinessThreshold;
 	
+	// Cycles sample clamp (path.clamping.cycles.direct/indirect, 0 = off):
+	// per-contribution limit on the RGB sum, see SampleResult::clampDirect
+	float cyclesClampDirect, cyclesClampIndirect;
+
 	// Option flags
 	bool forceBlackBackground, hybridBackForwardEnable;
 

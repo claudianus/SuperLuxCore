@@ -151,6 +151,14 @@ public:
 	// Used to keep some state of the current sample
 	bool firstPathVertex, lastPathVertex;
 
+	// Cycles sample clamp (path.clamping.cycles.*): limit on the sum of
+	// the RGB channels of each emission / direct-light contribution at
+	// the current path vertex (0 = off). The path tracer sets them per
+	// vertex: Cycles counts an emitter hit one bounce lower than the
+	// vertex the hitting ray left, so both stay "direct" one vertex
+	// longer for emission than for next-event estimation.
+	float clampEmission, clampDirect;
+
 	bool useFilmSplat;
 
 private:
