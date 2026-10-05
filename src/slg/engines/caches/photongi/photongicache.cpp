@@ -197,14 +197,20 @@ float PhotonGICache::GetIndirectUsageThreshold(const BSDFEvent lastBSDFEvent,
 }
 
 bool PhotonGICache::IsDirectLightHitVisible(const EyePathInfo &pathInfo,
-		const bool photonGICausticCacheUsed) const {
+		const bool photonGICausticCacheUsed,
+		const bool photonGICausticChainCached) const {
 	// This is a specific check to cut fireflies created by some glossy or
 	// specular bounce. Only bounces the caustic photons actually model
 	// (specular, or glossy under the usage threshold) may be cut: a rough
 	// glossy bounce after a diffuse/medium vertex is not caustic-class and
 	// nothing else estimates it (a rough subsurface boundary rendered the
-	// whole SSS interior black).
-	if (params.caustic.enabled && !(pathInfo.lastBSDFEvent & DIFFUSE) &&
+	// whole SSS interior black). The chain's receiver must also have
+	// queried the cache: a receiver the cache skipped (photongi.enable
+	// off, or depth 0 under hybrid where the light pass/eye partition owns
+	// the caustic) has no stand-in and the cut only deleted energy (003
+	// Cornell mirror caustic on the ceiling at 0.6x).
+	if (params.caustic.enabled && photonGICausticChainCached &&
+			!(pathInfo.lastBSDFEvent & DIFFUSE) &&
 			(pathInfo.depth.diffuseDepth + pathInfo.depth.volumeDepth > 0) &&
 			((pathInfo.lastBSDFEvent & SPECULAR) ||
 				(pathInfo.lastGlossiness < params.glossinessUsageThreshold)))

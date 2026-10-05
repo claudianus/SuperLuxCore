@@ -43,14 +43,24 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsPhotonGIEnabled(__global const BSDF *bs
 	}
 }
 
+// A vertex scattering with this event starts a new trailing chain (CPU
+// PhotonGICache::IsCausticChainReceiver)
+OPENCL_FORCE_INLINE bool PhotonGICache_IsCausticChainReceiver(const BSDFEvent event,
+		const float glossiness, const float glossinessUsageThreshold) {
+	return !((event & SPECULAR) ||
+			((event & GLOSSY) && (glossiness < glossinessUsageThreshold)));
+}
+
 OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 		__constant const GPUTaskConfiguration* restrict taskConfig,
 		__global const EyePathInfo *pathInfo,
-		const bool photonGICausticCacheUsed) {
+		const bool photonGICausticCacheUsed,
+		const bool photonGICausticChainCached) {
 	// This is a specific check to cut fireflies created by some glossy or
 	// specular bounce
-	// Only bounces the caustic photons model (CPU IsDirectLightHitVisible)
-	if (taskConfig->pathTracer.pgic.causticEnabled &&
+	// Only bounces the caustic photons model, and only chains whose
+	// receiver queried the cache (CPU IsDirectLightHitVisible)
+	if (taskConfig->pathTracer.pgic.causticEnabled && photonGICausticChainCached &&
 			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth + pathInfo->depth.volumeDepth > 0) &&
 			((pathInfo->lastBSDFEvent & SPECULAR) ||
 				(pathInfo->lastGlossiness < taskConfig->pathTracer.pgic.glossinessUsageThreshold)))

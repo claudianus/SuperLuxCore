@@ -317,8 +317,19 @@ public:
 	bool IsVisibilityEnabled(const BSDF &bsdf) const;
 	float GetIndirectUsageThreshold(const BSDFEvent lastBSDFEvent,
 			const float lastGlossiness, const float u0) const;
+	// photonGICausticChainCached: the receiver that started the path's
+	// trailing nearly-specular chain queried the caustic cache (see
+	// IsCausticChainReceiver()); the cache only stands in for a light
+	// hit at the end of a chain it was asked about.
 	bool IsDirectLightHitVisible(const EyePathInfo &pathInfo,
-		const bool photonGICausticCacheUsed) const;
+		const bool photonGICausticCacheUsed,
+		const bool photonGICausticChainCached) const;
+	// A vertex scattering with this event starts a new trailing chain
+	// (does not extend a nearly-specular one in the cache's sense)
+	bool IsCausticChainReceiver(const BSDFEvent event, const float glossiness) const {
+		return !((event & SPECULAR) ||
+				((event & GLOSSY) && (glossiness < params.glossinessUsageThreshold)));
+	}
 
 	const PhotonGICacheParams &GetParams() const { return params; }
 

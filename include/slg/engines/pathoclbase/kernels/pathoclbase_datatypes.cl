@@ -623,6 +623,9 @@ typedef struct {
 
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,
+			// The receiver of the trailing nearly-specular chain
+			// queried the caustic cache (IsDirectLightHitVisible)
+			photonGICausticChainCached,
 			// The shadow transparency lag used by Scene_Intersect()
 			throughShadowTransparency;
 } GPUTaskState;

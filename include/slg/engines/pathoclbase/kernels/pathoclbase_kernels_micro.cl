@@ -227,7 +227,8 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
-			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed));
+			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed,
+					taskState->photonGICausticChainCached));
 
 	if (checkDirectLightHit) {
 		DirectHitInfiniteLight(
@@ -416,7 +417,8 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
-			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed));
+			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed,
+					taskState->photonGICausticChainCached));
 
 	// Check if it is a light source (note: I can hit only triangle area light sources)
 	if (BSDF_IsLightSource(bsdf) && checkDirectLightHit) {
@@ -2347,6 +2349,21 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 	if (sampleResult->firstPathVertex)
 		sampleResult->firstPathVertexEvent = bsdfEvent;
+
+	// A vertex that does not extend a nearly-specular chain starts a new
+	// one: record whether the caustic cache was queried here (same gate
+	// as the MK_HIT_OBJECT ConnectWithCausticPaths call - hybrid leaves
+	// depth 0 to the light pass). CPU twin in pathtracer.cpp.
+	if ((taskConfig->pathTracer.pgic.indirectEnabled || taskConfig->pathTracer.pgic.causticEnabled) &&
+			PhotonGICache_IsCausticChainReceiver(bsdfEvent, BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
+				taskConfig->pathTracer.pgic.glossinessUsageThreshold))
+		taskState->photonGICausticChainCached = taskConfig->pathTracer.pgic.causticEnabled &&
+				(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE) &&
+				(!taskConfig->pathTracer.hybridBackForward.enabled || (pathInfo->depth.depth != 0)) &&
+				PhotonGICache_IsPhotonGIEnabled(bsdf,
+						taskConfig->pathTracer.pgic.glossinessUsageThreshold,
+						taskConfig->pathTracer.pgic.causticVolumeBeams
+						MATERIALS_PARAM);
 
 	EyePathInfo_AddVertex(pathInfo, bsdf, bsdfEvent, bsdfPdfW,
 			taskConfig->pathTracer.hybridBackForward.glossinessThreshold

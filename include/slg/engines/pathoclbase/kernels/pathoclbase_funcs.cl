@@ -185,6 +185,7 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 	VSTORE3F(BLACK, &sampleResult->shadingNormal.x);
 	taskState->photonGICacheEnabledOnLastHit = false;
 	taskState->photonGICausticCacheUsed = false;
+	taskState->photonGICausticChainCached = false;
 	taskState->photonGIShowIndirectPathMixUsed = false;
 	// Initialize the trough a shadow transparency flag used by Scene_Intersect()
 	taskState->throughShadowTransparency = false;
