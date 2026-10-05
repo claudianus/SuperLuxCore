@@ -101,6 +101,11 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	// EyePathInfo::AddVertex()
 	//--------------------------------------------------------------------------
 
+	// Cycles Filter Glossy: smallest BSDF/phase pdf along the path
+	// (singular lobes report ~1e6 in Cycles and never lower it)
+	if (!(event & SPECULAR))
+		depth.minRayPdf = luxrays::Min(depth.minRayPdf, pdfW);
+
 	// Update isNearlyCaustic — media-transparent chain: a medium
 	// scattering vertex neither extends nor breaks the specular run
 	// (doc/features/caustics-sota.md). The depth-1 receiver test is

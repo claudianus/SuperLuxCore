@@ -143,6 +143,15 @@ void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
 	regularization = (depthInfo && (depthInfo->depth >= depthInfo->regularizationMinDepth) &&
 			(depthInfo->diffuseDepth + depthInfo->glossyDepth + depthInfo->volumeDepth > 0)) ?
 			depthInfo->regularization : 0.f;
+	// Cycles Filter Glossy (surface_shader_prepare_closures): after a
+	// low-pdf bounce every microfacet lobe gets an alpha floor of
+	// sqrt(1 - blur_pdf) / 2, blur_pdf = min path pdf / blur_glossy.
+	// Stored negative: RegularizeAlpha takes max(alpha, -reg).
+	if (depthInfo && (depthInfo->filterGlossy > 0.f)) {
+		const float blurPdf = depthInfo->filterGlossy * depthInfo->minRayPdf;
+		if (blurPdf < 1.f)
+			regularization = -sqrtf(1.f - blurPdf) * .5f;
+	}
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
 

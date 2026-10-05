@@ -87,6 +87,9 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 
 	// Increment path depth information
 	PathDepthInfo_IncDepthsVol(&pathInfo->depth, event, bsdf->isVolume);
+	// Cycles Filter Glossy: smallest non-specular BSDF/phase pdf (CPU twin)
+	if (!(event & SPECULAR))
+		pathInfo->depth.minRayPdf = fmin(pathInfo->depth.minRayPdf, pdfW);
 
 	// Update volume information
 	PathVolumeInfo_Update(&pathInfo->volume, event, bsdf MATERIALS_PARAM);

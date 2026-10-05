@@ -34,7 +34,9 @@
 OPENCL_FORCE_INLINE float Microfacet_RegularizeAlpha(__global const HitPoint *hitPoint,
 		const float alpha) {
 	const float reg = hitPoint->regularization;
-	return (reg > 0.f) ? sqrt(alpha * alpha + reg * reg) : alpha;
+	// Negative: Cycles Filter Glossy alpha floor (CPU twin)
+	return (reg > 0.f) ? sqrt(alpha * alpha + reg * reg) :
+			((reg < 0.f) ? fmax(alpha, -reg) : alpha);
 }
 
 // Anisotropic GGX NDF.

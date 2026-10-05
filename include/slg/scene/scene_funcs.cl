@@ -41,6 +41,12 @@ OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 			(depthInfo->depth >= depthInfo->regularizationMinDepth) &&
 			(depthInfo->diffuseDepth + depthInfo->glossyDepth + depthInfo->volumeDepth > 0u)) ?
 			depthInfo->regularization : 0.f;
+	// Cycles Filter Glossy: negative = alpha floor (CPU twin)
+	if (depthInfo && (depthInfo->filterGlossy > 0.f)) {
+		const float blurPdf = depthInfo->filterGlossy * depthInfo->minRayPdf;
+		if (blurPdf < 1.f)
+			hitPoint->regularization = -sqrt(1.f - blurPdf) * .5f;
+	}
 }
 
 OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(

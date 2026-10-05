@@ -129,6 +129,14 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 	p.coatRotation = CoatRotation->GetFloatValue(hitPoint);
 	p.coatIor = Max(CoatIor->GetFloatValue(hitPoint), 1.f);
 	p.coatAffectsBaseIor = coatAffectsBaseIor;
+	// Cycles Filter Glossy (negative regularization = alpha floor):
+	// every microfacet lobe - specular, transmission, coat - blurs
+	p.specRoughnessMS = p.specRoughness;
+	if (hitPoint.regularization < 0.f) {
+		const float roughFloor = sqrtf(-hitPoint.regularization);
+		p.specRoughness = Max(p.specRoughness, roughFloor);
+		p.coatRoughness = Max(p.coatRoughness, roughFloor);
+	}
 	p.coatDarkening = Clamp(CoatDarkening->GetFloatValue(hitPoint), 0.f, 1.f);
 
 	p.fuzzWeight = Clamp(FuzzWeight->GetFloatValue(hitPoint), 0.f, 1.f);
@@ -341,7 +349,9 @@ Spectrum OpenPBRMaterial::EvalMetal(const HitPoint &hitPoint, const Params &p,
 	// gold sphere lost a third of its energy and came out darker and
 	// more saturated than Cycles
 	const Spectrum Fav = GgxFresnelAverage((p.specWeight * F0).Clamp(0.f, 1.f), Spectrum(1.f));
-	const Spectrum ms = GgxMSCompensation(fabsf(wor.z), sqrtf(alphaT * alphaB), Fav);
+	float msT, msB;
+	OpenPBRAnisoAlphas(p.specRoughnessMS, p.specAniso, msT, msB);
+	const Spectrum ms = GgxMSCompensation(fabsf(wor.z), sqrtf(msT * msB), Fav);
 	return (p.specWeight * F).Clamp(0.f, 1.f) * ms *
 			(D * G2 * fabsf(wir.z) / Max(4.f * fabsf(wir.z * wor.z), 1e-7f));
 }
@@ -491,7 +501,7 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	float msScale = 1.f;
 	if (refrFrac > 0.f) {
 		float alphaT, alphaB;
-		OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
+		OpenPBRAnisoAlphas(p.specRoughnessMS, p.specAniso, alphaT, alphaB);
 		const float nInt = InteriorIor(hitPoint, p);
 		msScale = GgxGlassEnergyScale(alphaT, alphaB, muF,
 				(wFixed.z > 0.f) ? nInt / p.extIor : p.extIor / nInt);

@@ -65,6 +65,13 @@ public:
 	// gates them into HitPoint::regularization per vertex. 0 = off.
 	float regularization;
 	u_int regularizationMinDepth;
+
+	// Cycles Filter Glossy (path.filterglossy): filterGlossy = 1 /
+	// blur_glossy (0 = off), seeded on eye paths only; minRayPdf is the
+	// smallest non-specular BSDF pdf along the path so far. Gated into a
+	// negative HitPoint::regularization (an alpha floor, see
+	// RegularizeAlpha) by SetRayContext.
+	float filterGlossy, minRayPdf;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const PathDepthInfo &pdi) {

@@ -37,6 +37,8 @@ PathDepthInfo::PathDepthInfo() {
 	volumeDepth = 0;
 	regularization = 0.f;
 	regularizationMinDepth = 0;
+	filterGlossy = 0.f;
+	minRayPdf = INFINITY;
 }
 
 void PathDepthInfo::IncDepths(const BSDFEvent event, const bool isVolume) {

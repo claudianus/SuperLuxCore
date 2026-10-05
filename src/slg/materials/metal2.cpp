@@ -182,7 +182,10 @@ Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 
 	*event = GLOSSY | REFLECT;
 	if (useGgx) {
-		if (multibounce) {
+		// Cycles' Filter Glossy blurs after the closure's multiscatter
+		// energy scale was fixed for the authored alpha: a blurred vertex
+		// (regularization < 0) is single scattering, as in Cycles
+		if (multibounce && !(hitPoint.regularization < 0.f)) {
 			// Heitz'16 height-tracking multi-bounce evaluation: the walk
 			// estimator already contains the single-scatter term.
 			Spectrum nVal, kVal;
@@ -256,7 +259,7 @@ Spectrum Metal2Material::Sample(const HitPoint &hitPoint,
 	*event = GLOSSY | REFLECT;
 
 	if (useGgx) {
-		if (multibounce) {
+		if (multibounce && !(hitPoint.regularization < 0.f)) {
 			// VNDF single-scatter sampling covers the full multi-bounce
 			// support; weight = (f_ss+ms)*cos / pdf_ss stays unbiased.
 			Spectrum nVal, kVal;

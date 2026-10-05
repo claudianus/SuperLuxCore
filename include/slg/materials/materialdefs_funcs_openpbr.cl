@@ -42,6 +42,9 @@ typedef struct {
 	float filmWeight, filmThickness, filmIor;
 	float extIor;
 	uint coatAffectsBaseIor;
+	// Pre-Filter-Glossy specular roughness for the multiscatter energy
+	// scale (CPU Params::specRoughnessMS)
+	float specRoughnessMS;
 	// Non-zero when the material's interior volume is a homogeneous
 	// albedo-parametrized SSS medium (its albedo already reproduces
 	// subsurface_color, so the interface tint must stay white).
@@ -89,6 +92,13 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->coatRotation = Texture_GetFloatValue(material->openpbr.coatRotationTexIndex, hitPoint TEXTURES_PARAM);
 	p->coatIor = fmax(Texture_GetFloatValue(material->openpbr.coatIorTexIndex, hitPoint TEXTURES_PARAM), 1.f);
 	p->coatAffectsBaseIor = material->openpbr.coatAffectsBaseIor;
+	// Cycles Filter Glossy alpha floor (CPU twin)
+	p->specRoughnessMS = p->specRoughness;
+	if (hitPoint->regularization < 0.f) {
+		const float roughFloor = sqrt(-hitPoint->regularization);
+		p->specRoughness = fmax(p->specRoughness, roughFloor);
+		p->coatRoughness = fmax(p->coatRoughness, roughFloor);
+	}
 	p->coatDarkening = clamp(Texture_GetFloatValue(material->openpbr.coatDarkeningTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
 
 	p->fuzzWeight = clamp(Texture_GetFloatValue(material->openpbr.fuzzWeightTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
@@ -353,7 +363,9 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalMetal(__global const HitPoint *hitPoin
 	const float G2 = Microfacet_GgxG2(wir, wor, alphaT, alphaB);
 	// Multiple scattering, Turquin (CPU OpenPBRMaterial::EvalMetal)
 	const float3 Fav = Microfacet_GgxFresnelAverage(clamp(p->specWeight * F0, BLACK, WHITE), WHITE);
-	const float3 ms = Microfacet_GgxMSCompensation(fabs(wor.z), sqrt(alphaT * alphaB), Fav);
+	float msT, msB;
+	Microfacet_OpenPBRAnisoAlphas(p->specRoughnessMS, p->specAniso, &msT, &msB);
+	const float3 ms = Microfacet_GgxMSCompensation(fabs(wor.z), sqrt(msT * msB), Fav);
 	return clamp(p->specWeight * F, BLACK, WHITE) * ms *
 			(D * G2 * fabs(wir.z) / fmax(4.f * fabs(wir.z * wor.z), 1e-7f));
 }
@@ -501,7 +513,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 	float msScale = 1.f;
 	if (refrFrac > 0.f) {
 		float alphaT, alphaB;
-		Microfacet_OpenPBRAnisoAlphas(p->specRoughness, p->specAniso, &alphaT, &alphaB);
+		Microfacet_OpenPBRAnisoAlphas(p->specRoughnessMS, p->specAniso, &alphaT, &alphaB);
 		const float nInt = OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
 		msScale = Microfacet_GgxGlassEnergyScale(alphaT, alphaB, muF,
 				(wFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt);

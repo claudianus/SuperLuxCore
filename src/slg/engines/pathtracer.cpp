@@ -117,6 +117,7 @@ PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
 		regularizationHalflife(0.f) {
 	cyclesClampDirect = 0.f;
 	cyclesClampIndirect = 0.f;
+	cyclesFilterGlossy = 0.f;
 }
 
 // Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
@@ -2095,6 +2096,8 @@ void PathTracer::RenderEyeSample(
 	pathInfo.depth.regularization = EffectiveRegularizationSigma(
 			film.GetTotalEyeSampleCount() / film.GetPixelCount());
 	pathInfo.depth.regularizationMinDepth = regularizationMinDepth;
+	// Cycles Filter Glossy: eye paths only (Cycles has no light paths)
+	pathInfo.depth.filterGlossy = cyclesFilterGlossy;
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
 
@@ -3064,6 +3067,8 @@ void PathTracer::ParseOptions(
 
 	cyclesClampDirect = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.cycles.direct")).Get<float>());
 	cyclesClampIndirect = Max(0.f, cfg.Get(defaultProps.Get("path.clamping.cycles.indirect")).Get<float>());
+	const float blurGlossy = cfg.Get(defaultProps.Get("path.filterglossy")).Get<float>();
+	cyclesFilterGlossy = (blurGlossy > 0.f) ? 1.f / blurGlossy : 0.f;
 	
 	hybridBackForwardEnable = cfg.Get(defaultProps.Get("path.hybridbackforward.enable")).Get<bool>();
 	// hybridBackForwardGlossinessThreshold is used by LIGHTCPU when PSR is enabled
@@ -3379,6 +3384,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.forceblackbackground.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.direct")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.indirect")) <<
+			cfg.Get(GetDefaultProps()->Get("path.filterglossy")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.type")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.glossinessthreshold")) <<
 			*Sampler::ToProperties(cfg);
@@ -3514,6 +3520,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.forceblackbackground.enable")(false) <<
 			Property("path.clamping.cycles.direct")(0.f) <<
 			Property("path.clamping.cycles.indirect")(0.f) <<
+			Property("path.filterglossy")(0.f) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);
 

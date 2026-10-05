@@ -35,5 +35,9 @@ typedef struct {
 	// gates them into HitPoint.regularization per vertex. 0 = off.
 	float regularization;
 	unsigned int regularizationMinDepth;
+
+	// Cycles Filter Glossy (CPU PathDepthInfo twin): 1 / blur_glossy
+	// (0 = off, eye paths only) and the smallest non-specular BSDF pdf
+	float filterGlossy, minRayPdf;
 } PathDepthInfo;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

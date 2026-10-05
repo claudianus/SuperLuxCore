@@ -32,6 +32,8 @@ OPENCL_FORCE_INLINE void PathDepthInfo_Init(__global PathDepthInfo *depthInfo) {
 	depthInfo->volumeDepth = 0;
 	depthInfo->regularization = 0.f;
 	depthInfo->regularizationMinDepth = 0;
+	depthInfo->filterGlossy = 0.f;
+	depthInfo->minRayPdf = INFINITY;
 }
 
 OPENCL_FORCE_INLINE void PathDepthInfo_IncDepthsVol(__global PathDepthInfo *depthInfo, const BSDFEvent event,

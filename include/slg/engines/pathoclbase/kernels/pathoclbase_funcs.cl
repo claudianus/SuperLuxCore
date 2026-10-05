@@ -125,6 +125,8 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 	// gates it into each vertex by depth)
 	pathInfo->depth.regularization = taskConfig->pathTracer.regularizationSigma;
 	pathInfo->depth.regularizationMinDepth = taskConfig->pathTracer.regularizationMinDepth;
+	// Cycles Filter Glossy: eye paths only (CPU RenderEyeSample twin)
+	pathInfo->depth.filterGlossy = taskConfig->pathTracer.cyclesFilterGlossy;
 
 	// LPE: seed each expression's NFA with its camera-stepped start set
 	// (EyePathInfo::InitLPE)

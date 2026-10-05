@@ -134,7 +134,8 @@ OPENCL_FORCE_INLINE void Metal2Material_Evaluate(__global const Material* restri
 	const BSDFEvent event = GLOSSY | REFLECT;
 	// f*|cos(lightDir)| = D * G2 * F / (4 * |eyeDir.z|)
 	float3 result;
-	if (useGgx && material->metal2.multibounce) {
+	// Filter Glossy blurred vertex: single scattering (CPU twin)
+	if (useGgx && material->metal2.multibounce && !(hitPoint->regularization < 0.f)) {
 		// Heitz'16 height-tracking multi-bounce evaluation; the estimator
 		// already includes the single-scatter term.
 		result = Microfacet_GgxMSConductorEval(eyeDir, lightDir,
@@ -218,7 +219,8 @@ OPENCL_FORCE_INLINE void Metal2Material_Sample(__global const Material* restrict
 	const BSDFEvent event = GLOSSY | REFLECT;
 
 	float3 result;
-	if (useGgx && material->metal2.multibounce) {
+	// Filter Glossy blurred vertex: single scattering (CPU twin)
+	if (useGgx && material->metal2.multibounce && !(hitPoint->regularization < 0.f)) {
 		// VNDF single-scatter sampling covers the multi-bounce support;
 		// weight = (f_ss+ms)*cos / pdf_ss stays unbiased.
 		result = Microfacet_GgxMSConductorEval(fixedDir, sampledDir,

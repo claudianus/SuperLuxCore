@@ -284,6 +284,9 @@ public:
 	// Cycles sample clamp (path.clamping.cycles.direct/indirect, 0 = off):
 	// per-contribution limit on the RGB sum, see SampleResult::clampDirect
 	float cyclesClampDirect, cyclesClampIndirect;
+	// Cycles Filter Glossy (path.filterglossy = blur_glossy): stored as
+	// 1 / blur_glossy, 0 = off (see PathDepthInfo::filterGlossy)
+	float cyclesFilterGlossy;
 
 	// Option flags
 	bool forceBlackBackground, hybridBackForwardEnable;

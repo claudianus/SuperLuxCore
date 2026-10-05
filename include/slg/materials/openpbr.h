@@ -159,6 +159,10 @@ private:
 		float filmWeight, filmThickness, filmIor;
 		float extIor;
 		bool coatAffectsBaseIor;
+		// Specular roughness before Cycles' Filter Glossy floor: Cycles
+		// computes the multiscatter energy scale at closure setup and
+		// blurs afterwards, so the compensation follows this one
+		float specRoughnessMS;
 	};
 
 	// Lobe ids matching the OpenPBR reference lobe list

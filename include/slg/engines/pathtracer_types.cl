@@ -45,6 +45,8 @@ typedef struct {
 
 	// Cycles sample clamp (path.clamping.cycles.direct/indirect, 0 = off)
 	float cyclesClampDirect, cyclesClampIndirect;
+	// Cycles Filter Glossy: 1 / blur_glossy, 0 = off
+	float cyclesFilterGlossy;
 
 	// ReSTIR DI direct light resampling: RIS reservoir over the light
 	// picking distribution (the proposal q). The target function is the
