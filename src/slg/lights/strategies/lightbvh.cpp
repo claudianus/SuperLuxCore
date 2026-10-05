@@ -47,6 +47,9 @@ namespace {
 		Point bboxMin, bboxMax, centroid;
 		Vector axis;
 		float thetaO;
+		// thetaO bounds the emission support exactly (profile lights):
+		// outside the cone the importance is 0, not a cosine falloff
+		bool focused;
 	};
 
 	constexpr u_int LIGHTBVH_BINS = 16;
@@ -112,7 +115,7 @@ namespace {
 		if (end - begin == 1) {
 			// Leaf
 			const LightBVHEntry &e = entries[begin];
-			node.flags = 1u;
+			node.flags = 1u | ((!e.flat && e.focused) ? 2u : 0u);
 			node.u.lightIndex = e.lightIndex;
 			node.energyFlat = e.flat ? e.energy : 0.f;
 			node.energyLocal = e.flat ? 0.f : e.energy;
@@ -137,6 +140,7 @@ namespace {
 		Vector axisSum(0.f);
 		float eFlat = 0.f, eLocal = 0.f;
 		u_int localCount = 0;
+		bool allFocused = true;
 		for (u_int i = begin; i < end; ++i) {
 			const LightBVHEntry &e = entries[i];
 			if (e.flat)
@@ -144,6 +148,7 @@ namespace {
 			else {
 				eLocal += e.energy;
 				++localCount;
+				allFocused = allFocused && e.focused;
 				bMin = PointMin(bMin, e.bboxMin);
 				bMax = PointMax(bMax, e.bboxMax);
 				cMin = PointMin(cMin, e.centroid);
@@ -173,6 +178,10 @@ namespace {
 			node.thetaO = Min(node.thetaO, (float)M_PI);
 			node.cosThetaO = cosf(node.thetaO);
 			node.sinThetaO = sinf(node.thetaO);
+			// The merged cone contains every child's cone: when all of
+			// them bound their support exactly, so does the node
+			if (allFocused)
+				node.flags |= 2u;
 		}
 
 		//------------------------------------------------------------------
@@ -333,16 +342,13 @@ void LightStrategyLightBVH::Preprocess(SceneConstRef scene,
 		auto& l = scene.GetLightSources().GetLightSource(i);
 		if (!l.IsDirectLightSamplingEnabled())
 			continue;
-		const float rawPower = l.GetPower(scene) * l.GetImportance();
-		const float energy = isfinite(rawPower) ?
-				logf(1.f + Max(0.f, rawPower)) :
-				((rawPower > 0.f) ? logf(FLT_MAX) : 0.f);
+		float rawPower = l.GetPower(scene) * l.GetImportance();
 
 		LightBVHEntry e;
 		e.lightIndex = i;
-		e.energy = energy;
 		e.axis = Vector(0.f, 0.f, 1.f);
 		e.thetaO = 0.f;
+		e.focused = false;
 		e.bboxMin = Point(FLT_MAX, FLT_MAX, FLT_MAX);
 		e.bboxMax = Point(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 		e.centroid = Point(0.f);
@@ -368,9 +374,28 @@ void LightStrategyLightBVH::Preprocess(SceneConstRef scene,
 					}
 					e.centroid = tl.worldCentroid;
 					e.axis = Vector(tl.worldGeometryNormal);
-					const float et = tl.lightMaterial->GetEmittedTheta();
-					e.thetaO = (et == 0.f) ? 0.f :
-							((et < 90.f) ? Radians(et) : (float)M_PI_2);
+					const SampleableSphericalFunctionRPtr ef = tl.lightMaterial->GetEmissionFunc();
+					if (ef && (ef->Average() > 0.f)) {
+						// Profile emitter (spot/spread/IES map): the power
+						// is spread over the profile's support only. The
+						// importance below models a Lambertian lobe (peak
+						// intensity power/PI), so weigh the light by its
+						// peak intensity instead - a 14 deg spot cone
+						// carries ~67x the intensity of the same power
+						// over a hemisphere, and judged by power alone its
+						// pick pdf collapsed to ~1e-7 inside the cone:
+						// every BSDF hit of the emitter landed with MIS
+						// weight ~1 (083 perfume spot: 1e5 fireflies).
+						// Intensity I(w) = power * f(w) / Integral(f) (see
+						// TriangleLight::GetRadiance).
+						rawPower *= M_PI * ef->GetMaxValue() / ef->Average();
+						e.thetaO = Min(ef->GetSupportTheta(), (float)M_PI);
+						e.focused = (e.thetaO < (float)M_PI);
+					} else {
+						const float et = tl.lightMaterial->GetEmittedTheta();
+						e.thetaO = (et == 0.f) ? 0.f :
+								((et < 90.f) ? Radians(et) : (float)M_PI_2);
+					}
 					break;
 				}
 				case TYPE_POINT:
@@ -432,6 +457,9 @@ void LightStrategyLightBVH::Preprocess(SceneConstRef scene,
 					break;
 			}
 		}
+		e.energy = isfinite(rawPower) ?
+				logf(1.f + Max(0.f, rawPower)) :
+				((rawPower > 0.f) ? logf(FLT_MAX) : 0.f);
 		entries.push_back(e);
 	}
 
@@ -465,10 +493,16 @@ float LightStrategyLightBVH::NodeImportance(const slg::ocl::LightBVHNode &node,
 		const Vector c2x = x - c;
 		const Vector q = VectorMax(VectorMax(bmin - x, x - bmax), Vector(0.f));
 		const float d2 = q.LengthSquared();
-		const float geo = 1.f / Max(d2, minDist2);
 
 		const Vector diag = bmax - bmin;
 		const float r2 = 0.25f * diag.LengthSquared();
+		// Distance clamped to the cluster radius (PBRT-v4/Cycles light
+		// trees): a receiver inside or next to a large cluster box is not
+		// 1/minDist2 (~1e6) closer to its lights than to a compact
+		// cluster outside it. With the bare box distance every receiver
+		// inside a top-level box picked that subtree ~always, starving a
+		// small spot cluster outside it to a 1e-7 pick pdf.
+		const float geo = 1.f / Max(Max(d2, r2), minDist2);
 		const float dc2 = c2x.LengthSquared();
 		float cosSurf = 1.f, cosOrient = 1.f;
 		if ((d2 > 0.f) && (dc2 > r2)) {
@@ -493,9 +527,11 @@ float LightStrategyLightBVH::NodeImportance(const slg::ocl::LightBVHNode &node,
 			const float cBO = cB * cO - sB * sO;   // cos(thetaB + thetaO)
 			const float sBO = sB * cO + cB * sO;   // sin(thetaB + thetaO)
 			const float cosO = Clamp(Dot(FromOCL(node.axis), -toC), -1.f, 1.f);
+			// Focused nodes bound the emission support exactly: nothing
+			// leaves the cone, so there is no falloff tail to keep
 			cosOrient = (((cO <= 0.f) && (sB >= sO)) || (cosO >= cBO)) ? 1.f :
-					Max(0.f, cosO * cBO +
-					sqrtf(Max(0.f, 1.f - cosO * cosO)) * sBO);
+					((node.flags & 2u) ? 0.f : Max(0.f, cosO * cBO +
+					sqrtf(Max(0.f, 1.f - cosO * cosO)) * sBO));
 		}
 		imp += node.energyLocal * geo * cosSurf * cosOrient;
 	}

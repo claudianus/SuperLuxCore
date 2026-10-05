@@ -23,15 +23,17 @@
 // math lives in LightStrategyLightBVH::NodeImportance /
 // ::SampleLights / ::SampleLightPdf (lightbvh.cpp) - keep in sync.
 //
-// Importance bound at receiver (x, n) for node C:
-//   I(C) = E_flat + E_local * (1/max(d^2(C,x),dmin^2))
+// Importance at receiver (x, n) for node C:
+//   I(C) = E_flat + E_local * (1/max(d^2(C,x),r^2(C),dmin^2))
 //          * max(0, cos(max(0, <(n, toC) - thetaB)))
 //          * max(0, cos(max(0, <(axis, -toC) - thetaO - thetaB)))
 // where toC is the direction from x to the bbox center, thetaB the
 // bbox bounding-cone half-angle seen from x (PI when x is inside the
-// bbox), d^2 the squared distance from x to the bbox. The
-// orientation and surface cos terms are the E&K'18 multiplicative
-// bounds; volume receivers drop the surface term.
+// bbox), d^2 the squared distance from x to the bbox and r^2 the
+// squared bbox half-diagonal. Focused nodes (flags bit1) drop the
+// orientation falloff outside the cone. The orientation and surface cos
+// terms are the E&K'18 multiplicative bounds; volume receivers drop the
+// surface term.
 
 OPENCL_FORCE_INLINE float LightBVH_NodeImportance(
 		__global const LightBVHNode* restrict node,
@@ -46,9 +48,11 @@ OPENCL_FORCE_INLINE float LightBVH_NodeImportance(
 		const float3 c2x = x - c;
 		const float3 q = fmax(fmax(bmin - x, x - bmax), 0.f);
 		const float d2 = dot(q, q);
-		const float geo = 1.f / fmax(d2, minDist2);
 
 		const float r2 = 0.25f * dot(bmax - bmin, bmax - bmin);
+		// Distance clamped to the cluster radius (CPU parity, see
+		// LightStrategyLightBVH::NodeImportance)
+		const float geo = 1.f / fmax(fmax(d2, r2), minDist2);
 		const float dc2 = dot(c2x, c2x);
 		float cosSurf = 1.f, cosOrient = 1.f;
 		if ((d2 > 0.f) && (dc2 > r2)) {
@@ -74,9 +78,11 @@ OPENCL_FORCE_INLINE float LightBVH_NodeImportance(
 			const float sBO = sB * cO + cB * sO;   // sin(thetaB + thetaO)
 			const float3 axis = VLOAD3F(&node->axis.x);
 			const float cosO = clamp(dot(axis, -toC), -1.f, 1.f);
+			// Focused nodes (flags bit1) bound the emission support
+			// exactly: no falloff tail outside the cone (CPU parity)
 			cosOrient = (((cO <= 0.f) && (sB >= sO)) || (cosO >= cBO)) ? 1.f :
-					fmax(0.f, cosO * cBO +
-					sqrt(fmax(0.f, 1.f - cosO * cosO)) * sBO);
+					((node->flags & 2u) ? 0.f : fmax(0.f, cosO * cBO +
+					sqrt(fmax(0.f, 1.f - cosO * cosO)) * sBO));
 		}
 		imp += node->energyLocal * geo * cosSurf * cosOrient;
 	}

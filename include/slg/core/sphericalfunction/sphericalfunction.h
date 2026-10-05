@@ -160,13 +160,19 @@ public:
 	 */
 	float Average() const;
 
+	// Largest function value and the polar angle (from +Z) bounding its
+	// support - the emission cone of a profile light (spot/spread maps:
+	// a light BVH must not judge a collimated profile by its power alone)
+	float GetMaxValue() const { return maxValue; }
+	float GetSupportTheta() const { return supportTheta; }
+
 	const SphericalFunction *GetFunc() const { return func; }
 	const luxrays::Distribution2DRPtr GetDistribution2D() const { return uvDistrib; }
 
 private:
 	luxrays::Distribution2DUPtr uvDistrib;
 	const SphericalFunction *func;
-	float average;
+	float average, maxValue, supportTheta;
 };
 
 /**

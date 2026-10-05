@@ -54,9 +54,10 @@ typedef struct {
 		unsigned int rightChildIndex; // internal: right subtree start
 		unsigned int lightIndex;      // leaf: lightDefs index
 	} u;
-	// bit0 = leaf, bits[8:31] = leafCount-1 (internal only, 0 => 1 light
-	// per subtree side impossible by construction: leafCount >= 2 for
-	// internals)
+	// bit0 = leaf, bit1 = focused (thetaO bounds the emission support
+	// exactly: zero importance outside the cone), bits[8:31] =
+	// leafCount-1 (internal only, 0 => 1 light per subtree side
+	// impossible by construction: leafCount >= 2 for internals)
 	unsigned int flags;
 } LightBVHNode;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

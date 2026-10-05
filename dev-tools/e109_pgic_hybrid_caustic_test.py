@@ -140,7 +140,7 @@ def check(ok, name, detail):
 
 
 def main():
-    pysuperluxcore.Init(lambda msg: None)
+    pysuperluxcore.Init()
     ok = True
     ref = render(PLAIN, "PATHCPU", 256)[CEIL].mean()
 

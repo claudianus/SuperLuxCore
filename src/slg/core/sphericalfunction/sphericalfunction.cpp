@@ -62,6 +62,8 @@ SampleableSphericalFunction::SampleableSphericalFunction(const SphericalFunction
 	// Compute scalar-valued image
 	std::vector<float> img(xRes * yRes);
 	average = 0.f;
+	maxValue = 0.f;
+	supportTheta = 0.f;
 	float normalize = 0.f;
 	for (u_int y = 0; y < yRes; ++y) {
 		const float yp = M_PI * (y + .5f) / yRes;
@@ -69,9 +71,16 @@ SampleableSphericalFunction::SampleableSphericalFunction(const SphericalFunction
 		normalize += xRes * weight;
 		for (u_int x = 0; x < xRes; ++x) {
 			const float xp = 2.f * M_PI * (x + .5f) / xRes;
-			const float value = func->Evaluate(xp, yp).Filter() * weight;
+			const float f = func->Evaluate(xp, yp).Filter();
+			const float value = f * weight;
 			average += value;
 			img[x + y * xRes] = value;
+			if (f > 0.f) {
+				maxValue = luxrays::Max(maxValue, f);
+				// Pixel upper edge: the function may reach past the
+				// sampled center
+				supportTheta = luxrays::Max(supportTheta, (float)(M_PI * (y + 1.f) / yRes));
+			}
 		}
 	}
 	average *= 4.f * M_PI / normalize;
