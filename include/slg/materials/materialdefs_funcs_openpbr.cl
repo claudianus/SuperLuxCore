@@ -347,7 +347,10 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalMetal(__global const HitPoint *hitPoin
 		F = Microfacet_FresnelF82(mu, F0, p->specColor);
 
 	const float G2 = Microfacet_GgxG2(wir, wor, alphaT, alphaB);
-	return clamp(p->specWeight * F, BLACK, WHITE) *
+	// Multiple scattering, Turquin (CPU OpenPBRMaterial::EvalMetal)
+	const float3 Fav = Microfacet_GgxFresnelAverage(clamp(p->specWeight * F0, BLACK, WHITE), WHITE);
+	const float3 ms = Microfacet_GgxMSCompensation(fabs(wor.z), sqrt(alphaT * alphaB), Fav);
+	return clamp(p->specWeight * F, BLACK, WHITE) * ms *
 			(D * G2 * fabs(wir.z) / fmax(4.f * fabs(wir.z * wor.z), 1e-7f));
 }
 
@@ -722,6 +725,16 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Evaluate(__global const Material* restrict m
 	OpenPBRParams p;
 	OpenPBRMat_EvaluateParams(material, hitPoint, &p MATERIALS_PARAM);
 
+	// Opaque backface shaded as the front (CPU OpenPBRMaterial::Evaluate)
+	{
+		const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
+		const float fixedZ = fromLight ? lightDir.z : eyeDir.z;
+		if ((fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f)) {
+			lightDir.z = -lightDir.z;
+			eyeDir.z = -eyeDir.z;
+		}
+	}
+
 	BSDFEvent event;
 	float directPdfW;
 	const float3 result = OpenPBRMat_EvaluateImpl(hitPoint, &p, lightDir, eyeDir,
@@ -753,6 +766,11 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 
 	OpenPBRParams p;
 	OpenPBRMat_EvaluateParams(material, hitPoint, &p MATERIALS_PARAM);
+
+	// Opaque backface shaded as the front (CPU OpenPBRMaterial::Sample)
+	const bool flipBack = (fixedDir.z < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
+	if (flipBack)
+		fixedDir.z = -fixedDir.z;
 
 	float3 weights[OPENPBR_LOBE_COUNT];
 	float probs[OPENPBR_LOBE_COUNT];
@@ -896,6 +914,8 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 #endif
 
 	const float3 result = f / pdfW;
+	if (flipBack)
+		sampledDir.z = -sampledDir.z;
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

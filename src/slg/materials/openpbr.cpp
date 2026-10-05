@@ -333,7 +333,13 @@ Spectrum OpenPBRMaterial::EvalMetal(const HitPoint &hitPoint, const Params &p,
 		F = FresnelF82(mu, F0, p.specColor);
 
 	const float G2 = GgxG2(wir, wor, alphaT, alphaB);
-	return (p.specWeight * F).Clamp(0.f, 1.f) *
+	// Multiple scattering (Cycles' Principled metal is multiscatter GGX):
+	// Turquin compensation with the average conductor Fresnel; a rough
+	// gold sphere lost a third of its energy and came out darker and
+	// more saturated than Cycles
+	const Spectrum Fav = GgxFresnelAverage((p.specWeight * F0).Clamp(0.f, 1.f), Spectrum(1.f));
+	const Spectrum ms = GgxMSCompensation(fabsf(wor.z), sqrtf(alphaT * alphaB), Fav);
+	return (p.specWeight * F).Clamp(0.f, 1.f) * ms *
 			(D * G2 * fabsf(wir.z) / Max(4.f * fabsf(wir.z * wor.z), 1e-7f));
 }
 
@@ -680,11 +686,37 @@ Spectrum OpenPBRMaterial::Evaluate(const HitPoint &hitPoint,
 	Params p;
 	EvaluateParams(hitPoint, p);
 
+	const float fixedZ = hitPoint.fromLight ? localLightDir.z : localEyeDir.z;
+	if (IsOpaqueBackface(p, fixedZ)) {
+		const Vector l(localLightDir.x, localLightDir.y, -localLightDir.z);
+		const Vector e(localEyeDir.x, localEyeDir.y, -localEyeDir.z);
+		return EvalInternal(hitPoint, p, l, e, event, directPdfW, reversePdfW);
+	}
+
 	return EvalInternal(hitPoint, p, localLightDir, localEyeDir,
 			event, directPdfW, reversePdfW);
 }
 
 Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
+		const Vector &localFixedDir, Vector *localSampledDir,
+		const float u0, const float u1, const float passThroughEvent,
+		float *pdfW, BSDFEvent *event) const {
+	if (localFixedDir.z < 0.f) {
+		Params p;
+		EvaluateParams(hitPoint, p);
+		if (IsOpaqueBackface(p, localFixedDir.z)) {
+			const Vector f(localFixedDir.x, localFixedDir.y, -localFixedDir.z);
+			const Spectrum result = SampleImpl(hitPoint, f, localSampledDir,
+					u0, u1, passThroughEvent, pdfW, event);
+			localSampledDir->z = -localSampledDir->z;
+			return result;
+		}
+	}
+	return SampleImpl(hitPoint, localFixedDir, localSampledDir,
+			u0, u1, passThroughEvent, pdfW, event);
+}
+
+Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 		const Vector &localFixedDir, Vector *localSampledDir,
 		const float u0, const float u1, const float passThroughEvent,
 		float *pdfW, BSDFEvent *event) const {
@@ -838,6 +870,13 @@ void OpenPBRMaterial::Pdf(const HitPoint &hitPoint,
 
 	Params p;
 	EvaluateParams(hitPoint, p);
+	const float fixedZ = hitPoint.fromLight ? localLightDir.z : localEyeDir.z;
+	if (IsOpaqueBackface(p, fixedZ)) {
+		const Vector l(localLightDir.x, localLightDir.y, -localLightDir.z);
+		const Vector e(localEyeDir.x, localEyeDir.y, -localEyeDir.z);
+		EvalInternal(hitPoint, p, l, e, nullptr, directPdfW, reversePdfW);
+		return;
+	}
 	EvalInternal(hitPoint, p, localLightDir, localEyeDir,
 			nullptr, directPdfW, reversePdfW);
 }

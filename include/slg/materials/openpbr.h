@@ -195,6 +195,15 @@ private:
 	luxrays::Spectrum EvalInternal(const HitPoint &hitPoint, const Params &p,
 			const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
 			BSDFEvent *event, float *directPdfW, float *reversePdfW) const;
+	luxrays::Spectrum SampleImpl(const HitPoint &hitPoint,
+		const luxrays::Vector &localFixedDir, luxrays::Vector *localSampledDir,
+		const float u0, const float u1, const float passThroughEvent,
+		float *pdfW, BSDFEvent *event) const;
+	// An opaque hit (no transmission/subsurface) seen from the back is
+	// shaded as the front, like Cycles which faces N toward the ray
+	static bool IsOpaqueBackface(const Params &p, const float fixedZ) {
+		return (fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
+	}
 
 	TextureConstPtr BaseColor, BaseWeight, BaseMetalness, BaseDiffuseRoughness;
 	TextureConstPtr SpecularWeight, SpecularColor, SpecularRoughness,

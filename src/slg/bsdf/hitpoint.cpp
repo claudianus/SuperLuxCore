@@ -137,7 +137,11 @@ void HitPoint::SetRayContext(const u_int rayType, const BSDFEvent event,
 	rayViewDepth = viewDepth;
 	// PSR: the engine seeds PathDepthInfo::regularization at path init;
 	// gate it per vertex so first-bounce shading stays exact
-	regularization = (depthInfo && (depthInfo->depth >= depthInfo->regularizationMinDepth)) ?
+	// Only after a non-specular event (Kaplanyan & Dachsbacher): a pure
+	// specular chain from the camera (looking through glass) stays sharp;
+	// regularizing it blurred every view through a window or a wine glass
+	regularization = (depthInfo && (depthInfo->depth >= depthInfo->regularizationMinDepth) &&
+			(depthInfo->diffuseDepth + depthInfo->glossyDepth + depthInfo->volumeDepth > 0)) ?
 			depthInfo->regularization : 0.f;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

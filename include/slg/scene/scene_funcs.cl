@@ -36,8 +36,10 @@ OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 	hitPoint->rayViewDepth = viewDepth;
 	// PSR: seed at path init (PathDepthInfo.regularization), gated per
 	// vertex so first-bounce shading stays exact
+	// Only after a non-specular event (CPU HitPoint::SetRayContext)
 	hitPoint->regularization = (depthInfo &&
-			(depthInfo->depth >= depthInfo->regularizationMinDepth)) ?
+			(depthInfo->depth >= depthInfo->regularizationMinDepth) &&
+			(depthInfo->diffuseDepth + depthInfo->glossyDepth + depthInfo->volumeDepth > 0u)) ?
 			depthInfo->regularization : 0.f;
 }
 
