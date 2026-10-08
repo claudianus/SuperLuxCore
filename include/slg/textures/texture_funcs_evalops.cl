@@ -279,7 +279,10 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					EvalStack_PopFloat3(bumbNTex2);
 					EvalStack_PopFloat3(bumbNTex1);
 
-					const float3 shadeN = MixTexture_Bump(hitPoint,
+					// 법선 혼합에는 높이장의 곱·차 미분을 적용하지 않는다.
+					const float3 shadeN = texture->mixTex.normalBlend ?
+							normalize(mix(bumbNTex1, bumbNTex2, clamp(evalFloatAmount, 0.f, 1.f))) :
+							MixTexture_Bump(hitPoint,
 							bumbNTex1, bumbNTex2, bumbNAmount,
 							evalFloatTex1, evalFloatTex2, evalFloatAmount);
 					EvalStack_PushFloat3(shadeN);

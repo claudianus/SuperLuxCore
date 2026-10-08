@@ -161,9 +161,11 @@ void Material::Bump(HitPoint *hitPoint) const {
 		float dist = bumpSampleDistance;
 		if ((bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
 			// Cycles처럼 등방성 광선 풋프린트에 필터 폭을 곱한다.
-			// 최소 간격은 히트 위치의 부동소수점 정밀도만 보장한다.
+			// 광선 충돌 회피용 epsilon은 텍스처 미분 간격에 사용하지 않는다.
+			const float precision = 4.76837158203125e-7f * Max(1.f,
+					Max(fabsf(hitPoint->p.x), Max(fabsf(hitPoint->p.y), fabsf(hitPoint->p.z))));
 			dist = Max(bumpFilterWidth * hitPoint->bumpFootprint,
-					64.f * MachineEpsilon::E(hitPoint->p));
+					precision);
 		}
 		hitPoint->shadeN = bumpTex->Bump(*hitPoint, dist);
 

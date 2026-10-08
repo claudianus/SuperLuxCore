@@ -270,7 +270,8 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& tex1 = GetTexture(props.Get(Property(propName + ".texture1")(0.f)));
 		auto& tex2 = GetTexture(props.Get(Property(propName + ".texture2")(1.f)));
 
-		tex = std::make_unique<MixTexture>(amtTex, tex1, tex2);
+		tex = std::make_unique<MixTexture>(amtTex, tex1, tex2,
+				props.Get(Property(propName + ".bumpnormal")(false)).Get<bool>());
 	} else if (texType == "fbm") {
 		const int octaves = props.Get(Property(propName + ".octaves")(8)).Get<int>();
 		const float omega = props.Get(Property(propName + ".roughness")(.5)).Get<double>();

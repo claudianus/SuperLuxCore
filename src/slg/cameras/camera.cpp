@@ -101,50 +101,51 @@ void Camera::Update(const u_int width, const u_int height, const u_int *subRegio
 }
 
 void Camera::UpdateAuto(SceneConstRef scene) {
-	if (autoVolume) {
-		// Trace a ray in the middle of the screen
-		Ray ray;
-		PathVolumeInfo volInfo;
-		GenerateRay(0.f, filmWidth / 2.f, filmHeight / 2.f, &ray, &volInfo, 0.f, 0.f);
+	if (!autoVolume)
+		return;
 
-		// Trace the ray. If there isn't an intersection just use the current
-		// focal distance
-		RayHit rayHit;
-		if (scene.GetDataSet().GetAccelerator(ACCEL_EMBREE)->Intersect(&ray, &rayHit)) {
-			/* I can not use BSDF::Init() here because Camera::UpdateAuto()
-			 * can be called before light preprocessing
-
-			BSDF bsdf;
-			bsdf.Init(false, *scene, ray, rayHit, 0.f, &volInfo);
-
-			volume = bsdf.hitPoint.intoObject ?
-				bsdf.hitPoint.exteriorVolume : bsdf.hitPoint.interiorVolume;*/
-
-			// Get the scene object
-			auto& sceneObject = scene.GetObjects().GetSceneObject(rayHit.meshIndex);
-
-			// Get the triangle
-			auto& mesh = sceneObject.GetExtMesh();
-
-			// Get the material
-			auto& material = sceneObject.GetMaterial();
-
-			// Interpolate face normal
-			Transform local2world;
-			mesh.GetLocal2World(ray.time, local2world);
-			const Normal geometryN = mesh.GetGeometryNormal(local2world, rayHit.triangleIndex);
-			const bool intoObject = (Dot(ray.d, geometryN) < 0.f);
-
-			volume = intoObject ?
-				material.GetExteriorVolume() :
-				material.GetInteriorVolume();
-			if (!volume) {
-				volume = scene.HasDefaultWorldVolume() ?
-					VolumeConstPtr(&scene.GetDefaultWorldVolume()) :
-					VolumeConstPtr(nullptr);
-			}
+	// 카메라 이동이나 볼륨 삭제 후 이전 매질이 남지 않도록 먼저 초기화한다.
+	volume = scene.HasDefaultWorldVolume() ?
+			VolumeConstPtr(&scene.GetDefaultWorldVolume()) : VolumeConstPtr(nullptr);
+	bool hasBoundaries = false;
+	for (u_int i = 0; i < scene.GetObjects().GetSize(); ++i) {
+		if (scene.GetObjects().GetSceneObject(i).GetMaterial().HasAnyVolume()) {
+			hasBoundaries = true;
+			break;
 		}
 	}
+	if (!hasBoundaries)
+		return;
+
+	Ray ray;
+	PathVolumeInfo volInfo;
+	GenerateRay(0.f, filmWidth / 2.f, filmHeight / 2.f, &ray, &volInfo, 0.f, 0.f);
+	const auto accelerator = scene.GetDataSet().GetAccelerator(ACCEL_EMBREE);
+	std::unordered_set<u_int> visited;
+	VolumeConstPtr enclosingVolume;
+	RayHit rayHit;
+	// 불투명 물체가 가까이 있더라도 매질 경계까지 추적한다. 각 물체의 첫 경계가
+	// 출구이면 카메라가 내부에 있다. 입구인 물체의 뒤쪽 출구는 내부 판정에 쓰지 않는다.
+	for (u_int intersections = 0; intersections < 4096 &&
+			accelerator->Intersect(&ray, &rayHit); ++intersections) {
+		const auto &object = scene.GetObjects().GetSceneObject(rayHit.meshIndex);
+		const auto &material = object.GetMaterial();
+		if (material.HasAnyVolume() && visited.insert(rayHit.meshIndex).second) {
+			Transform local2world;
+			const auto &mesh = object.GetExtMesh();
+			mesh.GetLocal2World(ray.time, local2world);
+			const Normal geometryN = mesh.GetGeometryNormal(local2world, rayHit.triangleIndex);
+			const bool entering = Dot(ray.d, geometryN) < 0.f;
+			const VolumeConstPtr candidate = entering ? material.GetExteriorVolume() :
+					material.GetInteriorVolume();
+			if (candidate && (!enclosingVolume ||
+					candidate->GetPriority() > enclosingVolume->GetPriority()))
+				enclosingVolume = candidate;
+		}
+		ray.mint = MachineEpsilon::NextFloat(rayHit.t);
+	}
+	if (enclosingVolume)
+		volume = enclosingVolume;
 }
 
 PropertiesUPtr Camera::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

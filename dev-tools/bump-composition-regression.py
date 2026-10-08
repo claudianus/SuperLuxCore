@@ -34,10 +34,11 @@ scene.textures.a.texture2 = 7 0 0
 scene.textures.b.type = dotproduct
 scene.textures.b.texture1 = position
 scene.textures.b.texture2 = 0 3 0
-scene.textures.combined.type = {operation}
+scene.textures.combined.type = {"mix" if operation == "normalmix" else operation}
 scene.textures.combined.texture1 = a
 scene.textures.combined.texture2 = b
 scene.textures.combined.amount = 0.25
+scene.textures.combined.bumpnormal = {1 if operation == "normalmix" else 0}
 scene.lights.env.type = constantinfinite
 scene.lights.env.color = 1 1 1
 """)
@@ -72,8 +73,14 @@ film.outputs.0.filename = /tmp/superluxcore-bump-normal.exr
     normal = np.asarray(buf).reshape(64, 64, 3)[30:34, 30:34].mean((0, 1))
     # 높이 h(x,y)의 해석적 기울기로 기대 법선을 계산한다.
     slopes = {"add": (7., 3.), "subtract": (7., -3.), "mix": (5.25, .75)}
-    dx, dy = slopes[operation]
-    expected = np.array([-dx, -dy, 1.])
+    if operation == "normalmix":
+        # Cycles는 각각 정규화한 법선을 Strength로 혼합한 뒤 다시 정규화한다.
+        a = np.array([-7., 0., 1.]); a /= np.linalg.norm(a)
+        b = np.array([0., -3., 1.]); b /= np.linalg.norm(b)
+        expected = .75 * a + .25 * b
+    else:
+        dx, dy = slopes[operation]
+        expected = np.array([-dx, -dy, 1.])
     expected /= np.linalg.norm(expected)
     error = np.max(np.abs(normal - expected))
     assert np.isfinite(normal).all() and error < .005, (engine, operation, normal, expected)
@@ -82,5 +89,5 @@ film.outputs.0.filename = /tmp/superluxcore-bump-normal.exr
 
 lux.Init()
 for engine in ("PATHCPU", "PATHOCL"):
-    for operation in ("add", "subtract", "mix"):
+    for operation in ("add", "subtract", "mix", "normalmix"):
         render(engine, operation)

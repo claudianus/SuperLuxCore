@@ -78,8 +78,11 @@ OPENCL_FORCE_INLINE void Material_Bump(const uint matIndex, __global HitPoint *h
 		float dist = material->bumpSampleDistance;
 		if ((material->bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
 			// Cycles와 같은 등방성 풋프린트 간격을 적용한다. CPU와 같은 규약이다.
+			const float3 p = fabs(VLOAD3F(&hitPoint->p.x));
+			const float precision = 4.76837158203125e-7f * fmax(1.f,
+					fmax(p.x, fmax(p.y, p.z)));
 			dist = fmax(material->bumpFilterWidth * hitPoint->bumpFootprint,
-					64.f * MachineEpsilon_E_Float3(VLOAD3F(&hitPoint->p.x)));
+					precision);
 		}
 		float3 shadeN = Texture_Bump(bumpTexIndex, hitPoint, dist
 			TEXTURES_PARAM);

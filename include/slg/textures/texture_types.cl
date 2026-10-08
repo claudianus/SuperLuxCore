@@ -161,6 +161,7 @@ typedef struct {
 
 typedef struct {
 	unsigned int amountTexIndex, tex1Index, tex2Index;
+	unsigned int normalBlend;
 } MixTexParam;
 
 typedef struct {

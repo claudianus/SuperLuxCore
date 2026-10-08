@@ -30,8 +30,8 @@ namespace slg {
 
 class MixTexture : public Texture {
 public:
-	MixTexture(TextureRef amnt, TextureRef t1, TextureRef t2) :
-		amount(amnt), tex1(t1), tex2(t2) { }
+	MixTexture(TextureRef amnt, TextureRef t1, TextureRef t2, const bool normalBlend = false) :
+		amount(amnt), tex1(t1), tex2(t2), normalBlend(normalBlend) { }
 	virtual ~MixTexture() { }
 
 	virtual TextureType GetType() const { return MIX_TEX; }
@@ -63,6 +63,7 @@ public:
 	TextureConstRef GetAmountTexture() const { return amount; }
 	TextureConstRef GetTexture1() const { return tex1; }
 	TextureConstRef GetTexture2() const { return tex2; }
+	bool IsNormalBlend() const { return normalBlend; }
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
@@ -70,6 +71,7 @@ private:
 	std::reference_wrapper<Texture> amount;
 	std::reference_wrapper<Texture> tex1;
 	std::reference_wrapper<Texture> tex2;
+	const bool normalBlend;
 };
 
 }

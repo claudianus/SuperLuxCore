@@ -51,6 +51,12 @@ Spectrum MixTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 }
 
 Normal MixTexture::Bump(const HitPoint &hitPoint, const float sampleDistance) const {
+	if (normalBlend) {
+		// 높이의 곱 미분 대신 정규화된 법선을 혼합한다. Cycles Bump Strength 규약이다.
+		const float amt = Clamp(GetAmountTexture().GetFloatValue(hitPoint), 0.f, 1.f);
+		return Normal(Normalize((1.f - amt) * Vector(GetTexture1().Bump(hitPoint, sampleDistance)) +
+				amt * Vector(GetTexture2().Bump(hitPoint, sampleDistance))));
+	}
 	const Vector u = Normalize(hitPoint.dpdu);
 	const Vector v = Normalize(Cross(Vector(hitPoint.shadeN), hitPoint.dpdu));
 	Normal n = GetTexture1().Bump(hitPoint, sampleDistance);
@@ -86,6 +92,7 @@ PropertiesUPtr MixTexture::ToProperties(const ImageMapCache &imgMapCache, const 
 	props->Set(Property("scene.textures." + name + ".amount")(GetAmountTexture().GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".texture1")(GetTexture1().GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".texture2")(GetTexture2().GetSDLValue()));
+	props->Set(Property("scene.textures." + name + ".bumpnormal")(normalBlend));
 
 	return props;
 }

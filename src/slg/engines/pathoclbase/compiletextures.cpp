@@ -1461,6 +1461,7 @@ void CompiledScene::CompileTextures() {
 				tex->mixTex.tex1Index = scene.GetTextures().GetTextureIndex(tex1);
 				TextureConstRef tex2 = mt.GetTexture2();
 				tex->mixTex.tex2Index = scene.GetTextures().GetTextureIndex(tex2);
+				tex->mixTex.normalBlend = mt.IsNormalBlend();
 				break;
 			}
 			case CLOUD_TEX: {
