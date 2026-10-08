@@ -160,11 +160,10 @@ void Material::Bump(HitPoint *hitPoint) const {
     if (bumpTex) {
 		float dist = bumpSampleDistance;
 		if ((bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
-			// Isotropic stand-in for Cycles' screen-space bump offsets: the
-			// footprint stretches by 1/cos along the view on a slanted
-			// surface, take the geometric mean of the two axes
-			const float cosV = Max(fabsf(Dot(hitPoint->fixedDir, hitPoint->geometryN)), .05f);
-			dist = Max(dist, bumpFilterWidth * hitPoint->bumpFootprint / sqrtf(cosV));
+			// Cycles처럼 등방성 광선 풋프린트에 필터 폭을 곱한다.
+			// 최소 간격은 히트 위치의 부동소수점 정밀도만 보장한다.
+			dist = Max(bumpFilterWidth * hitPoint->bumpFootprint,
+					64.f * MachineEpsilon::E(hitPoint->p));
 		}
 		hitPoint->shadeN = bumpTex->Bump(*hitPoint, dist);
 

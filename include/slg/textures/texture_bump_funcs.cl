@@ -121,8 +121,8 @@ OPENCL_FORCE_INLINE float3 ScaleTexture_Bump(__global const HitPoint *hitPoint,
 		du2 = dot(n2, u) / nn2;
 		dv2 = dot(n2, v) / nn2;
 	} else {
-		du1 = 0.f;
-		dv1 = 0.f;		
+		du2 = 0.f;
+		dv2 = 0.f;
 	}
 
 	const float t1 = evalFloatTex1;
@@ -156,7 +156,8 @@ OPENCL_FORCE_INLINE float3 MixTexture_Bump(__global const HitPoint *hitPoint,
 	const float du2 = dot(n, u) / nn;
 	const float dv2 = dot(n, v) / nn;
 
-	n = bumbNTex2;
+	// 혼합 계수 자체의 범프를 사용하여 CPU 경로와 일치시킨다.
+	n = bumbNAmount;
 	nn = dot(n, shadeN);
 	const float dua = dot(n, u) / nn;
 	const float dva = dot(n, v) / nn;
@@ -175,9 +176,23 @@ OPENCL_FORCE_INLINE float3 MixTexture_Bump(__global const HitPoint *hitPoint,
 // AddTexture
 //------------------------------------------------------------------------------
 
+// 범프 법선에서 높이 기울기를 복원한다. CPU와 같은 규약이다.
+OPENCL_FORCE_INLINE float2 BumpNormalToSlopes(const float3 n, const float3 shadeN,
+		const float3 u, const float3 v) {
+	const float nn = dot(n, shadeN);
+	return (nn != 0.f) ? MAKE_FLOAT2(dot(n, u) / nn, dot(n, v) / nn) : MAKE_FLOAT2(0.f, 0.f);
+}
+
+// 단위 법선 대신 높이 기울기를 더하여 강한 범프도 정확히 합성한다.
  OPENCL_FORCE_INLINE float3 AddTexture_Bump(__global const HitPoint *hitPoint,
 		 const float3 bumbNTex1, const float3 bumbNTex2) {
-	return normalize(bumbNTex1 + bumbNTex2 - VLOAD3F(&hitPoint->shadeN.x));
+	const float3 shadeN = VLOAD3F(&hitPoint->shadeN.x);
+	const float3 dpdu = VLOAD3F(&hitPoint->dpdu.x);
+	const float3 u = normalize(dpdu);
+	const float3 v = normalize(cross(shadeN, dpdu));
+	const float2 s = BumpNormalToSlopes(bumbNTex1, shadeN, u, v) +
+			BumpNormalToSlopes(bumbNTex2, shadeN, u, v);
+	return normalize(shadeN + s.x * u + s.y * v);
 }
 
 //------------------------------------------------------------------------------
@@ -186,7 +201,13 @@ OPENCL_FORCE_INLINE float3 MixTexture_Bump(__global const HitPoint *hitPoint,
 
  OPENCL_FORCE_INLINE float3 SubtractTexture_Bump(__global const HitPoint *hitPoint,
 		 const float3 bumbNTex1, const float3 bumbNTex2) {
-	return normalize(bumbNTex1 - bumbNTex2 + VLOAD3F(&hitPoint->shadeN.x));
+	const float3 shadeN = VLOAD3F(&hitPoint->shadeN.x);
+	const float3 dpdu = VLOAD3F(&hitPoint->dpdu.x);
+	const float3 u = normalize(dpdu);
+	const float3 v = normalize(cross(shadeN, dpdu));
+	const float2 s = BumpNormalToSlopes(bumbNTex1, shadeN, u, v) -
+			BumpNormalToSlopes(bumbNTex2, shadeN, u, v);
+	return normalize(shadeN + s.x * u + s.y * v);
 }
 
 //------------------------------------------------------------------------------

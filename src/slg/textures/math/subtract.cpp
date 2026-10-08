@@ -35,11 +35,14 @@ Spectrum SubtractTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 }
 
 Normal SubtractTexture::Bump(const HitPoint &hitPoint, const float sampleDistance) const {
-	const Normal tex1ShadeN = GetTexture1().Bump(hitPoint, sampleDistance);
-	const Normal tex2ShadeN = GetTexture2().Bump(hitPoint, sampleDistance);
+	// 높이 기울기를 뺀다. 합성 원리는 AddTexture::Bump와 같다.
+	const Vector u = Normalize(hitPoint.dpdu);
+	const Vector v = Normalize(Cross(Vector(hitPoint.shadeN), hitPoint.dpdu));
+	float du1, dv1, du2, dv2;
+	BumpNormalToSlopes(hitPoint, GetTexture1().Bump(hitPoint, sampleDistance), u, v, du1, dv1);
+	BumpNormalToSlopes(hitPoint, GetTexture2().Bump(hitPoint, sampleDistance), u, v, du2, dv2);
 
-	// Same of Normalize(hitPoint.shadeN + (tex1ShadeN - hitPoint.shadeN) - (tex2ShadeN - hitPoint.shadeN))
-	return Normalize(tex1ShadeN - tex2ShadeN + hitPoint.shadeN);
+	return Normal(Normalize(Vector(hitPoint.shadeN) + (du1 - du2) * u + (dv1 - dv2) * v));
 }
 
 PropertiesUPtr SubtractTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

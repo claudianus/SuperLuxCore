@@ -152,6 +152,20 @@ inline float Noise(const luxrays::Point &P) {
 	return Noise(P.x, P.y, P.z);
 }
 
+// 범프 법선에서 단위 접선 방향의 높이 기울기를 복원한다.
+// n = normalize(N + du*u + dv*v)의 역변환이며 큰 기울기에도 적용된다.
+inline void BumpNormalToSlopes(const HitPoint &hitPoint, const luxrays::Normal &n,
+		const luxrays::Vector &u, const luxrays::Vector &v, float &du, float &dv) {
+	const float nn = Dot(n, hitPoint.shadeN);
+	if (nn != 0.f) {
+		du = Dot(n, u) / nn;
+		dv = Dot(n, v) / nn;
+	} else {
+		du = 0.f;
+		dv = 0.f;
+	}
+}
+
 inline bool operator==(std::reference_wrapper<slg::Texture> lhs, const slg::Texture* rhs) {
 	return (&lhs.get() == rhs);
 }

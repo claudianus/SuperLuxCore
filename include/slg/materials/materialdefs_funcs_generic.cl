@@ -77,10 +77,9 @@ OPENCL_FORCE_INLINE void Material_Bump(const uint matIndex, __global HitPoint *h
 	if (bumpTexIndex != NULL_INDEX) {
 		float dist = material->bumpSampleDistance;
 		if ((material->bumpFilterWidth > 0.f) && (hitPoint->bumpFootprint > 0.f)) {
-			// Footprint-scaled step (CPU Material::Bump)
-			const float cosV = fmax(fabs(dot(VLOAD3F(&hitPoint->fixedDir.x),
-					VLOAD3F(&hitPoint->geometryN.x))), .05f);
-			dist = fmax(dist, material->bumpFilterWidth * hitPoint->bumpFootprint / sqrt(cosV));
+			// Cycles와 같은 등방성 풋프린트 간격을 적용한다. CPU와 같은 규약이다.
+			dist = fmax(material->bumpFilterWidth * hitPoint->bumpFootprint,
+					64.f * MachineEpsilon_E_Float3(VLOAD3F(&hitPoint->p.x)));
 		}
 		float3 shadeN = Texture_Bump(bumpTexIndex, hitPoint, dist
 			TEXTURES_PARAM);
