@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "out/build/src/p
 import pysuperluxcore as lux
 
 
-def render(engine, operation):
+def render(engine, operation, amount=.25):
     scene = lux.Scene()
     props = lux.Properties()
     props.SetFromString(f"""
@@ -37,7 +37,7 @@ scene.textures.b.texture2 = 0 3 0
 scene.textures.combined.type = {"mix" if operation == "normalmix" else operation}
 scene.textures.combined.texture1 = a
 scene.textures.combined.texture2 = b
-scene.textures.combined.amount = 0.25
+scene.textures.combined.amount = {amount}
 scene.textures.combined.bumpnormal = {1 if operation == "normalmix" else 0}
 scene.lights.env.type = constantinfinite
 scene.lights.env.color = 1 1 1
@@ -77,17 +77,21 @@ film.outputs.0.filename = /tmp/superluxcore-bump-normal.exr
         # Cycles는 각각 정규화한 법선을 Strength로 혼합한 뒤 다시 정규화한다.
         a = np.array([-7., 0., 1.]); a /= np.linalg.norm(a)
         b = np.array([0., -3., 1.]); b /= np.linalg.norm(b)
-        expected = .75 * a + .25 * b
+        strength = max(amount, 0.)
+        expected = (1. - strength) * a + strength * b
     else:
         dx, dy = slopes[operation]
         expected = np.array([-dx, -dy, 1.])
     expected /= np.linalg.norm(expected)
     error = np.max(np.abs(normal - expected))
     assert np.isfinite(normal).all() and error < .005, (engine, operation, normal, expected)
-    print(f"PASS {engine}/{operation}: error={error:.6f}, normal={normal}", flush=True)
+    print(f"PASS {engine}/{operation}: error={error:.6f}, amount={amount}, normal={normal}", flush=True)
 
 
 lux.Init()
 for engine in ("PATHCPU", "PATHOCL"):
     for operation in ("add", "subtract", "mix", "normalmix"):
         render(engine, operation)
+
+    for amount in (-.5, 1.5):
+        render(engine, "normalmix", amount)
