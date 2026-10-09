@@ -91,11 +91,15 @@ jobs:
       - name: Re-zip artifacts
         working-directory: ${{ github.workspace }}/dist
         run: |
+          set -euo pipefail
           mkdir ../artifacts
           for d in */ ; do
               d2=${d%/}
               echo "zip ${d2}"
               zip -j ../artifacts/${d2}.zip ${d2}/*
+              # Version-pinned Blender bundles consume the raw wheel assets.
+              # Preserve the original, attested bytes alongside the ZIPs.
+              cp "${d2}"/*.whl ../artifacts/
           done
 
       - id: make-release
