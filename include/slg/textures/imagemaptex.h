@@ -55,6 +55,15 @@ public:
 	ImageMapConstRef GetImageMap() const { return imageMap; }
 	TextureMapping2DConstRef GetTextureMapping() const { return *mapping; }
 	const float GetGain() const { return gain; }
+	const Texture *GetVectorTexture() const { return vectorTexture; }
+	void SetVectorTexture(const Texture *texture) { vectorTexture = texture; }
+	virtual void AddReferencedTextures(std::unordered_set<const Texture *> &refs) const {
+		Texture::AddReferencedTextures(refs);
+		if (vectorTexture) vectorTexture->AddReferencedTextures(refs);
+	}
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
+		if (vectorTexture == &oldTex) vectorTexture = &newTex;
+	}
 
 	bool HasRandomizedTiling() const { return randomizedTiling; }
 	ImageMapConstRef GetRandomizedTilingLUT() const { return *refRandomizedTilingLUT; }
@@ -82,6 +91,8 @@ public:
 	virtual ~ImageMapTexture();
 
 private:
+	luxrays::UV Coordinates(const HitPoint &hitPoint) const;
+	const Texture *vectorTexture = nullptr;
 
 	luxrays::Spectrum SampleTile(const luxrays::UV &vertex, const luxrays::UV &offset) const;
 	luxrays::Spectrum RandomizedTilingGetSpectrumValue(const luxrays::UV &pos) const;

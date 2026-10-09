@@ -20,6 +20,7 @@
 
 #include "slg/usings.h"
 #include "slg/textures/imagemaptex.h"
+#include "luxrays/core/color/spectral.h"
 
 using namespace std;
 using namespace luxrays;
@@ -359,6 +360,7 @@ ImageMapTexture::~ImageMapTexture() {
 }
 
 void ImageMapTexture::AddReferencedImageMaps(std::unordered_set<const ImageMap *> &referencedImgMaps) const {
+	if (vectorTexture) vectorTexture->AddReferencedImageMaps(referencedImgMaps);
 	referencedImgMaps.insert(&imageMap);
 	if (randomizedTilingLUT)
 		referencedImgMaps.insert(refRandomizedTilingLUT);
@@ -366,8 +368,15 @@ void ImageMapTexture::AddReferencedImageMaps(std::unordered_set<const ImageMap *
 		referencedImgMaps.insert(refRandomizedTilingInvLUT);
 }
 
+UV ImageMapTexture::Coordinates(const HitPoint &hitPoint) const {
+	if (!vectorTexture) return mapping->Map(hitPoint);
+	const Spectral::ScopePause pause;
+	const Spectrum vector = vectorTexture->GetSpectrumValue(hitPoint);
+	return UV(vector.c[0], vector.c[1]);
+}
+
 float ImageMapTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	const UV pos = mapping->Map(hitPoint);
+	const UV pos = Coordinates(hitPoint);
 
 	const float value = randomizedTiling ? RandomizedTilingGetSpectrumValue(pos).Y() : GetImageMap().GetFloat(pos);
 
@@ -375,7 +384,7 @@ float ImageMapTexture::GetFloatValue(const HitPoint &hitPoint) const {
 }
 
 Spectrum ImageMapTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
-	const UV pos = mapping->Map(hitPoint);
+	const UV pos = Coordinates(hitPoint);
 
 	const Spectrum value = randomizedTiling ? RandomizedTilingGetSpectrumValue(pos) : GetImageMap().GetSpectrum(pos);
 
@@ -383,6 +392,7 @@ Spectrum ImageMapTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 }
 
 Normal ImageMapTexture::Bump(const HitPoint &hitPoint, const float sampleDistance) const {
+	if (vectorTexture) return Texture::Bump(hitPoint, sampleDistance);
 	UV dst, du, dv;
 	dst = GetImageMap().GetDuv(mapping->MapDuv(hitPoint, &du, &dv));
 
@@ -411,6 +421,8 @@ PropertiesUPtr ImageMapTexture::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.textures." + name + ".gain")(gain));
 	props->Set(GetImageMap().ToProperties("scene.textures." + name, false));
 	props->Set(mapping->ToProperties("scene.textures." + name + ".mapping"));
+	if (vectorTexture)
+		props->Set(Property("scene.textures." + name + ".vector")(vectorTexture->GetSDLValue()));
 	props->Set(Property("scene.textures." + name + ".randomizedtiling.enable")(randomizedTiling));
 
 	return props;

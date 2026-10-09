@@ -42,3 +42,5 @@ docs live in `doc/features/` (see its README for the index).
 | [property-variant-casts.md](property-variant-casts.md) | `Get<float>` on API-written doubles threw bad_lexical_cast (exact-roundtrip check); lldb catch-vs-throw recipe |
 | [perf-ledger.md](perf-ledger.md) | Ranked bottleneck ledger: profile shares, hypotheses, constraints, A/B results, decisions |
 | [light-pass-channel-matrix.md](light-pass-channel-matrix.md) | LT/HBF suppression→deposit contract: per-engine channel/sampler matrix, PATHCPU InitFilm bug, TILEPATHCPU exclusion |
+
+[Texture-driven image coordinates](2026-10-09-image-vector-coordinates.md) documents optional image Vector input, raw spectral scope and CPU/Metal validation.

@@ -160,10 +160,9 @@ OPENCL_FORCE_NOT_INLINE float3 ImageMapTexture_RandomizedTilingGetSpectrumValue(
 	return YCbCrToRGB(YCbCr);
 }
 
-OPENCL_FORCE_INLINE float ImageMapTexture_ConstEvaluateFloat(__global const Texture* restrict tex,
-		__global const HitPoint *hitPoint
+OPENCL_FORCE_INLINE float ImageMapTexture_EvaluateFloatAt(__global const Texture* restrict tex,
+		const float2 pos
 		TEXTURES_PARAM_DECL) {
-	const float2 pos = TextureMapping2D_Map(&tex->imageMapTex.mapping, hitPoint TEXTURES_PARAM);
 
 	const float value = (tex->imageMapTex.randomizedTiling) ?
 		Spectrum_Y(ImageMapTexture_RandomizedTilingGetSpectrumValue(tex, pos TEXTURES_PARAM)) :
@@ -172,16 +171,27 @@ OPENCL_FORCE_INLINE float ImageMapTexture_ConstEvaluateFloat(__global const Text
 	return tex->imageMapTex.gain * value;
 }
 
-OPENCL_FORCE_INLINE float3 ImageMapTexture_ConstEvaluateSpectrum(__global const Texture* restrict tex,
-		__global const HitPoint *hitPoint
+OPENCL_FORCE_INLINE float3 ImageMapTexture_EvaluateSpectrumAt(__global const Texture* restrict tex,
+		const float2 pos
 		TEXTURES_PARAM_DECL) {
-	const float2 pos = TextureMapping2D_Map(&tex->imageMapTex.mapping, hitPoint TEXTURES_PARAM);
 
 	const float3 value = (tex->imageMapTex.randomizedTiling) ?
 		ImageMapTexture_RandomizedTilingGetSpectrumValue(tex, pos TEXTURES_PARAM) :
 		ImageMap_GetSpectrum(&imageMapDescs[tex->imageMapTex.imageMapIndex], pos.x, pos.y IMAGEMAPS_PARAM);
 
 	return tex->imageMapTex.gain * value;
+}
+
+OPENCL_FORCE_INLINE float ImageMapTexture_ConstEvaluateFloat(__global const Texture* restrict tex,
+		__global const HitPoint *hitPoint TEXTURES_PARAM_DECL) {
+	return ImageMapTexture_EvaluateFloatAt(tex,
+			TextureMapping2D_Map(&tex->imageMapTex.mapping, hitPoint TEXTURES_PARAM) TEXTURES_PARAM);
+}
+
+OPENCL_FORCE_INLINE float3 ImageMapTexture_ConstEvaluateSpectrum(__global const Texture* restrict tex,
+		__global const HitPoint *hitPoint TEXTURES_PARAM_DECL) {
+	return ImageMapTexture_EvaluateSpectrumAt(tex,
+			TextureMapping2D_Map(&tex->imageMapTex.mapping, hitPoint TEXTURES_PARAM) TEXTURES_PARAM);
 }
 
 // Note: ImageMapTexture_Bump() is defined in texture_bump_funcs.cl
@@ -197,20 +207,44 @@ OPENCL_FORCE_NOT_INLINE void ImageMapTexture_EvalOp(
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
-			const float eval = ImageMapTexture_ConstEvaluateFloat(texture, hitPoint TEXTURES_PARAM);
+			float2 pos;
+			if (texture->imageMapTex.vectorTexIndex != NULL_INDEX) {
+				float3 vector;
+				EvalStack_PopFloat3(vector);
+				pos = MAKE_FLOAT2(vector.x, vector.y);
+			} else
+				pos = TextureMapping2D_Map(&texture->imageMapTex.mapping, hitPoint TEXTURES_PARAM);
+			const float eval = ImageMapTexture_EvaluateFloatAt(texture, pos TEXTURES_PARAM);
 			EvalStack_PushFloat(eval);
 			break;
 		}
 		case EVAL_SPECTRUM: {
-			const float3 eval = ImageMapTexture_ConstEvaluateSpectrum(texture, hitPoint TEXTURES_PARAM);
+			float2 pos;
+			if (texture->imageMapTex.vectorTexIndex != NULL_INDEX) {
+				float3 vector;
+				EvalStack_PopFloat3(vector);
+				pos = MAKE_FLOAT2(vector.x, vector.y);
+			} else
+				pos = TextureMapping2D_Map(&texture->imageMapTex.mapping, hitPoint TEXTURES_PARAM);
+			const float3 eval = ImageMapTexture_EvaluateSpectrumAt(texture, pos TEXTURES_PARAM);
 			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP: {
-			const float3 shadeN = ImageMapTexture_Bump(texture, hitPoint TEXTURES_PARAM);
-			EvalStack_PushFloat3(shadeN);
+			if (texture->imageMapTex.vectorTexIndex != NULL_INDEX) {
+				Texture_EvalOpGenericBump(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			} else {
+				const float3 shadeN = ImageMapTexture_Bump(texture, hitPoint TEXTURES_PARAM);
+				EvalStack_PushFloat3(shadeN);
+			}
 			break;
 		}
+		case EVAL_BUMP_GENERIC_OFFSET_U:
+			Texture_EvalOpGenericBumpOffsetU(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			break;
+		case EVAL_BUMP_GENERIC_OFFSET_V:
+			Texture_EvalOpGenericBumpOffsetV(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			break;
 		default:
 			// Something wrong here
 			break;

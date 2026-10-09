@@ -388,7 +388,6 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		//----------------------------------------------------------------------
 		case slg::ocl::CONST_FLOAT:
 		case slg::ocl::CONST_FLOAT3:
-		case slg::ocl::IMAGEMAP:
 		case slg::ocl::IRREGULARDATA_TEX:
 		case slg::ocl::OBJECTID_TEX:
 		case slg::ocl::OBJECTID_COLOR_TEX:
@@ -862,6 +861,21 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				}
 				default:
 					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::IMAGEMAP: {
+			const bool vector = tex->imageMapTex.vectorTexIndex != NULL_INDEX;
+			if (vector && opType == slg::ocl::TextureEvalOpType::EVAL_BUMP)
+				evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+			else {
+				if (vector) {
+					PushSpectralPauseStartOp(texIndex);
+					evalOpStackSize += CompileTextureOps(tex->imageMapTex.vectorTexIndex,
+							slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
+				}
+				evalOpStackSize += (opType == slg::ocl::TextureEvalOpType::EVAL_FLOAT) ? 1 : 3;
 			}
 			break;
 		}
@@ -1400,6 +1414,8 @@ void CompiledScene::CompileTextures() {
 				tex->imageMapTex.gain = imt.GetGain();
 				CompileTextureMapping2D(&tex->imageMapTex.mapping, imt.GetTextureMapping());
 				tex->imageMapTex.imageMapIndex = scene.GetImageMaps().GetImageMapIndex(im);
+				tex->imageMapTex.vectorTexIndex = imt.GetVectorTexture() ?
+						scene.GetTextures().GetTextureIndex(*imt.GetVectorTexture()) : NULL_INDEX;
 
 				if (imt.HasRandomizedTiling()) {
 					tex->imageMapTex.randomizedTiling = true;

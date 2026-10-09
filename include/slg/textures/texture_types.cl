@@ -141,6 +141,7 @@ typedef struct {
 	float gain;
 
 	unsigned int imageMapIndex;
+	unsigned int vectorTexIndex;
 
 	int randomizedTiling;
 	unsigned int randomizedTilingLUTIndex;

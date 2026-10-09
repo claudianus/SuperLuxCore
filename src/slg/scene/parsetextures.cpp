@@ -177,6 +177,9 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 			randomizedTiling,
 			*GetRandomImageMap()
 		);
+		if (props.IsDefined(propName + ".vector"))
+			static_cast<ImageMapTexture *>(tex.get())->SetVectorTexture(
+					&GetTexture(props.Get(Property(propName + ".vector"))));
 	} else if (texType == "constfloat1") {
 		float v = props.Get(Property(propName + ".value")(1.0)).Get<double>();
 		
