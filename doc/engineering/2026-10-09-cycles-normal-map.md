@@ -46,10 +46,10 @@ original Cycles nodes, signed EXR Normal-pass comparisons and finite/error gates
 
 | Fixture and mode | Cases per CPU/Metal | CPU max MAE | Metal max MAE |
 | --- | ---: | ---: | ---: |
-| Plane RGB | 17 | 0.00080388 | 0.00090999 |
-| Plane standard spectral | 8 | 0.00080283 | 0.00085121 |
-| Smooth sphere RGB | 6 | 0.00224864 | 0.00229874 |
-| Smooth sphere standard spectral | 4 | 0.00224721 | 0.00225650 |
+| Plane RGB | 17 | 0.00081170 | 0.00089813 |
+| Plane standard spectral | 8 | 0.00080508 | 0.00086594 |
+| Smooth sphere RGB | 6 | 0.00225086 | 0.00228711 |
+| Smooth sphere standard spectral | 4 | 0.00225166 | 0.00225830 |
 
 All 70 conditions passed the 0.003 component-MAE gate. Cases include tangent,
 nonuniform scale, rotation, named and mirrored UV, zero/fractional/negative/
@@ -80,7 +80,18 @@ After the repair, the existing normal-vector fixtures passed ten RGB and five
 standard spectral cases per CPU/Metal, including insertion into an already
 rendered graph and map arithmetic/Mix. The image-vector Bump fixture passed
 four standard spectral cases per backend: 38 regression conditions total.
-Failure logs are preserved under phase14/regression-before-cache-fix.
+Failure logs are preserved under phase14/regression-before-cache-fix. The final
+70 Normal Map conditions were rerun after the cache repair; the table above
+records this rerun. All nine comparison sheets were inspected again. E37
+settings parity passed 22/22.
+
+A separate 1280×720, 32-sample standard spectral beauty fixture exercised
+normal-mapped, nonuniformly scaled Principled diffuse, metal and transmission
+surfaces on CPU and Metal. Both produced finite images without renderer errors;
+those images and a 32-sample Cycles reference were inspected. Placement and
+normal-map direction are preserved, but metal highlights and the transmission
+sphere retain visible material/radiometric differences and sampling noise.
+This is a runtime/visual smoke check, not a completed material-parity claim.
 
 ## Remaining scope
 
