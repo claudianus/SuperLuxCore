@@ -2179,7 +2179,9 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
                 if (!texture->cyclesBumpTex.useNormal) normal = side * VLOAD3F(&hitPoint->shadeN.x);
                 const float3 du = VLOAD3F(&hitPoint->dpdu.x), dv = VLOAD3F(&hitPoint->dpdv.x);
                 float3 value = normal;
-                if (length(du) > 0.f && length(dv) > 0.f) {
+                // Keep all stack pops/restoration above even for zero width.
+                // Cycles' coincident height samples preserve the input normal.
+                if (texture->cyclesBumpTex.filterWidth > 0.f && length(du) > 0.f && length(dv) > 0.f) {
                     const float3 rx = cross(dv, normal), ry = cross(normal, du);
                     const float det = dot(du, rx);
                     // Cycles orients both UV partials with its facing normal.

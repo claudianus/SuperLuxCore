@@ -19,6 +19,10 @@ Normal CyclesBumpTexture::EvaluateNormal(const HitPoint &hp, const float sampleD
     const Spectral::ScopePause pause;
     const float side = Dot(hp.fixedDir, Vector(hp.geometryN)) < 0.f ? -1.f : 1.f;
     const Vector normal = useNormal ? Vector(GetInput(3).GetSpectrumValue(hp).c) : side * Vector(hp.shadeN);
+    // Cycles evaluates center/dx/dy at the same point for zero Filter Width.
+    // The zero perturbation falls back to the input normal, not a derivative
+    // estimated using our nonzero floating-point precision floor.
+    if (filterWidth == 0.f) return Normal(normal);
     // Distance is local amplitude, never part of the differentiated height.
     const float distance = GetInput(1).GetFloatValue(hp) * (invert ? -1.f : 1.f);
     const float strength = Max(GetInput(2).GetFloatValue(hp), 0.f);
