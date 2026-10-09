@@ -189,6 +189,8 @@ DisplacementShape::DisplacementShape(luxrays::ExtTriangleMeshRef srcMesh, const 
 					srcMesh.GetGeometryNormal(Transform::TRANS_IDENTITY, hitPoint.triangleIndex));
 			hitPoint.interpolatedN = Normalize(params.objectToWorld * objectNormal);
 			hitPoint.shadeN = hitPoint.interpolatedN;
+			// Cycles shader_setup_from_displace evaluates with wi = N.
+			hitPoint.fixedDir = Vector(hitPoint.shadeN);
 			hitPoint.dpdu = params.objectToWorld * hitPoint.dpdu;
 			hitPoint.dpdv = params.objectToWorld * hitPoint.dpdv;
 			hitPoint.dndu = params.objectToWorld * hitPoint.dndu;

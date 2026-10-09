@@ -59,3 +59,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Imported OpenPBR lobe normals and independent coat](2026-10-09-openpbr-lobe-normals.md)
 
 - [Cycles vector displacement spaces and Mikk corner data](2026-10-10-cycles-vector-displacement.md)
+
+- [Verified private Cycles Vector Displacement Incoming direction](2026-10-10-cycles-displacement-incoming.md)
