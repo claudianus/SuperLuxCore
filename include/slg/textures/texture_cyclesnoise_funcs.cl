@@ -456,6 +456,18 @@ OPENCL_FORCE_NOT_INLINE float3 CyclesNoise_Evaluate(const float4 pIn,
 				CyclesNoise_HashUInt4(w, z, y, x));
 		return MAKE_FLOAT3(r, g, b);
 	}
+	if (type == 7u) {
+		const uint component = (waveMode >> 5u) & 7u;
+		const float p[4] = { pIn.x, pIn.y, pIn.z, pIn.w };
+		const CyclesVoronoiResult result = CyclesVoronoi_Evaluate(p, scale, detailIn,
+				roughnessIn, lacunarity, offset, gain, distortion, dims,
+				waveMode & 7u, (waveMode >> 3u) & 3u, normalize, component == 1u);
+		if (component == 1u) return MAKE_FLOAT3(result.color[0], result.color[1], result.color[2]);
+		if (component == 2u) return dims == 1u ? MAKE_FLOAT3(0.f, 0.f, 0.f) :
+				MAKE_FLOAT3(result.position[0], result.position[1], result.position[2]);
+		const float value = component == 3u ? result.position[dims == 1u ? 0u : 3u] : result.distance;
+		return MAKE_FLOAT3(value, value, value);
+	}
 	const float detail = clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmax(roughnessIn, 0.f);
 

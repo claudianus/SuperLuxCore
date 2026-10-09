@@ -748,20 +748,33 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				typeStr == "hetero_terrain" ? CYCLESNOISE_HETERO_TERRAIN :
 				typeStr == "wave" ? CYCLESNOISE_WAVE :
 				typeStr == "white" ? CYCLESNOISE_WHITENOISE :
+				typeStr == "voronoi" ? CYCLESNOISE_VORONOI :
 				throw runtime_error("Unknown cyclesnoise texture type: " + typeStr);
-		const u_int waveMode = props.Get(Property(propName + ".wavemode")(0u)).Get<u_int>();
+		u_int waveMode = props.Get(Property(propName + ".wavemode")(0u)).Get<u_int>();
 		const int dims = props.Get(Property(propName + ".dimensions")(3)).Get<int>();
 		if (dims < 1 || dims > 4)
 			throw runtime_error("Invalid cyclesnoise dimensions: " + ToString(dims));
 		const bool normalize = props.Get(Property(propName + ".normalize")(true)).Get<bool>();
 		const string outStr = props.Get(Property(propName + ".output")("fac")).Get<string>();
-		if (outStr != "fac" && outStr != "color")
+		if (noiseType == CYCLESNOISE_VORONOI) {
+			const string feature = props.Get(Property(propName + ".feature")("f1")).Get<string>();
+			const string metric = props.Get(Property(propName + ".metric")("euclidean")).Get<string>();
+			const u_int f = feature == "f1" ? 0u : feature == "f2" ? 1u : feature == "smooth_f1" ? 2u :
+					feature == "distance_to_edge" ? 3u : feature == "n_sphere_radius" ? 4u :
+					throw runtime_error("Unknown Voronoi feature: " + feature);
+			const u_int m = metric == "euclidean" ? 0u : metric == "manhattan" ? 1u : metric == "chebychev" ? 2u :
+					metric == "minkowski" ? 3u : throw runtime_error("Unknown Voronoi metric: " + metric);
+			const u_int o = outStr == "distance" || outStr == "fac" ? 0u : outStr == "color" ? 1u :
+					outStr == "position" ? 2u : outStr == "w" ? 3u : outStr == "radius" ? 4u :
+					throw runtime_error("Unknown Voronoi output: " + outStr);
+			waveMode = f | (m << 3u) | (o << 5u);
+		} else if (outStr != "fac" && outStr != "color")
 			throw runtime_error("Unknown cyclesnoise output: " + outStr);
 		const bool isColor = props.Get(Property(propName + ".color")(true)).Get<bool>();
 
 		tex = std::make_unique<CyclesNoiseTexture>(vec, w, scale, detail,
 				roughness, lacunarity, offset, gain, distortion, noiseType,
-				static_cast<u_int>(dims), normalize, outStr == "color", isColor,
+				static_cast<u_int>(dims), normalize, outStr == "color" || outStr == "position", isColor,
 				waveMode);
 	} else if (texType == "gabornoise") {
 		auto& vec = GetTexture(props.Get(Property(propName + ".vector")(0.f, 0.f, 0.f)));

@@ -99,6 +99,16 @@ inline float UIntToFloatIncl(const u_int n) {
 	return (float)n * (1.f / (float)0xFFFFFFFFu);
 }
 
+// 셀 알고리즘의 CPU·GPU 공통 소스를 같은 스칼라 연산으로 컴파일한다.
+typedef u_int uint;
+#define OPENCL_FORCE_INLINE inline
+#define as_uint FloatAsUInt
+#define clamp luxrays::Clamp
+#include "slg/textures/texture_cyclesvoronoi_funcs.cl"
+#undef clamp
+#undef as_uint
+#undef OPENCL_FORCE_INLINE
+
 // random_float*_offset(): component i of the seed offset in [100, 200]
 inline float RandomOffset(const u_int dims, const float seed, const u_int i) {
 	const float h = (dims == 1) ? UIntToFloatIncl(HashUInt(FloatAsUInt(seed))) :
@@ -473,6 +483,17 @@ void CyclesNoiseTexture::Evaluate(const float pIn[4], const float scale,
 				HashUInt4(w, z, y, x));
 		return;
 	}
+	if (noiseType == CYCLESNOISE_VORONOI) {
+		const u_int component = (waveMode >> 5u) & 7u;
+		const CyclesVoronoiResult result = CyclesVoronoi_Evaluate(pIn, scale, detailIn,
+				roughnessIn, lacunarity, offset, gain, distortion, dims,
+				waveMode & 7u, (waveMode >> 3u) & 3u, normalize, component == 1u);
+		value = component == 3u ? result.position[dims == 1u ? 0u : 3u] : result.distance;
+		for (u_int d = 0u; d < 3u; ++d)
+			color[d] = component == 1u ? result.color[d] : component == 2u ?
+					(dims == 1u ? 0.f : result.position[d]) : value;
+		return;
+	}
 	const float detail = Clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmaxf(roughnessIn, 0.f);
 
@@ -608,13 +629,21 @@ PropertiesUPtr CyclesNoiseTexture::ToProperties(const ImageMapCache &imgMapCache
 	props->Set(Property(prefix + ".gain")(gain.get().GetSDLValue()));
 	props->Set(Property(prefix + ".distortion")(distortion.get().GetSDLValue()));
 	static const char *types[] = { "fbm", "multifractal", "hybrid_multifractal",
-			"ridged_multifractal", "hetero_terrain", "wave", "white" };
+			"ridged_multifractal", "hetero_terrain", "wave", "white", "voronoi" };
 	props->Set(Property(prefix + ".noisetype")(types[noiseType]));
 	if (noiseType == CYCLESNOISE_WAVE)
 		props->Set(Property(prefix + ".wavemode")(waveMode));
 	props->Set(Property(prefix + ".dimensions")(dimensions));
 	props->Set(Property(prefix + ".normalize")(normalize));
-	props->Set(Property(prefix + ".output")(colorOutput ? "color" : "fac"));
+	if (noiseType == CYCLESNOISE_VORONOI) {
+		static const char *features[] = { "f1", "f2", "smooth_f1", "distance_to_edge", "n_sphere_radius" };
+		static const char *metrics[] = { "euclidean", "manhattan", "chebychev", "minkowski" };
+		static const char *outputs[] = { "distance", "color", "position", "w", "radius" };
+		props->Set(Property(prefix + ".feature")(features[waveMode & 7u]));
+		props->Set(Property(prefix + ".metric")(metrics[(waveMode >> 3u) & 3u]));
+		props->Set(Property(prefix + ".output")(outputs[(waveMode >> 5u) & 7u]));
+	} else
+		props->Set(Property(prefix + ".output")(colorOutput ? "color" : "fac"));
 	props->Set(Property(prefix + ".color")(isColor));
 
 	return props;

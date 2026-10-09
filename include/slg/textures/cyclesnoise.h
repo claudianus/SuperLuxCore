@@ -43,7 +43,9 @@ typedef enum {
 	// and profile (bits 3-4: sin/saw/tri)
 	CYCLESNOISE_WAVE,
 	// 연결된 W를 포함하는 1~4차원 White Noise.
-	CYCLESNOISE_WHITENOISE
+	CYCLESNOISE_WHITENOISE,
+	// 차원·출력·연결 입력을 보존하는 셀 기반 Voronoi.
+	CYCLESNOISE_VORONOI
 } CyclesNoiseType;
 
 class CyclesNoiseTexture : public Texture {

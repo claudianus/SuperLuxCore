@@ -217,6 +217,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_others_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_triplanar_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_gabor_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_cyclesvoronoi_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_cyclesnoise_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_whitenoise_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelcolor_funcs.cl
@@ -670,6 +671,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/texture_others_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_random_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_gabor_funcs_kernel.cpp
+  ${generated_kernels_dir}/texture_cyclesvoronoi_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_cyclesnoise_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_whitenoise_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_triplanar_funcs_kernel.cpp
