@@ -1036,9 +1036,18 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 
 			// Check if it is a pass through point
 			if (!continueToTrace) {
+				if (cameraRay && sampleResult) {
+					const Spectral::ScopePause rawRGB;
+					const Spectrum transparency = bsdf->GetMaterial()->GetCameraTransparency(bsdf->hitPoint);
+					sampleResult->alpha += Spectrum(sampleResult->cameraTransparency * (Spectrum(1.f) - transparency)).Filter();
+				}
 				const Spectrum transp = bsdf->GetPassThroughTransparency(backTracing);
 				if (!transp.Black()) {
 					*connectionThroughput *= transp;
+					if (cameraRay && sampleResult) {
+						const Spectral::ScopePause rawRGB;
+						sampleResult->cameraTransparency *= bsdf->GetPassThroughTransparency(backTracing);
+					}
 					continueToTrace = true;
 					// Account the crossed transparent surface for the
 					// "rayinfo" texture (Cycles LightPath "Transparent
@@ -1076,8 +1085,10 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				// A safety check in case of not enough numerical precision
 				if ((ray->mint == rayHit->t) || (ray->mint >= ray->maxt))
 					return false;
-			} else
+			} else {
+				bsdf->SetNullSelectionConditioned();
 				return true;
+			}
 		} else {
 			// Nothing was hit
 			return false;

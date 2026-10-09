@@ -112,6 +112,9 @@ public:
 	luxrays::SpectrumGroup radiance;
 
 	float alpha, depth;
+	// Raw RGB primary-ray null transmission. Alpha must not use hero-
+	// wavelength throughput or discard additive closure-selection weights.
+	luxrays::Spectrum cameraTransparency;
 	luxrays::Point position;
 	luxrays::Normal geometryNormal, shadingNormal;
 	// Note: MATERIAL_ID_MASK is calculated starting from materialID field

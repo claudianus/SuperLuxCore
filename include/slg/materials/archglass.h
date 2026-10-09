@@ -41,6 +41,7 @@ public:
 
 	virtual bool IsDelta() const { return true; }
 	virtual bool IsShadowTransparent() const { return true; }
+	virtual luxrays::Spectrum GetCameraTransparency(const HitPoint &hitPoint) const;
 	virtual luxrays::Spectrum GetPassThroughTransparency(const HitPoint &hitPoint, const luxrays::Vector &localFixedDir,
 		const float passThroughEvent, const bool backTracing) const;
 

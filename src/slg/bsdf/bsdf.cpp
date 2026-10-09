@@ -34,6 +34,7 @@ void BSDF::Init(
 		const bool fixedFromLight, const bool throughShadowTransparency,
 		SceneConstRef scene, const Ray &ray, const RayHit &rayHit,
 		const float passThroughEvent, const PathVolumeInfo *volInfo) {
+	nullSelectionConditioned = false;
 	// Get the scene object
 	sceneObject = &scene.GetObjects().GetSceneObject(rayHit.meshIndex);
 
@@ -128,6 +129,7 @@ void BSDF::Init(
 		const float passThroughEvent,
 		const PathVolumeInfo *volInfo
 ) {
+	nullSelectionConditioned = false;
 	// Get the scene object
 	sceneObject = &scene.GetObjects().GetSceneObject(meshIndex);
 
@@ -195,6 +197,7 @@ void BSDF::Init(
 	const float t,
 	const float passThroughEvent
 ) {
+	nullSelectionConditioned = false;
 	hitPoint.fromLight = fixedFromLight;
 	hitPoint.throughShadowTransparency = throughShadowTransparency;
 	hitPoint.passThroughEvent = passThroughEvent;
@@ -396,6 +399,14 @@ Spectrum BSDF::Evaluate(const Vector &generatedDir,
 	Spectrum result = material->Evaluate(hitPoint, localLightDir, localEyeDir,
 			event, directPdfW, reversePdfW);
 	verify (!result.IsNaN() && !result.IsInf());
+	if (nullSelectionConditioned) {
+		const float probability = material->GetNonNullSelectionProbability(hitPoint);
+		if (!(probability > 0.f))
+			return Spectrum();
+		result /= probability;
+		if (directPdfW) *directPdfW /= probability;
+		if (reversePdfW) *reversePdfW /= probability;
+	}
 	if (result.Black())
 		return result;
 
@@ -451,6 +462,13 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 	if (result.Black())
 		return result;
 
+	// The f/pdf throughput is unchanged when both f and pdf are conditioned.
+	if (nullSelectionConditioned) {
+		const float probability = material->GetNonNullSelectionProbability(hitPoint);
+		if (!(probability > 0.f))
+			return Spectrum();
+		*pdfW /= probability;
+	}
 	*absCosSampledDir = fabsf(CosTheta(localSampledDir));
 	*sampledDir = frame.ToWorld(localSampledDir);
 
@@ -492,6 +510,11 @@ void BSDF::Pdf(const Vector &sampledDir, float *directPdfW, float *reversePdfW) 
 	Vector localEyeDir = frame.ToLocal(eyeDir);
 
 	material->Pdf(hitPoint, localLightDir, localEyeDir, directPdfW, reversePdfW);
+	if (nullSelectionConditioned) {
+		const float probability = material->GetNonNullSelectionProbability(hitPoint);
+		if (directPdfW) *directPdfW = probability > 0.f ? *directPdfW / probability : 0.f;
+		if (reversePdfW) *reversePdfW = probability > 0.f ? *reversePdfW / probability : 0.f;
+	}
 }
 
 Spectrum BSDF::GetPassThroughTransparency(const bool backTracing) const {
@@ -502,9 +525,14 @@ Spectrum BSDF::GetPassThroughTransparency(const bool backTracing) const {
 }
 
 Spectrum BSDF::GetEmittedRadiance(float *directPdfA, float *emissionPdfW) const {
-	return triangleLightSource ?
+	Spectrum radiance = triangleLightSource ?
 		triangleLightSource->GetRadiance(hitPoint, directPdfA, emissionPdfW) :
 		Spectrum();
+	if (nullSelectionConditioned) {
+		const float probability = material->GetNonNullSelectionProbability(hitPoint);
+		return probability > 0.f ? radiance / probability : Spectrum();
+	}
+	return radiance;
 }
 
 AlbedoSpecularSetting slg::String2AlbedoSpecularSetting(const string &type) {

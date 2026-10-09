@@ -46,6 +46,6 @@ typedef struct {
 
 	Frame frame;
 
-	int isVolume;
+	int isVolume, nullSelectionConditioned;
 } BSDF;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

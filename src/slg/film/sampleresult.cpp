@@ -55,6 +55,7 @@ void SampleResult::Init(const Film::FilmChannels *chnls, const u_int radianceGro
 		radiance[i] = Spectrum();
 
 	alpha = 0.f;
+	cameraTransparency = Spectrum(1.f);
 	depth = numeric_limits<float>::infinity();
 	position = Point(numeric_limits<float>::infinity(),
 			numeric_limits<float>::infinity(),
@@ -254,6 +255,7 @@ void SampleResult::CopyFrom(const SampleResult &o) {
 	pixelX = o.pixelX; pixelY = o.pixelY;
 	filmX = o.filmX; filmY = o.filmY;
 	alpha = o.alpha; depth = o.depth;
+	cameraTransparency = o.cameraTransparency;
 	position = o.position;
 	geometryNormal = o.geometryNormal;
 	shadingNormal = o.shadingNormal;
@@ -311,6 +313,7 @@ void SampleResult::MoveFrom(SampleResult &&o) {
 	pixelX = o.pixelX; pixelY = o.pixelY;
 	filmX = o.filmX; filmY = o.filmY;
 	alpha = o.alpha; depth = o.depth;
+	cameraTransparency = o.cameraTransparency;
 	position = o.position;
 	geometryNormal = o.geometryNormal;
 	shadingNormal = o.shadingNormal;

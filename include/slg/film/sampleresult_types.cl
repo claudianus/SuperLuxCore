@@ -30,6 +30,7 @@ typedef struct {
 
 	Spectrum radiancePerPixelNormalized[FILM_MAX_RADIANCE_GROUP_COUNT];
 	float alpha;
+	Spectrum cameraTransparency;
 	float depth;
 	Point position;
 	Normal geometryNormal;

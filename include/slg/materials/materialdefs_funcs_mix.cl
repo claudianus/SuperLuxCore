@@ -26,11 +26,11 @@ OPENCL_FORCE_INLINE void MixMaterial_Albedo(__global const Material* restrict ma
 	EvalStack_PopFloat3(albedo2);
 	EvalStack_PopFloat3(albedo1);
 
-	const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+	const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 	const float weight2 = clamp(factor, 0.f, 1.f);
 	const float weight1 = 1.f - weight2;
 
-	const float3 albedo =  weight1 * albedo1 + weight2 * albedo2;
+	const float3 albedo = (material->mix.additive ? 2.f : 1.f) * (weight1 * albedo1 + weight2 * albedo2);
 
 	EvalStack_PushFloat3(albedo);
 }
@@ -42,7 +42,7 @@ OPENCL_FORCE_INLINE void MixMaterial_GetVolumeSetUp1(__global const Material* re
 	float passThroughEvent;
 	EvalStack_PopFloat(passThroughEvent);
 
-	const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+	const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 	const float weight2 = clamp(factor, 0.f, 1.f);
 	const float weight1 = 1.f - weight2;
 
@@ -148,7 +148,7 @@ OPENCL_FORCE_INLINE void MixMaterial_GetPassThroughTransparencySetUp1(__global c
 	EvalStack_PushFloat(passThroughEvent);
 	EvalStack_PushUInt(backTracing);
 
-	const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+	const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 	const float weight2 = clamp(factor, 0.f, 1.f);
 	const float weight1 = 1.f - weight2;
 
@@ -231,7 +231,7 @@ OPENCL_FORCE_INLINE void MixMaterial_GetPassThroughTransparency(__global const M
 		const float weight2 = clamp(factor, 0.f, 1.f);
 		const float weight1 = 1.f - weight2;
 
-		transp = (passThroughEvent < weight1) ? transp1 : transp2;
+		transp = (material->mix.additive ? 2.f : 1.f) * ((passThroughEvent < weight1) ? transp1 : transp2);
 	}
 
 	EvalStack_PushFloat3(transp);
@@ -280,7 +280,7 @@ OPENCL_FORCE_INLINE void MixMaterial_GetEmittedRadiance(__global const Material*
 		float oneOverPrimitiveArea;
 		EvalStack_PopFloat(oneOverPrimitiveArea);
 
-		const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+		const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 		const float weight2 = clamp(factor, 0.f, 1.f);
 		const float weight1 = 1.f - weight2;
 
@@ -290,7 +290,7 @@ OPENCL_FORCE_INLINE void MixMaterial_GetEmittedRadiance(__global const Material*
 		 if (weight2 > 0.f)
 			emittedRadiance += weight2 * emit2;
 
-		EvalStack_PushFloat3(emittedRadiance);
+		EvalStack_PushFloat3((material->mix.additive ? 2.f : 1.f) * emittedRadiance);
 	}
 }
 
@@ -446,7 +446,7 @@ OPENCL_FORCE_INLINE void MixMaterial_Evaluate(__global const Material* restrict 
 	// material referencing other materials
 	const float isTransmitEval = (signbit(lightDir.z) != signbit(eyeDir.z));
 
-	const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+	const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 	const float weight2 = clamp(factor, 0.f, 1.f);
 	const float weight1 = 1.f - weight2;
 
@@ -482,7 +482,7 @@ OPENCL_FORCE_INLINE void MixMaterial_Evaluate(__global const Material* restrict 
 		event |= eventMatB;
 	}
 
-	EvalStack_PushFloat3(result);
+	EvalStack_PushFloat3((material->mix.additive ? 2.f : 1.f) * result);
 	EvalStack_PushBSDFEvent(event);
 	EvalStack_PushFloat(directPdfW);
 }
@@ -502,7 +502,7 @@ OPENCL_FORCE_INLINE void MixMaterial_SampleSetUp1(__global const Material* restr
 	float3 fixedDir;
 	EvalStack_PopFloat3(fixedDir);
 
-	const float factor = Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM);
+	const float factor = (material->mix.additive ? .5f : Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM));
 	const float weight2 = clamp(factor, 0.f, 1.f);
 	const float weight1 = 1.f - weight2;
 
@@ -725,7 +725,7 @@ OPENCL_FORCE_INLINE void MixMaterial_Sample(__global const Material* restrict ma
 	BSDFEvent event = eventFirst;
 
 	if (eventFirst & SPECULAR) {
-		EvalStack_PushFloat3(result);
+		EvalStack_PushFloat3((material->mix.additive ? 2.f : 1.f) * result);
 		EvalStack_PushFloat3(sampledDir);
 		EvalStack_PushFloat(pdfW);
 		EvalStack_PushBSDFEvent(event);
@@ -754,7 +754,7 @@ OPENCL_FORCE_INLINE void MixMaterial_Sample(__global const Material* restrict ma
 
 	//--------------------------------------------------------------------------
 
-	EvalStack_PushFloat3(result);
+	EvalStack_PushFloat3((material->mix.additive ? 2.f : 1.f) * result);
 	EvalStack_PushFloat3(sampledDir);
 	EvalStack_PushFloat(pdfW);
 	EvalStack_PushBSDFEvent(event);

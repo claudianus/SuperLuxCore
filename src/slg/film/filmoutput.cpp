@@ -724,15 +724,18 @@ void Film::Output(
 					GetPixelFromMergedSampleBuffers(0, RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
 							x, y, pixel);
 					channel_ALPHA->GetWeightedPixel(x, y, &pixel[3]);
+					pixel[3] = Clamp(pixel[3], 0.f, 1.f);
 					break;
 				}
 				case FilmOutputs::RGBA_IMAGEPIPELINE: {
 					channel_IMAGEPIPELINEs[imagePipelineIndex]->GetWeightedPixel(x, y, pixel);
 					channel_ALPHA->GetWeightedPixel(x, y, &pixel[3]);
+					pixel[3] = Clamp(pixel[3], 0.f, 1.f);
 					break;
 				}
 				case FilmOutputs::ALPHA: {
 					channel_ALPHA->GetWeightedPixel(x, y, pixel);
+					pixel[0] = Clamp(pixel[0], 0.f, 1.f);
 					break;
 				}
 				case FilmOutputs::DEPTH: {
@@ -1060,6 +1063,7 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 						RADIANCE_PER_SCREEN_NORMALIZED_SampleCount,
 						i, &buffer[offset]);
 				channel_ALPHA->GetWeightedPixel(i, &buffer[offset + 3]);
+				buffer[offset + 3] = Clamp(buffer[offset + 3], 0.f, 1.f);
 			});
 			break;
 		}
@@ -1075,12 +1079,14 @@ template<> void Film::GetOutput<float>(const FilmOutputs::FilmOutputType type, f
 				buffer[dstOffset + 1] = srcRGB[srcOffset + 1];
 				buffer[dstOffset + 2] = srcRGB[srcOffset + 2];
 				channel_ALPHA->GetWeightedPixel(i, &buffer[dstOffset + 3]);
+				buffer[dstOffset + 3] = Clamp(buffer[dstOffset + 3], 0.f, 1.f);
 			});
 			break;
 		}
 		case FilmOutputs::ALPHA: {
 			parallelPixels([&](const u_int i) {
 				channel_ALPHA->GetWeightedPixel(i, &buffer[i]);
+				buffer[i] = Clamp(buffer[i], 0.f, 1.f);
 			});
 			break;
 		}

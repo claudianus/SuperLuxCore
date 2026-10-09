@@ -816,6 +816,8 @@ OPENCL_FORCE_INLINE float3 Spectral_KeepHeroBins(const float3 v,
 OPENCL_FORCE_INLINE float3 Spectral_LeafEval(const float3 rgb,
 		__global const HitPoint *hitPoint,
 		__global const float *spectralTable) {
+	if (hitPoint->spectralEmissionEval == 2u)
+		return rgb;
 	return Spectral_Upsample(rgb, hitPoint->spectralW,
 			hitPoint->spectralHeroAlive, hitPoint->spectralEmissionEval != 0u,
 			spectralTable);

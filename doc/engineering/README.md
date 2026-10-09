@@ -52,3 +52,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Rough matte transport and MIS directions](2026-10-09-roughmatte-transport.md)
 
 - [Cycles Bump direction and linked-input semantics](2026-10-09-cycles-bump-direction.md)
+
+- [Cycles Add Shader closure sums and transparent transport](2026-10-09-cycles-add-shader.md)

@@ -32,6 +32,8 @@ OPENCL_FORCE_INLINE void SampleResult_ClearRadiance(__global SampleResult *sampl
 OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 		__global SampleResult *sampleResult) {
 	// Initialize only Spectrum fields
+	VSTORE3F(WHITE, sampleResult->cameraTransparency.c);
+	sampleResult->alpha = 0.f;
 
 	SampleResult_ClearRadiance(sampleResult);
 

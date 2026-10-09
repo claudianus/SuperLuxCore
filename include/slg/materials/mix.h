@@ -32,7 +32,7 @@ class MixMaterial : public Material {
 public:
 	MixMaterial(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 			TextureConstPtr emitted, TextureConstPtr bump,
-			MaterialConstRef mA, MaterialConstRef mB, TextureConstPtr mix);
+			MaterialConstRef mA, MaterialConstRef mB, TextureConstPtr mix, const bool additive = false);
 
 	virtual MaterialType GetType() const { return MIX; }
 	virtual BSDFEvent GetEventTypes() const { return eventTypes; };
@@ -79,6 +79,10 @@ public:
 	MaterialConstRef GetMaterialA() const { return *matA; }
 	MaterialConstRef GetMaterialB() const { return *matB; }
 	TextureConstRef GetMixFactor() const { return *mixFactor; }
+	bool IsAdditive() const { return additive; }
+	virtual bool HasNullLobes() const { return hasNullLobes; }
+	virtual luxrays::Spectrum GetCameraTransparency(const HitPoint &hitPoint) const;
+	virtual float GetNonNullSelectionProbability(const HitPoint &hitPoint) const;
 
 protected:
 	virtual void UpdateAvgPassThroughTransparency();
@@ -94,10 +98,15 @@ private:
 	MaterialConstPtr matA;
 	MaterialConstPtr matB;
 	TextureConstPtr mixFactor;
+	const bool additive;
+	float MixAmount(const HitPoint &hp) const {
+		return additive ? .5f : luxrays::Clamp(mixFactor->GetFloatValue(hp), 0.f, 1.f);
+	}
+	float ClosureScale() const { return additive ? 2.f : 1.f; }
 
 	// Cached values for performance with very large material node trees
 	BSDFEvent eventTypes;
-	bool isLightSource, isDelta;
+	bool isLightSource, isDelta, hasNullLobes;
 
 };
 

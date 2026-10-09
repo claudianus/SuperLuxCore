@@ -1052,7 +1052,7 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 					DirectHitLight(false, eyeVertex, linkAcceptMask, eyeSampleResult);
 
 					if (eyeSampleResult.firstPathVertex) {
-						eyeSampleResult.alpha = 0.f;
+						// Primary-ray opacity was accumulated by Scene::Intersect.
 						eyeSampleResult.depth = numeric_limits<float>::infinity();
 						eyeSampleResult.position = Point(
 								numeric_limits<float>::infinity(),
@@ -1085,7 +1085,8 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 
 				float t_MIS;
 				if (eyeSampleResult.firstPathVertex) {
-					eyeSampleResult.alpha = 1.f;
+					// Primary-ray opacity was accumulated by Scene::Intersect.
+					if (eyeVertex.bsdf.IsVolume()) eyeSampleResult.alpha = 1.f;
 					eyeSampleResult.depth = eyeRayHit.t;
 					eyeSampleResult.position = eyeVertex.bsdf.hitPoint.p;
 					eyeSampleResult.geometryNormal = eyeVertex.bsdf.hitPoint.geometryN;

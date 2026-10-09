@@ -50,7 +50,9 @@ typedef enum {
 	EVAL_SAMPLE_GLOSSYCOATING_CLOSE_SAMPLE_BASE,
 	EVAL_SAMPLE_GLOSSYCOATING_CLOSE_EVALUATE_BASE,
 	// For the very special case of TwoSided material
-	EVAL_TWOSIDED_SETUP
+	EVAL_TWOSIDED_SETUP,
+	EVAL_GET_NON_NULL_SELECTION_PROBABILITY,
+	EVAL_GET_CAMERA_TRANSPARENCY
 } MaterialEvalOpType;
 
 typedef struct {
@@ -114,7 +116,7 @@ typedef struct {
 
 typedef struct {
 	unsigned int matAIndex, matBIndex;
-	unsigned int mixFactorTexIndex;
+	unsigned int mixFactorTexIndex, additive;
 } MixParam;
 
 typedef struct {
@@ -499,7 +501,8 @@ typedef struct {
 	// The result of calling Material::GetEventTypes()
 	BSDFEvent eventTypes;
 	// The result of calling Material::IsDelta()
-	int isDelta; 
+	int isDelta;
+	int hasNullLobes;
 
 	// Cryptomatte float id (host-computed murmur3 of the material name)
 	float cryptoID;
@@ -512,6 +515,8 @@ typedef struct {
 	unsigned int evalGetPassThroughTransparencyOpStartIndex, evalGetPassThroughTransparencyOpLength;
 	unsigned int evalEvaluateOpStartIndex, evalEvaluateOpLength;
 	unsigned int evalSampleOpStartIndex, evalSampleOpLength;
+	unsigned int evalNonNullSelectionOpStartIndex, evalNonNullSelectionOpLength;
+	unsigned int evalCameraTransparencyOpStartIndex, evalCameraTransparencyOpLength;
 
 	union {
 		MatteParam matte;

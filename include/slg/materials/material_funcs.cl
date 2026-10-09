@@ -26,6 +26,38 @@
 // Material_Albedo
 //------------------------------------------------------------------------------
 
+OPENCL_FORCE_NOT_INLINE float3 Material_GetCameraTransparency(const uint matIndex,
+		__global const HitPoint *hitPoint MATERIALS_PARAM_DECL) {
+	__global const Material *startMat = &mats[matIndex];
+	__global float *evalStack = &matEvalStacks[get_global_id(0) * maxMaterialEvalStackSize];
+	uint evalStackOffsetVal = 0;
+	uint *evalStackOffset = &evalStackOffsetVal;
+	for (uint i = 0; i < startMat->evalCameraTransparencyOpLength; ++i) {
+		__global const MaterialEvalOp *evalOp = &matEvalOps[startMat->evalCameraTransparencyOpStartIndex + i];
+		i += Material_EvalOp(evalOp, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
+	}
+	float3 transparency;
+	EvalStack_PopFloat3(transparency);
+	return transparency;
+}
+
+OPENCL_FORCE_NOT_INLINE float Material_GetNonNullSelectionProbability(const uint matIndex,
+		__global const HitPoint *hitPoint MATERIALS_PARAM_DECL) {
+	__global const Material *startMat = &mats[matIndex];
+	if (!startMat->hasNullLobes)
+		return 1.f;
+	__global float *evalStack = &matEvalStacks[get_global_id(0) * maxMaterialEvalStackSize];
+	uint evalStackOffsetVal = 0;
+	uint *evalStackOffset = &evalStackOffsetVal;
+	for (uint i = 0; i < startMat->evalNonNullSelectionOpLength; ++i) {
+		__global const MaterialEvalOp *evalOp = &matEvalOps[startMat->evalNonNullSelectionOpStartIndex + i];
+		i += Material_EvalOp(evalOp, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
+	}
+	float probability;
+	EvalStack_PopFloat(probability);
+	return probability;
+}
+
 OPENCL_FORCE_NOT_INLINE float3 Material_Albedo(const uint matIndex,
 		__global const HitPoint *hitPoint
 		MATERIALS_PARAM_DECL) {

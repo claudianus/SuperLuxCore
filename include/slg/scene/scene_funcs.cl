@@ -227,10 +227,26 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 
 		// Check if it is a pass through point
 		if (!continueToTrace) {
+			if (cameraRay && sampleResult) {
+				const uint savedContext = bsdf->hitPoint.spectralEmissionEval;
+				bsdf->hitPoint.spectralEmissionEval = 2u;
+				const float3 transparency = Material_GetCameraTransparency(bsdf->materialIndex,
+						&bsdf->hitPoint MATERIALS_PARAM);
+				bsdf->hitPoint.spectralEmissionEval = savedContext;
+				sampleResult->alpha += Spectrum_Filter(VLOAD3F(sampleResult->cameraTransparency.c) * (WHITE - transparency));
+			}
 			const float3 passThroughTrans = BSDF_GetPassThroughTransparency(bsdf, backTracing
 				MATERIALS_PARAM);
 			if (!Spectrum_IsBlack(passThroughTrans)) {
 				*connectionThroughput *= passThroughTrans;
+				if (cameraRay && sampleResult) {
+					const uint savedContext = bsdf->hitPoint.spectralEmissionEval;
+					bsdf->hitPoint.spectralEmissionEval = 2u; // raw RGB alpha context
+					const float3 rawTransmission = BSDF_GetPassThroughTransparency(bsdf, backTracing MATERIALS_PARAM);
+					bsdf->hitPoint.spectralEmissionEval = savedContext;
+					VSTORE3F(VLOAD3F(sampleResult->cameraTransparency.c) * rawTransmission,
+							sampleResult->cameraTransparency.c);
+				}
 
 				// It is a pass through point, continue to trace the ray
 				continueToTrace = true;
@@ -269,8 +285,10 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 				return false;
 			else
 				return true;
-		} else
+		} else {
+			bsdf->nullSelectionConditioned = mats[bsdf->materialIndex].hasNullLobes;
 			return false;
+		}
 	} else {
 		// Nothing was hit, stop tracing the ray
 		return false;

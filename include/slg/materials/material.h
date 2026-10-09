@@ -167,6 +167,12 @@ public:
 	// false and stay hard deltas under PSR.
 	virtual bool RegularizesAsLobe() const { return false; }
 	virtual float GetAvgPassThroughTransparency() const { return avgPassThroughTransparency; }
+	// Null closures are selected and skipped by Scene::Intersect before a
+	// scattering vertex is returned. This is their complement in the original
+	// closure-selection distribution, not their RGB transmission or opacity.
+	virtual bool HasNullLobes() const { return false; }
+	virtual luxrays::Spectrum GetCameraTransparency(const HitPoint &hitPoint) const;
+	virtual float GetNonNullSelectionProbability(const HitPoint &hitPoint) const { return 1.f; }
 	virtual luxrays::Spectrum GetPassThroughTransparency(const HitPoint &hitPoint,
 		const luxrays::Vector &localFixedDir, const float passThroughEvent,
 		const bool backTracing) const;

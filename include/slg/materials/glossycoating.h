@@ -56,6 +56,9 @@ public:
 	virtual bool IsDelta() const {
 		return matBase->IsDelta();
 	}
+	virtual luxrays::Spectrum GetCameraTransparency(const HitPoint &hitPoint) const {
+		return matBase->GetCameraTransparency(hitPoint);
+	}
 	virtual luxrays::Spectrum GetPassThroughTransparency(const HitPoint &hitPoint,
 		const luxrays::Vector &localFixedDir, const float passThroughEvent,
 		const bool backTracing) const;

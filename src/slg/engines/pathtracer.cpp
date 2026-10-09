@@ -1071,7 +1071,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			}
 
 			if (sampleResult.firstPathVertex) {
-				sampleResult.alpha = 0.f;
+				// Scene::Intersect accumulates the primary-ray opacity.
 				sampleResult.depth = numeric_limits<float>::infinity();
 				sampleResult.position = Point(
 						numeric_limits<float>::infinity(),
@@ -1105,7 +1105,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 
 		if (sampleResult.firstPathVertex) {
 			// The alpha value can be changed if the material is a shadow catcher (see below)
-			sampleResult.alpha = bsdf.IsHoldout() ? 0.f : 1.f;
+			if (bsdf.IsHoldout()) sampleResult.alpha = 0.f;
+			else if (bsdf.IsVolume()) sampleResult.alpha = 1.f;
 			sampleResult.depth = eyeRayHit.t;
 			sampleResult.position = bsdf.hitPoint.p;
 			sampleResult.geometryNormal = bsdf.hitPoint.geometryN;

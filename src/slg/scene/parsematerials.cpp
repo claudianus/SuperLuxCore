@@ -478,7 +478,7 @@ MaterialUPtr Scene::CreateMaterial(
 
 		auto mixMat = std::make_unique<MixMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			matA, matB, mix
+			matA, matB, mix, parseBool("additive", false)
 		);
 
 		// Check if there is a loop in Mix material definition

@@ -45,6 +45,51 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 	//--------------------------------------------------------------------------
 
 	switch (evalType) {
+		case EVAL_GET_CAMERA_TRANSPARENCY: {
+			float3 transparency = BLACK;
+			const uint texIndex = hitPoint->intoObject ? material->frontTranspTexIndex : material->backTranspTexIndex;
+			if (material->type == ARCHGLASS) {
+				Frame frame;
+				HitPoint_GetFrame(hitPoint, &frame);
+				const float3 localFixedDir = Frame_ToLocal_Private(&frame, VLOAD3F(&hitPoint->fixedDir.x));
+				const float3 kt = clamp(Texture_GetSpectrumValue(material->archglass.ktTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+				const float nc = ExtractExteriorIors(hitPoint, material->archglass.exteriorIorTexIndex TEXTURES_PARAM);
+				const float nt = ExtractInteriorIors(hitPoint, material->archglass.interiorIorTexIndex TEXTURES_PARAM);
+				float3 sampledDir;
+				transparency = ArchGlassMaterial_EvalSpecularTransmission(hitPoint, localFixedDir, kt, nc, nt, &sampledDir);
+			} else if (material->type == NULLMAT) {
+				transparency = texIndex == NULL_INDEX ? WHITE : clamp(
+						Texture_GetSpectrumValue(texIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+				if (Spectrum_IsBlack(transparency)) transparency = TO_FLOAT3(.0001f);
+			} else if (material->type == MIX && material->frontTranspTexIndex == NULL_INDEX &&
+					material->backTranspTexIndex == NULL_INDEX) {
+				float3 transparencyB, transparencyA;
+				EvalStack_PopFloat3(transparencyB);
+				EvalStack_PopFloat3(transparencyA);
+				const float weightB = material->mix.additive ? .5f : clamp(
+						Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+				transparency = (material->mix.additive ? 2.f : 1.f) *
+						((1.f - weightB) * transparencyA + weightB * transparencyB);
+			} else if (texIndex != NULL_INDEX)
+				transparency = TO_FLOAT3(1.f - clamp(Texture_GetFloatValue(texIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f));
+			EvalStack_PushFloat3(transparency);
+			return 0;
+		}
+		case EVAL_GET_NON_NULL_SELECTION_PROBABILITY: {
+			float probability = 1.f;
+			if (material->type == NULLMAT)
+				probability = 0.f;
+			else if (material->type == MIX && material->hasNullLobes) {
+				float probabilityB, probabilityA;
+				EvalStack_PopFloat(probabilityB);
+				EvalStack_PopFloat(probabilityA);
+				const float weightB = material->mix.additive ? .5f : clamp(
+						Texture_GetFloatValue(material->mix.mixFactorTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
+				probability = (1.f - weightB) * probabilityA + weightB * probabilityB;
+			}
+			EvalStack_PushFloat(probability);
+			return 0;
+		}
 		case EVAL_CONDITIONAL_GOTO: {
 				bool condition;
 				EvalStack_PopInt(condition);

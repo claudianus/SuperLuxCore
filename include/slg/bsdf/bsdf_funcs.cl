@@ -113,6 +113,7 @@ OPENCL_FORCE_INLINE void BSDF_Init(
 	Frame_Set(&bsdf->frame, dpdu, dpdv, shadeN);
 
 	bsdf->isVolume = false;
+	bsdf->nullSelectionConditioned = false;
 }
 
 // Used when hitting a volume scatter point
@@ -179,6 +180,7 @@ OPENCL_FORCE_INLINE void BSDF_InitVolume(
 	Frame_SetFromZ(&bsdf->frame, geometryN);
 
 	bsdf->isVolume = true;
+	bsdf->nullSelectionConditioned = false;
 }
 
 OPENCL_FORCE_INLINE float3 BSDF_Albedo(__global const BSDF *bsdf
@@ -310,6 +312,13 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 				localEyeDir, localLightDir, &event1, &pdf1
 				MATERIALS_PARAM);
 	}
+	const float selectionProbability = bsdf->nullSelectionConditioned ? Material_GetNonNullSelectionProbability(bsdf->materialIndex,
+			&bsdf->hitPoint MATERIALS_PARAM) : 1.f;
+	if (!(selectionProbability > 0.f))
+		return BLACK;
+	result /= selectionProbability;
+	pdf0 /= selectionProbability;
+	pdf1 /= selectionProbability;
 	if (directPdfW)
 		*directPdfW = fromLight ? pdf1 : pdf0;
 	if (reversePdfW)
@@ -369,6 +378,10 @@ OPENCL_FORCE_INLINE void BSDF_Pdf(__global const BSDF *bsdf,
 		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
 				localFixedDir, localSampledDir, &event, reversePdfW
 				MATERIALS_PARAM);
+	const float probability = bsdf->nullSelectionConditioned ? Material_GetNonNullSelectionProbability(bsdf->materialIndex,
+			&bsdf->hitPoint MATERIALS_PARAM) : 1.f;
+	if (directPdfW) *directPdfW = probability > 0.f ? *directPdfW / probability : 0.f;
+	if (reversePdfW) *reversePdfW = probability > 0.f ? *reversePdfW / probability : 0.f;
 }
 
 OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0, const float u1,
@@ -386,6 +399,11 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	if (Spectrum_IsBlack(result))
 		return BLACK;
 
+	const float selectionProbability = bsdf->nullSelectionConditioned ? Material_GetNonNullSelectionProbability(bsdf->materialIndex,
+			&bsdf->hitPoint MATERIALS_PARAM) : 1.f;
+	if (!(selectionProbability > 0.f))
+		return BLACK;
+	*pdfW /= selectionProbability;
 	*absCosSampledDir = fabs(CosTheta(localSampledDir));
 	*sampledDir = Frame_ToWorld(&bsdf->frame, localSampledDir);
 
@@ -441,10 +459,13 @@ OPENCL_FORCE_INLINE float3 BSDF_GetEmittedRadiance(__global const BSDF *bsdf, fl
 	const uint triangleLightSourceIndex = bsdf->triangleLightSourceIndex;
 	if (triangleLightSourceIndex == NULL_INDEX)
 		return BLACK;
-	else
-		return IntersectableLight_GetRadiance(&lights[triangleLightSourceIndex],
-				&bsdf->hitPoint, directPdfA, emissionPdfW
-				LIGHTS_PARAM);
+	else {
+		const float3 radiance = IntersectableLight_GetRadiance(&lights[triangleLightSourceIndex],
+				&bsdf->hitPoint, directPdfA, emissionPdfW LIGHTS_PARAM);
+		const float probability = bsdf->nullSelectionConditioned ? Material_GetNonNullSelectionProbability(bsdf->materialIndex,
+				&bsdf->hitPoint MATERIALS_PARAM) : 1.f;
+		return probability > 0.f ? radiance / probability : BLACK;
+	}
 }
 
 OPENCL_FORCE_INLINE float3 BSDF_GetPassThroughTransparency(__global const BSDF *bsdf, const bool backTracing

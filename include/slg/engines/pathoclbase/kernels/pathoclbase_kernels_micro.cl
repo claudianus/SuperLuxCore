@@ -246,7 +246,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 	}
 
 	if (pathInfo->depth.depth == 0) {
-		sampleResult->alpha = 0.f;
+		// Scene_Intersect accumulated the primary-ray opacity.
 		sampleResult->depth = INFINITY;
 		sampleResult->position.x = INFINITY;
 		sampleResult->position.y = INFINITY;
@@ -335,7 +335,8 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	if (pathInfo->depth.depth == 0) {
 		const bool isHoldout = BSDF_IsHoldout(bsdf
 				MATERIALS_PARAM);
-		sampleResult->alpha = isHoldout ? 0.f : 1.f;
+		if (isHoldout) sampleResult->alpha = 0.f;
+		else if (bsdf->isVolume) sampleResult->alpha = 1.f;
 		sampleResult->depth = rayHits[gid].t;
 		sampleResult->position = bsdf->hitPoint.p;
 		sampleResult->geometryNormal = bsdf->hitPoint.geometryN;

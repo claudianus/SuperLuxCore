@@ -174,6 +174,15 @@ Spectrum ArchGlassMaterial::Sample(const HitPoint &hitPoint,
 	return result / *pdfW;
 }
 
+Spectrum ArchGlassMaterial::GetCameraTransparency(const HitPoint &hitPoint) const {
+	const Spectrum kt = Kt->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
+	const float nc = ExtractExteriorIors(hitPoint, exteriorIor);
+	const float nt = ExtractInteriorIors(hitPoint, interiorIor);
+	const Frame frame(hitPoint.GetFrame());
+	Vector sampledDir;
+	return EvalSpecularTransmission(hitPoint, frame.ToLocal(hitPoint.fixedDir), kt, nc, nt, &sampledDir);
+}
+
 Spectrum ArchGlassMaterial::GetPassThroughTransparency(const HitPoint &hitPoint,
 		const Vector &localFixedDir, const float passThroughEvent, const bool backTracing) const {
 	const Spectrum kt = Kt->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);

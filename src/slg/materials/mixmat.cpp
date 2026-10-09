@@ -33,12 +33,14 @@ MixMaterial::MixMaterial(
 	TextureConstPtr bump,
 	MaterialConstRef mA,
 	MaterialConstRef mB,
-	TextureConstPtr mix
+	TextureConstPtr mix,
+	const bool additive
 ) :
 	Material(frontTransp, backTransp, emitted, bump),
 	matA(&mA),
 	matB(&mB),
-	mixFactor(mix)
+	mixFactor(mix),
+	additive(additive)
 {
 	// GetInteriorVolume/GetExteriorVolume read hitPoint - flag it so
 	// BSDF::Init keeps the virtual calls only for the override materials.
@@ -77,6 +79,10 @@ void MixMaterial::Preprocess() {
 
 	isLightSource = IsLightSourceImpl();
 	isDelta = IsDeltaImpl();
+	// An explicit material-opacity override replaces child pass-through
+	// selection, so it must not trigger null-closure conditioning.
+	hasNullLobes = !(frontTransparencyTex || backTransparencyTex) &&
+			(matA->HasNullLobes() || matB->HasNullLobes());
 }
 
 VolumeConstPtr MixMaterial::GetInteriorVolume(const HitPoint &hitPoint,
@@ -84,7 +90,7 @@ VolumeConstPtr MixMaterial::GetInteriorVolume(const HitPoint &hitPoint,
 	if (interiorVolume)
 		return interiorVolume;
 	else {
-		const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+		const float weight2 = MixAmount(hitPoint);
 		const float weight1 = 1.f - weight2;
 
 		if (passThroughEvent < weight1)
@@ -99,7 +105,7 @@ VolumeConstPtr MixMaterial::GetExteriorVolume(const HitPoint &hitPoint,
 	if (exteriorVolume)
 		return exteriorVolume;
 	else {
-		const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+		const float weight2 = MixAmount(hitPoint);
 		const float weight1 = 1.f - weight2;
 
 		if (passThroughEvent < weight1)
@@ -109,11 +115,27 @@ VolumeConstPtr MixMaterial::GetExteriorVolume(const HitPoint &hitPoint,
 	}
 }
 
+Spectrum MixMaterial::GetCameraTransparency(const HitPoint &hitPoint) const {
+	if (frontTransparencyTex || backTransparencyTex)
+		return Material::GetCameraTransparency(hitPoint);
+	const float weight2 = MixAmount(hitPoint);
+	return ClosureScale() * ((1.f - weight2) * matA->GetCameraTransparency(hitPoint) +
+			weight2 * matB->GetCameraTransparency(hitPoint));
+}
+
+float MixMaterial::GetNonNullSelectionProbability(const HitPoint &hitPoint) const {
+	if (!hasNullLobes)
+		return 1.f;
+	const float weight2 = MixAmount(hitPoint);
+	return (1.f - weight2) * matA->GetNonNullSelectionProbability(hitPoint) +
+			weight2 * matB->GetNonNullSelectionProbability(hitPoint);
+}
+
 void MixMaterial::UpdateAvgPassThroughTransparency() {
 	if (frontTransparencyTex || backTransparencyTex)
 		Material::UpdateAvgPassThroughTransparency();
 	else {
-		const float avgMix = mixFactor->Filter();
+		const float avgMix = additive ? .5f : mixFactor->Filter();
 
 		const float weight2 = Clamp(avgMix, 0.f, 1.f);
 		const float weight1 = 1.f - weight2;
@@ -130,14 +152,14 @@ Spectrum MixMaterial::GetPassThroughTransparency(const HitPoint &hitPoint,
 		return Material::GetPassThroughTransparency(hitPoint, localFixedDir,
 				passThroughEvent, backTracing);
 	} else {
-		const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+		const float weight2 = MixAmount(hitPoint);
 		const float weight1 = 1.f - weight2;
 
 		if (passThroughEvent < weight1) {
-			return matA->GetPassThroughTransparency(hitPoint, localFixedDir,
+			return ClosureScale() * matA->GetPassThroughTransparency(hitPoint, localFixedDir,
 					passThroughEvent / weight1, backTracing);
 		} else {
-			return matB->GetPassThroughTransparency(hitPoint, localFixedDir,
+			return ClosureScale() * matB->GetPassThroughTransparency(hitPoint, localFixedDir,
 					(passThroughEvent - weight1) / weight2, backTracing);
 		}
 	}
@@ -147,7 +169,9 @@ float MixMaterial::GetEmittedRadianceY(const float oneOverPrimitiveArea) const {
 	if (emittedTex)
 		return Material::GetEmittedRadianceY(oneOverPrimitiveArea);
 	else
-		return luxrays::Lerp(mixFactor->Y(), matA->GetEmittedRadianceY(oneOverPrimitiveArea), matB->GetEmittedRadianceY(oneOverPrimitiveArea));
+		return additive ?
+				matA->GetEmittedRadianceY(oneOverPrimitiveArea) + matB->GetEmittedRadianceY(oneOverPrimitiveArea) :
+				luxrays::Lerp(mixFactor->Y(), matA->GetEmittedRadianceY(oneOverPrimitiveArea), matB->GetEmittedRadianceY(oneOverPrimitiveArea));
 }
 
 Spectrum MixMaterial::GetEmittedRadiance(const HitPoint &hitPoint, const float oneOverPrimitiveArea) const {
@@ -156,7 +180,7 @@ Spectrum MixMaterial::GetEmittedRadiance(const HitPoint &hitPoint, const float o
 	else {
 		Spectrum result;
 
-		const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+		const float weight2 = MixAmount(hitPoint);
 		const float weight1 = 1.f - weight2;
 
 		if (matA->IsLightSource() && (weight1 > 0.f))
@@ -164,15 +188,15 @@ Spectrum MixMaterial::GetEmittedRadiance(const HitPoint &hitPoint, const float o
 		if (matB->IsLightSource() && (weight2 > 0.f))
 			result += weight2 * matB->GetEmittedRadiance(hitPoint, oneOverPrimitiveArea);
 
-		return result;
+		return ClosureScale() * result;
 	}
 }
 
 Spectrum MixMaterial::Albedo(const HitPoint &hitPoint) const {
-	const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+	const float weight2 = MixAmount(hitPoint);
 	const float weight1 = 1.f - weight2;
 
-	return weight1 * matA->Albedo(hitPoint) + weight2 * matB->Albedo(hitPoint);
+	return ClosureScale() * (weight1 * matA->Albedo(hitPoint) + weight2 * matB->Albedo(hitPoint));
 }
 
 Spectrum MixMaterial::Evaluate(const HitPoint &hitPoint,
@@ -185,7 +209,7 @@ Spectrum MixMaterial::Evaluate(const HitPoint &hitPoint,
 	// material referencing other materials
 	const float isTransmitEval = (Sgn(localLightDir.z) != Sgn(localEyeDir.z));
 	
-	const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+	const float weight2 = MixAmount(hitPoint);
 	const float weight1 = 1.f - weight2;
 
 	if (directPdfW)
@@ -245,7 +269,7 @@ Spectrum MixMaterial::Evaluate(const HitPoint &hitPoint,
 		}
 	}
 
-	return result;
+	return ClosureScale() * result;
 }
 
 Spectrum MixMaterial::Sample(const HitPoint &hitPoint,
@@ -264,7 +288,7 @@ Spectrum MixMaterial::Sample(const HitPoint &hitPoint,
 	const Frame frameB(hitPointB.GetFrame());
 	const Vector fixedDirB = frameB.ToLocal(frame.ToWorld(localFixedDir));
 
-	const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+	const float weight2 = MixAmount(hitPoint);
 	const float weight1 = 1.f - weight2;
 
 	const bool sampleMatA = (passThroughEvent < weight1);
@@ -298,7 +322,7 @@ Spectrum MixMaterial::Sample(const HitPoint &hitPoint,
 	*pdfW *= weightFirst;
 
 	if ((*event) & SPECULAR)
-		return result;
+		return ClosureScale() * result;
 	
 	result *= *pdfW;
 
@@ -322,14 +346,14 @@ Spectrum MixMaterial::Sample(const HitPoint &hitPoint,
 		}
 	}
 
-	return result / *pdfW;
+	return ClosureScale() * result / *pdfW;
 }
 
 void MixMaterial::Pdf(const HitPoint &hitPoint,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		float *directPdfW, float *reversePdfW) const {
 	const Frame frame(hitPoint.GetFrame());
-	const float weight2 = Clamp(mixFactor->GetFloatValue(hitPoint), 0.f, 1.f);
+	const float weight2 = MixAmount(hitPoint);
 	const float weight1 = 1.f - weight2;
 
 	float directPdfWMatA = 1.f;
@@ -415,6 +439,7 @@ PropertiesUPtr MixMaterial::ToProperties(const ImageMapCache &imgMapCache, const
 	props->Set(Property("scene.materials." + name + ".material1")(matA->GetName()));
 	props->Set(Property("scene.materials." + name + ".material2")(matB->GetName()));
 	props->Set(Property("scene.materials." + name + ".amount")(mixFactor->GetSDLValue()));
+	props->Set(Property("scene.materials." + name + ".additive")(additive));
 	props->Set(Material::ToProperties(imgMapCache, useRealFileName));
 
 	return props;

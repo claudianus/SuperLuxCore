@@ -217,6 +217,8 @@ public:
 	bool HasBakeMap(const BakeMapType type) const;
 	luxrays::Spectrum GetBakeMapValue() const;
 
+	void SetNullSelectionConditioned() { nullSelectionConditioned = material->HasNullLobes(); }
+
 	HitPoint hitPoint;
 
 private:
@@ -228,6 +230,7 @@ private:
 	mutable MaterialConstPtr material;  // Optional reference, owned by scene
 	mutable TriangleLightConstPtr triangleLightSource; // != NULL only if it is an area light, optional, owned by scen
 	luxrays::Frame frame;
+	bool nullSelectionConditioned = false;
 };
 
 }

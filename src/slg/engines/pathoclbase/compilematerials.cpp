@@ -125,6 +125,39 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 	u_int evalOpStackSize = 0;
 	bool addDefaultOp = true;
 
+	if (opType == slg::ocl::EVAL_GET_CAMERA_TRANSPARENCY) {
+		if (mat->type == slg::ocl::GLOSSYCOATING)
+			return CompileMaterialOps(mat->glossycoating.matBaseIndex, opType, evalOps);
+		if (mat->type == slg::ocl::TWOSIDED && mat->frontTranspTexIndex == NULL_INDEX &&
+				mat->backTranspTexIndex == NULL_INDEX) {
+			evalOpStackSize += CompileMaterialOps(matIndex, slg::ocl::EVAL_TWOSIDED_SETUP, evalOps);
+			evalOpStackSize += CompileMaterialConditionalOps(matIndex,
+					mat->twosided.frontMatIndex, opType, mat->twosided.backMatIndex, opType, evalOps);
+			return evalOpStackSize;
+		}
+		if (mat->type == slg::ocl::MIX &&
+				mat->frontTranspTexIndex == NULL_INDEX && mat->backTranspTexIndex == NULL_INDEX) {
+			evalOpStackSize += CompileMaterialOps(mat->mix.matAIndex, opType, evalOps);
+			evalOpStackSize += CompileMaterialOps(mat->mix.matBIndex, opType, evalOps);
+		}
+		slg::ocl::MaterialEvalOp op;
+		op.matIndex = matIndex;
+		op.evalType = opType;
+		evalOps.push_back(op);
+		return evalOpStackSize + 3;
+	}
+	if (opType == slg::ocl::EVAL_GET_NON_NULL_SELECTION_PROBABILITY) {
+		if (mat->type == slg::ocl::MIX && mat->hasNullLobes) {
+			evalOpStackSize += CompileMaterialOps(mat->mix.matAIndex, opType, evalOps);
+			evalOpStackSize += CompileMaterialOps(mat->mix.matBIndex, opType, evalOps);
+		}
+		slg::ocl::MaterialEvalOp op;
+		op.matIndex = matIndex;
+		op.evalType = opType;
+		evalOps.push_back(op);
+		return evalOpStackSize + 1;
+	}
+
 	switch (mat->type) {
 		//----------------------------------------------------------------------
 		// Materials without sub-nodes
@@ -565,6 +598,17 @@ void CompiledScene::CompileMaterialOps() {
 		mat->evalSampleOpLength = matEvalOps.size() - mat->evalSampleOpStartIndex;
 
 		maxMaterialEvalStackSize = Max(maxMaterialEvalStackSize, evalSampleOpsStackSizeFloat);
+
+		mat->evalNonNullSelectionOpStartIndex = matEvalOps.size();
+		const u_int nonNullStackSize = CompileMaterialOps(i,
+				slg::ocl::EVAL_GET_NON_NULL_SELECTION_PROBABILITY, matEvalOps);
+		mat->evalNonNullSelectionOpLength = matEvalOps.size() - mat->evalNonNullSelectionOpStartIndex;
+		maxMaterialEvalStackSize = Max(maxMaterialEvalStackSize, nonNullStackSize);
+		mat->evalCameraTransparencyOpStartIndex = matEvalOps.size();
+		const u_int cameraStackSize = CompileMaterialOps(i,
+				slg::ocl::EVAL_GET_CAMERA_TRANSPARENCY, matEvalOps);
+		mat->evalCameraTransparencyOpLength = matEvalOps.size() - mat->evalCameraTransparencyOpStartIndex;
+		maxMaterialEvalStackSize = Max(maxMaterialEvalStackSize, cameraStackSize);
 	}
 
 	SLG_LOG("Material evaluation ops count: " << matEvalOps.size());
@@ -696,6 +740,7 @@ void CompiledScene::CompileMaterials() {
 		// Bake Material::GetEventTypes() and Material::IsDelta()
 		mat->eventTypes = m.GetEventTypes();
 		mat->isDelta = m.IsDelta();
+		mat->hasNullLobes = m.HasNullLobes();
 
 		// Material specific parameters
 		switch (m.GetType()) {
@@ -784,6 +829,7 @@ void CompiledScene::CompileMaterials() {
 				mat->mix.matAIndex = scene.GetMaterials().GetMaterialIndex(mm.GetMaterialA());
 				mat->mix.matBIndex = scene.GetMaterials().GetMaterialIndex(mm.GetMaterialB());
 				mat->mix.mixFactorTexIndex = scene.GetTextures().GetTextureIndex(mm.GetMixFactor());
+				mat->mix.additive = mm.IsAdditive() ? 1u : 0u;
 				break;
 			}
 			case NULLMAT: {

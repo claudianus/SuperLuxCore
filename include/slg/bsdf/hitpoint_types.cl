@@ -73,8 +73,9 @@ typedef struct {
 	float spectralW[3];
 	unsigned int spectralHeroAlive;
 	// Transient flag: non-zero while an emission-context texture graph is
-	// being evaluated (Material_GetEmittedRadiance sets it around the
+	// being evaluated (Material_GetEmittedRadiance sets 1 around the
 	// emittedTex eval) so leaf RGB producers pick the illuminant basis.
+	// Value 2 scopes raw RGB primary-ray transparency for film alpha.
 	unsigned int spectralEmissionEval;
 
 	// The context of the ray that generated this hit point. It is read by

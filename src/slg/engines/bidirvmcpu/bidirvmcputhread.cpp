@@ -220,7 +220,7 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 					DirectHitLight(false, eyeVertex, linkAcceptMask, eyeSampleResult);
 
 					if (eyeSampleResult.firstPathVertex) {
-						eyeSampleResult.alpha = 0.f;
+						// Primary-ray opacity was accumulated by Scene::Intersect.
 						eyeSampleResult.depth = std::numeric_limits<float>::infinity();
 					}
 					break;
@@ -229,7 +229,8 @@ void BiDirVMCPURenderThread::RenderFuncVM(std::stop_token stop_token) {
 
 				// Something was hit
 				if (eyeSampleResult.firstPathVertex) {
-					eyeSampleResult.alpha = 1.f;
+					// Primary-ray opacity was accumulated by Scene::Intersect.
+					if (eyeVertex.bsdf.IsVolume()) eyeSampleResult.alpha = 1.f;
 					eyeSampleResult.depth = eyeRayHit.t;
 				}
 

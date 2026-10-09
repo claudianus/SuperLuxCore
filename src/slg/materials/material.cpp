@@ -99,6 +99,11 @@ void Material::SetExteriorVolume(VolumeConstRef vol) {
 
 
 
+Spectrum Material::GetCameraTransparency(const HitPoint &hitPoint) const {
+	const auto tex = hitPoint.intoObject ? frontTransparencyTex : backTransparencyTex;
+	return tex ? Spectrum(1.f - Clamp(tex->GetFloatValue(hitPoint), 0.f, 1.f)) : Spectrum();
+}
+
 Spectrum Material::GetPassThroughTransparency(const HitPoint &hitPoint,
 		const luxrays::Vector &localFixedDir, const float passThroughEvent,
 		const bool backTracing) const {
