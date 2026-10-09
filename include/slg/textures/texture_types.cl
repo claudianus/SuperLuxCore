@@ -49,7 +49,8 @@ typedef enum {
 	// RGB-space math on the children -- mirrors CPU Spectral::ScopePause for
 	// HSV/normal-map/dot-product/split subtrees).
 	EVAL_SPECTRUM_PAUSE_START,
-	EVAL_SPECTRUM_PAUSE_END
+	EVAL_SPECTRUM_PAUSE_END,
+	EVAL_CYCLES_BUMP_RESTORE
 } TextureEvalOpType;
 
 typedef struct {
@@ -93,7 +94,8 @@ typedef enum {
 	CYCLESNOISE_TEX,
 	VECTOR_MAPPING_TEX,
 	NORMAL_VECTOR_TEX,
-	CYCLES_NORMAL_MAP_TEX
+	CYCLES_NORMAL_MAP_TEX,
+	CYCLES_BUMP_TEX
 } TextureType;
 
 // Note: keep aligned with the copy in rayinfo.h
@@ -558,6 +560,12 @@ typedef struct {
 } CyclesNormalMapTexParam;
 
 typedef struct {
+    unsigned int heightTexIndex, distanceTexIndex, strengthTexIndex, normalTexIndex;
+    unsigned int useNormal, invert;
+    float filterWidth;
+} CyclesBumpTexParam;
+
+typedef struct {
 	unsigned int texIndex, brightnessTexIndex, contrastTexIndex;
 } BrightContrastTexParam;
 
@@ -690,6 +698,7 @@ typedef struct {
 		VectorMappingTexParam vectorMappingTex;
 		NormalVectorTexParam normalVectorTex;
 		CyclesNormalMapTexParam cyclesNormalMapTex;
+		CyclesBumpTexParam cyclesBumpTex;
 		RoundingTexParam roundingTex;
 		ModuloTexParam moduloTex;
 		BrightContrastTexParam brightContrastTex;

@@ -50,3 +50,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Cycles Normal Map spaces and MikkTSpace data](2026-10-09-cycles-normal-map.md)
 
 - [Rough matte transport and MIS directions](2026-10-09-roughmatte-transport.md)
+
+- [Cycles Bump direction and linked-input semantics](2026-10-09-cycles-bump-direction.md)

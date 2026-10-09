@@ -94,6 +94,7 @@
 #include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/normalvector.h"
 #include "slg/textures/vectormath/cyclesnormalmap.h"
+#include "slg/textures/vectormath/cyclesbump.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -881,6 +882,26 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 			}
 			break;
 		}
+        case slg::ocl::CYCLES_BUMP_TEX: {
+            PushSpectralPauseStartOp(texIndex);
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.heightTexIndex, slg::ocl::EVAL_FLOAT);
+            slg::ocl::TextureEvalOp offset;
+            offset.texIndex = texIndex;
+            offset.evalType = slg::ocl::EVAL_BUMP_GENERIC_OFFSET_U;
+            texEvalOps.push_back(offset);
+            evalOpStackSize += 8;
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.heightTexIndex, slg::ocl::EVAL_FLOAT);
+            offset.evalType = slg::ocl::EVAL_BUMP_GENERIC_OFFSET_V;
+            texEvalOps.push_back(offset);
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.heightTexIndex, slg::ocl::EVAL_FLOAT);
+            offset.evalType = slg::ocl::EVAL_CYCLES_BUMP_RESTORE;
+            texEvalOps.push_back(offset);
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.distanceTexIndex, slg::ocl::EVAL_FLOAT);
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.strengthTexIndex, slg::ocl::EVAL_FLOAT);
+            evalOpStackSize += CompileTextureOps(tex->cyclesBumpTex.normalTexIndex, slg::ocl::EVAL_SPECTRUM);
+            PushSpectralPauseEndOp(texIndex);
+            break;
+        }
         case slg::ocl::CYCLES_NORMAL_MAP_TEX: {
             PushSpectralPauseStartOp(texIndex);
             evalOpStackSize += CompileTextureOps(tex->cyclesNormalMapTex.colorTexIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
@@ -2493,6 +2514,18 @@ void CompiledScene::CompileTextures() {
 				tex->splitFloat3Tex.channelIndex = sf3t.GetChannel();
 				break;
 			}
+            case CYCLES_BUMP_TEX: {
+                const auto &bump = dynamic_cast<const CyclesBumpTexture &>(t);
+                tex->type = slg::ocl::CYCLES_BUMP_TEX;
+                tex->cyclesBumpTex.heightTexIndex = scene.GetTextures().GetTextureIndex(bump.GetInput(0));
+                tex->cyclesBumpTex.distanceTexIndex = scene.GetTextures().GetTextureIndex(bump.GetInput(1));
+                tex->cyclesBumpTex.strengthTexIndex = scene.GetTextures().GetTextureIndex(bump.GetInput(2));
+                tex->cyclesBumpTex.normalTexIndex = scene.GetTextures().GetTextureIndex(bump.GetInput(3));
+                tex->cyclesBumpTex.useNormal = bump.UsesNormal();
+                tex->cyclesBumpTex.invert = bump.IsInvert();
+                tex->cyclesBumpTex.filterWidth = bump.GetFilterWidth();
+                break;
+            }
             case CYCLES_NORMAL_MAP_TEX: {
                 const auto &normal = dynamic_cast<const CyclesNormalMapTexture &>(t);
                 tex->type = slg::ocl::CYCLES_NORMAL_MAP_TEX;

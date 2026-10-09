@@ -2150,6 +2150,56 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		// CYCLESNOISE_TEX
 		//----------------------------------------------------------------------
+        case CYCLES_BUMP_TEX: {
+            const float precision = 4.76837158203125e-7f * fmax(1.f,
+                    fmax(fabs(hitPoint->p.x), fmax(fabs(hitPoint->p.y), fabs(hitPoint->p.z))));
+            const float step = fmax(texture->cyclesBumpTex.filterWidth *
+                    (hitPoint->bumpFootprint > 0.f ? hitPoint->bumpFootprint : sampleDistance), precision);
+            if (evalType == EVAL_BUMP_GENERIC_OFFSET_U) {
+                Texture_EvalOpGenericBumpOffsetU(evalStack, evalStackOffset, hitPoint, step);
+            } else if (evalType == EVAL_BUMP_GENERIC_OFFSET_V) {
+                Texture_EvalOpGenericBumpOffsetV(evalStack, evalStackOffset, hitPoint, step);
+            } else if (evalType == EVAL_CYCLES_BUMP_RESTORE) {
+                float hv, hu, center;
+                float3 origP, origN;
+                float2 origUV;
+                EvalStack_PopFloat(hv); EvalStack_PopFloat(hu);
+                EvalStack_PopFloat2(origUV); EvalStack_PopFloat3(origN); EvalStack_PopFloat3(origP);
+                EvalStack_PopFloat(center);
+                __global HitPoint *tmp = (__global HitPoint *)hitPoint;
+                VSTORE3F(origP, &tmp->p.x); VSTORE3F(origN, &tmp->shadeN.x);
+                tmp->defaultUV.u = origUV.x; tmp->defaultUV.v = origUV.y;
+                EvalStack_PushFloat(center); EvalStack_PushFloat(hu); EvalStack_PushFloat(hv);
+            } else {
+                float3 normal;
+                float strength, distance, hv, hu, center;
+                EvalStack_PopFloat3(normal); EvalStack_PopFloat(strength); EvalStack_PopFloat(distance);
+                EvalStack_PopFloat(hv); EvalStack_PopFloat(hu); EvalStack_PopFloat(center);
+                const float side = dot(VLOAD3F(&hitPoint->fixedDir.x), VLOAD3F(&hitPoint->geometryN.x)) < 0.f ? -1.f : 1.f;
+                if (!texture->cyclesBumpTex.useNormal) normal = side * VLOAD3F(&hitPoint->shadeN.x);
+                const float3 du = VLOAD3F(&hitPoint->dpdu.x), dv = VLOAD3F(&hitPoint->dpdv.x);
+                float3 value = normal;
+                if (length(du) > 0.f && length(dv) > 0.f) {
+                    const float3 rx = cross(dv, normal), ry = cross(normal, du);
+                    const float det = dot(du, rx);
+                    // Cycles orients both UV partials with its facing normal.
+                    const float3 gradient = side * (((hu - center) * length(du) / step) * rx +
+                            ((hv - center) * length(dv) / step) * ry);
+                    if (texture->cyclesBumpTex.invert) distance = -distance;
+                    const float3 perturbed = fabs(det) * normal - distance * sign(det) * gradient;
+                    const float pl2 = dot(perturbed, perturbed);
+                    if (isfinite(pl2) && pl2 > 0.f) {
+                        strength = fmax(strength, 0.f);
+                        const float3 blended = strength * perturbed / sqrt(pl2) + (1.f - strength) * normal;
+                        const float bl2 = dot(blended, blended);
+                        value = isfinite(bl2) && bl2 > 0.f ? blended / sqrt(bl2) : ZERO;
+                    }
+                }
+                if (evalType == EVAL_FLOAT) { EvalStack_PushFloat(Spectrum_Y(value)); }
+                else { EvalStack_PushFloat3(evalType == EVAL_BUMP ? side * value : value); }
+            }
+            break;
+        }
         case CYCLES_NORMAL_MAP_TEX: {
             float strength;
             float3 color;

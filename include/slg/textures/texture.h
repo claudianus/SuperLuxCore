@@ -84,7 +84,8 @@ typedef enum {
 	CYCLESNOISE_TEX,
 	VECTOR_MAPPING_TEX,
 	NORMAL_VECTOR_TEX,
-	CYCLES_NORMAL_MAP_TEX
+	CYCLES_NORMAL_MAP_TEX,
+	CYCLES_BUMP_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

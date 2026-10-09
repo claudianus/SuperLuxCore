@@ -91,6 +91,7 @@
 #include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/normalvector.h"
 #include "slg/textures/vectormath/cyclesnormalmap.h"
+#include "slg/textures/vectormath/cyclesbump.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -701,6 +702,15 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));
 		tex = std::make_unique<SplitFloat3Texture>(t, static_cast<u_int>(channel));
+    } else if (texType == "cyclesbump") {
+        auto &height = GetTexture(props.Get(Property(propName + ".height")(0.f)));
+        auto &distance = GetTexture(props.Get(Property(propName + ".distance")(.1f)));
+        auto &strength = GetTexture(props.Get(Property(propName + ".strength")(1.f)));
+        auto &normal = GetTexture(props.Get(Property(propName + ".normal")(0.f)));
+        tex = std::make_unique<CyclesBumpTexture>(height, distance, strength, normal,
+                props.Get(Property(propName + ".usenormal")(false)).Get<bool>(),
+                props.Get(Property(propName + ".invert")(false)).Get<bool>(),
+                props.Get(Property(propName + ".filterwidth")(1.f)).Get<float>());
 	} else if (texType == "cyclesnormalmap") {
         auto &color = GetTexture(props.Get(Property(propName + ".color")(Spectrum(.5f, .5f, 1.f))));
         auto &strength = GetTexture(props.Get(Property(propName + ".strength")(1.f)));
