@@ -150,3 +150,28 @@ transport beyond the eight targeted BIDIR checks, and actual
 viewport/F12 behavior. General Principled glossy/bump silhouette correction (C31)
 is tracked independently and remains unresolved. User OSL and baking stay outside
 the deferred goal scope.
+
+## Verified public 2.11.20 deployment
+
+Engine source `2f0304832ea144a7069718a1cf0a6dcdb13dea73` and add-on source
+`6a8c14837fae8428aaec459ad26ef4423f5ec9a7` are published as
+[engine wheels 2.11.20](https://github.com/claudianus/SuperLuxCore/releases/tag/wheels-v2.11.20)
+and [Blender extension 2.11.20](https://github.com/claudianus/SuperBlendLuxCore/releases/tag/v2.11.20).
+Four platform wheel/ZIP structures, metadata/runtime payloads, source/hash
+attestations and published tag/asset digests passed. The ARM CI module SHA-256 is
+`79b47dca82b4692aba120aa32adaf339457bfc49c5f822ca1f0f2b7dd83b6324`;
+it is distinct from the private module above.
+
+Installed Blender 5.2.1 macOS ARM completed 125 CI-wheel checks, 48 final-ZIP
+checks and 38 actual user-profile checks on CPU/Metal. Fourteen comparison sheets
+and six 1280×720 spectral material images were inspected. Actual Metal logs
+confirm M5 Pro intersection/path kernels. Native quality defaults remain in
+place; Metal glass caustics retain noise at 128 samples. This does not establish
+full production compatibility, mapped-normal glossy correction, convergence or
+other-platform local GPU rendering.
+
+The actual user extension now uses the bundled 2.11.20 wheel, with the prior
+extension/config/native module backed up. Detailed checks, SHA-256 values,
+installation diagnostics and remaining work are recorded in the
+[add-on deployment report](https://github.com/claudianus/SuperBlendLuxCore/blob/main/doc/engineering/2026-10-09-deployment-2.11.20.md).
+Durable workspace evidence: `test-scenes/validation-2026-10-09/public-bundle-2.11.20`.
