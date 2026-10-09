@@ -62,4 +62,8 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Verified private Cycles Vector Displacement Incoming direction](2026-10-10-cycles-displacement-incoming.md)
 
-- [Cycles Backfacing spectrum](2026-10-10-cycles-backfacing.md): front/back emission color/strength fix; 28 private CPU/Metal checks, public deployment pending.
+- [Cycles Backfacing spectrum](2026-10-10-cycles-backfacing.md): front/back emission color/strength fix; 28 private CPU/Metal checks; the scoped fix is included in verified2.11.24 deployment.
+
+- [Current 2.11.24 standalone positive SSS boundary diagnostic](2026-10-10-cycles-positive-sss-diagnostic.md): confirmed remaining defect; auxiliary models excluded from production acceptance.
+
+- [Verified2.11.24 Incoming, Backfacing, valid-zero and Microfiber deployment](2026-10-10-deployment-2.11.24.md): 591 guarded CI/fresh/actual CPU and Metal checks; full-scene goal remains active.
