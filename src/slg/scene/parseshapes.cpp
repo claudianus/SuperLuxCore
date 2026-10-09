@@ -433,6 +433,31 @@ ExtTriangleMeshUPtr Scene::CreateShape(const string &shapeName, const Properties
 		params.offset = props.Get(Property(propName + ".offset")(0.f)).Get<double>();
 		params.uvIndex = Clamp(props.Get(Property(propName + ".uvindex")(0)).Get<u_int>(), 0u, EXTMESH_MAX_DATA_COUNT);
 		params.normalSmooth = props.Get(Property(propName + ".normalsmooth")(true)).Get<bool>();
+		// Native vector maps retain their historical tangent/channel convention.
+		// The Cycles adapter explicitly supplies its coordinate space and transform.
+		const string mapSpace = props.Get(Property(propName + ".map.space")("native")).Get<string>();
+		if (mapSpace == "native")
+			params.mapSpace = DisplacementShape::NATIVE_SPACE;
+		else if (mapSpace == "object")
+			params.mapSpace = DisplacementShape::OBJECT_SPACE;
+		else if (mapSpace == "world")
+			params.mapSpace = DisplacementShape::WORLD_SPACE;
+		else if (mapSpace == "tangent")
+			params.mapSpace = DisplacementShape::TANGENT_SPACE;
+		else
+			throw runtime_error("Unknown displacement map space in shape: " + shapeName);
+		if ((params.mapSpace != DisplacementShape::NATIVE_SPACE) &&
+				(params.mapType != DisplacementShape::VECTOR_DISPLACEMENT))
+			throw runtime_error("Explicit displacement map space requires a vector map: " + shapeName);
+		params.objectToWorld = Transform(props.Get(Property(propName + ".objecttoworld")
+				(Matrix4x4::MAT_IDENTITY)).Get<Matrix4x4>());
+		params.normalIndex = props.Get(Property(propName + ".map.normalindex")(NULL_INDEX)).Get<u_int>();
+		params.tangentIndex = props.Get(Property(propName + ".map.tangentindex")(NULL_INDEX)).Get<u_int>();
+		params.signIndex = props.Get(Property(propName + ".map.signindex")(NULL_INDEX)).Get<u_int>();
+		params.vertexIDLowIndex = props.Get(Property(propName + ".map.vertexidlowindex")(NULL_INDEX)).Get<u_int>();
+		params.vertexIDHighIndex = props.Get(Property(propName + ".map.vertexidhighindex")(NULL_INDEX)).Get<u_int>();
+		params.vertexIDSmoothFlag = props.Get(Property(propName + ".map.vertexidsmoothflag")(false)).Get<bool>();
+		params.normalDelta = props.Get(Property(propName + ".map.normaldelta")(false)).Get<bool>();
 
 		shape = std::make_unique<DisplacementShape>(
 			static_cast<ExtTriangleMesh&>(extMeshCache.GetExtMesh(sourceMeshName)),

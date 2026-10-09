@@ -33,6 +33,12 @@ public:
 		HIGHT_DISPLACEMENT,
 		VECTOR_DISPLACEMENT
 	} DisplacementType;
+	typedef enum {
+		NATIVE_SPACE,
+		OBJECT_SPACE,
+		WORLD_SPACE,
+		TANGENT_SPACE
+	} DisplacementSpace;
 
 	typedef struct {
 		DisplacementType mapType;
@@ -41,6 +47,15 @@ public:
 		float offset;
 		u_int uvIndex;
 		bool normalSmooth;
+		DisplacementSpace mapSpace = NATIVE_SPACE;
+		luxrays::Transform objectToWorld;
+		u_int normalIndex = NULL_INDEX;
+		u_int tangentIndex = NULL_INDEX;
+		u_int signIndex = NULL_INDEX;
+		u_int vertexIDLowIndex = NULL_INDEX;
+		u_int vertexIDHighIndex = NULL_INDEX;
+		bool vertexIDSmoothFlag = false;
+		bool normalDelta = false;
 	} Params;
 
 	DisplacementShape(luxrays::ExtTriangleMeshRef srcMesh, const Texture &dispMap,

@@ -28,6 +28,7 @@ include_directories(${PROJECT_SOURCE_DIR}/deps/bcd-1.1/include)
 pybind11_add_module(pysuperluxcore MODULE
   ${PROJECT_SOURCE_DIR}/src/pysuperluxcore/pysuperluxcore.cpp
   ${PROJECT_SOURCE_DIR}/src/pysuperluxcore/pysuperluxcoreforblender.cpp
+  ${PROJECT_SOURCE_DIR}/src/pysuperluxcore/mikktspace.cpp
 )
 
 target_link_libraries(pysuperluxcore PRIVATE
@@ -210,4 +211,3 @@ if(WIN32)
   #)
 
 endif(WIN32)
-

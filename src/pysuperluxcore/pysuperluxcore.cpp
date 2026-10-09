@@ -50,6 +50,7 @@
 #include "luxcore/luxcoreimpl.h"
 #include "luxcore/pysuperluxcore/pysuperluxcoreforblender.h"
 #include "luxcore/pysuperluxcore/pysuperluxcoreutils.h"
+#include "mikktspace.h"
 
 using namespace luxcore;
 using namespace luxcore::detail;
@@ -3046,6 +3047,7 @@ PYBIND11_MODULE(pysuperluxcore, m) {
   ;
 
   m.def("GetOpenVDBGridNames", &GetOpenVDBGridNames);
+  RegisterMikkTangents(m);
   m.def("GetOpenVDBGridInfo", &GetOpenVDBGridInfo);
 	m.def("BlenderMatrix4x4ToList", &blender::BlenderMatrix4x4ToList);
 

@@ -52,6 +52,8 @@ MESSAGE(STATUS "C compiler version is ${CMAKE_C_COMPILER_VERSION}")
 # Versioning should comply to semver standard: https://semver.org
 #
 FILE(READ "${CMAKE_CURRENT_LIST_DIR}/build-system/build-settings.json" settings_json)
+SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/build-system/build-settings.json")
 STRING(JSON _DEFAULT_VERSION_MAJOR GET "${settings_json}" DefaultVersion major)
 STRING(JSON _DEFAULT_VERSION_MINOR GET "${settings_json}" DefaultVersion minor)
 STRING(JSON _DEFAULT_VERSION_PATCH GET "${settings_json}" DefaultVersion patch)
