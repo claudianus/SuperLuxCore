@@ -747,6 +747,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				typeStr == "ridged_multifractal" ? CYCLESNOISE_RIDGED_MULTIFRACTAL :
 				typeStr == "hetero_terrain" ? CYCLESNOISE_HETERO_TERRAIN :
 				typeStr == "wave" ? CYCLESNOISE_WAVE :
+				typeStr == "white" ? CYCLESNOISE_WHITENOISE :
 				throw runtime_error("Unknown cyclesnoise texture type: " + typeStr);
 		const u_int waveMode = props.Get(Property(propName + ".wavemode")(0u)).Get<u_int>();
 		const int dims = props.Get(Property(propName + ".dimensions")(3)).Get<int>();

@@ -440,6 +440,22 @@ OPENCL_FORCE_NOT_INLINE float3 CyclesNoise_Evaluate(const float4 pIn,
 		const float lacunarity, const float offset, const float gain,
 		const float distortion, const uint type, const uint dims,
 		const uint normalize, const uint colorNeeded, const uint waveMode) {
+	// CPU와 같은 비트 해시를 사용하며 4D W와 raw 좌표를 보존한다.
+	if (type == 6u) {
+		const uint x = as_uint(pIn.x), y = as_uint(pIn.y);
+		const uint z = as_uint(pIn.z), w = as_uint(pIn.w);
+		const float r = CyclesNoise_UIntToFloatIncl(dims == 1u ? CyclesNoise_HashUInt(x) : dims == 2u ?
+				CyclesNoise_HashUInt2(x, y) : dims == 3u ? CyclesNoise_HashUInt3(x, y, z) : CyclesNoise_HashUInt4(x, y, z, w));
+		if (!colorNeeded)
+			return MAKE_FLOAT3(r, 0.f, 0.f);
+		const float g = CyclesNoise_UIntToFloatIncl(dims == 1u ? CyclesNoise_HashUInt2(x, as_uint(1.f)) : dims == 2u ?
+				CyclesNoise_HashUInt3(x, y, as_uint(1.f)) : dims == 3u ? CyclesNoise_HashUInt4(x, y, z, as_uint(1.f)) :
+				CyclesNoise_HashUInt4(z, x, w, y));
+		const float b = CyclesNoise_UIntToFloatIncl(dims == 1u ? CyclesNoise_HashUInt2(x, as_uint(2.f)) : dims == 2u ?
+				CyclesNoise_HashUInt3(x, y, as_uint(2.f)) : dims == 3u ? CyclesNoise_HashUInt4(x, y, z, as_uint(2.f)) :
+				CyclesNoise_HashUInt4(w, z, y, x));
+		return MAKE_FLOAT3(r, g, b);
+	}
 	const float detail = clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmax(roughnessIn, 0.f);
 

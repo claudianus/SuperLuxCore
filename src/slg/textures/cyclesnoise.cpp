@@ -458,6 +458,21 @@ void CyclesNoiseTexture::Evaluate(const float pIn[4], const float scale,
 		const CyclesNoiseType noiseType, const u_int dims,
 		const bool normalize, const bool colorNeeded,
 		float &value, float color[3], const u_int waveMode) {
+	// White Noise는 스케일·왜곡 없이 입력 비트를 직접 해시한다.
+	if (noiseType == CYCLESNOISE_WHITENOISE) {
+		const u_int x = FloatAsUInt(pIn[0]), y = FloatAsUInt(pIn[1]);
+		const u_int z = FloatAsUInt(pIn[2]), w = FloatAsUInt(pIn[3]);
+		value = UIntToFloatIncl(dims == 1u ? HashUInt(x) : dims == 2u ?
+				HashUInt2(x, y) : dims == 3u ? HashUInt3(x, y, z) : HashUInt4(x, y, z, w));
+		color[0] = value;
+		color[1] = UIntToFloatIncl(dims == 1u ? HashUInt2(x, FloatAsUInt(1.f)) : dims == 2u ?
+				HashUInt3(x, y, FloatAsUInt(1.f)) : dims == 3u ? HashUInt4(x, y, z, FloatAsUInt(1.f)) :
+				HashUInt4(z, x, w, y));
+		color[2] = UIntToFloatIncl(dims == 1u ? HashUInt2(x, FloatAsUInt(2.f)) : dims == 2u ?
+				HashUInt3(x, y, FloatAsUInt(2.f)) : dims == 3u ? HashUInt4(x, y, z, FloatAsUInt(2.f)) :
+				HashUInt4(w, z, y, x));
+		return;
+	}
 	const float detail = Clamp(detailIn, 0.f, 15.f);
 	const float roughness = fmaxf(roughnessIn, 0.f);
 
@@ -593,7 +608,7 @@ PropertiesUPtr CyclesNoiseTexture::ToProperties(const ImageMapCache &imgMapCache
 	props->Set(Property(prefix + ".gain")(gain.get().GetSDLValue()));
 	props->Set(Property(prefix + ".distortion")(distortion.get().GetSDLValue()));
 	static const char *types[] = { "fbm", "multifractal", "hybrid_multifractal",
-			"ridged_multifractal", "hetero_terrain", "wave" };
+			"ridged_multifractal", "hetero_terrain", "wave", "white" };
 	props->Set(Property(prefix + ".noisetype")(types[noiseType]));
 	if (noiseType == CYCLESNOISE_WAVE)
 		props->Set(Property(prefix + ".wavemode")(waveMode));

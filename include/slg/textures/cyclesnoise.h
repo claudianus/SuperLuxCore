@@ -41,7 +41,9 @@ typedef enum {
 	// gain = Detail Scale, roughness = Detail Roughness; waveMode packs
 	// type (bit 0: rings), direction (bits 1-2: X/Y/Z/diagonal-spherical)
 	// and profile (bits 3-4: sin/saw/tri)
-	CYCLESNOISE_WAVE
+	CYCLESNOISE_WAVE,
+	// 연결된 W를 포함하는 1~4차원 White Noise.
+	CYCLESNOISE_WHITENOISE
 } CyclesNoiseType;
 
 class CyclesNoiseTexture : public Texture {
