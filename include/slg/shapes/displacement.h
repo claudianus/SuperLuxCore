@@ -40,7 +40,7 @@ public:
 		TANGENT_SPACE
 	} DisplacementSpace;
 
-	typedef struct {
+	struct Params {
 		DisplacementType mapType;
 		u_int mapChannels[3];
 		float scale;
@@ -56,7 +56,7 @@ public:
 		u_int vertexIDHighIndex = NULL_INDEX;
 		bool vertexIDSmoothFlag = false;
 		bool normalDelta = false;
-	} Params;
+	};
 
 	DisplacementShape(luxrays::ExtTriangleMeshRef srcMesh, const Texture &dispMap,
 			const Params &params);

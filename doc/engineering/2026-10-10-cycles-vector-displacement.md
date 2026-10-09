@@ -22,6 +22,8 @@ Source contracts were checked against local Blender `kernel/svm/displace.h`, `sc
 
 ## Validation and limits
 
+The first four-platform release run (`37977575837`) exposed MSVC C7626: an unnamed typedef class cannot contain the new default member initializers. `DisplacementShape::Params` is now a named struct; its member layout, defaults and call-site type are unchanged. A corrected release run must pass before publishing 2.11.22.
+
 Native `dev-tools/displacement-space-properties-test.py` covers 16 native legacy/imported-space and invalid-data conditions. Legacy 2.11.21 positions/rejections exactly match the candidate's three legacy checks. `dev-tools/mikktspace-properties-test.py` covers 13 UV basis, mirror orientation, smoothing, quantized-normal and malformed-input conditions.
 
 Blender adapter validation, final runtime hashes, 720p image review, CPU/Metal results and release status are recorded in `../SuperBlendLuxCore/doc/engineering/2026-10-10-cycles-vector-displacement.md` in the workspace and the corresponding add-on repository. This document does not establish a public/installed 2.11.22 runtime until its deployment evidence is complete.
