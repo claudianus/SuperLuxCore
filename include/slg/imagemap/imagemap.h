@@ -982,6 +982,9 @@ public:
 	static void FromProperties(const luxrays::Properties &props, const std::string &prefix, ImageMapConfig &imgCfg);
 
 	ColorSpaceConfig colorSpaceCfg;
+	// Blender 색 이미지의 입력 알파 결합을 명시적으로 전달한다.
+	bool premultiplyAlpha = false;
+	bool unpremultiplyAlpha = false;
 
 	
 	ImageMapStorage::StorageType GetStorageType() const { return storageType; }

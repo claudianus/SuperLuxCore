@@ -39,6 +39,8 @@ namespace OCIO = OCIO_NAMESPACE;
 
 #include "luxrays/utils/properties.h"
 #include "slg/core/sdl.h"
+#include <OpenImageIO/imagecache.h>
+
 #include "slg/imagemap/imagemap.h"
 #include "slg/imagemap/imagemapcache.h"
 #include "slg/utils/filenameresolver.h"
@@ -794,6 +796,8 @@ ImageMapConfig::ImageMapConfig(const Properties &props, const string &prefix) {
 
 void ImageMapConfig::FromProperties(const Properties &props, const string &prefix, ImageMapConfig &imgCfg) {
 	ColorSpaceConfig::FromProperties(props, prefix, imgCfg.colorSpaceCfg, ColorSpaceConfig::defaultLuxCoreConfig);
+	imgCfg.premultiplyAlpha = props.Get(Property(prefix + ".premultiplyalpha")(false)).Get<bool>();
+	imgCfg.unpremultiplyAlpha = props.Get(Property(prefix + ".unpremultiplyalpha")(false)).Get<bool>();
 
 	imgCfg.SetStorageType(
 		ImageMapStorage::String2StorageType(
@@ -1048,7 +1052,10 @@ void ImageMap::Init(
 		// Lazy + tile-cached source: ImageBufAlgo::resize pulls only the
 		// scanlines/tiles it needs through the ImageCache. Same
 		// UnassociatedAlpha config as the ImageInput path.
-		ImageBuf source(resolvedFileName, 0, 0, nullptr, &config);
+		auto resizeCache = ImageCache::create(false);
+		resizeCache->attribute("unassociatedalpha", 1);
+		resizeCache->attribute("max_memory_MB", 64.f);
+		ImageBuf source(resolvedFileName, 0, 0, resizeCache, &config);
 		ImageBufAlgo::KWArgs options = {};
 		ROI roi(0, width, 0, height, 0, 1, 0, channelCount);
 		ImageBuf dest = ImageBufAlgo::resize(source, options, roi);
@@ -1065,6 +1072,16 @@ void ImageMap::Init(
 			SDL_LOG("Error reading image map: " << error);
 		}
 		in->close();
+	}
+
+	// 색 공간 변환 전에 Cycles의 바이트/연결 알파 의미를 적용한다.
+	if ((cfg.premultiplyAlpha || cfg.unpremultiplyAlpha) && channelCount == 4) {
+		const u_int pixelCount = width * height;
+		for (u_int i = 0; i < pixelCount; ++i) {
+			const float alpha = pixelStorage->GetAlpha(i);
+			const float factor = cfg.unpremultiplyAlpha ? (alpha > 0.f ? 1.f / alpha : 1.f) : alpha;
+			pixelStorage->SetSpectrum(i, pixelStorage->GetSpectrum(i) * factor);
+		}
 	}
 
 	switch (cfg.colorSpaceCfg.colorSpaceType) {
@@ -1680,9 +1697,16 @@ pair<u_int, u_int> ImageMap::GetSize(const std::string &fileName) {
 }
 
 void ImageMap::MakeTx(const std::string &srcFileName, const std::string &dstFileName) {
-	ImageBuf Input(srcFileName);
+	// 캐시에 알파가 결합된 원본을 저장하면 Non-Color 데이터까지 바뀐다.
+	ImageSpec inputConfig;
+	inputConfig["oiio:UnassociatedAlpha"] = 1;
+	auto txCache = ImageCache::create(false);
+	txCache->attribute("unassociatedalpha", 1);
+	txCache->attribute("max_memory_MB", 64.f);
+	ImageBuf Input(srcFileName, 0, 0, txCache, &inputConfig);
 
 	ImageSpec config;
+	config["oiio:UnassociatedAlpha"] = 1;
 	stringstream s;
 	if (!ImageBufAlgo::make_texture(ImageBufAlgo::MakeTxTexture, Input, dstFileName, config, &s))
 		throw runtime_error("ImageMap::MakeTx error: " + s.str());

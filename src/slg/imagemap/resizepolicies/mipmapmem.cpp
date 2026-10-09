@@ -36,7 +36,7 @@ ImageMapUPtr ImageMapResizeMipMapMemPolicy::ApplyResizePolicy(const std::string 
 	const string srcFileName = SLG_FileNameResolver.ResolveFile(fileName);
 	
 	// Check/Create and TX file for each image map
-	const string dstFileName = srcFileName + ".tx";
+	const string dstFileName = srcFileName + ".slc-raw-v1.tx";
 
 	// Check if the TX file exist and it is up to date
 	if (!std::filesystem::exists(dstFileName) ||
@@ -164,7 +164,7 @@ void ImageMapResizeMipMapMemPolicy::Preprocess(
 
 		// Reload the original image map with the best mip map level
 		const string srcFileName = SLG_FileNameResolver.ResolveFile(imc.maps[i]->GetName());
-		const string dstFileName = srcFileName + ".tx";
+		const string dstFileName = srcFileName + ".slc-raw-v1.tx";
 		imc.maps[i]->Reload(dstFileName, newWidth, newHeight);
 
 		currentMemUsed += imc.maps[i]->GetStorage().GetMemorySize();
