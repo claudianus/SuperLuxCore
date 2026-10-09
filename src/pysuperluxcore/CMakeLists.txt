@@ -31,6 +31,11 @@ pybind11_add_module(pysuperluxcore MODULE
   ${PROJECT_SOURCE_DIR}/src/pysuperluxcore/mikktspace.cpp
 )
 
+# pybind11::arg_v includes an extra std::string under this definition.  Keep
+# its layout consistent across every binding translation unit: registering
+# default arguments from a TU with a different layout corrupts module import.
+target_compile_definitions(pysuperluxcore PRIVATE PYBIND11_DETAILED_ERROR_MESSAGES)
+
 target_link_libraries(pysuperluxcore PRIVATE
     onetbb::onetbb
     oidn::oidn

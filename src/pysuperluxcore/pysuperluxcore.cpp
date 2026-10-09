@@ -22,7 +22,6 @@
 #include <pybind11/detail/common.h>
 #include <pybind11/detail/using_smart_holder.h>
 #include <string_view>
-#define PYBIND11_DETAILED_ERROR_MESSAGES
 
 #ifdef WIN32
 // Python 3.8 and older define snprintf as a macro even for VS 2015 and newer
