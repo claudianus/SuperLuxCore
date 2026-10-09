@@ -90,7 +90,8 @@ typedef enum {
 	// Raw HitPoint field reads (Geometry-node remaining outputs)
 	HITPOINT_TEX,
 	// Cycles Noise Texture node (exact kernel port)
-	CYCLESNOISE_TEX
+	CYCLESNOISE_TEX,
+	VECTOR_MAPPING_TEX
 } TextureType;
 
 // Note: keep aligned with the copy in rayinfo.h
@@ -539,6 +540,11 @@ typedef struct {
 } MakeFloat3TexParam;
 
 typedef struct {
+	unsigned int inputIndex[4];
+	unsigned int mode;
+} VectorMappingTexParam;
+
+typedef struct {
 	unsigned int texIndex, brightnessTexIndex, contrastTexIndex;
 } BrightContrastTexParam;
 
@@ -668,6 +674,7 @@ typedef struct {
 		MathFuncTexParam mathFuncTex;
 		SplitFloat3TexParam splitFloat3Tex;
 		MakeFloat3TexParam makeFloat3Tex;
+		VectorMappingTexParam vectorMappingTex;
 		RoundingTexParam roundingTex;
 		ModuloTexParam moduloTex;
 		BrightContrastTexParam brightContrastTex;

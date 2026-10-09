@@ -2150,6 +2150,47 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		// CYCLESNOISE_TEX
 		//----------------------------------------------------------------------
+		case VECTOR_MAPPING_TEX: {
+			if (evalType == EVAL_FLOAT || evalType == EVAL_SPECTRUM) {
+				float3 scale, rotation, location, value;
+				EvalStack_PopFloat3(scale);
+				EvalStack_PopFloat3(rotation);
+				EvalStack_PopFloat3(location);
+				EvalStack_PopFloat3(value);
+				const float cx = cos(rotation.x), cy = cos(rotation.y), cz = cos(rotation.z);
+				const float sx = sin(rotation.x), sy = sin(rotation.y), sz = sin(rotation.z);
+				const float3 r0 = MAKE_FLOAT3(cy * cz, cz * sx * sy - cx * sz, sx * sz + cx * cz * sy);
+				const float3 r1 = MAKE_FLOAT3(cy * sz, cx * cz + sx * sy * sz, cx * sy * sz - cz * sx);
+				const float3 r2 = MAKE_FLOAT3(-sy, cy * sx, cx * cy);
+				const unsigned int mode = texture->vectorMappingTex.mode;
+				float3 v = mode == 1u ? value - location : mode == 3u ?
+						MAKE_FLOAT3(scale.x != 0.f ? value.x / scale.x : 0.f,
+							scale.y != 0.f ? value.y / scale.y : 0.f,
+							scale.z != 0.f ? value.z / scale.z : 0.f) : value * scale;
+				v = mode == 1u ? v.x * r0 + v.y * r1 + v.z * r2 :
+						MAKE_FLOAT3(dot(r0, v), dot(r1, v), dot(r2, v));
+				if (mode == 0u) v += location;
+				else if (mode == 1u)
+					v = MAKE_FLOAT3(scale.x != 0.f ? v.x / scale.x : 0.f,
+							scale.y != 0.f ? v.y / scale.y : 0.f,
+							scale.z != 0.f ? v.z / scale.z : 0.f);
+				else if (mode == 3u) {
+					const float len = sqrt(dot(v, v));
+					v = len > 0.f ? v / len : BLACK;
+				}
+				if (evalType == EVAL_FLOAT) {
+					EvalStack_PushFloat(Spectrum_Y(v));
+				} else {
+					EvalStack_PushFloat3(v);
+				}
+			} else if (evalType == EVAL_BUMP_GENERIC_OFFSET_U)
+				Texture_EvalOpGenericBumpOffsetU(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			else if (evalType == EVAL_BUMP_GENERIC_OFFSET_V)
+				Texture_EvalOpGenericBumpOffsetV(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			else if (evalType == EVAL_BUMP)
+				Texture_EvalOpGenericBump(evalStack, evalStackOffset, hitPoint, sampleDistance);
+			break;
+		}
 		case CYCLESNOISE_TEX:
 			CyclesNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);

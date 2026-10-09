@@ -88,6 +88,7 @@
 #include "slg/textures/object_id.h"
 #include "slg/textures/vectormath/dotproduct.h"
 #include "slg/textures/vectormath/makefloat3.h"
+#include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -695,6 +696,14 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));
 		tex = std::make_unique<SplitFloat3Texture>(t, static_cast<u_int>(channel));
+	} else if (texType == "vectormapping") {
+		auto &vector = GetTexture(props.Get(Property(propName + ".vector")(0.f)));
+		auto &location = GetTexture(props.Get(Property(propName + ".location")(0.f)));
+		auto &rotation = GetTexture(props.Get(Property(propName + ".rotation")(0.f)));
+		auto &scale = GetTexture(props.Get(Property(propName + ".scale")(1.f)));
+		const u_int mode = props.Get(Property(propName + ".mode")(0u)).Get<u_int>();
+		if (mode > 3u) throw runtime_error("Invalid vector mapping mode: " + ToString(mode));
+		tex = std::make_unique<VectorMappingTexture>(vector, location, rotation, scale, mode);
 	} else if (texType == "makefloat3") {
 		auto& t1 = GetTexture(props.Get(Property(propName + ".texture1")(1.f)));
 		auto& t2 = GetTexture(props.Get(Property(propName + ".texture2")(1.f)));

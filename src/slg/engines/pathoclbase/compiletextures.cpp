@@ -91,6 +91,7 @@
 #include "slg/textures/uv.h"
 #include "slg/textures/vectormath/dotproduct.h"
 #include "slg/textures/vectormath/makefloat3.h"
+#include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -862,6 +863,20 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				default:
 					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
 			}
+			break;
+		}
+		case slg::ocl::VECTOR_MAPPING_TEX: {
+			if (opType == slg::ocl::TextureEvalOpType::EVAL_BUMP)
+				evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+			else if (opType == slg::ocl::TextureEvalOpType::EVAL_FLOAT ||
+					opType == slg::ocl::TextureEvalOpType::EVAL_SPECTRUM) {
+				PushSpectralPauseStartOp(texIndex);
+				for (u_int i = 0; i < 4; ++i)
+					evalOpStackSize += CompileTextureOps(tex->vectorMappingTex.inputIndex[i],
+							slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+				PushSpectralPauseEndOp(texIndex);
+			} else
+				throw runtime_error("Invalid vector mapping evaluation operation");
 			break;
 		}
 		case slg::ocl::MAKE_FLOAT3: {
@@ -2443,6 +2458,14 @@ void CompiledScene::CompileTextures() {
 				tex->splitFloat3Tex.texIndex = scene.GetTextures().GetTextureIndex(t);
 
 				tex->splitFloat3Tex.channelIndex = sf3t.GetChannel();
+				break;
+			}
+			case VECTOR_MAPPING_TEX: {
+				const auto &mapping = dynamic_cast<const VectorMappingTexture &>(t);
+				tex->type = slg::ocl::VECTOR_MAPPING_TEX;
+				for (u_int i = 0; i < 4; ++i)
+					tex->vectorMappingTex.inputIndex[i] = scene.GetTextures().GetTextureIndex(mapping.GetInput(i));
+				tex->vectorMappingTex.mode = mapping.GetMode();
 				break;
 			}
 			case MAKE_FLOAT3: {
