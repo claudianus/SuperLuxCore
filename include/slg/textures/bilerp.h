@@ -47,7 +47,7 @@ public:
 	virtual void AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexsreferencedTexs) const;
 	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap * > &referencedImgMaps) const;
 
-	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex);
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override ;
 
 	TextureConstRef GetTexture00() const { return t00; }
 	TextureConstRef GetTexture01() const { return t01; }

@@ -62,7 +62,7 @@ public:
 		GetAmount().AddReferencedImageMaps(referencedImgMaps);
 	}
 
-	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
 		if (&GetAmount() == &oldTex) amount = newTex;
 	}
 

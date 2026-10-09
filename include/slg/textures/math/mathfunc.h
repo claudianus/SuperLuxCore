@@ -88,7 +88,7 @@ public:
 			tex2.get().AddReferencedImageMaps(referencedImgMaps);
 	}
 
-	virtual void UpdateTextureReferences(TextureRef oldTex, TextureRef newTex) {
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
 		updtex(tex1, oldTex, newTex);
 		if (MathFuncIsBinary(op))
 			updtex(tex2, oldTex, newTex);
@@ -96,7 +96,8 @@ public:
 
 	MathFuncOp GetOp() const { return op; }
 	TextureConstRef GetTexture1() const { return tex1; }
-	TextureConstRef GetTexture2() const { return tex2; }
+	// 단항 연산은 첫 입력 재정의 후에도 같은 유효 참조를 반환해야 한다.
+	TextureConstRef GetTexture2() const { return MathFuncIsBinary(op) ? tex2.get() : tex1.get(); }
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 

@@ -15,3 +15,9 @@ Blender 5.2.1의 1280×720 모래 장면에서 Cycles 대비 밝기 비율은 �
 ## 남은 범위
 
 전체 호환성의 분모와 합격 기준이 정해져 있지 않으므로 99% 달성을 선언하지 않는다. 정확히 겹친 볼륨/표면, 일부 고주파 범프, 변위와 연결된 Bump Normal/Distance, 일부 노드 및 GPU 광선 연결 추정기의 차이는 추가 검증이 필요하다. 배포 후 플랫폼별 실행 검증과 실제 배포 ZIP 검증 결과는 별도 기록한다.
+
+## 재질 변경 후 참조 무효화 수정
+
+실제 Blender 장면에서 노드 트리를 교체한 뒤 Metal 재렌더가 `Reference to an undefined NamedObject pointer`로 실패했다. 텍스처 공통 갱신 함수가 값으로 받은 참조 래퍼의 복사본만 변경했고, 여러 파생 텍스처의 갱신 메서드는 기반 클래스와 다른 가변 인자 서명으로 가상 호출을 재정의하지 않았다. 참조 래퍼와 관찰 포인터의 실제 멤버를 갱신하도록 수정하고 상수 인자 서명과 `override`로 일치시켰다. Fresnel 색 갱신의 비교/대입 오타와 단항 Math의 사용하지 않는 두 번째 참조도 수정했다. GPU 컴파일 오류에 해당 텍스처 이름을 추가했다.
+
+`dev-tools/texture-redefinition-regression.py`는 공유 입력을 0.125, 0.25, 0.5로 바꾼 뒤 기존 Scale/Add/Subtract/Divide/Dot/Power/Math/MakeFloat3 경로의 독립 RGB 기대값을 검사한다. CPU·Metal 6조건이 통과했다. Blender의 같은 장면에서 재질 그래프를 계속 바꾸는 벡터·Mix 영상 20조건도 Metal에서 모두 통과했고 이전 참조 오류가 사라졌다. 전체 헤더 변경 후 Release 빌드를 완료했다.

@@ -565,7 +565,7 @@ void CyclesNoiseTexture::AddReferencedImageMaps(std::unordered_set<const ImageMa
 		t->AddReferencedImageMaps(referencedImgMaps);
 }
 
-void CyclesNoiseTexture::UpdateTextureReferences(TextureRef oldTex, TextureRef newTex) {
+void CyclesNoiseTexture::UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
 	updtex(vec, oldTex, newTex);
 	updtex(w, oldTex, newTex);
 	updtex(scale, oldTex, newTex);

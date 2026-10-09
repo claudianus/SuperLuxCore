@@ -56,7 +56,7 @@ public:
 		GetOffset().AddReferencedImageMaps(referencedImgMaps);
 	}
 
-	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
 		if (&GetTex() == &oldTex)
 			tex = newTex;
 		if (&offset.get() == &oldTex)

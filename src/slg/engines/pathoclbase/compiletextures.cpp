@@ -1361,6 +1361,7 @@ void CompiledScene::CompileTextures() {
 		auto& t = scene.GetTextures().GetTexture(i);
 		slg::ocl::Texture *tex = &texs[i];
 
+		try {
 		switch (t.GetType()) {
 			case CONST_FLOAT: {
 				auto& cft = dynamic_cast<const ConstFloatTexture &>(t);
@@ -2590,6 +2591,9 @@ void CompiledScene::CompileTextures() {
 			}
 			default:
 				throw runtime_error("Unknown texture in CompiledScene::CompileTextures(): " + ToString(t.GetType()));
+		}
+		} catch (const std::exception &error) {
+			throw runtime_error("텍스처 '" + t.GetName() + "' 컴파일 실패: " + error.what());
 		}
 	}
 

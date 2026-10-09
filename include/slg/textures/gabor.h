@@ -71,7 +71,7 @@ public:
 	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap * > &referencedImgMaps) const {
 		vec.get().AddReferencedImageMaps(referencedImgMaps);
 	}
-	virtual void UpdateTextureReferences(TextureRef oldTex, TextureRef newTex) {
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
 		updtex(vec, oldTex, newTex);
 	}
 

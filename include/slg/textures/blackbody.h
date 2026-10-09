@@ -52,7 +52,7 @@ public:
 		if (temperatureTex)
 			temperatureTex->AddReferencedImageMaps(referencedImgMaps);
 	}
-	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
 		if (temperatureTex == std::addressof(oldTex))
 			temperatureTex = std::addressof(newTex);
 	}

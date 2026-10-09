@@ -49,9 +49,8 @@ public:
 		GetKr().AddReferencedTextures(referencedTexs);
 	}
 
-	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
-		if (kr == &oldTex)
-			kr == newTex;
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) override {
+		updtex(kr, oldTex, newTex);
 	}
 
 	TextureConstRef GetKr() const { return kr; };

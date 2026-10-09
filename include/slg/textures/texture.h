@@ -170,29 +170,20 @@ inline bool operator==(std::reference_wrapper<slg::Texture> lhs, const slg::Text
 	return (&lhs.get() == rhs);
 }
 
+// 참조를 값으로 받으면 복사본만 바뀌어 재정의된 텍스처를 계속 가리킨다.
+// 가변·상수 참조 래퍼와 관찰 포인터의 실제 멤버를 모두 갱신한다.
 template <typename T>
-void updtex(T texture, TextureConstRef oldTex, TextureRef newTex) {}
-
-template<>
-inline void updtex<>(
-	TexturePtr texture,
-	const TextureConstRef oldTex,
-	TextureRef newTex
-) {
-	if (texture == std::addressof(oldTex)) {
-		texture = std::addressof(newTex);
-	}
+inline void updtex(std::reference_wrapper<T> &texture,
+		TextureConstRef oldTex, TextureRef newTex) {
+	if (std::addressof(texture.get()) == std::addressof(oldTex))
+		texture = std::ref(newTex);
 }
 
-template<>
-inline void updtex<>(
-	std::reference_wrapper<Texture> texture,
-	const TextureConstRef oldTex,
-	TextureRef newTex
-) {
-	if (std::addressof(texture.get()) == std::addressof(oldTex)) {
-		texture = std::reference_wrapper(newTex);
-	}
+template <typename T>
+inline void updtex(luxrays::observer_ptr<T> &texture,
+		TextureConstRef oldTex, TextureRef newTex) {
+	if (texture == std::addressof(oldTex))
+		texture = std::addressof(newTex);
 }
 
 }  // namespace slg
