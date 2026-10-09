@@ -1,0 +1,11 @@
+# Checker coordinates and GPU portability
+
+Version 2.11.15 fixes the common UV payload integer type and stabilizes object-space coordinates used by discontinuous procedural textures.
+
+The 2.11.14 candidate at `40107882aaa691972d410a6847eb71b501dd5044` built C++ wheels on all four platforms, but its `u_int` member failed when an actual Metal session compiled the shader. The versioned and rolling wheel releases were returned to draft and the Blender extension was never published. The shared payload now uses `unsigned int`, which is a language type in C++, OpenCL C and Metal rather than a host-only typedef. CPU wheel smoke tests alone cannot validate this path.
+
+Object coordinates previously transformed the ray-derived world hit point directly. Cancellation near a flat triangle could produce a small negative local coordinate, inverting Checker parity at an integer plane. Both CPU and GPU now project the texture evaluation point onto the hit triangle plane before applying the inverse object transform. Tangential bump offsets remain intact. This changes texture coordinates, not the intersection, integrator, sampling or quality defaults. GPU curves and missing mesh references bypass triangle access.
+
+Blender 5.2.1 LTS, a full synchronized private 2.11.15 installation, and 1280 × 720 renders validate linked Checker Scale with UV tiles, negative UVs, UV=1, default Generated, Object and two chained Mapping nodes. CPU and Metal Color and Factor outputs each passed 12 conditions. CPU Color maximum mean absolute error was 0.002521, CPU Factor 0.004310, and Metal Color 0.002422. Factor was rerun after the GPU mesh guard. CPU default spectral Color also passed all 12 conditions with its separate spectral tolerance. Boundary filtering and spectral noise are distinct from a node's coordinate and output contract.
+
+The adapter records exact metrics, native version, errors and warnings in its coordinate regression harness. Final source evidence and further spectral/installed-package checks are recorded in `SuperBlendLuxCore/doc/engineering/2026-10-09-cycles-scene-goal.md`. Static planar coverage does not establish all instancing, animated coordinates, undeformed ORCO or arbitrary production-scene compatibility.

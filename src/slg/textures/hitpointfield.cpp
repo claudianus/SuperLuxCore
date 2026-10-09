@@ -61,10 +61,18 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			return Spectrum(theta, r, 0.f);
 		}
 		case HITPOINT_OBJECTSPACE: {
-			// Cycles' Texture Coordinate "Object": world hit point back into
-			// the shading object's local frame. localToWorld is the hit's
-			// instance transform; the inverse maps world -> object space.
-			const Point pObj = Inverse(hitPoint.localToWorld) * hitPoint.p;
+			// 광선 거리의 뺄셈 오차가 정수 평면의 Checker 셀을 뒤집지 않도록
+			// 실제 삼각형 평면에 투영한다. 접선 방향 범프 오프셋은 유지한다.
+			Point p = hitPoint.p;
+			if (hitPoint.mesh && hitPoint.triangleIndex < hitPoint.mesh->GetTotalTriangleCount()) {
+				const Triangle &triangle = hitPoint.mesh->GetTriangles()[hitPoint.triangleIndex];
+				const Point anchor = hitPoint.mesh->GetVertex(hitPoint.localToWorld, triangle.v[0]);
+				const Vector n(hitPoint.geometryN);
+				const float n2 = Dot(n, n);
+				if (n2 > 0.f)
+					p += (Dot(anchor - p, n) / n2) * n;
+			}
+			const Point pObj = Inverse(hitPoint.localToWorld) * p;
 			return Spectrum(pObj.x, pObj.y, pObj.z);
 		}
 		case HITPOINT_GENERATED: {

@@ -6,6 +6,7 @@ docs live in `doc/features/` (see its README for the index).
 
 | File | Contents |
 |---|---|
+| [2026-10-09-checker-coordinate-portability.md](2026-10-09-checker-coordinate-portability.md) | 2.11.15 portable UV payload, actual Metal validation and stable object-space Checker coordinates |
 | [out-of-core.md](out-of-core.md) | Out-of-core memory: spilling, .lxm proxies, streaming |
 | [light-bvh.md](light-bvh.md) | Light BVH strategy |
 | [adaptive-clamping.md](adaptive-clamping.md) | Adaptive Robust Clamping |

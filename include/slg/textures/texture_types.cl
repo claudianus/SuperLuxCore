@@ -381,7 +381,7 @@ typedef struct {
 
 typedef struct {
 	TextureMapping2D mapping;
-	u_int wrap;
+	unsigned int wrap;
 } UVTexParam;
 
 #define BAND_TEX_MAX_SIZE 16

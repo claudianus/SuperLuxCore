@@ -2053,8 +2053,20 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					break;
 				}
 				case HITPOINT_OBJECTSPACE: {
-					// p_obj = localToWorld^-1 * p
-					const float4 p4 = (float4)(hitPoint->p.x, hitPoint->p.y, hitPoint->p.z, 1.f);
+					// 삼각형 평면에 투영하여 거리 연산의 오차를 제거하고 범프 접선은 보존한다.
+					float3 p = VLOAD3F(&hitPoint->p.x);
+					if (hitPoint->meshIndex != NULL_INDEX && !(hitPoint->triangleIndex & RAYHIT_CURVE_FLAG)) {
+						__global const ExtMesh *mesh = &meshDescs[hitPoint->meshIndex];
+						__global const Triangle *triangle = &triangles[mesh->trisOffset + hitPoint->triangleIndex];
+						float3 anchor = VLOAD3F(&vertices[mesh->vertsOffset + triangle->v[0]].x);
+						if (mesh->type != TYPE_EXT_TRIANGLE)
+							anchor = Transform_ApplyPoint(&hitPoint->localToWorld, anchor);
+						const float3 n = VLOAD3F(&hitPoint->geometryN.x);
+						const float n2 = dot(n, n);
+						if (n2 > 0.f)
+							p += (dot(anchor - p, n) / n2) * n;
+					}
+					const float4 p4 = (float4)(p.x, p.y, p.z, 1.f);
 					// hitPoint lives in __global: keep the qualifier so
 					// pure-OpenCL parses (the cl2msl pass maps __global
 					// to device)
