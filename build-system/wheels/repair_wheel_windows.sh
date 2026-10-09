@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -o pipefail
+set -euo pipefail
 
 wheel=$1
 dest_dir=$2
@@ -26,7 +26,10 @@ echo "Paths: ${redist_paths}"
 
 # Compute dependency paths
 base="$workspace/out/dependencies/full_deploy/host"
-paths=$(find $base -type d -wholename "*/bin" -print0 | xargs -0 realpath | tr "\n" ":")
+# workspace is already absolute. MSYS xargs can abort while computing its
+# argument budget in cibuildwheel's large environment, losing every DLL path.
+# Keep path collection independent of that budget and stop on repair errors.
+paths=$(find "$base" -type d -wholename "*/bin" -print | paste -s -d ":")
 
 # Repair wheel
 delvewheel repair -v \
@@ -38,10 +41,15 @@ delvewheel repair -v \
 
 # Rename oidnDenoise
 pip install wheel
-dest_dir2=$(cygpath "${dest_dir}")
-files=$(ls -1 ${dest_dir2}/*.whl)
+dest_dir2=$(cygpath -u "${dest_dir}")
+shopt -s nullglob
+files=("${dest_dir2}"/*.whl)
+if [ ${#files[@]} -eq 0 ]; then
+  echo "ERROR: wheel repair produced no wheel in ${dest_dir2}" >&2
+  exit 1
+fi
 # There should be only one wheel, but strictly speaking, we need a loop
-for filename in $files;
+for filename in "${files[@]}";
 do
-  make win-recompose $filename
+  make win-recompose "$filename"
 done

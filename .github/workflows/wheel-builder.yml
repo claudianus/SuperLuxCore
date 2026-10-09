@@ -320,7 +320,7 @@ jobs:
             dnf install -y almalinux-release-devel
             dnf install -y ccache
             dnf install -y perl-IPC-Cmd perl-Digest-SHA
-            dnf install -y ninja-build
+            dnf install -y ninja-build gdb
 
             # Install gh (via conda)
             dnf install -y wget
@@ -380,7 +380,12 @@ jobs:
             export DYLD_LIBRARY_PATH
             delocate-listdeps -v {wheel}
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_TEST_COMMAND_LINUX: pysuperluxcoretest
+          # Preserve the smoke gate and retain native import backtraces when
+          # wheel relocation or an optional runtime crashes before test output.
+          CIBW_TEST_ENVIRONMENT: PYTHONFAULTHANDLER=1 PYTHONUNBUFFERED=1
+          CIBW_TEST_COMMAND_LINUX: >-
+            python -X faulthandler -m pysuperluxcoretest ||
+            (gdb --batch -ex run -ex bt --args python -c "import pysuperluxcore"; exit 1)
           CIBW_TEST_COMMAND_WINDOWS: pysuperluxcoretest
           CIBW_TEST_COMMAND_MACOS: pysuperluxcoretest
           # macos-15-intel runners are GPU-less VMs: the smoke test aborts
