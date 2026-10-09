@@ -2150,6 +2150,19 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		// CYCLESNOISE_TEX
 		//----------------------------------------------------------------------
+		case NORMAL_VECTOR_TEX: {
+			float3 value;
+			EvalStack_PopFloat3(value);
+			const float length2 = dot(value, value);
+			value = isfinite(length2) && length2 > 0.f ? value / sqrt(length2) :
+					VLOAD3F(&hitPoint->shadeN.x);
+			if (evalType == EVAL_FLOAT) {
+				EvalStack_PushFloat(Spectrum_Y(value));
+			} else {
+				EvalStack_PushFloat3(value);
+			}
+			break;
+		}
 		case VECTOR_MAPPING_TEX: {
 			if (evalType == EVAL_FLOAT || evalType == EVAL_SPECTRUM) {
 				float3 scale, rotation, location, value;

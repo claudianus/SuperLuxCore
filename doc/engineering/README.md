@@ -44,3 +44,5 @@ docs live in `doc/features/` (see its README for the index).
 | [light-pass-channel-matrix.md](light-pass-channel-matrix.md) | LT/HBF suppression→deposit contract: per-engine channel/sampler matrix, PATHCPU InitFilm bug, TILEPATHCPU exclusion |
 
 [Texture-driven image coordinates](2026-10-09-image-vector-coordinates.md) documents optional image Vector input, raw spectral scope and CPU/Metal validation.
+
+- [Normal data vectors for shader inputs](2026-10-09-normal-data-vectors.md)

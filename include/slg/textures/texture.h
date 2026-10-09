@@ -82,7 +82,8 @@ typedef enum {
 	HITPOINT_TEX,
 	// Cycles Noise Texture node (exact kernel port)
 	CYCLESNOISE_TEX,
-	VECTOR_MAPPING_TEX
+	VECTOR_MAPPING_TEX,
+	NORMAL_VECTOR_TEX
 } TextureType;
 
 class Texture : public luxrays::NamedObject

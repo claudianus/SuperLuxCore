@@ -89,6 +89,7 @@
 #include "slg/textures/vectormath/dotproduct.h"
 #include "slg/textures/vectormath/makefloat3.h"
 #include "slg/textures/vectormath/vectormapping.h"
+#include "slg/textures/vectormath/normalvector.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -699,6 +700,10 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));
 		tex = std::make_unique<SplitFloat3Texture>(t, static_cast<u_int>(channel));
+	} else if (texType == "normalvector") {
+		auto &input = GetTexture(props.Get(Property(propName + ".texture")(0.f)));
+		tex = std::make_unique<NormalVectorTexture>(input,
+				props.Get(Property(propName + ".sourcebump")(false)).Get<bool>());
 	} else if (texType == "vectormapping") {
 		auto &vector = GetTexture(props.Get(Property(propName + ".vector")(0.f)));
 		auto &location = GetTexture(props.Get(Property(propName + ".location")(0.f)));

@@ -92,6 +92,7 @@
 #include "slg/textures/vectormath/dotproduct.h"
 #include "slg/textures/vectormath/makefloat3.h"
 #include "slg/textures/vectormath/vectormapping.h"
+#include "slg/textures/vectormath/normalvector.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -877,6 +878,14 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				}
 				evalOpStackSize += (opType == slg::ocl::TextureEvalOpType::EVAL_FLOAT) ? 1 : 3;
 			}
+			break;
+		}
+		case slg::ocl::NORMAL_VECTOR_TEX: {
+			PushSpectralPauseStartOp(texIndex);
+			evalOpStackSize += CompileTextureOps(tex->normalVectorTex.texIndex,
+					tex->normalVectorTex.sourceBump ? slg::ocl::TextureEvalOpType::EVAL_BUMP :
+						slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+			PushSpectralPauseEndOp(texIndex);
 			break;
 		}
 		case slg::ocl::VECTOR_MAPPING_TEX: {
@@ -2474,6 +2483,13 @@ void CompiledScene::CompileTextures() {
 				tex->splitFloat3Tex.texIndex = scene.GetTextures().GetTextureIndex(t);
 
 				tex->splitFloat3Tex.channelIndex = sf3t.GetChannel();
+				break;
+			}
+			case NORMAL_VECTOR_TEX: {
+				const auto &normal = dynamic_cast<const NormalVectorTexture &>(t);
+				tex->type = slg::ocl::NORMAL_VECTOR_TEX;
+				tex->normalVectorTex.texIndex = scene.GetTextures().GetTextureIndex(normal.GetTexture());
+				tex->normalVectorTex.sourceBump = normal.IsSourceBump();
 				break;
 			}
 			case VECTOR_MAPPING_TEX: {
