@@ -187,7 +187,7 @@ __forceinline__ void vstore4(const float4 data, const size_t offset, float *p) {
 	p[offset] = data.x;
 	p[offset + 1] = data.y;
 	p[offset + 2] = data.z;
-	p[offset + 2] = data.w;
+	p[offset + 3] = data.w;
 }
 
 //------------------------------------------------------------------------------
@@ -436,6 +436,15 @@ __forceinline__ float atanh(const float x) {
 
 __forceinline__ float fabs(const float x) {
 	return fabsf(x);
+}
+
+//------------------------------------------------------------------------------
+// sign()
+//------------------------------------------------------------------------------
+
+// OpenCL semantics: 1 for x > 0, -1 for x < 0, +-0 for +-0 and 0 for NaN
+__forceinline__ float sign(const float x) {
+	return (x > 0.f) ? 1.f : ((x < 0.f) ? -1.f : copysignf(0.f, x));
 }
 
 //------------------------------------------------------------------------------

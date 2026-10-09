@@ -52,8 +52,40 @@ on:
   push:
 
 jobs:
+  # CUDA is never exercised on the macOS dev machines nor on the GPU-less
+  # runners, so kernel code that compiles for CPU/Metal/OpenCL can ship broken
+  # on CUDA (v2.11.21). NVRTC needs no GPU: compile every hardware program as
+  # CUDADevice assembles it and refuse to build wheels when any of them fails.
+  cuda-kernel-check:
+    name: CUDA kernel compile gate (NVRTC)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repository (standard context)
+        if: ${{ !env.ACT }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Checkout main repository (act context)
+        if: env.ACT
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # Same NVRTC as the Windows/Linux bundles ship (SuperBlendLuxCore
+      # cmake/bundled-wheels-*.txt).
+      - name: Install NVRTC
+        run: python -m pip install nvidia-cuda-nvrtc-cu12==12.9.86
+
+      - name: Compile CUDA kernels
+        run: python dev-tools/cuda_kernel_check.py --jobs 4
+
   build-wheels:
     name: Build wheel ${{ matrix.os }}-3.${{ matrix.python-minor }}
+    needs: [cuda-kernel-check]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

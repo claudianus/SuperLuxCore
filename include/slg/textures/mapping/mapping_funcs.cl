@@ -153,13 +153,13 @@ OPENCL_FORCE_INLINE float2 DirMapping2D_Map(__global const TextureMapping2D *map
 	const float vScaled = v * mapping->dirMapping2D.vScale - vOffset;
 	const float uRotated = uOffset + uScaled * mapping->dirMapping2D.cosTheta - vScaled * mapping->dirMapping2D.sinTheta;
 	const float vRotated = vOffset + vScaled * mapping->dirMapping2D.cosTheta + uScaled * mapping->dirMapping2D.sinTheta;
-	return (float2)(uRotated + mapping->dirMapping2D.uDelta, vRotated + mapping->dirMapping2D.vDelta);
+	return MAKE_FLOAT2(uRotated + mapping->dirMapping2D.uDelta, vRotated + mapping->dirMapping2D.vDelta);
 }
 
 OPENCL_FORCE_INLINE float2 DirMapping2D_MapDuv(__global const TextureMapping2D *mapping,
 		__global const HitPoint *hitPoint, float2 *ds, float2 *dt TEXTURES_PARAM_DECL) {
-	*ds = (float2)(mapping->dirMapping2D.cosTheta, mapping->dirMapping2D.sinTheta);
-	*dt = (float2)(-mapping->dirMapping2D.sinTheta, mapping->dirMapping2D.cosTheta);
+	*ds = MAKE_FLOAT2(mapping->dirMapping2D.cosTheta, mapping->dirMapping2D.sinTheta);
+	*dt = MAKE_FLOAT2(-mapping->dirMapping2D.sinTheta, mapping->dirMapping2D.cosTheta);
 	return DirMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
 }
 

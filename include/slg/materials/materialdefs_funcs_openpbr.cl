@@ -668,10 +668,12 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *h
 		float unusedPdf;
 		BSDFEvent le = GLOSSY | REFLECT;
 		switch (lobe) {
-			case OPENPBR_LOBE_FUZZ:
-				value = Zeltner_EvalTimesCosI(wo, wi, p->fuzzRoughness);
+			case OPENPBR_LOBE_FUZZ: {
+				const float fuzz = Zeltner_EvalTimesCosI(wo, wi, p->fuzzRoughness);
+				value = MAKE_FLOAT3(fuzz, fuzz, fuzz);
 				le = DIFFUSE | REFLECT;
 				break;
+			}
 			case OPENPBR_LOBE_COAT: value = OpenPBRMat_EvalGlossyRefl(hp, p, true, wo, wi, &unusedPdf MATERIALS_PARAM); break;
 			case OPENPBR_LOBE_METAL: value = OpenPBRMat_EvalMetal(hp, p, wo, wi, &unusedPdf MATERIALS_PARAM); break;
 			case OPENPBR_LOBE_SPEC: value = OpenPBRMat_EvalGlossyRefl(hp, p, false, wo, wi, &unusedPdf MATERIALS_PARAM); break;
@@ -696,7 +698,7 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *h
 		if (p->applyLobeTerminator && reflected && !Spectrum_IsBlack(value)) {
 			const float side = (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) ? p->specFrameSide : 1.f;
 			const float3 Ns = side * MAKE_FLOAT3(frame->Z.x, frame->Z.y, frame->Z.z), Ni = p->interpolatedN;
-			if (any(Ns != Ni)) {
+			if (Ns.x != Ni.x || Ns.y != Ni.y || Ns.z != Ni.z) {
 				// Preserve imported per-diffuse-closure correction without
 				// changing native OpenPBR's selected terminator policy.
 #if (SLG_SHADOW_TERMINATOR_MODE != 2)

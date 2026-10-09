@@ -1,0 +1,7 @@
+#!/bin/sh
+# Blocks pushes that introduce OpenCL-only idioms the CUDA backend cannot
+# compile (see doc/engineering/cuda-kernel-gate.md). Enable once per clone:
+#   git config core.hooksPath dev-tools/git-hooks
+# CI's NVRTC job remains the authoritative check.
+root=$(git rev-parse --show-toplevel) || exit 1
+exec python3 "$root/dev-tools/cuda_kernel_check.py" --lint
