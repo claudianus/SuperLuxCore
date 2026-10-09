@@ -18,6 +18,7 @@
 
 #include "luxrays/core/color/spectral.h"
 #include "slg/materials/openpbr.h"
+#include "slg/bsdf/bsdf.h"
 #include "slg/materials/microfacet.h"
 #include "slg/volumes/homogenous.h"
 
@@ -96,7 +97,21 @@ void OpenPBRMaterial::UpdateGlossiness() {
 // Parameter evaluation
 //------------------------------------------------------------------------------
 
-void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const {
+void OpenPBRMaterial::Bump(HitPoint *hp) const {
+	// Each closure gets its own pre-base-bump input, including Mix children.
+	if (CoatNormal) hp->coatN = CoatNormal->Bump(*hp, bumpSampleDistance);
+	Material::Bump(hp);
+	if (!CoatNormal) hp->coatN = hp->shadeN;
+}
+
+const Frame &OpenPBRMaterial::LobeFrame(const Params &p, const LobeId lobe) {
+	if (lobe == LOBE_COAT) return p.coatFrame;
+	if (lobe == LOBE_FUZZ) return p.fuzzFrame;
+	if (lobe == LOBE_DIFF) return p.diffuseFrame;
+	return p.specFrame;
+}
+
+void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p, const bool needNormals) const {
 	p.baseColor = BaseColor->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
 	p.baseWeight = Clamp(BaseWeight->GetFloatValue(hitPoint), 0.f, 1.f);
 	p.metalness = Clamp(BaseMetalness->GetFloatValue(hitPoint), 0.f, 1.f);
@@ -149,6 +164,32 @@ void OpenPBRMaterial::EvaluateParams(const HitPoint &hitPoint, Params &p) const 
 	p.filmIor = Max(FilmIor->GetFloatValue(hitPoint), 1.f);
 
 	p.extIor = ExtractExteriorIors(hitPoint, nullptr);
+	p.independentNormals = needNormals && OwnsLobeNormals();
+	p.applyLobeTerminator = !cyclesNormalSemantics || reflectionNormalCorrection;
+	if (p.independentNormals) {
+		const Frame root = hitPoint.GetFrame();
+		const float side = hitPoint.intoObject ? 1.f : -1.f;
+		const Vector Ng = side * Vector(hitPoint.geometryN);
+		const Normal base = side * hitPoint.shadeN;
+		const Normal coat = CoatNormal ? side * hitPoint.coatN : base;
+		const Normal spec = reflectionNormalCorrection ?
+				EnsureValidSpecularReflection(Ng, hitPoint.fixedDir, base) : base;
+		const Normal coatRefl = reflectionNormalCorrection ?
+				EnsureValidSpecularReflection(Ng, hitPoint.fixedDir, coat) : coat;
+		const auto makeFrame = [&](const Normal &n) {
+			return Frame(Vector(1.f, 0.f, 0.f), Vector(0.f, 1.f, 0.f), Normal(root.ToLocal(Vector(n))));
+		};
+		p.diffuseFrame = makeFrame(base);
+		// Only refractive interfaces retain the mesh side for interior IOR.
+		// Opaque surfaces shade both physical faces against the exterior.
+		p.specFrameSide = (p.transWeight > 0.f || p.sssWeight > 0.f) ? side : 1.f;
+		p.specFrame = makeFrame(p.specFrameSide * spec);
+		p.coatFrame = makeFrame(coatRefl);
+		const Vector fuzz = (1.f - p.coatWeight) * Vector(base) + p.coatWeight * Vector(coat);
+		p.fuzzFrame = makeFrame(fuzz.LengthSquared() > 0.f ? Normal(Normalize(fuzz)) : base);
+		p.geometryN = root.ToLocal(Vector(hitPoint.geometryN));
+		p.interpolatedN = root.ToLocal(side * Vector(hitPoint.interpolatedN));
+	}
 }
 
 // specular_ior / exterior ratio blended toward the coat interface IOR by the
@@ -464,17 +505,21 @@ static float SpecLayerAlbedo(const float mu, const float etaS,
 void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 		const Vector &wFixed,
 		Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT]) const {
-	const float muF = fabsf(wFixed.z);
+	const Vector specFixed = p.independentNormals ? p.specFrame.ToLocal(wFixed) : wFixed;
+	const Vector coatFixed = p.independentNormals ? p.coatFrame.ToLocal(wFixed) : wFixed;
+	const Vector fuzzFixed = p.independentNormals ? p.fuzzFrame.ToLocal(wFixed) : wFixed;
+	const Vector diffFixed = p.independentNormals ? p.diffuseFrame.ToLocal(wFixed) : wFixed;
+	const float muF = fabsf(specFixed.z);
 
 	// Fuzz: top layer, statistically unoccluded (Zeltner directional albedo)
 	weights[LOBE_FUZZ] = (p.fuzzWeight * p.fuzzColor).Clamp(0.f, 1.f);
-	const float impFuzz = (wFixed.z > 0.f) ?
-			weights[LOBE_FUZZ].Filter() * zeltner::DirAlbedo(muF, p.fuzzRoughness) : 0.f;
+	const float impFuzz = (fuzzFixed.z > 0.f) ?
+			weights[LOBE_FUZZ].Filter() * zeltner::DirAlbedo(fabsf(fuzzFixed.z), p.fuzzRoughness) : 0.f;
 
 	// Coat: coverage * tint; the directional Fresnel is the lobe albedo
 	weights[LOBE_COAT] = (p.coatWeight * p.coatColor).Clamp(0.f, 1.f);
-	const float coatF = (wFixed.z > 0.f && fabsf(p.coatIor - p.extIor) > 1e-4f) ?
-			FresnelDielectric(muF, p.coatIor / p.extIor) : 0.f;
+	const float coatF = (coatFixed.z > 0.f && fabsf(p.coatIor - p.extIor) > 1e-4f) ?
+			FresnelDielectric(fabsf(coatFixed.z), p.coatIor / p.extIor) : 0.f;
 	const float impCoat = weights[LOBE_COAT].Filter() * coatF;
 
 	// Energy left for the base substrate; coat_color additionally darkens it
@@ -504,7 +549,7 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 		OpenPBRAnisoAlphas(p.specRoughnessMS, p.specAniso, alphaT, alphaB);
 		const float nInt = InteriorIor(hitPoint, p);
 		msScale = GgxGlassEnergyScale(alphaT, alphaB, muF,
-				(wFixed.z > 0.f) ? nInt / p.extIor : p.extIor / nInt);
+				(specFixed.z > 0.f) ? nInt / p.extIor : p.extIor / nInt);
 	}
 
 	weights[LOBE_SPEC] = Spectrum(wDiel * (1.f + refrFrac * (msScale - 1.f))) *
@@ -532,7 +577,7 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	// Opaque diffuse share (attenuated by interface transmission at eval)
 	const float wDiff = wDiel * (1.f - p.transWeight) * (1.f - p.sssWeight);
 	weights[LOBE_DIFF] = Spectrum(wDiff) * darkening * p.baseWeight * p.baseColor;
-	const float impDiff = (wFixed.z > 0.f) ?
+	const float impDiff = (p.independentNormals || diffFixed.z > 0.f) ?
 			weights[LOBE_DIFF].Filter() *
 			(1.f - SpecLayerAlbedo(muF, etaS, p.specWeight, p.specRoughness)) : 0.f;
 
@@ -551,7 +596,21 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 
 // PDF of sampling `wi` given fixed `wo` for a single lobe.
 float OpenPBRMaterial::LobePdf(const HitPoint &hitPoint, const Params &p,
-		const LobeId lobe, const Vector &wo, const Vector &wi) const {
+		const LobeId lobe, const Vector &fixed, const Vector &sampled) const {
+	const Frame &frame = LobeFrame(p, lobe);
+	const Vector wo = p.independentNormals ? frame.ToLocal(fixed) : fixed;
+	const Vector wi = p.independentNormals ? frame.ToLocal(sampled) : sampled;
+	if (p.independentNormals) {
+		const bool physicalReflection = Dot(fixed, p.geometryN) * Dot(sampled, p.geometryN) > 0.f;
+		if (lobe == LOBE_BTDF || lobe == LOBE_SSS) {
+			if (physicalReflection != (wo.z * wi.z > 0.f)) return 0.f;
+		} else if (!physicalReflection) return 0.f;
+		if (lobe == LOBE_SPEC || lobe == LOBE_METAL) {
+			const float side = p.specFrameSide;
+			if (side * wo.z <= 0.f || side * wi.z <= 0.f) return 0.f;
+		}
+		if (lobe == LOBE_COAT && (wo.z <= 0.f || wi.z <= 0.f)) return 0.f;
+	}
 	float pdf = 0.f;
 	switch (lobe) {
 		case LOBE_FUZZ:
@@ -570,6 +629,8 @@ float OpenPBRMaterial::LobePdf(const HitPoint &hitPoint, const Params &p,
 			EvalBtdf(hitPoint, p, wo, wi, pdf);
 			return pdf;
 		case LOBE_DIFF:
+			if (p.independentNormals && wi.z <= 0.f) return 0.f;
+			if (p.independentNormals && wo.z <= 1e-7f) return wi.z / M_PI;
 			return eon::Pdf(wo, wi, p.diffuseRoughness);
 		default:
 			return 0.f;
@@ -580,9 +641,101 @@ float OpenPBRMaterial::LobePdf(const HitPoint &hitPoint, const Params &p,
 // BSDF evaluation
 //------------------------------------------------------------------------------
 
+Spectrum OpenPBRMaterial::EvalIndependent(const HitPoint &hp, const Params &p,
+		const Vector &light, const Vector &eye, BSDFEvent *event,
+		float *directPdfW, float *reversePdfW) const {
+	const Vector &fixed = hp.fromLight ? light : eye;
+	const Vector &sampled = hp.fromLight ? eye : light;
+	const bool reflected = Dot(light, p.geometryN) * Dot(eye, p.geometryN) > 0.f;
+	Spectrum weights[LOBE_COUNT], reverseWeights[LOBE_COUNT];
+	float probs[LOBE_COUNT], reverseProbs[LOBE_COUNT];
+	ComputeWeights(hp, p, fixed, weights, probs);
+	if (reversePdfW) ComputeWeights(hp, p, sampled, reverseWeights, reverseProbs);
+	Spectrum result;
+	float pdfF = 0.f, pdfR = 0.f;
+	BSDFEvent ev = NONE;
+	for (u_int i = 0; i < LOBE_COUNT; ++i) {
+		const LobeId lobe = static_cast<LobeId>(i);
+		// Zero coverage has neither energy nor sampler mass. Preserve reverse
+		// density when directional layer coverage changes at the other end.
+		if (weights[i].Black() && probs[i] <= 0.f && (!reversePdfW || reverseProbs[i] <= 0.f)) continue;
+		if (lobe == LOBE_SSS || (!reflected && lobe != LOBE_BTDF)) continue;
+		const Frame &frame = LobeFrame(p, lobe);
+		const Vector wi = frame.ToLocal(light), wo = frame.ToLocal(eye);
+		if (lobe == LOBE_SPEC || lobe == LOBE_METAL) {
+			const float side = p.specFrameSide;
+			if (side * wi.z <= 0.f || side * wo.z <= 0.f) continue;
+		}
+		if (lobe == LOBE_COAT && (wi.z <= 0.f || wo.z <= 0.f)) continue;
+		if (lobe == LOBE_BTDF && reflected != (wi.z * wo.z > 0.f)) continue;
+		Spectrum value;
+		float unusedPdf;
+		BSDFEvent le = GLOSSY | REFLECT;
+		switch (lobe) {
+			case LOBE_FUZZ:
+				value = zeltner::EvalTimesCosI(wo, wi, p.fuzzRoughness);
+				le = DIFFUSE | REFLECT;
+				break;
+			case LOBE_COAT: value = EvalGlossyRefl(hp, p, true, wo, wi, unusedPdf); break;
+			case LOBE_METAL: value = EvalMetal(hp, p, wo, wi, unusedPdf); break;
+			case LOBE_SPEC: value = EvalGlossyRefl(hp, p, false, wo, wi, unusedPdf); break;
+			case LOBE_BTDF:
+				// Include TIR sampler density, but only physical transmission energy.
+				if (!reflected) value = EvalBtdf(hp, p, wo, wi, unusedPdf);
+				le = GLOSSY | TRANSMIT;
+				break;
+			case LOBE_DIFF: {
+				const float mu = fabsf(p.specFrame.ToLocal(fixed).z);
+				const float att = 1.f - SpecLayerAlbedo(mu, EtaS(p, p.disp), p.specWeight, p.specRoughness);
+				value = att * eon::Eval(Spectrum(1.f), p.diffuseRoughness, wi, wo, true) * Max(wi.z, 0.f);
+				le = DIFFUSE | REFLECT;
+				break;
+			}
+			default: break;
+		}
+		pdfF += probs[i] * LobePdf(hp, p, lobe, fixed, sampled);
+		if (reversePdfW) pdfR += reverseProbs[i] * LobePdf(hp, p, lobe, sampled, fixed);
+		if (cyclesNormalSemantics && reflected && !value.Black()) {
+			// Cycles' non-bump support check also applies when correction
+			// is disabled. A mapped normal pointing through the smoothed
+			// surface must not leak reflection onto its physical rear side.
+			const Normal Ns(frame.Z * ((lobe == LOBE_SPEC || lobe == LOBE_METAL) ? p.specFrameSide : 1.f));
+			const Normal Ni(p.interpolatedN);
+			if (Dot(Ni, light) * Dot(Ni, Ns) * Dot(Ns, light) < 0.f)
+				value = Spectrum();
+		}
+		if (p.applyLobeTerminator && reflected && !value.Black()) {
+			// Apply the selected native quality policy to each lobe's own N.
+			const Normal Ns(frame.Z * ((lobe == LOBE_SPEC || lobe == LOBE_METAL) ? p.specFrameSide : 1.f));
+			const Normal Ni(p.interpolatedN);
+			if (Ns != Ni) {
+				// Imported Cycles correction is a per-material, per-diffuse-
+				// closure contract. Glossy lobes already carry their native
+				// microfacet masking; a second Chiang term darkens a valid
+				// corrected reflection by up to 80% at grazing incidence.
+				// Native OpenPBR retains the selected quality policy.
+				if (cyclesNormalSemantics) {
+					if (BSDF::GetShadowTerminatorMode() != 2 && (le & DIFFUSE))
+						value *= BSDF::ContyBumpShadowingTerm(Ni, Ns, light);
+				} else if (BSDF::GetShadowTerminatorMode() == 0)
+					value *= BSDF::ShadowTerminatorAvoidanceFactor(Ni, Ns, light);
+				else if (BSDF::GetShadowTerminatorMode() == 1 && (le & DIFFUSE))
+					value *= BSDF::ContyBumpShadowingTerm(Ni, Ns, light);
+			}
+		}
+		value *= weights[i];
+		if (!value.Black()) { result += value; ev = BSDFEvent(ev | le); }
+	}
+	if (event) *event = ev;
+	if (directPdfW) *directPdfW = pdfF;
+	if (reversePdfW) *reversePdfW = pdfR;
+	return result;
+}
+
 Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		BSDFEvent *event, float *directPdfW, float *reversePdfW) const {
+	if (p.independentNormals) return EvalIndependent(hitPoint, p, localLightDir, localEyeDir, event, directPdfW, reversePdfW);
 	const Vector &wi = localLightDir;
 	const Vector &wo = localEyeDir;
 	const Vector &wFixed = hitPoint.fromLight ? wi : wo;
@@ -693,14 +846,14 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 Spectrum OpenPBRMaterial::Evaluate(const HitPoint &hitPoint,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		BSDFEvent *event, float *directPdfW, float *reversePdfW) const {
-	if (localLightDir.z == 0.f || localEyeDir.z == 0.f)
+	if (!OwnsLobeNormals() && (localLightDir.z == 0.f || localEyeDir.z == 0.f))
 		return Spectrum();
 
 	Params p;
 	EvaluateParams(hitPoint, p);
 
 	const float fixedZ = hitPoint.fromLight ? localLightDir.z : localEyeDir.z;
-	if (IsOpaqueBackface(p, fixedZ)) {
+	if (!p.independentNormals && IsOpaqueBackface(p, fixedZ)) {
 		const Vector l(localLightDir.x, localLightDir.y, -localLightDir.z);
 		const Vector e(localEyeDir.x, localEyeDir.y, -localEyeDir.z);
 		return EvalInternal(hitPoint, p, l, e, event, directPdfW, reversePdfW);
@@ -714,10 +867,10 @@ Spectrum OpenPBRMaterial::Sample(const HitPoint &hitPoint,
 		const Vector &localFixedDir, Vector *localSampledDir,
 		const float u0, const float u1, const float passThroughEvent,
 		float *pdfW, BSDFEvent *event) const {
-	if (localFixedDir.z < 0.f) {
+	if (!OwnsLobeNormals() && localFixedDir.z < 0.f) {
 		Params p;
 		EvaluateParams(hitPoint, p);
-		if (IsOpaqueBackface(p, localFixedDir.z)) {
+		if (!p.independentNormals && IsOpaqueBackface(p, localFixedDir.z)) {
 			const Vector f(localFixedDir.x, localFixedDir.y, -localFixedDir.z);
 			const Spectrum result = SampleImpl(hitPoint, f, localSampledDir,
 					u0, u1, passThroughEvent, pdfW, event);
@@ -733,7 +886,7 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 		const Vector &localFixedDir, Vector *localSampledDir,
 		const float u0, const float u1, const float passThroughEvent,
 		float *pdfW, BSDFEvent *event) const {
-	if (localFixedDir.z == 0.f)
+	if (!OwnsLobeNormals() && localFixedDir.z == 0.f)
 		return Spectrum();
 
 	Params p;
@@ -757,7 +910,11 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 	if (probs[lobe] <= 0.f)
 		return Spectrum();
 
-	const Vector &wo = localFixedDir;
+	const Frame &sampleFrame = LobeFrame(p, static_cast<LobeId>(lobe));
+	const Vector wo = p.independentNormals ? sampleFrame.ToLocal(localFixedDir) : localFixedDir;
+	if (p.independentNormals && (lobe == LOBE_SPEC || lobe == LOBE_METAL) &&
+			p.specFrameSide * wo.z <= 0.f) return Spectrum();
+	if (p.independentNormals && (lobe == LOBE_COAT || lobe == LOBE_FUZZ) && wo.z <= 0.f) return Spectrum();
 	const Vector wFl = (wo.z > 0.f) ? wo : -wo;
 	bool sampledTransmit = false;
 
@@ -813,7 +970,7 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 				// Index-matched interface: straight pass-through delta
 				// (Fresnel is identically 0; the specular lobe has no
 				// energy either). Weighted by the lobe's mixture share.
-				*localSampledDir = -wo;
+				*localSampledDir = -localFixedDir;
 				*pdfW = probs[lobe];
 				*event = SPECULAR | TRANSMIT;
 				return weights[lobe] / probs[lobe];
@@ -849,13 +1006,20 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 		}
 		case LOBE_DIFF: {
 			float pdf;
-			*localSampledDir = eon::Sample(wFl, p.diffuseRoughness, u0, u1, pdf);
+			if (p.independentNormals && wo.z <= 1e-7f)
+				*localSampledDir = CosineSampleHemisphere(u0, u1);
+			else *localSampledDir = eon::Sample(p.independentNormals ? wo : wFl, p.diffuseRoughness, u0, u1, pdf);
 			break;
 		}
 		default:
 			return Spectrum();
 	}
 
+	if (p.independentNormals) {
+		*localSampledDir = sampleFrame.ToWorld(*localSampledDir);
+		const bool reflected = Dot(localFixedDir, p.geometryN) * Dot(*localSampledDir, p.geometryN) > 0.f;
+		if (reflected == sampledTransmit) return Spectrum();
+	}
 	const Vector &localLightDir = hitPoint.fromLight ? localFixedDir : *localSampledDir;
 	const Vector &localEyeDir = hitPoint.fromLight ? *localSampledDir : localFixedDir;
 
@@ -873,7 +1037,7 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 void OpenPBRMaterial::Pdf(const HitPoint &hitPoint,
 		const Vector &localLightDir, const Vector &localEyeDir,
 		float *directPdfW, float *reversePdfW) const {
-	if (localLightDir.z == 0.f || localEyeDir.z == 0.f) {
+	if (!OwnsLobeNormals() && (localLightDir.z == 0.f || localEyeDir.z == 0.f)) {
 		if (directPdfW)
 			*directPdfW = 0.f;
 		if (reversePdfW)
@@ -884,7 +1048,7 @@ void OpenPBRMaterial::Pdf(const HitPoint &hitPoint,
 	Params p;
 	EvaluateParams(hitPoint, p);
 	const float fixedZ = hitPoint.fromLight ? localLightDir.z : localEyeDir.z;
-	if (IsOpaqueBackface(p, fixedZ)) {
+	if (!p.independentNormals && IsOpaqueBackface(p, fixedZ)) {
 		const Vector l(localLightDir.x, localLightDir.y, -localLightDir.z);
 		const Vector e(localEyeDir.x, localEyeDir.y, -localEyeDir.z);
 		EvalInternal(hitPoint, p, l, e, nullptr, directPdfW, reversePdfW);
@@ -896,7 +1060,7 @@ void OpenPBRMaterial::Pdf(const HitPoint &hitPoint,
 
 Spectrum OpenPBRMaterial::Albedo(const HitPoint &hitPoint) const {
 	Params p;
-	EvaluateParams(hitPoint, p);
+	EvaluateParams(hitPoint, p, false);
 
 	const Spectrum diffuse = p.baseColor * (p.baseWeight * (1.f - p.metalness) *
 			(1.f - p.transWeight) * (1.f - p.sssWeight));
@@ -910,6 +1074,7 @@ Spectrum OpenPBRMaterial::Albedo(const HitPoint &hitPoint) const {
 
 void OpenPBRMaterial::AddReferencedTextures(std::unordered_set<const Texture *> &referencedTexs) const {
 	Material::AddReferencedTextures(referencedTexs);
+	if (CoatNormal) CoatNormal->AddReferencedTextures(referencedTexs);
 
 	BaseColor->AddReferencedTextures(referencedTexs);
 	BaseWeight->AddReferencedTextures(referencedTexs);
@@ -953,6 +1118,7 @@ void OpenPBRMaterial::AddReferencedTextures(std::unordered_set<const Texture *> 
 
 void OpenPBRMaterial::UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
 	Material::UpdateTextureReferences(oldTex, newTex);
+	if (CoatNormal == &oldTex) CoatNormal = &newTex;
 
 	if (BaseColor == &oldTex) BaseColor = &newTex;
 	if (BaseWeight == &oldTex) BaseWeight = &newTex;
@@ -1033,6 +1199,9 @@ PropertiesUPtr OpenPBRMaterial::ToProperties(const ImageMapCache &imgMapCache,
 	props->Set(Property("scene.materials." + name + ".coatior")(CoatIor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".coatdarkening")(CoatDarkening->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".coataffectsbaseior")(coatAffectsBaseIor));
+	props->Set(Property("scene.materials." + name + ".cyclesnormalsemantics")(cyclesNormalSemantics));
+	props->Set(Property("scene.materials." + name + ".reflectionnormalcorrection")(reflectionNormalCorrection));
+	if (CoatNormal) props->Set(Property("scene.materials." + name + ".coatnormal")(CoatNormal->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".fuzzweight")(FuzzWeight->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".fuzzcolor")(FuzzColor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".fuzzroughness")(FuzzRoughness->GetSDLValue()));

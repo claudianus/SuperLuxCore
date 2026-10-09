@@ -916,8 +916,11 @@ MaterialUPtr Scene::CreateMaterial(
 			fuzzWeight, fuzzColor, fuzzRoughness,
 			filmWeight, filmThickness, filmIor
 		);
-		static_cast<OpenPBRMaterial *>(mat.get())->SetCoatAffectsBaseIor(
-				parseBool("coataffectsbaseior", true));
+		auto *openpbr = static_cast<OpenPBRMaterial *>(mat.get());
+		openpbr->SetCoatAffectsBaseIor(parseBool("coataffectsbaseior", true));
+		openpbr->SetCyclesNormalSemantics(parseBool("cyclesnormalsemantics", false));
+		openpbr->SetReflectionNormalCorrection(parseBool("reflectionnormalcorrection", false));
+		if (isDefined("coatnormal")) openpbr->SetCoatNormal(parseTex("coatnormal", {0.f, 0.f, 1.f}));
 
 		// Implicit interior volume: subsurface scattering (dense medium)
 		// wins over the transmission medium when both are active - the

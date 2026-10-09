@@ -384,6 +384,7 @@ typedef struct {
 	unsigned int filmIorTexIndex;
 	// OpenPBRMaterial::coatAffectsBaseIor
 	unsigned int coatAffectsBaseIor;
+	unsigned int cyclesNormalSemantics, reflectionNormalCorrection, coatNormalTexIndex;
 } OpenPBRParam;
 
 typedef struct {
@@ -503,6 +504,7 @@ typedef struct {
 	// The result of calling Material::IsDelta()
 	int isDelta;
 	int hasNullLobes;
+	int ownsLobeNormals;
 
 	// Cryptomatte float id (host-computed murmur3 of the material name)
 	float cryptoID;

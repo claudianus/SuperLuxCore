@@ -136,7 +136,7 @@ float Material::GetEmittedRadianceY(const float oneOverPrimitiveArea) const {
 // bends a bumped/normal-mapped N toward Ng until the mirror reflection of
 // the incoming direction I stays above the surface, so grazing views of
 // bumped surfaces do not turn black (normals facing away from the eye)
-static Normal EnsureValidSpecularReflection(const Vector &Ng, const Vector &I,
+Normal Material::EnsureValidSpecularReflection(const Vector &Ng, const Vector &I,
 		const Normal &Nn) {
 	const Vector N(Nn);
 	const Vector R = 2.f * Dot(N, I) * N - I;
@@ -175,7 +175,7 @@ void Material::Bump(HitPoint *hitPoint) const {
 		hitPoint->shadeN = bumpTex->Bump(*hitPoint, dist);
 
 		// Cycles bump semantics (path.shadowterminator = conty)
-		if (BSDF::GetShadowTerminatorMode() == 1) {
+		if (!OwnsLobeNormals() && BSDF::GetShadowTerminatorMode() == 1) {
 			const Vector I = hitPoint->fixedDir;
 			const Vector Ng0(hitPoint->geometryN);
 			const float side = (Dot(I, Ng0) >= 0.f) ? 1.f : -1.f;

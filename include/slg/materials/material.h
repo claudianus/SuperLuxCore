@@ -226,6 +226,9 @@ public:
 	VolumeConstPtr GetExteriorVolume() const { return exteriorVolume; }
 
 	virtual void Bump(HitPoint *hitPoint) const;
+	virtual bool OwnsLobeNormals() const { return false; }
+	static luxrays::Normal EnsureValidSpecularReflection(const luxrays::Vector &Ng,
+			const luxrays::Vector &I, const luxrays::Normal &N);
 
 	// Albedo() returns the material albedo. It is used for Albedo AOV.
 	virtual luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;

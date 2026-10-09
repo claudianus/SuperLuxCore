@@ -79,6 +79,15 @@ public:
 	};
 	virtual bool IsDelta() const { return false; }
 
+	virtual void Bump(HitPoint *hitPoint) const;
+	virtual bool OwnsLobeNormals() const { return cyclesNormalSemantics || CoatNormal; }
+	void SetCyclesNormalSemantics(bool v) { cyclesNormalSemantics = v; }
+	bool GetCyclesNormalSemantics() const { return cyclesNormalSemantics; }
+	void SetReflectionNormalCorrection(bool v) { reflectionNormalCorrection = v; }
+	bool GetReflectionNormalCorrection() const { return reflectionNormalCorrection; }
+	void SetCoatNormal(TextureConstPtr t) { CoatNormal = t; }
+	TextureConstPtr GetCoatNormal() const { return CoatNormal; }
+
 	virtual luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;
 
 	virtual luxrays::Spectrum Evaluate(const HitPoint &hitPoint,
@@ -158,6 +167,10 @@ private:
 		float fuzzWeight, fuzzRoughness;
 		float filmWeight, filmThickness, filmIor;
 		float extIor;
+		bool independentNormals, applyLobeTerminator;
+		float specFrameSide;
+		luxrays::Frame diffuseFrame, specFrame, coatFrame, fuzzFrame;
+		luxrays::Vector geometryN, interpolatedN;
 		bool coatAffectsBaseIor;
 		// Specular roughness before Cycles' Filter Glossy floor: Cycles
 		// computes the multiscatter energy scale at closure setup and
@@ -171,7 +184,11 @@ private:
 		LOBE_BTDF, LOBE_DIFF, LOBE_SSS, LOBE_COUNT
 	};
 
-	void EvaluateParams(const HitPoint &hitPoint, Params &p) const;
+	void EvaluateParams(const HitPoint &hitPoint, Params &p, const bool needNormals = true) const;
+	static const luxrays::Frame &LobeFrame(const Params &p, const LobeId lobe);
+	luxrays::Spectrum EvalIndependent(const HitPoint &hp, const Params &p,
+			const luxrays::Vector &light, const luxrays::Vector &eye,
+			BSDFEvent *event, float *directPdfW, float *reversePdfW) const;
 
 	// specular_ior / exterior ratio blended toward coat IOR by coat weight,
 	// with the spec's TIR-preserving ratio flip.
@@ -216,6 +233,8 @@ private:
 	}
 
 	bool coatAffectsBaseIor = true;
+	bool cyclesNormalSemantics = false, reflectionNormalCorrection = false;
+	TextureConstPtr CoatNormal;
 	TextureConstPtr BaseColor, BaseWeight, BaseMetalness, BaseDiffuseRoughness;
 	TextureConstPtr SpecularWeight, SpecularColor, SpecularRoughness,
 			SpecularAnisotropy, SpecularRotation, SpecularIor;

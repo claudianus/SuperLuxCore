@@ -58,6 +58,10 @@ public:
 	//   2 = "none"
 	static void SetShadowTerminatorMode(const u_int mode);
 	static u_int GetShadowTerminatorMode();
+	static float ContyBumpShadowingTerm(const luxrays::Normal &Ni, const luxrays::Normal &Ns,
+			const luxrays::Vector &lightDir);
+	static float ShadowTerminatorAvoidanceFactor(const luxrays::Normal &Ni, const luxrays::Normal &Ns,
+			const luxrays::Vector &lightDir);
 
 	// An empty BSDF
 	BSDF() { };

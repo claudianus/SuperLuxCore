@@ -1558,10 +1558,10 @@ OPENCL_FORCE_INLINE float EON_EFonApprox(const float muIn, const float r) {
 }
 
 // EON BRDF value (single + multi-scatter lobes), without the cosine factor.
-OPENCL_FORCE_INLINE float3 EON_Eval(const float3 rho, const float r,
-		const float3 wi, const float3 wo) {
-	const float muI = wi.z, muO = wo.z;
-	if (muI <= 1e-7f || muO <= 1e-7f)
+OPENCL_FORCE_INLINE float3 EON_EvalWithView(const float3 rho, const float r,
+		const float3 wi, const float3 wo, const bool allowNegativeView) {
+	const float muI = wi.z, muO = allowNegativeView ? fmax(wo.z, 0.f) : wo.z;
+	if (muI <= 1e-7f || (!allowNegativeView && muO <= 1e-7f))
 		return BLACK;
 	const float s = dot(wi, wo) - muI * muO;
 	const float sovertF = (s > 0.f) ? s / fmax(muI, muO) : s;
@@ -1576,6 +1576,11 @@ OPENCL_FORCE_INLINE float3 EON_Eval(const float3 rho, const float r,
 			fmax(eps, 1.f - EFo) * fmax(eps, 1.f - EFi) /
 			fmax(eps, 1.f - avgEF);
 	return fSS + fMS;
+}
+
+OPENCL_FORCE_INLINE float3 EON_Eval(const float3 rho, const float r,
+		const float3 wi, const float3 wo) {
+	return EON_EvalWithView(rho, r, wi, wo, false);
 }
 
 // Directional albedo of the full EON BRDF.

@@ -571,9 +571,9 @@ inline float EFonApprox(float mu, const float r) {
 // EON BRDF value (single + multi-scatter lobes). wi, wo point away from the
 // surface, local frame. Returns f (without the cosine factor).
 inline luxrays::Spectrum Eval(const luxrays::Spectrum &rho, const float r,
-		const luxrays::Vector &wi, const luxrays::Vector &wo) {
-	const float muI = wi.z, muO = wo.z;
-	if (muI <= 1e-7f || muO <= 1e-7f)
+		const luxrays::Vector &wi, const luxrays::Vector &wo, const bool allowNegativeView = false) {
+	const float muI = wi.z, muO = allowNegativeView ? luxrays::Max(wo.z, 0.f) : wo.z;
+	if (muI <= 1e-7f || (!allowNegativeView && muO <= 1e-7f))
 		return luxrays::Spectrum(0.f);
 	const float s = luxrays::Dot(wi, wo) - muI * muO;
 	const float sovertF = (s > 0.f) ? s / luxrays::Max(muI, muO) : s;

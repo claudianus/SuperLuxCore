@@ -54,3 +54,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Cycles Bump direction and linked-input semantics](2026-10-09-cycles-bump-direction.md)
 
 - [Cycles Add Shader closure sums and transparent transport](2026-10-09-cycles-add-shader.md)
+
+- [Imported OpenPBR lobe normals and independent coat](2026-10-09-openpbr-lobe-normals.md)

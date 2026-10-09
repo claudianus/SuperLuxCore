@@ -26,6 +26,7 @@ typedef struct {
 	Normal geometryN;
 	Normal interpolatedN;
 	Normal shadeN;
+	Normal coatN;
 
 	UV defaultUV;
 

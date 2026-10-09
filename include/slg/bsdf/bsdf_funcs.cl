@@ -189,52 +189,6 @@ OPENCL_FORCE_INLINE float3 BSDF_Albedo(__global const BSDF *bsdf
 			MATERIALS_PARAM);
 }
 
-// Cycles bump_shadowing_term() (Conty Estevez et al. 2019), BSDF.cpp
-OPENCL_FORCE_INLINE float BSDF_ContyBumpShadowingTerm(const float3 Ni, const float3 Ns,
-		const float3 lightDir) {
-	const float cos_i = dot(Ni, lightDir);
-	if (cos_i < 0.f)
-		return 0.f;
-	const float cos_d = fmin(fabs(dot(Ni, Ns)), 1.f);
-	if (cos_d <= 0.f)
-		return 0.f;
-	const float tan2_d = (1.f - cos_d * cos_d) / (cos_d * cos_d);
-	const float alpha2 = clamp(.125f * tan2_d, 0.f, 1.f);
-	const float cos2_i = fmax(cos_i * cos_i, 1e-12f);
-	const float tan2_i = (1.f - cos2_i) / cos2_i;
-	return 2.f / (1.f + sqrt(1.f + alpha2 * tan2_i));
-}
-
-#if !defined(SLG_SHADOW_TERMINATOR_MODE)
-#define SLG_SHADOW_TERMINATOR_MODE 0
-#endif
-
-//------------------------------------------------------------------------------
-// "Taming the Shadow Terminator"
-// by Matt Jen-Yuan Chiang, Yining Karl Li and Brent Burley
-// https://www.yiningkarlli.com/projects/shadowterminator.html
-//------------------------------------------------------------------------------
-
-OPENCL_FORCE_INLINE float BSDF_ShadowTerminatorAvoidanceFactor(const float3 Ni, const float3 Ns,
-		const float3 lightDir) {
-	const float dotNsLightDir = dot(Ns, lightDir);
-	if (dotNsLightDir <= 0.f)
-		return 0.f;
-
-	const float dotNiNs = dot(Ni, Ns);
-	if (dotNiNs <= 0.f)
-		return 0.f;
-
-	const float G = fmin(1.f, dot(Ni, lightDir) / (dotNsLightDir * dotNiNs));
-	if (G <= 0.f)
-		return 0.f;
-	
-	const float G2 = G * G;
-	const float G3 = G2 * G;
-
-	return -G3 + G2 + G;
-}
-
 // Full BSDF::Evaluate() port including the adjoint (fromLight) convention:
 // a hit point produced by a LIGHT_RAY swaps the eye/light direction roles
 // and the result is adjoint-corrected by absDotEyeDirNG/absDotLightDirNG
@@ -326,7 +280,7 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
-		if ((*event & REFLECT) &&
+		if (!mats[bsdf->materialIndex].ownsLobeNormals && (*event & REFLECT) &&
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
 #if (SLG_SHADOW_TERMINATOR_MODE == 0)
 			if (*event & (DIFFUSE | GLOSSY))
@@ -416,7 +370,7 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 		// CPU BSDF::Sample uses lightDir = fromLight ? fixedDir : sampledDir
 		const float3 lightDir = fromLight ?
 				VLOAD3F(&bsdf->hitPoint.fixedDir.x) : *sampledDir;
-		if ((*event & REFLECT) &&
+		if (!mats[bsdf->materialIndex].ownsLobeNormals && (*event & REFLECT) &&
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
 #if (SLG_SHADOW_TERMINATOR_MODE == 0)
 			if (*event & (DIFFUSE | GLOSSY))
@@ -441,7 +395,9 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
 		const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 		const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
-		result *= fabs(dot(fixedDir, shadeN) * dot(*sampledDir, geometryN)) /
+		if (mats[bsdf->materialIndex].ownsLobeNormals)
+			result *= fabs(dot(*sampledDir, geometryN)) / fmax(fabs(dot(fixedDir, geometryN)), DEFAULT_COS_EPSILON_STATIC);
+		else result *= fabs(dot(fixedDir, shadeN) * dot(*sampledDir, geometryN)) /
 				fmax(fabs(dot(*sampledDir, shadeN)) * fabs(dot(fixedDir, geometryN)),
 						DEFAULT_COS_EPSILON_STATIC);
 	}

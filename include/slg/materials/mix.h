@@ -39,6 +39,7 @@ public:
 
 	virtual bool IsLightSource() const { return isLightSource; }
 	virtual bool IsDelta() const { return isDelta; }
+	virtual bool OwnsLobeNormals() const { return !bumpTex && matA->OwnsLobeNormals() && matB->OwnsLobeNormals(); }
 
 	virtual luxrays::Spectrum GetPassThroughTransparency(const HitPoint &hitPoint,
 		const luxrays::Vector &localFixedDir, const float passThroughEvent,

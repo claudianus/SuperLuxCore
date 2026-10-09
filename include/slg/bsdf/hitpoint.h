@@ -54,6 +54,8 @@ typedef struct HitPoint_t {
 	luxrays::Normal geometryN;
 	luxrays::Normal interpolatedN;
 	luxrays::Normal shadeN;
+	// Material-local coat normal; filled by OpenPBR::Bump before base bump.
+	luxrays::Normal coatN;
 
 	// The "main" UV coordinate of the hit point (from UV set 0)
 	luxrays::UV defaultUV;

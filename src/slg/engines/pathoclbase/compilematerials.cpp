@@ -735,6 +735,7 @@ void CompiledScene::CompileMaterials() {
 		mat->isShadowCatcher = m.IsShadowCatcher();
 		mat->isShadowCatcherOnlyInfiniteLights = m.IsShadowCatcherOnlyInfiniteLights();
 		mat->isPhotonGIEnabled = m.IsPhotonGIEnabled();
+		mat->ownsLobeNormals = m.OwnsLobeNormals();
 		mat->isHoldout = m.IsHoldout();
 
 		// Bake Material::GetEventTypes() and Material::IsDelta()
@@ -1175,6 +1176,9 @@ void CompiledScene::CompileMaterials() {
 				mat->openpbr.filmThicknessTexIndex = ti(om.GetFilmThickness());
 				mat->openpbr.filmIorTexIndex = ti(om.GetFilmIor());
 				mat->openpbr.coatAffectsBaseIor = om.GetCoatAffectsBaseIor() ? 1u : 0u;
+				mat->openpbr.cyclesNormalSemantics = om.GetCyclesNormalSemantics();
+				mat->openpbr.reflectionNormalCorrection = om.GetReflectionNormalCorrection();
+				mat->openpbr.coatNormalTexIndex = om.GetCoatNormal() ? ti(om.GetCoatNormal()) : NULL_INDEX;
 				break;
 			}
 			case DIFFRACTION: {

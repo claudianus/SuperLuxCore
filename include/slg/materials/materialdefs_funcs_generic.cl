@@ -1,5 +1,3 @@
-#line 2 "materialdefs_funcs_generic.cl"
-
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -17,6 +15,72 @@
  * See the License for the specific language governing permissions and     *
  * limitations under the License.                                          *
  ***************************************************************************/
+
+OPENCL_FORCE_INLINE float3 Material_EnsureValidSpecularReflection(const float3 Ng,
+		const float3 I, const float3 N) {
+	const float3 R = 2.f * dot(N, I) * N - I;
+	const float Iz = dot(I, Ng), threshold = fmin(.9f * Iz, .01f);
+	if (dot(Ng, R) >= threshold) return N;
+	float3 X = N - dot(N, Ng) * Ng;
+	const float xl = length(X);
+	X = xl > 0.f ? X / xl : N;
+	const float Ix = dot(I, X), a = Ix * Ix + Iz * Iz;
+	if (!(a > 0.f)) return N;
+	const float b = 2.f * (a + Iz * threshold), c = (threshold + Iz) * (threshold + Iz);
+	const float disc = sqrt(fmax(b * b - 4.f * a * c, 0.f));
+	const float Nz2 = (Ix < 0.f) ? .25f * (b + disc) / a : .25f * (b - disc) / a;
+	return normalize(sqrt(fmax(1.f - Nz2, 0.f)) * X + sqrt(fmax(Nz2, 0.f)) * Ng);
+}
+
+// Cycles bump_shadowing_term() (Conty Estevez et al. 2019), BSDF.cpp
+OPENCL_FORCE_INLINE float BSDF_ContyBumpShadowingTerm(const float3 Ni, const float3 Ns,
+		const float3 lightDir) {
+	const float cos_i = dot(Ni, lightDir);
+	if (cos_i < 0.f)
+		return 0.f;
+	const float cos_d = fmin(fabs(dot(Ni, Ns)), 1.f);
+	if (cos_d <= 0.f)
+		return 0.f;
+	const float tan2_d = (1.f - cos_d * cos_d) / (cos_d * cos_d);
+	const float alpha2 = clamp(.125f * tan2_d, 0.f, 1.f);
+	const float cos2_i = fmax(cos_i * cos_i, 1e-12f);
+	const float tan2_i = (1.f - cos2_i) / cos2_i;
+	return 2.f / (1.f + sqrt(1.f + alpha2 * tan2_i));
+}
+
+#if !defined(SLG_SHADOW_TERMINATOR_MODE)
+#define SLG_SHADOW_TERMINATOR_MODE 0
+#endif
+
+//------------------------------------------------------------------------------
+// "Taming the Shadow Terminator"
+// by Matt Jen-Yuan Chiang, Yining Karl Li and Brent Burley
+// https://www.yiningkarlli.com/projects/shadowterminator.html
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float BSDF_ShadowTerminatorAvoidanceFactor(const float3 Ni, const float3 Ns,
+		const float3 lightDir) {
+	const float dotNsLightDir = dot(Ns, lightDir);
+	if (dotNsLightDir <= 0.f)
+		return 0.f;
+
+	const float dotNiNs = dot(Ni, Ns);
+	if (dotNiNs <= 0.f)
+		return 0.f;
+
+	const float G = fmin(1.f, dot(Ni, lightDir) / (dotNsLightDir * dotNiNs));
+	if (G <= 0.f)
+		return 0.f;
+
+	const float G2 = G * G;
+	const float G3 = G2 * G;
+
+	return -G3 + G2 + G;
+}
+
+#line 2 "materialdefs_funcs_generic.cl"
+
+
 
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
@@ -65,11 +129,16 @@ OPENCL_FORCE_INLINE void Material_Bump(const uint matIndex, __global HitPoint *h
 	MATERIALS_PARAM_DECL) {
 	__global const Material *material = &mats[matIndex];
 
+	if (material->type == OPENPBR && material->openpbr.coatNormalTexIndex != NULL_INDEX) {
+		const float3 coatN = Texture_Bump(material->openpbr.coatNormalTexIndex,
+				hitPoint, material->bumpSampleDistance TEXTURES_PARAM);
+		VSTORE3F(coatN, &hitPoint->coatN.x);
+	}
 	uint bumpTexIndex;
-	
+
 	// A special case here for TWOSIDED material
 	if (material->type == TWOSIDED) {
-		bumpTexIndex = hitPoint->intoObject ? mats[material->twosided.frontMatIndex].bumpTexIndex : 
+		bumpTexIndex = hitPoint->intoObject ? mats[material->twosided.frontMatIndex].bumpTexIndex :
 			mats[material->twosided.backMatIndex].bumpTexIndex;
 	} else
 		bumpTexIndex = material->bumpTexIndex;
@@ -88,32 +157,12 @@ OPENCL_FORCE_INLINE void Material_Bump(const uint matIndex, __global HitPoint *h
 			TEXTURES_PARAM);
 
 #if defined(SLG_SHADOW_TERMINATOR_MODE) && (SLG_SHADOW_TERMINATOR_MODE == 1)
-		// Cycles ensure_valid_specular_reflection() (CPU Material::Bump)
-		{
+		if (!material->ownsLobeNormals) {
 			const float3 I = VLOAD3F(&hitPoint->fixedDir.x);
 			const float3 Ng0 = VLOAD3F(&hitPoint->geometryN.x);
-			const float3 Ng = (dot(I, Ng0) >= 0.f) ? Ng0 : -Ng0;
-			const float nSide = (dot(shadeN, Ng) >= 0.f) ? 1.f : -1.f;
-			const float3 N = nSide * shadeN;
-			const float3 R = 2.f * dot(N, I) * N - I;
-			const float Iz = dot(I, Ng);
-			const float threshold = fmin(.9f * Iz, .01f);
-			if (dot(Ng, R) < threshold) {
-				float3 X = N - dot(N, Ng) * Ng;
-				const float xl = length(X);
-				X = (xl > 0.f) ? X / xl : N;
-				const float Ix = dot(I, X);
-				const float a = Ix * Ix + Iz * Iz;
-				if (a > 0.f) {
-					const float b = 2.f * (a + Iz * threshold);
-					const float c = (threshold + Iz) * (threshold + Iz);
-					const float disc = sqrt(fmax(b * b - 4.f * a * c, 0.f));
-					const float Nz2 = (Ix < 0.f) ? .25f * (b + disc) / a : .25f * (b - disc) / a;
-					const float Nx = sqrt(fmax(1.f - Nz2, 0.f));
-					const float Nz = sqrt(fmax(Nz2, 0.f));
-					shadeN = nSide * normalize(Nx * X + Nz * Ng);
-				}
-			}
+			const float3 Ng = dot(I, Ng0) >= 0.f ? Ng0 : -Ng0;
+			const float side = dot(shadeN, Ng) >= 0.f ? 1.f : -1.f;
+			shadeN = side * Material_EnsureValidSpecularReflection(Ng, I, side * shadeN);
 		}
 #endif
 
@@ -278,7 +327,7 @@ OPENCL_FORCE_INLINE float3 SchlickBSDF_CoatingF(const float3 ks, const float rou
 		factor = factor / (4.f * coso) +
 				(multibounce ? cosi * clamp((1.f - G) / (4.f * coso * cosi), 0.f, 1.f) : 0.f);
 	//else
-	//	factor = factor / (4.f * cosi) + 
+	//	factor = factor / (4.f * cosi) +
 	//			(multibounce ? coso * Clamp((1.f - G) / (4.f * cosi * coso), 0.f, 1.f) : 0.f);
 
 	return factor * S;
@@ -309,7 +358,7 @@ OPENCL_FORCE_INLINE float3 SchlickBSDF_CoatingSampleF(const float3 ks,
 	const float G = SchlickDistribution_G(roughness, fixedDir, *sampledDir);
 
 	//CoatingF(sw, *wi, wo, f_);
-	S *= (d / *pdf) * G / (4.f * coso) + 
+	S *= (d / *pdf) * G / (4.f * coso) +
 			(multibounce ? cosi * clamp((1.f - G) / (4.f * coso * cosi), 0.f, 1.f) / *pdf : 0.f);
 
 	return S;

@@ -27,6 +27,14 @@
 float Spectral_WaveLength2IOR(const float waveLength, const float ior, const float B);
 #endif
 
+#define OPENPBR_LOBE_FUZZ 0u
+#define OPENPBR_LOBE_COAT 1u
+#define OPENPBR_LOBE_METAL 2u
+#define OPENPBR_LOBE_SPEC 3u
+#define OPENPBR_LOBE_BTDF 4u
+#define OPENPBR_LOBE_DIFF 5u
+#define OPENPBR_LOBE_COUNT 6u
+
 // Per-hitpoint evaluated parameters (mirrors OpenPBRMaterial::Params)
 typedef struct {
 	float3 baseColor, specColor, transColor, transScatter;
@@ -41,6 +49,10 @@ typedef struct {
 	float fuzzWeight, fuzzRoughness;
 	float filmWeight, filmThickness, filmIor;
 	float extIor;
+	int independentNormals, applyLobeTerminator, cyclesNormalSemantics;
+	float specFrameSide;
+	Frame diffuseFrame, specFrame, coatFrame, fuzzFrame;
+	float3 geometryN, interpolatedN;
 	uint coatAffectsBaseIor;
 	// Pre-Filter-Glossy specular roughness for the multiscatter energy
 	// scale (CPU Params::specRoughnessMS)
@@ -51,8 +63,15 @@ typedef struct {
 	int sssAlbedoMedium;
 } OpenPBRParams;
 
+OPENCL_FORCE_INLINE __private const Frame *OpenPBRMat_LobeFrame(__private const OpenPBRParams *p, const uint lobe) {
+	if (lobe == OPENPBR_LOBE_COAT) return &p->coatFrame;
+	if (lobe == OPENPBR_LOBE_FUZZ) return &p->fuzzFrame;
+	if (lobe == OPENPBR_LOBE_DIFF) return &p->diffuseFrame;
+	return &p->specFrame;
+}
+
 OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* restrict material,
-		__global const HitPoint *hitPoint, __private OpenPBRParams *p
+		__global const HitPoint *hitPoint, __private OpenPBRParams *p, const bool needNormals
 		MATERIALS_PARAM_DECL) {
 	p->baseColor = Spectrum_Clamp(Texture_GetSpectrumValue(material->openpbr.baseColorTexIndex, hitPoint TEXTURES_PARAM));
 	p->baseWeight = clamp(Texture_GetFloatValue(material->openpbr.baseWeightTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
@@ -111,6 +130,28 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->filmIor = fmax(Texture_GetFloatValue(material->openpbr.filmIorTexIndex, hitPoint TEXTURES_PARAM), 1.f);
 
 	p->extIor = ExtractExteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+	p->independentNormals = needNormals && material->ownsLobeNormals;
+	p->cyclesNormalSemantics = material->openpbr.cyclesNormalSemantics;
+	p->applyLobeTerminator = !material->openpbr.cyclesNormalSemantics || material->openpbr.reflectionNormalCorrection;
+	if (p->independentNormals) {
+		Frame root;
+		Frame_Set_Private(&root, VLOAD3F(&hitPoint->dpdu.x), VLOAD3F(&hitPoint->dpdv.x), VLOAD3F(&hitPoint->shadeN.x));
+		const float side = hitPoint->intoObject ? 1.f : -1.f;
+		const float3 Ng = side * VLOAD3F(&hitPoint->geometryN.x), fixed = VLOAD3F(&hitPoint->fixedDir.x);
+		const float3 base = side * VLOAD3F(&hitPoint->shadeN.x);
+		const float3 coat = material->openpbr.coatNormalTexIndex != NULL_INDEX ? side * VLOAD3F(&hitPoint->coatN.x) : base;
+		const float3 spec = material->openpbr.reflectionNormalCorrection ? Material_EnsureValidSpecularReflection(Ng, fixed, base) : base;
+		const float3 coatRefl = material->openpbr.reflectionNormalCorrection ? Material_EnsureValidSpecularReflection(Ng, fixed, coat) : coat;
+		const float3 X = MAKE_FLOAT3(1.f, 0.f, 0.f), Y = MAKE_FLOAT3(0.f, 1.f, 0.f);
+		Frame_Set_Private(&p->diffuseFrame, X, Y, Frame_ToLocal_Private(&root, base));
+		p->specFrameSide = (p->transWeight > 0.f || p->sssWeight > 0.f) ? side : 1.f;
+		Frame_Set_Private(&p->specFrame, X, Y, Frame_ToLocal_Private(&root, p->specFrameSide * spec));
+		Frame_Set_Private(&p->coatFrame, X, Y, Frame_ToLocal_Private(&root, coatRefl));
+		const float3 fuzz = (1.f - p->coatWeight) * base + p->coatWeight * coat;
+		Frame_Set_Private(&p->fuzzFrame, X, Y, Frame_ToLocal_Private(&root, dot(fuzz, fuzz) > 0.f ? normalize(fuzz) : base));
+		p->geometryN = Frame_ToLocal_Private(&root, VLOAD3F(&hitPoint->geometryN.x));
+		p->interpolatedN = Frame_ToLocal_Private(&root, side * VLOAD3F(&hitPoint->interpolatedN.x));
+	}
 
 	const uint ivIdx = material->interiorVolumeIndex;
 	p->sssAlbedoMedium = (ivIdx != NULL_INDEX) &&
@@ -460,13 +501,7 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalBtdf(__global const HitPoint *hitPoint
 // Lobe weights + mixture probabilities
 //------------------------------------------------------------------------------
 
-#define OPENPBR_LOBE_FUZZ 0u
-#define OPENPBR_LOBE_COAT 1u
-#define OPENPBR_LOBE_METAL 2u
-#define OPENPBR_LOBE_SPEC 3u
-#define OPENPBR_LOBE_BTDF 4u
-#define OPENPBR_LOBE_DIFF 5u
-#define OPENPBR_LOBE_COUNT 6u
+
 
 // Same as openpbr.cpp SpecLayerAlbedo(): GGX directional albedo of the
 // dielectric specular layer (interface F0, specular_weight scaled).
@@ -483,16 +518,20 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 		__private const OpenPBRParams *p, const float3 wFixed,
 		float3 weights[OPENPBR_LOBE_COUNT], float probs[OPENPBR_LOBE_COUNT]
 		MATERIALS_PARAM_DECL) {
-	const float muF = fabs(wFixed.z);
+	const float3 specFixed = p->independentNormals ? Frame_ToLocal_Private(&p->specFrame, wFixed) : wFixed;
+	const float3 coatFixed = p->independentNormals ? Frame_ToLocal_Private(&p->coatFrame, wFixed) : wFixed;
+	const float3 fuzzFixed = p->independentNormals ? Frame_ToLocal_Private(&p->fuzzFrame, wFixed) : wFixed;
+	const float3 diffFixed = p->independentNormals ? Frame_ToLocal_Private(&p->diffuseFrame, wFixed) : wFixed;
+	const float muF = fabs(specFixed.z);
 
 	weights[OPENPBR_LOBE_FUZZ] = Spectrum_Clamp(p->fuzzWeight * p->fuzzColor);
-	const float impFuzz = (wFixed.z > 0.f) ?
+	const float impFuzz = (fuzzFixed.z > 0.f) ?
 			Spectrum_Filter(weights[OPENPBR_LOBE_FUZZ]) *
-			Zeltner_DirAlbedo(muF, p->fuzzRoughness) : 0.f;
+			Zeltner_DirAlbedo(fabs(fuzzFixed.z), p->fuzzRoughness) : 0.f;
 
 	weights[OPENPBR_LOBE_COAT] = Spectrum_Clamp(p->coatWeight * p->coatColor);
-	const float coatF = (wFixed.z > 0.f && fabs(p->coatIor - p->extIor) > 1e-4f) ?
-			Microfacet_FresnelDielectric(muF, p->coatIor / p->extIor) : 0.f;
+	const float coatF = (coatFixed.z > 0.f && fabs(p->coatIor - p->extIor) > 1e-4f) ?
+			Microfacet_FresnelDielectric(fabs(coatFixed.z), p->coatIor / p->extIor) : 0.f;
 	const float impCoat = Spectrum_Filter(weights[OPENPBR_LOBE_COAT]) * coatF;
 
 	const float rem = fmax(0.f, 1.f - impFuzz - impCoat);
@@ -516,7 +555,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 		Microfacet_OpenPBRAnisoAlphas(p->specRoughnessMS, p->specAniso, &alphaT, &alphaB);
 		const float nInt = OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
 		msScale = Microfacet_GgxGlassEnergyScale(alphaT, alphaB, muF,
-				(wFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt);
+				(specFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt);
 	}
 
 	weights[OPENPBR_LOBE_SPEC] = (wDiel * (1.f + refrFrac * (msScale - 1.f))) *
@@ -536,7 +575,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 
 	const float wDiff = wDiel * (1.f - p->transWeight) * (1.f - p->sssWeight);
 	weights[OPENPBR_LOBE_DIFF] = wDiff * darkening * p->baseWeight * p->baseColor;
-	const float impDiff = (wFixed.z > 0.f) ?
+	const float impDiff = (p->independentNormals || diffFixed.z > 0.f) ?
 			Spectrum_Filter(weights[OPENPBR_LOBE_DIFF]) *
 			(1.f - OpenPBRMat_SpecLayerAlbedo(muF, etaS, p->specWeight, p->specRoughness)) : 0.f;
 
@@ -558,8 +597,22 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 
 OPENCL_FORCE_INLINE float OpenPBRMat_LobePdf(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const uint lobe,
-		const float3 wo, const float3 wi
+		const float3 fixed, const float3 sampled
 		MATERIALS_PARAM_DECL) {
+	__private const Frame *frame = OpenPBRMat_LobeFrame(p, lobe);
+	const float3 wo = p->independentNormals ? Frame_ToLocal_Private(frame, fixed) : fixed;
+	const float3 wi = p->independentNormals ? Frame_ToLocal_Private(frame, sampled) : sampled;
+	if (p->independentNormals) {
+		const bool physicalReflection = dot(fixed, p->geometryN) * dot(sampled, p->geometryN) > 0.f;
+		if (lobe == OPENPBR_LOBE_BTDF) {
+			if (physicalReflection != (wo.z * wi.z > 0.f)) return 0.f;
+		} else if (!physicalReflection) return 0.f;
+		if (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) {
+			const float side = p->specFrameSide;
+			if (side * wo.z <= 0.f || side * wi.z <= 0.f) return 0.f;
+		}
+		if (lobe == OPENPBR_LOBE_COAT && (wo.z <= 0.f || wi.z <= 0.f)) return 0.f;
+	}
 	float pdf = 0.f;
 	switch (lobe) {
 		case OPENPBR_LOBE_FUZZ:
@@ -577,6 +630,8 @@ OPENCL_FORCE_INLINE float OpenPBRMat_LobePdf(__global const HitPoint *hitPoint,
 			OpenPBRMat_EvalBtdf(hitPoint, p, wo, wi, &pdf MATERIALS_PARAM);
 			return pdf;
 		case OPENPBR_LOBE_DIFF:
+			if (p->independentNormals && wi.z <= 0.f) return 0.f;
+			if (p->independentNormals && wo.z <= 1e-7f) return wi.z * M_1_PI_F;
 			return EON_Pdf(wo, wi, p->diffuseRoughness);
 		default:
 			return 0.f;
@@ -587,10 +642,89 @@ OPENCL_FORCE_INLINE float OpenPBRMat_LobePdf(__global const HitPoint *hitPoint,
 // BSDF evaluation / sampling (GPU paths are always camera paths)
 //------------------------------------------------------------------------------
 
+OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *hp,
+		__private const OpenPBRParams *p, const float3 light, const float3 eye,
+		BSDFEvent *event, float *directPdfW, const bool fromLight MATERIALS_PARAM_DECL) {
+	const float3 fixed = fromLight ? light : eye, sampled = fromLight ? eye : light;
+	const bool reflected = dot(light, p->geometryN) * dot(eye, p->geometryN) > 0.f;
+	float3 weights[OPENPBR_LOBE_COUNT];
+	float probs[OPENPBR_LOBE_COUNT];
+	OpenPBRMat_ComputeWeights(hp, p, fixed, weights, probs MATERIALS_PARAM);
+	float3 result = BLACK;
+	float pdfF = 0.f;
+	BSDFEvent ev = NONE;
+	for (uint lobe = 0; lobe < OPENPBR_LOBE_COUNT; ++lobe) {
+		if (Spectrum_IsBlack(weights[lobe]) && probs[lobe] <= 0.f) continue;
+		if (!reflected && lobe != OPENPBR_LOBE_BTDF) continue;
+		__private const Frame *frame = OpenPBRMat_LobeFrame(p, lobe);
+		const float3 wi = Frame_ToLocal_Private(frame, light), wo = Frame_ToLocal_Private(frame, eye);
+		if (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) {
+			const float side = p->specFrameSide;
+			if (side * wi.z <= 0.f || side * wo.z <= 0.f) continue;
+		}
+		if (lobe == OPENPBR_LOBE_COAT && (wi.z <= 0.f || wo.z <= 0.f)) continue;
+		if (lobe == OPENPBR_LOBE_BTDF && reflected != (wi.z * wo.z > 0.f)) continue;
+		float3 value = BLACK;
+		float unusedPdf;
+		BSDFEvent le = GLOSSY | REFLECT;
+		switch (lobe) {
+			case OPENPBR_LOBE_FUZZ:
+				value = Zeltner_EvalTimesCosI(wo, wi, p->fuzzRoughness);
+				le = DIFFUSE | REFLECT;
+				break;
+			case OPENPBR_LOBE_COAT: value = OpenPBRMat_EvalGlossyRefl(hp, p, true, wo, wi, &unusedPdf MATERIALS_PARAM); break;
+			case OPENPBR_LOBE_METAL: value = OpenPBRMat_EvalMetal(hp, p, wo, wi, &unusedPdf MATERIALS_PARAM); break;
+			case OPENPBR_LOBE_SPEC: value = OpenPBRMat_EvalGlossyRefl(hp, p, false, wo, wi, &unusedPdf MATERIALS_PARAM); break;
+			case OPENPBR_LOBE_BTDF:
+				if (!reflected) value = OpenPBRMat_EvalBtdf(hp, p, wo, wi, &unusedPdf MATERIALS_PARAM);
+				le = GLOSSY | TRANSMIT;
+				break;
+			case OPENPBR_LOBE_DIFF: {
+				const float mu = fabs(Frame_ToLocal_Private(&p->specFrame, fixed).z);
+				const float att = 1.f - OpenPBRMat_SpecLayerAlbedo(mu, OpenPBRMat_EtaS(p, hp), p->specWeight, p->specRoughness);
+				value = att * EON_EvalWithView(WHITE, p->diffuseRoughness, wi, wo, true) * fmax(wi.z, 0.f);
+				le = DIFFUSE | REFLECT;
+				break;
+			}
+		}
+		pdfF += probs[lobe] * OpenPBRMat_LobePdf(hp, p, lobe, fixed, sampled MATERIALS_PARAM);
+		if (p->cyclesNormalSemantics && reflected && !Spectrum_IsBlack(value)) {
+			const float side = (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) ? p->specFrameSide : 1.f;
+			const float3 Ns = side * MAKE_FLOAT3(frame->Z.x, frame->Z.y, frame->Z.z), Ni = p->interpolatedN;
+			if (dot(Ni, light) * dot(Ni, Ns) * dot(Ns, light) < 0.f) value = BLACK;
+		}
+		if (p->applyLobeTerminator && reflected && !Spectrum_IsBlack(value)) {
+			const float side = (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) ? p->specFrameSide : 1.f;
+			const float3 Ns = side * MAKE_FLOAT3(frame->Z.x, frame->Z.y, frame->Z.z), Ni = p->interpolatedN;
+			if (any(Ns != Ni)) {
+				// Preserve imported per-diffuse-closure correction without
+				// changing native OpenPBR's selected terminator policy.
+#if (SLG_SHADOW_TERMINATOR_MODE != 2)
+				if (p->cyclesNormalSemantics) {
+					if (le & DIFFUSE) value *= BSDF_ContyBumpShadowingTerm(Ni, Ns, light);
+				} else {
+#if (SLG_SHADOW_TERMINATOR_MODE == 0)
+				value *= BSDF_ShadowTerminatorAvoidanceFactor(Ni, Ns, light);
+#elif (SLG_SHADOW_TERMINATOR_MODE == 1)
+				if (le & DIFFUSE) value *= BSDF_ContyBumpShadowingTerm(Ni, Ns, light);
+#endif
+				}
+#endif
+			}
+		}
+		value *= weights[lobe];
+		if (!Spectrum_IsBlack(value)) { result += value; ev |= le; }
+	}
+	*event = ev;
+	if (directPdfW) *directPdfW = pdfF;
+	return result;
+}
+
 OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const float3 lightDir, const float3 eyeDir,
 		BSDFEvent *event, float *directPdfW
 		MATERIALS_PARAM_DECL) {
+	if (p->independentNormals) return OpenPBRMat_EvalIndependent(hitPoint, p, lightDir, eyeDir, event, directPdfW, false MATERIALS_PARAM);
 	const float3 wi = lightDir;
 	const float3 wo = eyeDir;
 	const float3 wFixed = wo, wSmp = wi;
@@ -685,7 +819,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Albedo(__global const Material* restrict mat
 		__global float *evalStack, uint *evalStackOffset
 		MATERIALS_PARAM_DECL) {
 	OpenPBRParams p;
-	OpenPBRMat_EvaluateParams(material, hitPoint, &p MATERIALS_PARAM);
+	OpenPBRMat_EvaluateParams(material, hitPoint, &p, false MATERIALS_PARAM);
 
 	const float3 diffuse = p.baseColor * (p.baseWeight * (1.f - p.metalness) *
 			(1.f - p.transWeight) * (1.f - p.sssWeight));
@@ -734,18 +868,18 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Evaluate(__global const Material* restrict m
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
-	if (lightDir.z == 0.f || eyeDir.z == 0.f) {
+	if (!material->ownsLobeNormals && (lightDir.z == 0.f || eyeDir.z == 0.f)) {
 		MATERIAL_EVALUATE_RETURN_BLACK;
 	}
 
 	OpenPBRParams p;
-	OpenPBRMat_EvaluateParams(material, hitPoint, &p MATERIALS_PARAM);
+	OpenPBRMat_EvaluateParams(material, hitPoint, &p, true MATERIALS_PARAM);
 
 	// Opaque backface shaded as the front (CPU OpenPBRMaterial::Evaluate)
 	{
 		const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
 		const float fixedZ = fromLight ? lightDir.z : eyeDir.z;
-		if ((fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f)) {
+		if (!p.independentNormals && (fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f)) {
 			lightDir.z = -lightDir.z;
 			eyeDir.z = -eyeDir.z;
 		}
@@ -776,15 +910,15 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 	float3 fixedDir;
 	EvalStack_PopFloat3(fixedDir);
 
-	if (fixedDir.z == 0.f) {
+	if (!material->ownsLobeNormals && fixedDir.z == 0.f) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
 	OpenPBRParams p;
-	OpenPBRMat_EvaluateParams(material, hitPoint, &p MATERIALS_PARAM);
+	OpenPBRMat_EvaluateParams(material, hitPoint, &p, true MATERIALS_PARAM);
 
 	// Opaque backface shaded as the front (CPU OpenPBRMaterial::Sample)
-	const bool flipBack = (fixedDir.z < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
+	const bool flipBack = !p.independentNormals && (fixedDir.z < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
 	if (flipBack)
 		fixedDir.z = -fixedDir.z;
 
@@ -807,7 +941,11 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
-	const float3 wo = fixedDir;
+	__private const Frame *sampleFrame = OpenPBRMat_LobeFrame(&p, lobe);
+	const float3 wo = p.independentNormals ? Frame_ToLocal_Private(sampleFrame, fixedDir) : fixedDir;
+	if (p.independentNormals && (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) &&
+			p.specFrameSide * wo.z <= 0.f) { MATERIAL_SAMPLE_RETURN_BLACK; }
+	if (p.independentNormals && (lobe == OPENPBR_LOBE_COAT || lobe == OPENPBR_LOBE_FUZZ) && wo.z <= 0.f) { MATERIAL_SAMPLE_RETURN_BLACK; }
 	const float3 wFl = (wo.z > 0.f) ? wo : -wo;
 	bool sampledTransmit = false;
 	float3 sampledDir;
@@ -868,7 +1006,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 				// mixture share.
 				const float3 result = weights[lobe] / probs[lobe];
 				EvalStack_PushFloat3(result);
-				const float3 dir = -wo;
+				const float3 dir = -fixedDir;
 				EvalStack_PushFloat3(dir);
 				const float pdfW0 = probs[lobe];
 				EvalStack_PushFloat(pdfW0);
@@ -905,20 +1043,28 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 		}
 		case OPENPBR_LOBE_DIFF: {
 			float pdf;
-			sampledDir = EON_Sample(wFl, p.diffuseRoughness, u0, u1, &pdf);
+			if (p.independentNormals && wo.z <= 1e-7f) sampledDir = CosineSampleHemisphereWithPdf(u0, u1, &pdf);
+			else sampledDir = EON_Sample(p.independentNormals ? wo : wFl, p.diffuseRoughness, u0, u1, &pdf);
 			break;
 		}
 		default:
 			MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
-	const float3 localLightDir = sampledDir;
-	const float3 localEyeDir = fixedDir;
+	if (p.independentNormals) {
+		sampledDir = Frame_ToWorld_Private(sampleFrame, sampledDir);
+		const bool reflected = dot(fixedDir, p.geometryN) * dot(sampledDir, p.geometryN) > 0.f;
+		if (reflected == sampledTransmit) { MATERIAL_SAMPLE_RETURN_BLACK; }
+	}
+	const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
+	const float3 localLightDir = p.independentNormals && fromLight ? fixedDir : sampledDir;
+	const float3 localEyeDir = p.independentNormals && fromLight ? sampledDir : fixedDir;
 
 	BSDFEvent event;
 	float pdfW;
-	float3 f = OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir,
-			&event, &pdfW MATERIALS_PARAM);
+	float3 f = p.independentNormals ?
+			OpenPBRMat_EvalIndependent(hitPoint, &p, localLightDir, localEyeDir, &event, &pdfW, fromLight MATERIALS_PARAM) :
+			OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir, &event, &pdfW MATERIALS_PARAM);
 	if (pdfW <= 0.f) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
