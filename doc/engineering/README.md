@@ -46,3 +46,5 @@ docs live in `doc/features/` (see its README for the index).
 [Texture-driven image coordinates](2026-10-09-image-vector-coordinates.md) documents optional image Vector input, raw spectral scope and CPU/Metal validation.
 
 - [Normal data vectors for shader inputs](2026-10-09-normal-data-vectors.md)
+
+- [Cycles Normal Map spaces and MikkTSpace data](2026-10-09-cycles-normal-map.md)

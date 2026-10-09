@@ -93,6 +93,7 @@
 #include "slg/textures/vectormath/makefloat3.h"
 #include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/normalvector.h"
+#include "slg/textures/vectormath/cyclesnormalmap.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -880,6 +881,13 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 			}
 			break;
 		}
+        case slg::ocl::CYCLES_NORMAL_MAP_TEX: {
+            PushSpectralPauseStartOp(texIndex);
+            evalOpStackSize += CompileTextureOps(tex->cyclesNormalMapTex.colorTexIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+            evalOpStackSize += CompileTextureOps(tex->cyclesNormalMapTex.strengthTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+            PushSpectralPauseEndOp(texIndex);
+            break;
+        }
 		case slg::ocl::NORMAL_VECTOR_TEX: {
 			PushSpectralPauseStartOp(texIndex);
 			evalOpStackSize += CompileTextureOps(tex->normalVectorTex.texIndex,
@@ -2485,6 +2493,18 @@ void CompiledScene::CompileTextures() {
 				tex->splitFloat3Tex.channelIndex = sf3t.GetChannel();
 				break;
 			}
+            case CYCLES_NORMAL_MAP_TEX: {
+                const auto &normal = dynamic_cast<const CyclesNormalMapTexture &>(t);
+                tex->type = slg::ocl::CYCLES_NORMAL_MAP_TEX;
+                tex->cyclesNormalMapTex.colorTexIndex = scene.GetTextures().GetTextureIndex(normal.GetInput(0));
+                tex->cyclesNormalMapTex.strengthTexIndex = scene.GetTextures().GetTextureIndex(normal.GetInput(1));
+                tex->cyclesNormalMapTex.space = normal.GetSpace();
+                tex->cyclesNormalMapTex.invertGreen = normal.IsInvertGreen();
+                tex->cyclesNormalMapTex.normalIndex = normal.GetNormalIndex();
+                tex->cyclesNormalMapTex.tangentIndex = normal.GetTangentIndex();
+                tex->cyclesNormalMapTex.signIndex = normal.GetSignIndex();
+                break;
+            }
 			case NORMAL_VECTOR_TEX: {
 				const auto &normal = dynamic_cast<const NormalVectorTexture &>(t);
 				tex->type = slg::ocl::NORMAL_VECTOR_TEX;

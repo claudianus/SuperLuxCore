@@ -2150,12 +2150,65 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		// CYCLESNOISE_TEX
 		//----------------------------------------------------------------------
+        case CYCLES_NORMAL_MAP_TEX: {
+            float strength;
+            float3 color;
+            EvalStack_PopFloat(strength);
+            EvalStack_PopFloat3(color);
+            color = 2.f * color - MAKE_FLOAT3(1.f, 1.f, 1.f);
+            if (texture->cyclesNormalMapTex.invertGreen) color.y = -color.y;
+            const unsigned int space = texture->cyclesNormalMapTex.space;
+            const bool backfacing = dot(VLOAD3F(&hitPoint->fixedDir.x), VLOAD3F(&hitPoint->geometryN.x)) < 0.f;
+            const float side = backfacing ? -1.f : 1.f;
+            const float3 base = side * VLOAD3F(&hitPoint->shadeN.x);
+            float3 value;
+            if (space == 0) {
+                const unsigned int ni = texture->cyclesNormalMapTex.normalIndex;
+                const unsigned int ti = texture->cyclesNormalMapTex.tangentIndex;
+                const unsigned int si = texture->cyclesNormalMapTex.signIndex;
+                if (hitPoint->meshIndex == NULL_INDEX || ni == NULL_INDEX || ti == NULL_INDEX || si == NULL_INDEX) {
+                    if (evalType == EVAL_FLOAT) { EvalStack_PushFloat(Spectrum_Y(base)); }
+                    else { EvalStack_PushFloat3(evalType == EVAL_BUMP ? side * base : base); }
+                    break;
+                }
+                const float3 normal = HitPoint_GetColor(hitPoint, ni EXTMESH_PARAM);
+                const float3 tangent = HitPoint_GetColor(hitPoint, ti EXTMESH_PARAM);
+                const float sign = HitPoint_GetAlpha(hitPoint, si EXTMESH_PARAM);
+                color.x *= strength;
+                color.y *= strength;
+                color.z = mix(1.f, color.z, clamp(strength, 0.f, 1.f));
+                value = tangent * color.x + sign * cross(normal, tangent) * color.y + normal * color.z;
+                const float length2 = dot(value, value);
+                value = isfinite(length2) && length2 > 0.f ? value / sqrt(length2) : ZERO;
+                value = Transform_ApplyNormal(&hitPoint->localToWorld, value);
+            } else {
+                if (space == 3 || space == 4) { color.y = -color.y; color.z = -color.z; }
+                value = (space == 1 || space == 3) ? Transform_ApplyNormal(&hitPoint->localToWorld, color) : color;
+            }
+            float length2 = dot(value, value);
+            value = isfinite(length2) && length2 > 0.f ? value / sqrt(length2) : ZERO;
+            value *= side;
+            if (space != 0 && strength != 1.f) {
+                value = base + (value - base) * max(strength, 0.f);
+                length2 = dot(value, value);
+                value = isfinite(length2) && length2 > 0.f ? value / sqrt(length2) : ZERO;
+            }
+            length2 = dot(value, value);
+            if (!(isfinite(length2) && length2 > 0.f)) value = base;
+            if (evalType == EVAL_BUMP) value *= side;
+            if (evalType == EVAL_FLOAT) { EvalStack_PushFloat(Spectrum_Y(value)); }
+            else { EvalStack_PushFloat3(value); }
+            break;
+        }
 		case NORMAL_VECTOR_TEX: {
 			float3 value;
 			EvalStack_PopFloat3(value);
+			const float side = dot(VLOAD3F(&hitPoint->fixedDir.x), VLOAD3F(&hitPoint->geometryN.x)) < 0.f ? -1.f : 1.f;
+			if (texture->normalVectorTex.sourceBump) value *= side;
 			const float length2 = dot(value, value);
 			value = isfinite(length2) && length2 > 0.f ? value / sqrt(length2) :
-					VLOAD3F(&hitPoint->shadeN.x);
+					side * VLOAD3F(&hitPoint->shadeN.x);
+			if (evalType == EVAL_BUMP) value *= side;
 			if (evalType == EVAL_FLOAT) {
 				EvalStack_PushFloat(Spectrum_Y(value));
 			} else {

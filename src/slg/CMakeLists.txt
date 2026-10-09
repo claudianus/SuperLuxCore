@@ -511,6 +511,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/vectormath/makefloat3.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/vectormath/vectormapping.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/vectormath/normalvector.cpp
+	textures/vectormath/cyclesnormalmap.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/vectormath/splitfloat3.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/windy.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/wireframe.cpp

@@ -38,6 +38,7 @@ public:
 			const bool useRealFileName) const;
 
 private:
+	luxrays::Normal EvaluateNormal(const HitPoint &hitPoint, const float sampleDistance) const;
 	std::reference_wrapper<const Texture> texture;
 	const bool sourceBump;
 };

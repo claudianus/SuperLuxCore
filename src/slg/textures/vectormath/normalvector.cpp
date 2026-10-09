@@ -10,22 +10,29 @@ float NormalVectorTexture::GetFloatValue(const HitPoint &hitPoint) const {
 }
 
 Spectrum NormalVectorTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
-	const Normal normal = Bump(hitPoint, .001f);
+	const Normal normal = EvaluateNormal(hitPoint, .001f);
 	return Spectrum(&normal.x);
 }
 
 Normal NormalVectorTexture::Bump(const HitPoint &hitPoint, const float sampleDistance) const {
+	const Normal value = EvaluateNormal(hitPoint, sampleDistance);
+	return Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN)) < 0.f ? -value : value;
+}
+
+Normal NormalVectorTexture::EvaluateNormal(const HitPoint &hitPoint, const float sampleDistance) const {
 	const Spectral::ScopePause pause;
+	const float side = Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN)) < 0.f ? -1.f : 1.f;
 	Spectrum value;
 	if (sourceBump) {
 		const Normal normal = GetTexture().Bump(hitPoint, sampleDistance);
-		value = Spectrum(&normal.x);
+		const Normal facing = side * normal;
+		value = Spectrum(&facing.x);
 	} else
 		value = GetTexture().GetSpectrumValue(hitPoint);
 	const Vector vector(value.c);
 	const float length2 = Dot(vector, vector);
 	return std::isfinite(length2) && length2 > 0.f ?
-			Normal(vector / sqrtf(length2)) : hitPoint.shadeN;
+			Normal(vector / sqrtf(length2)) : side * hitPoint.shadeN;
 }
 
 PropertiesUPtr NormalVectorTexture::ToProperties(const ImageMapCache &cache,

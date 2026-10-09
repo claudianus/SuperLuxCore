@@ -90,6 +90,7 @@
 #include "slg/textures/vectormath/makefloat3.h"
 #include "slg/textures/vectormath/vectormapping.h"
 #include "slg/textures/vectormath/normalvector.h"
+#include "slg/textures/vectormath/cyclesnormalmap.h"
 #include "slg/textures/vectormath/splitfloat3.h"
 #include "slg/textures/windy.h"
 #include "slg/textures/wireframe.h"
@@ -700,7 +701,16 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& t = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const int channel = Min(2, Max(0, props.Get(Property(propName + ".channel")(0)).Get<int>()));
 		tex = std::make_unique<SplitFloat3Texture>(t, static_cast<u_int>(channel));
-	} else if (texType == "normalvector") {
+	} else if (texType == "cyclesnormalmap") {
+        auto &color = GetTexture(props.Get(Property(propName + ".color")(Spectrum(.5f, .5f, 1.f))));
+        auto &strength = GetTexture(props.Get(Property(propName + ".strength")(1.f)));
+        tex = std::make_unique<CyclesNormalMapTexture>(color, strength,
+                props.Get(Property(propName + ".space")(0u)).Get<u_int>(),
+                props.Get(Property(propName + ".invertgreen")(false)).Get<bool>(),
+                props.Get(Property(propName + ".normalindex")(NULL_INDEX)).Get<u_int>(),
+                props.Get(Property(propName + ".tangentindex")(NULL_INDEX)).Get<u_int>(),
+                props.Get(Property(propName + ".signindex")(NULL_INDEX)).Get<u_int>());
+    } else if (texType == "normalvector") {
 		auto &input = GetTexture(props.Get(Property(propName + ".texture")(0.f)));
 		tex = std::make_unique<NormalVectorTexture>(input,
 				props.Get(Property(propName + ".sourcebump")(false)).Get<bool>());

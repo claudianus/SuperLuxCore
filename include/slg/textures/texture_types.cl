@@ -92,7 +92,8 @@ typedef enum {
 	// Cycles Noise Texture node (exact kernel port)
 	CYCLESNOISE_TEX,
 	VECTOR_MAPPING_TEX,
-	NORMAL_VECTOR_TEX
+	NORMAL_VECTOR_TEX,
+	CYCLES_NORMAL_MAP_TEX
 } TextureType;
 
 // Note: keep aligned with the copy in rayinfo.h
@@ -551,6 +552,12 @@ typedef struct {
 } NormalVectorTexParam;
 
 typedef struct {
+    unsigned int colorTexIndex, strengthTexIndex;
+    unsigned int space, invertGreen;
+    unsigned int normalIndex, tangentIndex, signIndex;
+} CyclesNormalMapTexParam;
+
+typedef struct {
 	unsigned int texIndex, brightnessTexIndex, contrastTexIndex;
 } BrightContrastTexParam;
 
@@ -682,6 +689,7 @@ typedef struct {
 		MakeFloat3TexParam makeFloat3Tex;
 		VectorMappingTexParam vectorMappingTex;
 		NormalVectorTexParam normalVectorTex;
+		CyclesNormalMapTexParam cyclesNormalMapTex;
 		RoundingTexParam roundingTex;
 		ModuloTexParam moduloTex;
 		BrightContrastTexParam brightContrastTex;
