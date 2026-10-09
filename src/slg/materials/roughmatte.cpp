@@ -49,8 +49,13 @@ Spectrum RoughMatteMaterial::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,
 	float *directPdfW, float *reversePdfW) const {
 	const float r = Clamp(sigma->GetFloatValue(hitPoint), 0.f, 1.f);
-	const Vector wi = (hitPoint.fromLight ? localLightDir : localEyeDir);
-	const Vector wo = (hitPoint.fromLight ? localEyeDir : localLightDir);
+	// EON Pdf takes (fixed, sampled), for either transport direction.
+	// Lift both directions together as Sample() does for backfaces.
+	const Vector fixedDir = hitPoint.fromLight ? localLightDir : localEyeDir;
+	const Vector sampledDir = hitPoint.fromLight ? localEyeDir : localLightDir;
+	const float side = Sgn(fixedDir.z);
+	const Vector wo = side * fixedDir;
+	const Vector wi = side * sampledDir;
 
 	if (directPdfW)
 		*directPdfW = eon::Pdf(wo, wi, r);
@@ -80,16 +85,22 @@ Spectrum RoughMatteMaterial::Sample(const HitPoint &hitPoint,
 	*event = DIFFUSE | REFLECT;
 	const Spectrum rho = Kd->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
 	const Vector wi = Sgn(localSampledDir->z) * *localSampledDir;
-	// Sample() returns f * |cos(theta)| / pdf
-	return eon::Eval(rho, r, wi, wo) * (fabsf(localSampledDir->z) / *pdfW);
+	// Sample() returns f * light-side cosine / pdf for radiance or importance.
+	const float transportCos = hitPoint.fromLight ? fabsf(localFixedDir.z) : fabsf(localSampledDir->z);
+	return eon::Eval(rho, r, wi, wo) * (transportCos / *pdfW);
 }
 
 void RoughMatteMaterial::Pdf(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir,
 	float *directPdfW, float *reversePdfW) const {
 	const float r = Clamp(sigma->GetFloatValue(hitPoint), 0.f, 1.f);
-	const Vector wi = (hitPoint.fromLight ? localLightDir : localEyeDir);
-	const Vector wo = (hitPoint.fromLight ? localEyeDir : localLightDir);
+	// EON Pdf takes (fixed, sampled), for either transport direction.
+	// Lift both directions together as Sample() does for backfaces.
+	const Vector fixedDir = hitPoint.fromLight ? localLightDir : localEyeDir;
+	const Vector sampledDir = hitPoint.fromLight ? localEyeDir : localLightDir;
+	const float side = Sgn(fixedDir.z);
+	const Vector wo = side * fixedDir;
+	const Vector wi = side * sampledDir;
 
 	if (directPdfW)
 		*directPdfW = eon::Pdf(wo, wi, r);

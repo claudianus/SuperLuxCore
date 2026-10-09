@@ -48,3 +48,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Normal data vectors for shader inputs](2026-10-09-normal-data-vectors.md)
 
 - [Cycles Normal Map spaces and MikkTSpace data](2026-10-09-cycles-normal-map.md)
+
+- [Rough matte transport and MIS directions](2026-10-09-roughmatte-transport.md)
