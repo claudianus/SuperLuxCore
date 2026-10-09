@@ -461,17 +461,19 @@ OPENCL_FORCE_INLINE float3 WrinkledTexture_ConstEvaluateSpectrum(__global const 
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float UVTexture_ConstEvaluateFloat(__global const HitPoint *hitPoint,
-		__global const TextureMapping2D *mapping TEXTURES_PARAM_DECL) {
+		__global const TextureMapping2D *mapping, const uint wrap TEXTURES_PARAM_DECL) {
 	const float2 uv = TextureMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
 
-	return Spectrum_Y(MAKE_FLOAT3(uv.x - Floor2Int(uv.x), uv.y - Floor2Int(uv.y), 0.f));
+	return Spectrum_Y(wrap ? MAKE_FLOAT3(uv.x - Floor2Int(uv.x), uv.y - Floor2Int(uv.y), 0.f)
+			: MAKE_FLOAT3(uv.x, uv.y, 0.f));
 }
 
 OPENCL_FORCE_INLINE float3 UVTexture_ConstEvaluateSpectrum(__global const HitPoint *hitPoint,
-		__global const TextureMapping2D *mapping TEXTURES_PARAM_DECL) {
+		__global const TextureMapping2D *mapping, const uint wrap TEXTURES_PARAM_DECL) {
 	const float2 uv = TextureMapping2D_Map(mapping, hitPoint TEXTURES_PARAM);
 
-	return MAKE_FLOAT3(uv.x - Floor2Int(uv.x), uv.y - Floor2Int(uv.y), 0.f);
+	return wrap ? MAKE_FLOAT3(uv.x - Floor2Int(uv.x), uv.y - Floor2Int(uv.y), 0.f)
+			: MAKE_FLOAT3(uv.x, uv.y, 0.f);
 }
 
 //------------------------------------------------------------------------------

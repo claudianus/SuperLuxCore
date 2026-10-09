@@ -1730,14 +1730,14 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			switch (evalType) {
 				case EVAL_FLOAT: {
 					const float eval = UVTexture_ConstEvaluateFloat(hitPoint,
-							&texture->uvTex.mapping
+							&texture->uvTex.mapping, texture->uvTex.wrap
 							TEXTURES_PARAM);
 					EvalStack_PushFloat(eval);
 					break;
 				}
 				case EVAL_SPECTRUM: {
 					const float3 eval = UVTexture_ConstEvaluateSpectrum(hitPoint,
-							&texture->uvTex.mapping
+							&texture->uvTex.mapping, texture->uvTex.wrap
 							TEXTURES_PARAM);
 					EvalStack_PushFloat3(eval);
 					break;

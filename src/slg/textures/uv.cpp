@@ -33,7 +33,9 @@ float UVTexture::GetFloatValue(const HitPoint &hitPoint) const {
 Spectrum UVTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const UV uv = mapping->Map(hitPoint);
 	
-	return Spectrum(uv.u - Floor2Int(uv.u), uv.v - Floor2Int(uv.v), 0.f);
+	// 좌표 출력은 정수 타일과 경계의 1을 보존하고 기존 UV 무늬는 반복한다.
+	return wrap ? Spectrum(uv.u - Floor2Int(uv.u), uv.v - Floor2Int(uv.v), 0.f)
+			: Spectrum(uv.u, uv.v, 0.f);
 }
 
 PropertiesUPtr UVTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
@@ -41,6 +43,7 @@ PropertiesUPtr UVTexture::ToProperties(const ImageMapCache &imgMapCache, const b
 
 	const string name = GetName();
 	props->Set(Property("scene.textures." + name + ".type")("uv"));
+	props->Set(Property("scene.textures." + name + ".wrap")(wrap));
 	props->Set(mapping->ToProperties("scene.textures." + name + ".mapping"));
 
 	return props;

@@ -426,7 +426,8 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 
 		tex = std::make_unique<WrinkledTexture>(CreateTextureMapping3D(propName + ".mapping", props), octaves, omega);
 	} else if (texType == "uv") {
-		tex = std::make_unique<UVTexture>(CreateTextureMapping2D(propName + ".mapping", props));
+		tex = std::make_unique<UVTexture>(CreateTextureMapping2D(propName + ".mapping", props),
+				props.Get(Property(propName + ".wrap")(true)).Get<bool>());
 	} else if (texType == "band") {
 		const string interpTypeString = props.Get(Property(propName + ".interpolation")("linear")).Get<string>();
 		const BandTexture::InterpolationType interpType = BandTexture::String2InterpolationType(interpTypeString);

@@ -2120,6 +2120,7 @@ void CompiledScene::CompileTextures() {
 
 				tex->type = slg::ocl::UV_TEX;
 				CompileTextureMapping2D(&tex->uvTex.mapping, uvt.GetTextureMapping());
+				tex->uvTex.wrap = uvt.GetWrap();
 				break;
 			}
 			case BAND_TEX: {
