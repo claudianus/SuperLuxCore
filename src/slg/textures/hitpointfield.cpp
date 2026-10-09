@@ -108,7 +108,7 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 		}
 		case HITPOINT_BACKFACING: {
 			const float s = Dot(hitPoint.fixedDir, Vector(hitPoint.geometryN.x, hitPoint.geometryN.y, hitPoint.geometryN.z));
-			return Spectrum(s > 0.f ? 1.f : 0.f);
+			return Spectrum(s < 0.f ? 1.f : 0.f);
 		}
 		default:
 			return Spectrum(0.f, 0.f, 0.f);

@@ -61,3 +61,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Cycles vector displacement spaces and Mikk corner data](2026-10-10-cycles-vector-displacement.md)
 
 - [Verified private Cycles Vector Displacement Incoming direction](2026-10-10-cycles-displacement-incoming.md)
+
+- [Cycles Backfacing spectrum](2026-10-10-cycles-backfacing.md): front/back emission color/strength fix; 28 private CPU/Metal checks, public deployment pending.
