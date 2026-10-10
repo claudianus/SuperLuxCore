@@ -511,7 +511,7 @@ float HeterogeneousVolume::MarchScatter(const Ray &ray, const float u,
 				segmentTransmittance, segmentEmission);
 
 		// I need to update first connectionEmission and than connectionThroughput
-		*connectionEmission += *connectionThroughput * emission;
+		*connectionEmission += *connectionThroughput * segmentEmission;
 		*connectionThroughput *= segmentTransmittance;
 
 		if (scatterDistance >= 0.f)
@@ -602,10 +602,27 @@ float HeterogeneousVolume::DeltaTrackScatter(const Ray &ray, const float u,
 	u_int candidateCount = 0;
 	const u_int maxCandidateCount = 65536;
 
+	// Integrate emission on a finite interval where the residual ratio is
+	// constant. One uniform sample is unbiased even for textured emission;
+	// the analytically folded minorant still attenuates the sampled position.
+	// In particular, zero extinction must not suppress an emitting medium.
+	auto addIntervalEmission = [&](const float t0, const float t1,
+			const float controlRate, const float cellStart) {
+		const float length = t1 - t0;
+		if (hasEmission && (length > 0.f) && isfinite(length)) {
+			const float t = t0 + rng.floatValue() * length;
+			hitPoint.p = ray(t);
+			*connectionEmission += (*connectionThroughput) * w * R *
+					(expf(-controlRate * (t - cellStart)) * length) * Emission(hitPoint);
+		}
+	};
+
 	while (WalkNext(&walk)) {
 		const float maj = walk.maj;
-		if (!(maj > 0.f))
+		if (!(maj > 0.f)) {
+			addIntervalEmission(walk.t0, walk.t1, 0.f, walk.t0);
 			continue;
+		}
 		const float invMaj = 1.f / maj;
 		// Residual decomposition (Novak et al. 2014 applied to collision
 		// sampling): sigma_t = sigma_c + sigma_r with the per-cell
@@ -622,6 +639,7 @@ float HeterogeneousVolume::DeltaTrackScatter(const Ray &ray, const float u,
 		const float invResRate = (resRate > 0.f) ? 1.f / resRate : INFINITY;
 
 		float t = walk.t0;
+		float intervalStart = t;
 		// Next minorant-stream event (real collision, analytic Exp(sigma_c)).
 		// Transmittance-only walks fold the minorant analytically instead.
 		float tMinor = (scatterAllowed && (mn > 0.f)) ?
@@ -634,14 +652,21 @@ float HeterogeneousVolume::DeltaTrackScatter(const Ray &ray, const float u,
 				tCand = t;
 			}
 			t = Min(tCand, tMinor);
-			if (t >= walk.t1)
+			if (t >= walk.t1) {
+				if (!scatterAllowed)
+					addIntervalEmission(intervalStart, walk.t1, mn, walk.t0);
 				break;
+			}
 			if (++candidateCount > maxCandidateCount) {
 				*connectionThroughput *= w * R;
 				return -1.f;
 			}
 			const bool minorEvent = (t == tMinor);
 
+			if (!scatterAllowed) {
+				addIntervalEmission(intervalStart, t, mn, walk.t0);
+				intervalStart = t;
+			}
 			hitPoint.p = ray(t);
 			const Spectrum sigmaT = SigmaA(hitPoint) + SigmaS(hitPoint);
 			const float sigmaTf = sigmaT.Filter();
@@ -650,7 +675,7 @@ float HeterogeneousVolume::DeltaTrackScatter(const Ray &ray, const float u,
 			// arrive at rate maj (minorant stream + residual stream),
 			// each contributes Le * T_lambda / maj where T_lambda is the
 			// running transmittance estimate (w * R)
-			if (hasEmission)
+			if (hasEmission && scatterAllowed)
 				*connectionEmission += (*connectionThroughput) * w * R *
 						Emission(hitPoint) * invMaj;
 

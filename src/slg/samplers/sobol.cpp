@@ -70,9 +70,9 @@ void SobolSamplerSharedData::Reset() {
 		const u_int filmRegionPixelCount = (subRegion[1] - subRegion[0] + 1) * (subRegion[3] - subRegion[2] + 1);
 
 		// Initialize with SOBOL_STARTOFFSET the vector holding the passes per pixel
-		passPerPixel.resize(filmRegionPixelCount, SOBOL_STARTOFFSET);
+		passPerPixel.assign(filmRegionPixelCount, SOBOL_STARTOFFSET);
 	} else
-		passPerPixel.resize(1, SOBOL_STARTOFFSET);
+		passPerPixel.assign(1, SOBOL_STARTOFFSET);
 
 	bucketIndex = std::make_shared<u_int>(0);
 }

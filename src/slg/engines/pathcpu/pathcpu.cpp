@@ -276,7 +276,7 @@ void PathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions
 	if (restirPT)
 		restirPT->Reset();
 
-	CPURenderEngine::EndSceneEditLockLess(editActions);
+	CPUNoTileRenderEngine::EndSceneEditLockLess(editActions);
 }
 
 //------------------------------------------------------------------------------

@@ -511,7 +511,7 @@ OPENCL_FORCE_INLINE float HeterogeneousVolume_MarchScatter(__global const Volume
 				&segmentTransmittance, &segmentEmission);
 
 		// I need to update first connectionEmission and than connectionThroughput
-		*connectionEmission += *connectionThroughput * emission;
+		*connectionEmission += *connectionThroughput * segmentEmission;
 		*connectionThroughput *= segmentTransmittance;
 
 		if (scatterDistance >= 0.f)
@@ -777,6 +777,23 @@ OPENCL_FORCE_INLINE bool VolWalk_Next(VolMajorantWalk *w,
 // Mirrors the CPU implementation (see heterogenous.cpp for references).
 //------------------------------------------------------------------------------
 
+// Unbiased emission integral over a finite interval with a constant residual
+// ratio. Mirrors the CPU tracker, including zero-extinction emitting cells.
+OPENCL_FORCE_INLINE void HeterogeneousVolume_AddIntervalEmission(
+		__global const Volume *vol, const float3 rayOrig, const float3 rayDir,
+		const float t0, const float t1, const float controlRate, const float cellStart,
+		const float3 weight, float3 *connectionEmission,
+		__global HitPoint *tmpHitPoint, Seed *seed TEXTURES_PARAM_DECL) {
+	const float length = t1 - t0;
+	if ((vol->volume.volumeEmissionTexIndex != NULL_INDEX) &&
+			(length > 0.f) && isfinite(length)) {
+		const float t = t0 + Rnd_FloatValue(seed) * length;
+		VSTORE3F(rayOrig + t * rayDir, &tmpHitPoint->p.x);
+		*connectionEmission += weight * (exp(-controlRate * (t - cellStart)) * length) *
+				Volume_Emission(vol, tmpHitPoint TEXTURES_PARAM);
+	}
+}
+
 OPENCL_FORCE_INLINE float HeterogeneousVolume_DeltaTrackScatter(__global const Volume *vol,
 		__global Ray *ray, const float hitT,
 		const float passThroughEvent,
@@ -805,8 +822,12 @@ OPENCL_FORCE_INLINE float HeterogeneousVolume_DeltaTrackScatter(__global const V
 
 	while (VolWalk_Next(&walk, vol, rayOrig, rayDir, volMajorants)) {
 		const float maj = walk.maj;
-		if (!(maj > 0.f))
+		if (!(maj > 0.f)) {
+			HeterogeneousVolume_AddIntervalEmission(vol, rayOrig, rayDir,
+					walk.t0, walk.t1, 0.f, walk.t0, (*connectionThroughput) * w * R,
+					connectionEmission, tmpHitPoint, seed TEXTURES_PARAM);
 			continue;
+		}
 		const float invMaj = 1.f / maj;
 		// Residual decomposition (Novak et al. 2014 applied to collision
 		// sampling, mirrors the CPU tracker): the per-cell minorant is a
@@ -818,6 +839,7 @@ OPENCL_FORCE_INLINE float HeterogeneousVolume_DeltaTrackScatter(__global const V
 		const float invResRate = (resRate > 0.f) ? 1.f / resRate : INFINITY;
 
 		float t = walk.t0;
+		float intervalStart = t;
 		float tMinor = (scatterAllowed && (sigmaC > 0.f)) ?
 				t + (-log(1.f - Rnd_FloatValue(seed)) / sigmaC) : INFINITY;
 
@@ -828,20 +850,31 @@ OPENCL_FORCE_INLINE float HeterogeneousVolume_DeltaTrackScatter(__global const V
 				tCand = t;
 			}
 			t = fmin(tCand, tMinor);
-			if (t >= walk.t1)
+			if (t >= walk.t1) {
+				if (!scatterAllowed)
+					HeterogeneousVolume_AddIntervalEmission(vol, rayOrig, rayDir,
+							intervalStart, walk.t1, sigmaC, walk.t0, (*connectionThroughput) * w * R,
+							connectionEmission, tmpHitPoint, seed TEXTURES_PARAM);
 				break;
+			}
 			if (++candidateCount > maxCandidateCount) {
 				*connectionThroughput *= w * R;
 				return -1.f;
 			}
 			const bool minorEvent = (t == tMinor);
 
+			if (!scatterAllowed) {
+				HeterogeneousVolume_AddIntervalEmission(vol, rayOrig, rayDir,
+						intervalStart, t, sigmaC, walk.t0, (*connectionThroughput) * w * R,
+						connectionEmission, tmpHitPoint, seed TEXTURES_PARAM);
+				intervalStart = t;
+			}
 			VSTORE3F(rayOrig + t * rayDir, &tmpHitPoint->p.x);
 			const float3 sigmaT = HeterogeneousVolume_SigmaT(vol, tmpHitPoint
 					TEXTURES_PARAM);
 			const float sigmaTf = Spectrum_Filter(sigmaT);
 
-			if (hasEmission)
+			if (hasEmission && scatterAllowed)
 				*connectionEmission += (*connectionThroughput) * w * R *
 						Volume_Emission(vol, tmpHitPoint TEXTURES_PARAM) * invMaj;
 
