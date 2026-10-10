@@ -134,10 +134,6 @@ std::string CyclesBSSRDFMaterial::ExperimentalAdjointParameterFailure(bool spect
 			return "adjoint color and radius must be finite";
 	if (!std::isfinite(p.ior) || !std::isfinite(p.roughness) || !std::isfinite(p.anisotropy))
 		return "adjoint IOR, roughness and anisotropy must be finite";
-	bool nonlocal = false;
-	for (unsigned i = 0; i < COLOR_SAMPLES; ++i) nonlocal |= p.radiusRGB.c[i] >= 1e-8f;
-	if (nonlocal && !(p.roughness > 0.f))
-		return "adjoint sharp camera boundaries require internal-vertex/manifold connections";
 	return "";
 }
 
@@ -237,10 +233,27 @@ static Vector SampleBSSRDFPhase(const Vector &direction, float g, float u0, floa
 	return Normalize(s * cosf(phi) * x + s * sinf(phi) * y + c * direction);
 }
 
+bool slg::TraceCyclesBSSRDFBoundary(SceneConstRef scene, IntersectionDeviceRef device,
+		const Ray &ray, const u_int entryMesh, RayHit &hit, const u_int skipEntryTriangle) {
+	const std::string &group = scene.GetObjects().GetSceneObject(entryMesh).GetSubsurfaceGroup();
+	Ray probe = ray;
+	while (device.TraceRay(&probe, &hit)) {
+		if (!(hit.meshIndex == entryMesh && hit.triangleIndex == skipEntryTriangle) &&
+				(hit.meshIndex == entryMesh || (!group.empty() &&
+				scene.GetObjects().GetSceneObject(hit.meshIndex).GetSubsurfaceGroup() == group)))
+			return true;
+		const float next = hit.t + MachineEpsilon::E(hit.t);
+		if (!(next > probe.mint) || next >= probe.maxt)
+			break;
+		probe.mint = next;
+	}
+	return false;
+}
+
 static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef device,
 		const Ray &entryRay, const RayHit &entryHit,
 		const PathVolumeInfo &volumes, BSDF &bsdf, TauswortheRandomGenerator &rng,
-		Spectrum &weight, const bool adjoint) {
+		Spectrum &weight, const bool adjoint, const CyclesBSSRDFAdjointConnect &connect) {
 	const auto *material = ResolveCyclesBSSRDF(*bsdf.GetMaterial(), bsdf.hitPoint);
 	if (!material)
 		return true;
@@ -332,7 +345,13 @@ static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef de
 	Ray walk = entryRay;
 	walk.o = bsdf.GetRayOrigin(direction);
 	walk.d = direction;
-	const std::string &entryGroup = scene.GetObjects().GetSceneObject(entryHit.meshIndex).GetSubsurfaceGroup();
+	const bool sharpConnect = adjoint && p.roughness == 0.f && bool(connect);
+	// The connection sampler owns an independent stream. Its root-search
+	// work must not change the free-flight or HG continuation variates.
+	TauswortheRandomGenerator connectRng(static_cast<unsigned int>(sharpConnect ? rng.uintValue() : 1u));
+	if (sharpConnect)
+		connect({bsdf.hitPoint.p, bsdf.hitPoint.fixedDir, weight * throughput,
+				sigmaT, p.ior, p.anisotropy, true}, connectRng);
 	for (unsigned bounce = 0; bounce < 256; ++bounce) {
 		float probabilities[COLOR_SAMPLES], sum = 0.f;
 		for (unsigned i = 0; i < COLOR_SAMPLES; ++i) {
@@ -353,24 +372,7 @@ static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef de
 		walk.mint = MachineEpsilon::E(0.f);
 		walk.maxt = distance;
 		RayHit boundary;
-		bool escaped = false;
-		for (;;) {
-			const bool hit = device.TraceRay(&walk, &boundary);
-			if (!hit)
-				break;
-			if (boundary.meshIndex == entryHit.meshIndex ||
-					(!entryGroup.empty() && scene.GetObjects().GetSceneObject(boundary.meshIndex).
-							GetSubsurfaceGroup() == entryGroup)) {
-				escaped = true;
-				break;
-			}
-			// Object-local walk: overlapping objects must not become its
-			// boundary, shading closure, or a different scattering medium.
-			const float next = boundary.t + MachineEpsilon::E(boundary.t);
-			if (!(next > walk.mint) || next >= distance)
-				break;
-			walk.mint = next;
-		}
+		const bool escaped = TraceCyclesBSSRDFBoundary(scene, device, walk, entryHit.meshIndex, boundary);
 		const float t = escaped ? boundary.t : distance;
 		Spectrum transmittance;
 		float pdf = 0.f;
@@ -403,6 +405,9 @@ static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef de
 			return true;
 		}
 		walk.o = walk(distance);
+		if (sharpConnect)
+			connect({walk.o, walk.d, weight * throughput, sigmaT,
+					p.ior, p.anisotropy, false}, connectRng);
 		walk.d = SampleBSSRDFPhase(walk.d, p.anisotropy, rng.floatValue(), rng.floatValue());
 		if (bounce >= 8) {
 			const float survive = Clamp(throughput.Max(), .05f, .95f);
@@ -418,11 +423,12 @@ static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef de
 bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 		const Ray &entryRay, const RayHit &entryHit, const PathVolumeInfo &volumes,
 		BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
-	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, false);
+	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, false, {});
 }
 
 bool slg::SampleCyclesBSSRDFAdjoint(SceneConstRef scene, IntersectionDeviceRef device,
 		const Ray &entryRay, const RayHit &entryHit, const PathVolumeInfo &volumes,
-		BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
-	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, true);
+		BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight,
+		const CyclesBSSRDFAdjointConnect &connect) {
+	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, true, connect);
 }

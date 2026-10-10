@@ -53,6 +53,7 @@ namespace ocl {
 
 class PathTracer;
 class VarianceClamping;
+struct CyclesBSSRDFAdjointVertex;
 
 // Multi-specular MNEE chain capacity: the solver's fixed-size chain
 // budget. Shared by the solver (pathtracer_mnee.cpp), the SSP tail gate
@@ -496,6 +497,13 @@ private:
 			const LightSource &light,  const BSDF &bsdf,
 			const luxrays::Spectrum &flux, const LightPathInfo &pathInfo,
 			const SspTail *sspTail,
+			std::vector<SampleResult> &sampleResults, u_int &used) const;
+
+	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera
+	void ConnectCyclesBSSRDFSharpToEye(luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene, FilmConstRef film, float time, const LightSource &light,
+			const BSDF &escape, u_int entryMesh, const CyclesBSSRDFAdjointVertex &vertex,
+			const LightPathInfo &pathInfo, luxrays::TauswortheRandomGenerator &rng,
 			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera

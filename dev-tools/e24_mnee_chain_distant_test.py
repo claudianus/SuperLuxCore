@@ -68,6 +68,13 @@ batch.haltspp = {SPP}
 renderengine.seed = 17
 opencl.task.count = {TASK_COUNT}
 path.lighttracing.enable = 0
+path.hybridbackforward.enable = 0
+path.lighttracing.auto = 0
+path.mnee.auto = 0
+# This contract requires exact delta interfaces. Auto PSR turns CPU glass
+# glossy at the initial sample budget, so it no longer enters the MNEE gate.
+path.regularization.auto = 0
+path.regularization.sigma = 0
 path.mnee.enable = 1
 path.mnee.maxspecular = 2
 path.mnee.maxiterations = 32

@@ -88,3 +88,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Cycles BSSRDF material partition boundaries](2026-10-10-cycles-bssrdf-object-groups.md): CPU33 contracts, exporter3 contracts and7 reviewed720p pairs; instance and hair boundaries stay separate, full goal remains active.
 
 - [Experimental Cycles BSSRDF CPU adjoint transport](2026-10-10-cycles-bssrdf-adjoint-transport.md): homogeneous reverse walk, rough camera boundary and surface identity; full default-quality goal remains active.
+
+- [Experimental sharp Cycles BSSRDF CPU adjoint connections](2026-10-10-cycles-bssrdf-sharp-transport.md): initial diffuse and internal HG camera connections; full default-quality goal remains active.

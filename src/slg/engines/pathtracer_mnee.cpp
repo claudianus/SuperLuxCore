@@ -56,6 +56,8 @@
 #include "slg/engines/pathtracer.h"
 #include "slg/materials/mirror.h"
 #include "slg/materials/glass.h"
+#include "slg/materials/cyclesbssrdf.h"
+#include "slg/materials/cyclesbssrdf_boundary.h"
 #include "slg/scene/scene.h"
 
 using namespace std;
@@ -105,6 +107,7 @@ struct MneeVertex {
 	Vector s, t;
 	// Relative IOR (interior/exterior). 1.f == conductor (mirror).
 	float eta;
+	bool geometryParameterization = false;
 };
 
 // Endpoint of the specular connection. For a point-like emitter (isDir ==
@@ -139,6 +142,7 @@ inline void MneeOrthonormalize(MneeVertex &v) {
 }
 
 inline void MneeInitVertex(MneeVertex &v, const BSDF &bsdf, const float eta) {
+	v.geometryParameterization = false;
 	const HitPoint &hitPoint = bsdf.hitPoint;
 	v.p = hitPoint.p;
 	v.dpdu = hitPoint.dpdu;
@@ -166,6 +170,50 @@ inline void MneeInitVertex(MneeVertex &v, const BSDF &bsdf, const float eta) {
 	}
 
 	MneeOrthonormalize(v);
+}
+
+// A BSSRDF boundary can be smooth without a UV layer. Use an orthonormal
+// geometric triangle basis and differentiate its normalized barycentric
+// normals, independently of UVs and of the BSDF's shading-plane tangents.
+static void MneeInitCyclesVertex(MneeVertex &v, const BSDF &bsdf, const float eta) {
+	MneeInitVertex(v, bsdf, eta);
+	const HitPoint &hit = bsdf.hitPoint;
+	const auto &mesh = *hit.mesh;
+	const Triangle &tri = mesh.GetTriangles()[hit.triangleIndex];
+	const Vector e1 = mesh.GetVertex(hit.localToWorld, tri.v[1]) - mesh.GetVertex(hit.localToWorld, tri.v[0]);
+	const Vector e2 = mesh.GetVertex(hit.localToWorld, tri.v[2]) - mesh.GetVertex(hit.localToWorld, tri.v[0]);
+	const float a = e1.Length();
+	if (!(a > 0.f)) return;
+	v.dpdu = e1 / a;
+	const float b = Dot(e2, v.dpdu);
+	const Vector tangent2 = e2 - b * v.dpdu;
+	const float c = tangent2.Length();
+	if (!(c > 0.f)) return;
+	v.dpdv = tangent2 / c;
+	v.dndu = v.dndv = Normal();
+	if (mesh.HasNormals()) {
+		const auto &base = *mesh.GetAsExtTriangleMesh();
+		const auto rawCorner = [&](const u_int index) {
+			const Normal n = base.GetShadeNormal(Transform::TRANS_IDENTITY, index);
+			// Transform the unnormalized interpolation first, as the mesh
+			// does. Normalizing transformed corners individually changes
+			// the field on a nonuniformly scaled instance.
+			return mesh.GetType() == TYPE_EXT_TRIANGLE ? n :
+					(hit.localToWorld.SwapsHandedness() ? -1.f : 1.f) * (hit.localToWorld * n);
+		};
+		const Normal n0 = rawCorner(tri.v[0]), n1 = rawCorner(tri.v[1]), n2 = rawCorner(tri.v[2]);
+		const Normal raw = (1.f - hit.triangleBariCoord1 - hit.triangleBariCoord2) * n0 +
+				hit.triangleBariCoord1 * n1 + hit.triangleBariCoord2 * n2;
+		const float length = sqrtf(Dot(raw, raw));
+		if (length > 0.f) {
+			const Normal du = (n1 - n0) / a;
+			const Normal dv = ((n2 - n0) - (b / a) * (n1 - n0)) / c;
+			v.dndu = (du - v.n * Dot(v.n, du)) / length;
+			v.dndv = (dv - v.n * Dot(v.n, dv)) / length;
+		}
+	}
+	MneeCoordinateSystem(Vector(v.n), v.s, v.t);
+	v.geometryParameterization = true;
 }
 
 inline void MneeCoordinateSystem(const Vector &n, Vector &s, Vector &t) {
@@ -198,10 +246,11 @@ inline void MneeCoordinateSystem(const Vector &n, Vector &s, Vector &t) {
 // constraint may use the physical eta (e.g. -1 for an opposite-side mirror
 // reflection).
 static bool MneeResidual(const Point &x0p, const MneeEndpoint &ep,
-		const MneeVertex &vtx, MneeVec2 &C, const float etaOverride = 0.f) {
+		const MneeVertex &vtx, MneeVec2 &C, const float etaOverride = 0.f,
+		const float minDistance = 1e-3f) {
 	Vector wi = x0p - vtx.p;
 	float r01 = wi.Length();
-	if (r01 < 1e-3f)
+	if (r01 < minDistance)
 		return false;
 	wi /= r01;
 
@@ -212,7 +261,7 @@ static bool MneeResidual(const Point &x0p, const MneeEndpoint &ep,
 	} else {
 		wo = ep.pos - vtx.p;
 		const float r12 = wo.Length();
-		if (r12 < 1e-3f)
+		if (r12 < minDistance)
 			return false;
 		wo /= r12;
 	}
@@ -260,12 +309,13 @@ static bool MneeReproject(
 static float MneeGeometricTermWithJacobians(const Point &x0p,
 		const MneeEndpoint &ep, const MneeVertex &vtx, MneeMat2 *jacVertex,
 		float *det1Out = nullptr, float *det2Out = nullptr,
-		MneeVec2 *residualOut = nullptr, bool *residualOk = nullptr) {
+		MneeVec2 *residualOut = nullptr, bool *residualOk = nullptr,
+		const float minDistance = 1e-3f) {
 	if (residualOk)
 		*residualOk = false;
 	Vector wi = x0p - vtx.p;
 	const float r01 = wi.Length();
-	if (r01 < 1e-3f)
+	if (r01 < minDistance)
 		return 0.f;
 	wi /= r01;
 
@@ -278,7 +328,7 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 	} else {
 		wo = ep.pos - vtx.p;
 		r12 = wo.Length();
-		if (r12 < 1e-3f)
+		if (r12 < minDistance)
 			return 0.f;
 		wo /= r12;
 	}
@@ -332,7 +382,12 @@ static float MneeGeometricTermWithJacobians(const Point &x0p,
 	const float dotHDndv = Dot(h, vtx.dndv);
 	const float dotDpduN = Dot(vtx.dpdu, vtx.n);
 	const float dotDpdvN = Dot(vtx.dpdv, vtx.n);
-	const MneeMat2 j1{
+	const MneeMat2 j1 = vtx.geometryParameterization ? MneeMat2{
+		Dot(dhDdu, s) - Dot(s, vtx.dndu) * dotHN,
+		Dot(dhDdv, s) - Dot(s, vtx.dndv) * dotHN,
+		Dot(dhDdu, t) - Dot(t, vtx.dndu) * dotHN,
+		Dot(dhDdv, t) - Dot(t, vtx.dndv) * dotHN
+	} : MneeMat2{
 		Dot(dhDdu, s) - Dot(vtx.dpdu, vtx.dndu) * dotHN - dotDpduN * dotHDndu,
 		Dot(dhDdv, s) - Dot(vtx.dpdu, vtx.dndv) * dotHN - dotDpduN * dotHDndv,
 		Dot(dhDdu, t) - Dot(vtx.dpdv, vtx.dndu) * dotHN - dotDpdvN * dotHDndu,
@@ -669,6 +724,8 @@ static bool MneeSeedLookup(const MneeSeedEntry *cache,
 // seeding and the contribution assembly differ. On success *vtx and
 // *finalBsdf hold the solved specular vertex. seedVtx (optional) replaces
 // the line/mirror seeding with a cached manifold solution.
+using MneeLocalTrace = std::function<bool(const Ray &, RayHit &, BSDF &)>;
+
 static bool MneeSolveSingleVertex(
 		luxrays::IntersectionDeviceRef device, SceneConstRef scene,
 		const float time, const Point &x0p, const MneeEndpoint &ep,
@@ -676,9 +733,12 @@ static bool MneeSolveSingleVertex(
 		const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
 		const float etaVertex, const u_int maxIterations,
 		const MneeVertex *seedVtx, MneeVertex *vtx, BSDF *finalBsdf,
-		float *gOut = nullptr, float *det1Out = nullptr, float *det2Out = nullptr) {
+		float *gOut = nullptr, float *det1Out = nullptr, float *det2Out = nullptr,
+		const MneeLocalTrace *localTrace = nullptr, const bool exactReceiverOrigin = false) {
 	if (seedVtx)
 		*vtx = *seedVtx;
+	else if (localTrace)
+		MneeInitCyclesVertex(*vtx, shadowBsdf, etaVertex);
 	else
 		MneeInitVertex(*vtx, shadowBsdf, etaVertex);
 	*finalBsdf = shadowBsdf;
@@ -731,7 +791,8 @@ static bool MneeSolveSingleVertex(
 	// line). The offset only selects the Newton basin; the solve itself is
 	// pulled to the exact constraint solution.
 	const float seedShift = Max(1e-4f, 1e-3f * Distance(x0p, vtx->p));
-	vtx->p += (vtx->dpdu + vtx->dpdv) * (seedShift / sqrtf(2.f));
+	if (!localTrace)
+		vtx->p += (vtx->dpdu + vtx->dpdv) * (seedShift / sqrtf(2.f));
 
 	bool solved = false;
 	float beta = 1.f;
@@ -753,7 +814,7 @@ static bool MneeSolveSingleVertex(
 		// singular Jacobian" (still a Newton attempt).
 		bool residualOk = false;
 		const float g = MneeGeometricTermWithJacobians(x0p, ep, *vtx,
-				&jac, &lastDet1, &lastDet2, &residual, &residualOk);
+				&jac, &lastDet1, &lastDet2, &residual, &residualOk, localTrace ? 1e-7f : 1e-3f);
 		lastG = g;
 		if (!residualOk) {
 			failStage = 0;
@@ -762,7 +823,17 @@ static bool MneeSolveSingleVertex(
 		const float resNorm =
 				sqrtf(residual.x * residual.x + residual.y * residual.y);
 
-		if (resNorm < 3e-4f) {
+		// An interior collision can be much closer to the boundary than a
+		// surface MNEE receiver. Float world coordinates then impose an
+		// angular residual floor proportional to ulp(position)/distance.
+		float solveTolerance = 3e-4f;
+		if (localTrace) {
+			const float positionScale = Max(1.f, Max(Max(fabsf(x0p.x), fabsf(x0p.y)),
+					Max(fabsf(x0p.z), Max(Max(fabsf(vtx->p.x), fabsf(vtx->p.y)), fabsf(vtx->p.z)))));
+			solveTolerance = Max(1e-6f, 4.f * numeric_limits<float>::epsilon() *
+					positionScale / Max(Distance(x0p, vtx->p), 1e-7f));
+		}
+		if (resNorm < solveTolerance) {
 			solved = true;
 			break;
 		}
@@ -796,15 +867,18 @@ static bool MneeSolveSingleVertex(
 			const Point pProp = vtx->p - beta * (vtx->dpdu * dX.x + vtx->dpdv * dX.y);
 			const Vector dProp = Normalize(pProp - x0p);
 
-			Ray propRay(x0Bsdf.GetRayOrigin(dProp), dProp, 0.f,
+			Ray propRay(exactReceiverOrigin ? x0p : x0Bsdf.GetRayOrigin(dProp), dProp,
+					localTrace ? MachineEpsilon::E(0.f) : 0.f,
 					numeric_limits<float>::infinity(), time);
 			RayHit propHit;
 			BSDF propBsdf;
 			Spectrum propThru;
 			PathVolumeInfo propVol = volInfo;
-			if (!scene.Intersect(IntersectionDevicePtr(&device),
+			const bool propFound = localTrace ? (*localTrace)(propRay, propHit, propBsdf) :
+					scene.Intersect(IntersectionDevicePtr(&device),
 					INDIRECT_RAY, &propVol, .5f, &propRay,
-					&propHit, &propBsdf, &propThru, nullptr, nullptr, false)) {
+					&propHit, &propBsdf, &propThru, nullptr, nullptr, false);
+			if (!propFound) {
 				// The proposal left every surface (e.g. past the caster's
 				// silhouette as seen from x0, through the open camera
 				// face): halving beta lands back on the mesh, so treat it
@@ -815,7 +889,7 @@ static bool MneeSolveSingleVertex(
 				continue;
 			}
 
-			if (propHit.meshIndex != shadowRayHit.meshIndex) {
+			if (!localTrace && propHit.meshIndex != shadowRayHit.meshIndex) {
 				++dbgMeshMiss;
 				beta *= .5f;
 				++iteration;
@@ -823,9 +897,12 @@ static bool MneeSolveSingleVertex(
 			}
 
 			MneeVertex vProp;
-			MneeInitVertex(vProp, propBsdf, etaVertex);
+			if (localTrace)
+				MneeInitCyclesVertex(vProp, propBsdf, etaVertex);
+			else
+				MneeInitVertex(vProp, propBsdf, etaVertex);
 			MneeVec2 resProp;
-			if (!MneeResidual(x0p, ep, vProp, resProp)) {
+			if (!MneeResidual(x0p, ep, vProp, resProp, 0.f, localTrace ? 1e-7f : 1e-3f)) {
 				++dbgResFail;
 				beta *= .5f;
 				++iteration;
@@ -840,7 +917,7 @@ static bool MneeSolveSingleVertex(
 				// boundaries toward an unreachable root - cut the budget
 				// burn instead of running the full 12 iters (e55: the
 				// exhausted class ran the whole budget).
-				if (g_crawlBailOn &&
+				if (!localTrace && g_crawlBailOn &&
 						(resPropNorm > MNEE_CRAWL_RATIO * resNorm)) {
 					if (++crawlStrikes >= 2) {
 						failStage = 2;
@@ -2373,6 +2450,211 @@ static void LMneeSplat(FilmConstRef film, const LightSource &light,
 	sampleResult.cryptoObjectID = receiver.GetCryptoObjectID();
 	sampleResult.cryptoMaterialID = receiver.GetCryptoMaterialID();
 	sampleResult.radiance[light.GetID()] = radiance;
+}
+
+// Transpose of the sharp, unit-weight Cycles entry kernel. A light-side
+// random walk must connect its interior collisions (and its initial diffuse
+// escape) through this boundary; connecting the delta escape BSDF misses them.
+void PathTracer::ConnectCyclesBSSRDFSharpToEye(IntersectionDeviceRef device,
+		SceneConstRef scene, FilmConstRef film, const float time, const LightSource &light,
+		const BSDF &escape, const u_int entryMesh, const CyclesBSSRDFAdjointVertex &vertex,
+		const LightPathInfo &pathInfo, TauswortheRandomGenerator &rng,
+		vector<SampleResult> &sampleResults, u_int &used) const {
+	if (vertex.flux.Black())
+		return;
+	static const bool jacobianDiagnostics = getenv("SUPERLUXCORE_BSSRDF_SHARP_JACOBIAN") != nullptr;
+	const bool orthographic = scene.GetCamera().GetType() == Camera::ORTHOGRAPHIC;
+	MneeEndpoint ep;
+	ep.isDir = orthographic;
+	ep.pos = pathInfo.lensPoint;
+	ep.dir = orthographic ? -Normalize(scene.GetCamera().GetDir()) : Vector();
+	PathVolumeInfo volumes = pathInfo.volume;
+	const MneeLocalTrace trace = [&](const Ray &ray, RayHit &hit, BSDF &bsdf) {
+		// The surface receiver belongs to this triangle's plane. An exact
+		// origin can round just outside it: ignore that initial triangle,
+		// instead of offsetting x0 and solving a different constraint.
+		if (!TraceCyclesBSSRDFBoundary(scene, device, ray, entryMesh, hit,
+				vertex.diffuseEscape ? escape.hitPoint.triangleIndex : numeric_limits<u_int>::max()))
+			return false;
+		bsdf.Init(true, false, scene, ray, hit, .5f, &volumes);
+		return true;
+	};
+	const float escapeSide = Dot(escape.hitPoint.fixedDir, escape.hitPoint.geometryN) < 0.f ? -1.f : 1.f;
+	const Vector inward = -escapeSide * Vector(escape.hitPoint.geometryN);
+	// Independent uniform direction seeds give every reachable first boundary
+	// and every Newton basin nonzero probability. No seed cache or cold-line
+	// preference can silently drop a second solution on a curved/concave mesh.
+	const auto solve = [&](MneeVertex &v, BSDF &boundary, float &g) {
+		const float z = 1.f - 2.f * rng.floatValue();
+		const float phi = 2.f * M_PI * rng.floatValue();
+		const float r = sqrtf(Max(0.f, 1.f - z * z));
+		Vector seedDir(r * cosf(phi), r * sinf(phi), z);
+		if (vertex.diffuseEscape && Dot(seedDir, inward) < 0.f)
+			seedDir = -seedDir;
+		Ray seedRay(vertex.p, seedDir, MachineEpsilon::E(0.f), numeric_limits<float>::infinity(), time);
+		RayHit seedHit;
+		BSDF seedBsdf;
+		if (!trace(seedRay, seedHit, seedBsdf))
+			return false;
+		g = 0.f;
+		const bool solved = MneeSolveSingleVertex(device, scene, time, vertex.p, ep, escape,
+				seedHit, seedBsdf, volumes, vertex.ior, 64, nullptr, &v, &boundary,
+				&g, nullptr, nullptr, &trace, true);
+		if (vertex.diffuseEscape && jacobianDiagnostics) {
+			static atomic<u_int> surfaceProbes{0};
+			if (surfaceProbes.fetch_add(1, memory_order_relaxed) < 128)
+				printf("BSSRDF_SHARP_SURFACE solved=%u g=%.9g x0=%.9g %.9g %.9g "
+						"seed=%.9g %.9g %.9g root=%.9g %.9g %.9g\n", solved, g,
+						vertex.p.x, vertex.p.y, vertex.p.z, seedBsdf.hitPoint.p.x, seedBsdf.hitPoint.p.y,
+						seedBsdf.hitPoint.p.z, v.p.x, v.p.y, v.p.z);
+		}
+		if (!solved)
+			return false;
+		const Vector wi = Normalize(vertex.p - v.p);
+		const Vector wo = orthographic ? ep.dir : Normalize(ep.pos - v.p);
+		const float side = Dot(wi, v.gn) < 0.f ? 1.f : -1.f;
+		const auto inverse = cyclesbssrdfboundary::CyclesBSSRDF_SampleAdjointBoundary(
+				side * boundary.GetFrame().ToLocal(wi), vertex.ior, 0.f, 0.f, 0.f);
+		// The shared delta PDF's 1e-12 squared direction test is appropriate
+		// for an exactly sampled pair, not a solved surface point rounded to
+		// float world coordinates. Validate Snell/TIR and the actual direction
+		// with the same attainable position error as the Newton solve.
+		const float positionScale = Max(1.f, Max(Max(fabsf(vertex.p.x), fabsf(vertex.p.y)), fabsf(vertex.p.z)));
+		const float directionTolerance = Max(8e-6f, 32.f * numeric_limits<float>::epsilon() *
+				positionScale / Max(Distance(vertex.p, v.p), 1e-7f));
+		const Vector error = boundary.GetFrame().ToWorld(side * inverse.direction) - wo;
+		return inverse.direction.z > 0.f && Dot(wi, v.gn) * Dot(wo, v.gn) < 0.f &&
+				error.LengthSquared() <= directionTolerance * directionTolerance &&
+				g > 0.f && std::isfinite(g);
+	};
+	MneeVertex v;
+	BSDF boundary;
+	float geometricTerm;
+	if (!solve(v, boundary, geometricTerm) || boundary.IsCameraInvisible())
+		return;
+	const Vector toBoundary = Normalize(v.p - vertex.p);
+	float receiver;
+	if (vertex.diffuseEscape)
+		receiver = Max(0.f, Dot(toBoundary, inward)) * INV_PI;
+	else {
+		const float g = vertex.anisotropy;
+		const float denom = 1.f + g * g - 2.f * g * Dot(vertex.incoming, toBoundary);
+		receiver = (1.f - g * g) / (4.f * M_PI * denom * sqrtf(denom));
+	}
+	if (!(receiver > 0.f))
+		return;
+
+	float filmX, filmY, cameraWeight;
+	Ray eyeRay;
+	float outsideDistance;
+	if (orthographic) {
+		outsideDistance = fabsf(Dot(v.p - ep.pos, -ep.dir));
+		eyeRay = Ray(v.p, -ep.dir, 0.f, outsideDistance, time);
+		if (!scene.GetCamera().ProjectToImage(&eyeRay, &filmX, &filmY))
+			return;
+		scene.GetCamera().GetPDF(eyeRay, outsideDistance, filmX, filmY, nullptr, &cameraWeight);
+	} else {
+		if (!LMneeCameraEndpoint(scene, ep.pos, v.p, time, false, &filmX, &filmY, &cameraWeight))
+			return;
+		outsideDistance = Distance(ep.pos, v.p);
+		eyeRay = Ray(ep.pos, (v.p - ep.pos) / outsideDistance, 0.f, outsideDistance, time);
+	}
+	if (!(cameraWeight > 0.f))
+		return;
+	const Vector wi = -toBoundary, wo = -eyeRay.d;
+	PathVolumeInfo outsideVolume = pathInfo.volume;
+	PathDepthInfo outsideDepth = pathInfo.depth;
+	Ray shadow(boundary.GetRayOrigin(wo), wo, 0.f, outsideDistance, time);
+	shadow.UpdateMinMaxWithEpsilon();
+	RayHit shadowHit;
+	BSDF shadowBsdf;
+	Spectrum shadowThroughput;
+	if (scene.Intersect(IntersectionDevicePtr(&device), LIGHT_RAY | CAMERA_RAY | SHADOW_RAY,
+			&outsideVolume, rng.floatValue(), &shadow, &shadowHit, &shadowBsdf, &shadowThroughput,
+			nullptr, nullptr, false, &outsideDepth, NONE))
+		return;
+
+	// SMS reciprocal basin probability: the number of independent solves
+	// until this same root reappears has mean 1/p(root). A roulette-truncated
+	// tail retains that expectation and bounds the expected solver work; an
+	// iteration cap without compensation would bias small basins dark.
+	double inverseProbability = 1., tailWeight = 1.;
+	const float rootTolerance = Max(32.f * MachineEpsilon::E(v.p),
+			1e-5f * Distance(vertex.p, v.p));
+	for (;;) {
+		MneeVertex candidate;
+		BSDF candidateBsdf;
+		float candidateG;
+		if (solve(candidate, candidateBsdf, candidateG) &&
+				DistanceSquared(candidate.p, v.p) <= rootTolerance * rootTolerance &&
+				Dot(candidate.n, v.n) > 1.f - 1e-6f)
+			break;
+		if (rng.floatValue() >= .99f)
+			break;
+		tailWeight /= .99;
+		inverseProbability += tailWeight;
+	}
+	const float insideGeometry = AbsDot(wi, boundary.hitPoint.geometryN);
+	const float outsideShade = AbsDot(wo, boundary.hitPoint.shadeN);
+	if (!(insideGeometry > 0.f && outsideShade > 0.f))
+		return;
+	// Unit eye-side refraction has an ior^2 delta transpose, without glass
+	// Fresnel loss. Keep the same shade/geometry correction as BSDF::Sample.
+	const float inverseBoundaryWeight = vertex.ior * vertex.ior *
+			AbsDot(wi, boundary.hitPoint.shadeN) / outsideShade *
+			AbsDot(wo, boundary.hitPoint.geometryN) / insideGeometry;
+	// Opt-in independent derivative diagnostic: perturb the camera endpoint,
+	// solve its four actual paths, and measure the solid-angle Jacobian from
+	// their directions. Reject probes that cross a triangle derivative edge.
+	if (jacobianDiagnostics) {
+		static atomic<u_int> probes{0};
+		if (probes.fetch_add(1, memory_order_relaxed) < 128) {
+			Vector u, t;
+			MneeCoordinateSystem(-wo, u, t);
+			const float eps = orthographic ? 1e-3f : 1e-3f * outsideDistance;
+			Vector directions[4];
+			bool ok = true;
+			for (u_int i = 0; i < 4 && ok; ++i) {
+				MneeEndpoint perturbed = ep;
+				const Vector offset = (i < 2 ? u : t) * ((i % 2) ? -eps : eps);
+				if (orthographic) perturbed.dir = Normalize(ep.dir + offset);
+				else perturbed.pos += offset;
+				MneeVertex neighbor;
+				BSDF neighborBsdf;
+				ok = MneeSolveSingleVertex(device, scene, time, vertex.p, perturbed, escape,
+						RayHit(), boundary, volumes, vertex.ior, 64, &v, &neighbor,
+						&neighborBsdf, nullptr, nullptr, nullptr, &trace, true) &&
+						neighborBsdf.hitPoint.mesh == boundary.hitPoint.mesh &&
+						neighborBsdf.hitPoint.triangleIndex == boundary.hitPoint.triangleIndex;
+				if (ok) directions[i] = Normalize(neighbor.p - vertex.p);
+			}
+			if (ok) {
+				const float numerical = Cross((directions[0] - directions[1]) / (2.f * eps),
+						(directions[2] - directions[3]) / (2.f * eps)).Length();
+				printf("BSSRDF_SHARP_JACOBIAN analytical=%.9g numerical=%.9g ratio=%.9g "
+						"diffuse=%u x0=%.9g %.9g %.9g p=%.9g %.9g %.9g\n",
+						geometricTerm, numerical, geometricTerm / numerical, vertex.diffuseEscape,
+						vertex.p.x, vertex.p.y, vertex.p.z, v.p.x, v.p.y, v.p.z);
+			}
+		}
+	}
+	Spectrum transmission;
+	const float insideDistance = Distance(vertex.p, v.p);
+	for (u_int i = 0; i < COLOR_SAMPLES; ++i)
+		transmission.c[i] = expf(-vertex.sigmaT.c[i] * insideDistance);
+	const Spectrum radiance = vertex.flux * transmission * shadowThroughput *
+			(receiver * inverseBoundaryWeight * geometricTerm * cameraWeight * float(inverseProbability));
+	if (radiance.Black() || radiance.IsNaN() || radiance.IsInf())
+		return;
+	SampleResult &result = AddLightSampleResult(sampleResults, used, film);
+	result.filmX = filmX;
+	result.filmY = filmY;
+	result.pixelX = Floor2UInt(filmX);
+	result.pixelY = Floor2UInt(filmY);
+	result.isCaustic = false; // the complete imported closure is diffuse
+	result.cryptoMaterialID = boundary.GetCryptoMaterialID();
+	result.cryptoObjectID = boundary.GetCryptoObjectID();
+	result.radiance[light.GetID()] = radiance;
 }
 
 bool PathTracer::LMNEEConnectToEye(

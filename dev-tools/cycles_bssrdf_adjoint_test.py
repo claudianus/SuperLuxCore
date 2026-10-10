@@ -4,7 +4,8 @@
 Use Blender Python with the complete isolated wheel on PYTHONPATH and the
 existing identity/audit environment variables. This runs the 50 existing CPU
 contracts first. Adjoint transport remains an explicit pure-LIGHTCPU diagnostic
-for uniform coefficients and rough camera boundaries, not production acceptance.
+for uniform coefficients, not production acceptance. Sharp camera connections
+are exercised separately by cycles_bssrdf_sharp_test.py.
 """
 import ast
 import json
@@ -87,7 +88,8 @@ def reject(case, scn, overrides, phrase):
 
 
 reject('light-opt-in-required', body(), {'path.cyclesbssrdf.experimental.adjoint.enable': False}, 'Experimental cyclesbssrdf')
-reject('sharp-boundary-rejected', body({'roughness': 0.}), {}, 'internal-vertex/manifold')
+session(body({'roughness': 0.}))
+record('sharp-boundary-camera-connection-accepted')
 reject('mixed-kernel-rejected', body(nested_mix=True), {}, 'adjoint mixed')
 reject('partitioned-kernel-rejected', body(partitioned=True), {}, 'partitioned groups')
 bumped = body()
@@ -101,8 +103,8 @@ textured.Parse(props({'scene.textures.checker.type': 'checkerboard3d',
                       'scene.materials.body.kd': 'checker'}))
 reject('textured-kernel-rejected', textured, {}, 'textured coefficients')
 reject('cpu-vertex-connect-bypass-rejected', body(),
-       {'engine': 'PATHCPU', 'path.vertexconnect.enable': True}, 'vertex connections')
-reject('adjoint-vertex-connect-rejected', body(), {'path.vertexconnect.enable': True}, 'vertex connections')
+       {'engine': 'PATHCPU', 'path.vertexconnection.enable': True}, 'vertex connections')
+reject('adjoint-vertex-connect-rejected', body(), {'path.vertexconnection.enable': True}, 'vertex connections')
 
 
 def render(scn, engine, spectral=False, *, spp=None, seed=131):
@@ -206,11 +208,12 @@ scn = body()
 ses = session(scn)
 ses.Start()
 ses.BeginSceneEdit()
-scn.Parse(props({'scene.materials.body.type': 'cyclesbssrdf', 'scene.materials.body.roughness': 0.}))
+scn.Parse(props({'scene.materials.body.type': 'cyclesbssrdf', 'scene.materials.body.roughness': .4,
+                 'scene.materials.body.bumptex': .1}))
 try:
     ses.EndSceneEdit()
 except RuntimeError as error:
-    assert 'internal-vertex/manifold' in str(error), str(error)
+    assert 'Normal/Bump' in str(error), str(error)
 else:
     raise AssertionError('Live edits must preserve adjoint preflight')
 scn.Parse(props({'scene.materials.body.type': 'cyclesbssrdf', 'scene.materials.body.roughness': .4}))

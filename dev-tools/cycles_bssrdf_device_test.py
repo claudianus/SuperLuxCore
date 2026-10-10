@@ -43,7 +43,7 @@ def entry(pixels):
 
 
 for name, overrides, material in (
-        ('vertex-connect-rejected', {'path.vertexconnect.enable': True}, None),
+        ('vertex-connect-rejected', {'path.vertexconnection.enable': True}, None),
         ('entry-bump-rejected', {}, 'body'),
         ('grouped-exit-bump-rejected', {}, 'partition')):
     scn = scene(partitioned=material == 'partition')

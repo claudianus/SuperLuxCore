@@ -2138,7 +2138,10 @@ SampleResult &PathTracer::AddLightSampleResult(vector<SampleResult> &sampleResul
 	// session - `used` is the live entry count. Never shrink it:
 	// clear()+resize() destroyed each SampleResult's inner SpectrumGroup
 	// vector, forcing a malloc/free pair per light-path vertex.
-	assert (used < sampleResults.size());
+	// A collapsed SSS vertex can produce several internal camera splats.
+	// Retain the grown storage for subsequent samples, as for ordinary paths.
+	if (used >= sampleResults.size())
+		sampleResults.resize(used + 16);
 	SampleResult &sampleResult = sampleResults[used++];
 	sampleResult.Init(&lightSampleResultsChannels, film.GetRadianceGroupCount(), film.GetLPECount());
 
@@ -2838,11 +2841,19 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 
 			const bool cyclesSubsurfaceVertex = bsdf.GetMaterial()->HasCyclesBSSRDF();
 			if (cyclesSubsurfaceVertex) {
+				scene.GetCamera().SampleLens(time, sampler.GetSample(6), sampler.GetSample(7),
+						&pathInfo.lensPoint);
+				const BSDF escape = bsdf;
+				const CyclesBSSRDFAdjointConnect connect = [&](const CyclesBSSRDFAdjointVertex &vertex,
+						TauswortheRandomGenerator &connectRng) {
+					ConnectCyclesBSSRDFSharpToEye(device, scene, film, time, *light, escape,
+							nextEventRayHit.meshIndex, vertex, pathInfo, connectRng, sampleResults, used);
+				};
 				TauswortheRandomGenerator subsurfaceRng(sampler.GetSample(sampleOffset));
 				subsurfaceRng.uintValue();
 				if (!SelectCyclesBSSRDFClosure(bsdf, subsurfaceRng, lightPathFlux) ||
 						!SampleCyclesBSSRDFAdjoint(scene, device, nextEventRay, nextEventRayHit,
-								pathInfo.volume, bsdf, subsurfaceRng, lightPathFlux))
+								pathInfo.volume, bsdf, subsurfaceRng, lightPathFlux, connect))
 					break;
 			}
 

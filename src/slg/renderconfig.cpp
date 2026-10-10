@@ -626,7 +626,8 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 							(child->GetBumpTexture() || child->GetInteriorVolume() || child->GetExteriorVolume() || GetScene().HasDefaultWorldVolume()))
 						throw runtime_error("Experimental cyclesbssrdf device exit Normal/Bump and explicit Volume contexts remain unverified: " + child->GetName());
 			}
-			if (props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>())
+			if ((props.Get(Property("path.vertexconnection.enable")(false)).Get<bool>() ||
+					props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>()))
 				throw runtime_error("Experimental cyclesbssrdf device adjoint/vertex connection is not implemented yet");
 		}
 		if (!props.Get(Property("path.cyclesbssrdf.experimental.enable")(false)).Get<bool>() ||
@@ -634,7 +635,8 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 				props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.only")(false)).Get<bool>() ||
-				props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>() ||
+				(props.Get(Property("path.vertexconnection.enable")(false)).Get<bool>() ||
+					props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>()) ||
 				props.Get(Property("path.restir.gi.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.restir.pt.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>() ||

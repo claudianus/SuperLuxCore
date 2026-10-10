@@ -75,6 +75,12 @@ batch.haltspp = {SPP}
 renderengine.seed = 17
 opencl.task.count = {TASK_COUNT}
 path.spectral.enable = 1
+path.hybridbackforward.enable = 0
+path.lighttracing.auto = 0
+path.mnee.auto = 0
+# Match the authored delta glass rather than Auto's early-pass PSR lobe.
+path.regularization.auto = 0
+path.regularization.sigma = 0
 path.mnee.enable = 1
 path.mnee.maxspecular = 4
 path.mnee.maxiterations = 64

@@ -1,5 +1,9 @@
 # Experimental Cycles BSSRDF CPU adjoint transport
 
+The support and validation below describe the original rough-boundary unit.
+[Sharp boundary camera connections](2026-10-10-cycles-bssrdf-sharp-transport.md)
+subsequently extend the experimental CPU path without completing the full goal.
+
 Pure `LIGHTCPU` can now reverse a standalone homogeneous Cycles random-walk
 closure and connect its rough entry boundary to the camera. This is an actual
 light-path transport implementation, building on the shared directional

@@ -6,6 +6,8 @@
 #include "slg/textures/constfloat.h"
 #include "luxrays/core/randomgen.h"
 #include "luxrays/core/intersectiondevice.h"
+#include <functional>
+#include <limits>
 
 namespace slg {
 
@@ -74,10 +76,30 @@ bool SampleCyclesBSSRDF(SceneConstRef scene, luxrays::IntersectionDeviceRef devi
 		const luxrays::Ray &entryRay,
 		const luxrays::RayHit &entryHit, const PathVolumeInfo &volumes,
 		BSDF &bsdf, luxrays::TauswortheRandomGenerator &rng, luxrays::Spectrum &weight);
+
+// A camera connection before the next interior direction is sampled. The
+// initial white-diffuse escape and every HG collision are distinct vertices;
+// a delta inverse boundary cannot connect the camera after the walk escapes.
+struct CyclesBSSRDFAdjointVertex {
+	luxrays::Point p;
+	luxrays::Vector incoming;
+	luxrays::Spectrum flux, sigmaT;
+	float ior, anisotropy;
+	bool diffuseEscape;
+};
+using CyclesBSSRDFAdjointConnect = std::function<void(
+		const CyclesBSSRDFAdjointVertex &, luxrays::TauswortheRandomGenerator &)>;
+
+// Trace only this physical object, including its material partitions. Other
+// overlapping objects do not bound an object-local Cycles random walk.
+bool TraceCyclesBSSRDFBoundary(SceneConstRef scene, luxrays::IntersectionDeviceRef device,
+		const luxrays::Ray &ray, u_int entryMesh, luxrays::RayHit &hit,
+		u_int skipEntryTriangle = std::numeric_limits<u_int>::max());
 bool SampleCyclesBSSRDFAdjoint(SceneConstRef scene, luxrays::IntersectionDeviceRef device,
 		const luxrays::Ray &entryRay, const luxrays::RayHit &entryHit,
 		const PathVolumeInfo &volumes, BSDF &bsdf,
-		luxrays::TauswortheRandomGenerator &rng, luxrays::Spectrum &weight);
+		luxrays::TauswortheRandomGenerator &rng, luxrays::Spectrum &weight,
+		const CyclesBSSRDFAdjointConnect &connect = {});
 
 }
 #endif
