@@ -318,18 +318,26 @@ void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults
 		}
 	}
 	
-	if (sharedData->cooldown && isLargeMutation) {
+	const bool estimatingMean = sharedData->cooldown.load();
+	if (estimatingMean && isLargeMutation) {
 		//AtomicAdd(&sharedData->totalLuminance, (double)newLuminance);
-		sharedData->totalLuminance.fetch_add(static_cast<double>(newLuminance));
 		sharedData->sampleCount++;
+		sharedData->totalLuminance.fetch_add(static_cast<double>(newLuminance));
 		if (newLuminance > 0.f)
 			sharedData->noBlackSampleCount++;
 	}
 
-	const float invMeanIntensity = sharedData->invLuminance;
+	// A worker can discover the first productive uniform proposal before
+	// thread 0 publishes the normalizer. Use the live uniform estimate in
+	// every chain while warming up, before any positive contribution is
+	// splatted. Otherwise the initial fallback b=1 can persist in the film.
+	const double bootstrapTotal = sharedData->totalLuminance.load();
+	const auto bootstrapCount = sharedData->sampleCount.load();
+	const float invMeanIntensity = (estimatingMean && bootstrapTotal > 0. && bootstrapCount > 0) ?
+			float(bootstrapCount / bootstrapTotal) : sharedData->invLuminance.load();
 
 	// Define the probability of large mutations.
-	const float currentLargeMutationProbability = (sharedData->cooldown) ? .5 : largeMutationProbability;
+	const float currentLargeMutationProbability = estimatingMean ? .5f : largeMutationProbability;
 
 	// Calculate accept probability from old and new image sample
 	float accProb;
@@ -482,6 +490,12 @@ void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults
 	}
 
 	isLargeMutation = (rndGen->floatValue() < currentLargeMutationProbability);
+	// Until a uniform proposal has contributed, small mutations can find
+	// light with no estimate of its normalization. Bootstrap with uniform
+	// proposals instead. Black proposals still count, so an all-black render
+	// terminates normally. Once b is known the configured policy resumes.
+	if (estimatingMean && sharedData->totalLuminance.load() <= 0.)
+		isLargeMutation = true;
 	if (isLargeMutation) {
 		stamp = 1;
 		std::fill_n(sampleStamps.begin(), requestedSamples, 0);

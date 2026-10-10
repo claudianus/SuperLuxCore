@@ -161,6 +161,15 @@ for mode in ('off', 'on'):
         record(mode + '-metropolis-legacy-reject-limit-' + str(legacy_limit),
                rgb_mean=measured.tolist(), cpu_rgb_mean=reference.tolist(), max_error=error)
 
+    # Bootstrap cannot wait forever for a productive path. A genuinely
+    # unlit scene must reach the declared sample halt on both schedulers.
+    unlit = scene()
+    unlit.Parse(props({'scene.lights.env.type': 'constantinfinite',
+                      'scene.lights.env.color': (0., 0., 0.)}))
+    pixels = render(unlit, {'pathocl.wavefront': mode, 'sampler.type': 'METROPOLIS'})
+    assert np.isfinite(pixels['RGB']).all() and np.max(np.abs(pixels['RGB'])) < 1e-6
+    record(mode + '-metropolis-all-black-completes-bootstrap')
+
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 (folder / 'device-metrics.json').write_text(json.dumps({
     'native_sha256': identity['native_sha256'], 'experimental': True,

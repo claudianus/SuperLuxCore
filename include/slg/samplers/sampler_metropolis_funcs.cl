@@ -257,7 +257,12 @@ OPENCL_FORCE_INLINE void MetropolisSampler_NextSample(
 
 	__global float *proposedU = &samplesDataBuff[gid * 2 * METROPOLISSAMPLER_TOTAL_U_SIZE] +
 			sample->proposed * METROPOLISSAMPLER_TOTAL_U_SIZE;
-	if (Rnd_FloatValue(seed) < taskConfig->sampler.metropolis.largeMutationProbability) {
+	const float mutationDraw = Rnd_FloatValue(seed);
+	// As on CPU, do not start a local chain before a productive uniform
+	// proposal has provided its normalization. Every black path still
+	// completes and counts towards halt conditions.
+	if ((mutationDraw < taskConfig->sampler.metropolis.largeMutationProbability) ||
+			(sample->totalI <= 0.f)) {
 		LargeStep(taskConfig, seed, proposedU);
 		sample->smallMutationCount = 0;
 	} else {

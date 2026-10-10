@@ -66,9 +66,10 @@ public:
 	float lastLuminance;
 	u_int lastSampleCount, lastNoBlackSampleCount;
 
-	// Updated only by thread 0 but read by all threads
-	float invLuminance;
-	bool cooldown;
+	// Published by thread 0 and read by all chains. Plain fields here race
+	// with workers during bootstrap and when the normalizer is frozen.
+	std::atomic<float> invLuminance;
+	std::atomic<bool> cooldown;
 };
 
 //------------------------------------------------------------------------------
