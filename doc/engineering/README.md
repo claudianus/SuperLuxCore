@@ -95,3 +95,7 @@ docs live in `doc/features/` (see its README for the index).
 - [Experimental Cycles BSSRDF CPU hybrid transport](2026-10-10-cycles-bssrdf-hybrid-transport.md): external caustic classification and CPU/device Metropolis rejection-bias repair; production adapter and full compatibility remain open.
 
 - [Experimental Cycles BSSRDF device adjoint transport](2026-10-11-cycles-bssrdf-device-adjoint.md): uniform rough Metal light walks and inverse boundaries; sharp camera connections, mixed reverse transport and production acceptance remain open.
+
+- [Finite heterogeneous emission and CPU scene edit samples](2026-10-11-vdb-emission-and-edit-reset.md): independent CPU/Metal emission integrals and four real CPU VDB edit cases.
+
+- [Metal scene edit films and exact blackbody cache](2026-10-11-metal-edit-film-and-blackbody-cache.md): four real Metal VDB edits and 6912 bit-identical spectral evaluations; full compatibility remains open.

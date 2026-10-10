@@ -449,6 +449,12 @@ void PathOCLBaseOCLRenderThread::EndSceneEdit(const EditActionList &editActions)
 		//----------------------------------------------------------------------
 
 		// Clear the frame buffers
+		// The host films otherwise keep the previous pixels/sample counts
+		// until the first asynchronous GPU download. MergeThreadFilms can
+		// immediately resurrect that old frame and falsely satisfy the halt
+		// condition after an edit. All render workers are stopped here.
+		for (ThreadFilmRPtr threadFilm : threadFilms)
+			threadFilm->GetFilm().Reset();
 		ClearThreadFilms();
 	}
 

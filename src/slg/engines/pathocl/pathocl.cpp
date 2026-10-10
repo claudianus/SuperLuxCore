@@ -194,6 +194,14 @@ void PathOCLRenderEngine::StopLockLess() {
 	photonGICache = nullptr;
 }
 
+void PathOCLRenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
+	// The GPU tasks restart below, and the native eye workers must restart
+	// their shared sample sequence too. Reset once while all workers are stopped.
+	if (eyeSamplerSharedData)
+		eyeSamplerSharedData->Reset();
+	PathOCLBaseRenderEngine::EndSceneEditLockLess(editActions);
+}
+
 void PathOCLRenderEngine::MergeThreadFilms() {
 	// Film may have been not initialized because of an error during Start()
 	if (GetFilm().IsInitiliazed()) {

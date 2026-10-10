@@ -109,6 +109,7 @@ protected:
 
 	virtual void StartLockLess();
 	virtual void StopLockLess();
+	virtual void EndSceneEditLockLess(const EditActionList &editActions);
 
 	void MergeThreadFilms();
 	virtual void UpdateFilmLockLess();

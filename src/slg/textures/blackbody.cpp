@@ -83,8 +83,27 @@ Spectrum BlackBodyTexture::EvalSpectralValue(const HitPoint &hitPoint,
 			temperatureTex->GetFloatValue(hitPoint) : temperature;
 	const Spectrum ref = temperatureTex ?
 			BlackBodyLutRGB(temp, normalize) : rgb;
-	const BlackbodySPD spd(temp);
-	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), spd, ref.Y());
+	// VDBs frequently evaluate the same temperature many times along a ray.
+	// Keep one exact SPD/integral per worker, without quantizing temperature
+	// or retaining an unbounded cache for spatially varying fields.
+	struct CachedBlackbody {
+		float temperature = 0.f;
+		std::unique_ptr<BlackbodySPD> spd;
+		float luminance = 0.f;
+	};
+	thread_local CachedBlackbody cached;
+	if (!cached.spd || (cached.temperature != temp)) {
+		auto spd = std::make_unique<BlackbodySPD>(temp);
+		const float luminance = Spectral::ExpectedLuminance(*spd);
+		cached.spd = std::move(spd);
+		cached.temperature = temp;
+		cached.luminance = luminance;
+	}
+	const Spectrum bins = Spectral::EvaluateSPD(*cached.spd, sw);
+	const float yTarget = ref.Y();
+	if ((cached.luminance > 0.f) && (yTarget > 0.f))
+		return bins * (yTarget / cached.luminance);
+	return bins;
 }
 
 PropertiesUPtr BlackBodyTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
