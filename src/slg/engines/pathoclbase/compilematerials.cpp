@@ -745,6 +745,8 @@ void CompiledScene::CompileMaterials() {
 
 		// Material specific parameters
 		switch (m.GetType()) {
+			case CYCLES_BSSRDF:
+				throw runtime_error("cyclesbssrdf nonlocal Metal/OpenCL transport is not implemented yet");
 			case MATTE: {
 				auto& mm = dynamic_cast<const MatteMaterial &>(m);
 

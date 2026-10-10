@@ -38,6 +38,7 @@
 #include "slg/engines/pathguiding.h"
 #include "slg/samplers/metropolis.h"
 #include "slg/utils/varianceclamping.h"
+#include "slg/materials/cyclesbssrdf.h"
 #include "slg/cameras/camera.h"
 
 using namespace std;
@@ -1151,6 +1152,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					!pathInfo.IsCausticPath()))) {
 			DirectHitFiniteLight(scene, pathInfo, pathThroughput,
 					eyeRay, eyeRayHit.t, bsdf, &sampleResult);
+		}
+
+		// Record the camera-visible entry's AOVs and emission before a
+		// nonlocal walk moves this scattering vertex to another surface.
+		// Absorption terminates the path; it is not a miss/environment hit.
+		if (ResolveCyclesBSSRDF(*bsdf.GetMaterial(), bsdf.hitPoint)) {
+			TauswortheRandomGenerator subsurfaceRng(passThrough);
+			subsurfaceRng.uintValue();
+			if (!SampleCyclesBSSRDF(scene, device, eyeRay, eyeRayHit,
+					pathInfo.volume, bsdf, subsurfaceRng, pathThroughput))
+				break;
 		}
 
 		// Path guiding: the pending record's target is radiance arriving

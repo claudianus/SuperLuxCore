@@ -386,6 +386,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/materials/material.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/materialdefs.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/matte.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/materials/cyclesbssrdf.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/mattetranslucent.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/metal2.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/mirror.cpp

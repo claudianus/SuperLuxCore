@@ -222,6 +222,11 @@ public:
 	luxrays::Spectrum GetBakeMapValue() const;
 
 	void SetNullSelectionConditioned() { nullSelectionConditioned = material->HasNullLobes(); }
+	void SetSubsurfaceExitMaterial(MaterialConstRef diffuseExit) {
+		material = &diffuseExit;
+		triangleLightSource = nullptr;
+		nullSelectionConditioned = false;
+	}
 
 	HitPoint hitPoint;
 

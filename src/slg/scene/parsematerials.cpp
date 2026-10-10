@@ -48,6 +48,7 @@
 #include "slg/materials/glossycoating.h"
 #include "slg/materials/glossytranslucent.h"
 #include "slg/materials/matte.h"
+#include "slg/materials/cyclesbssrdf.h"
 #include "slg/materials/mattetranslucent.h"
 #include "slg/materials/metal2.h"
 #include "slg/materials/mirror.h"
@@ -383,6 +384,13 @@ MaterialUPtr Scene::CreateMaterial(
 
 		mat = std::make_unique<MatteMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex, kd
+		);
+	} else if (matType == "cyclesbssrdf") {
+		mat = std::make_unique<CyclesBSSRDFMaterial>(
+			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
+			parseTex("kd", {.8f}), parseTex("radius", {1.f, .2f, .1f}),
+			parseTex("scale", {.05f}), parseTex("ior", {1.4f}),
+			parseTex("roughness", {0.f}), parseTex("anisotropy", {0.f})
 		);
 	} else if (matType == "roughmatte") {
 		auto kd = parseTex("kd", {.75f, .75f, .75f});

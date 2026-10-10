@@ -48,7 +48,8 @@ typedef enum {
 	TWOSIDED, HAIR, OPENPBR, DIFFRACTION,
 
 	// Volumes
-	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
+	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL,
+	CYCLES_BSSRDF
 } MaterialType;
 
 // Material emission direct light sampling type

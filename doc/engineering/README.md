@@ -81,3 +81,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Cycles SSS constant arithmetic inputs](2026-10-10-cycles-sss-constant-expression.md): private native26 CPU/Metal82 conditions and5 sheets; public27 CI/final/actual154 conditions and17 sheets, full goal active and incomplete.
 
 - [Verified2.11.27 SSS constant-expression deployment](2026-10-10-deployment-2.11.27.md):154 guarded CI/fresh/actual checks,17 reviewed sheets; full goal active and incomplete.
+
+- [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.

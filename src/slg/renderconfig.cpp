@@ -33,6 +33,8 @@
 #include "slg/usings.h"
 #include "slg/renderconfig.h"
 #include "slg/materials/materialdefs.h"
+#include "slg/materials/cyclesbssrdf.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/film/film.h"
 
@@ -522,6 +524,53 @@ std::unique_ptr<Sampler> RenderConfig::AllocSampler(
 }
 
 RenderEngineUPtr RenderConfig::AllocRenderEngine() {
+	bool experimentalBSSRDF = false;
+	const auto &objects = GetScene().GetObjects();
+	for (u_int i = 0; i < objects.GetSize(); ++i) {
+		const Material &root = objects.GetSceneObject(i).GetMaterial();
+		std::unordered_set<const Material *> referenced;
+		root.AddReferencedMaterials(referenced);
+		bool contains = root.GetType() == CYCLES_BSSRDF;
+		for (const auto material : referenced)
+			contains |= material->GetType() == CYCLES_BSSRDF;
+		if (contains) {
+			// A two-sided wrapper can itself contain a mix/coating subtree.
+			// Reject that subtree too, rather than losing its BSSRDF branch.
+			referenced.insert(&root);
+			for (const auto material : referenced) {
+				if (material->GetType() == CYCLES_BSSRDF) {
+					const auto &closure = static_cast<const CyclesBSSRDFMaterial &>(*material);
+					const auto failure = closure.ExperimentalParameterFailure(
+							GetConfig().Get(Property("path.spectral.enable")(false)).Get<bool>());
+					if (!failure.empty())
+						throw runtime_error("Experimental cyclesbssrdf material " + closure.GetName() + ": " + failure);
+					continue;
+				}
+				if (material->GetType() == TWOSIDED)
+					continue;
+				std::unordered_set<const Material *> children;
+				material->AddReferencedMaterials(children);
+				for (const auto child : children)
+					if (child->GetType() == CYCLES_BSSRDF)
+						throw runtime_error("Experimental cyclesbssrdf mixed closures require nonlocal selection/PDF support");
+			}
+		}
+		experimentalBSSRDF |= contains;
+	}
+	if (experimentalBSSRDF) {
+		const auto &props = GetConfig();
+		const string engine = props.Get(Property("renderengine.type")("PATHCPU")).Get<string>();
+		if (!props.Get(Property("path.cyclesbssrdf.experimental.enable")(false)).Get<bool>() ||
+				engine != "PATHCPU" ||
+				props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
+				props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() ||
+				props.Get(Property("path.lighttracing.only")(false)).Get<bool>() ||
+				props.Get(Property("path.restir.gi.enable")(false)).Get<bool>() ||
+				props.Get(Property("path.restir.pt.enable")(false)).Get<bool>() ||
+				props.Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>() ||
+				props.Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>())
+			throw runtime_error("Experimental cyclesbssrdf currently requires explicit CPU eye-only diagnostics; Metal, light tracing, BIDIR and caches remain unverified");
+	}
 #if defined(LUXRAYS_DISABLE_OPENCL)
 	// This is a specific test for OpenCL-less version in order to print
 	// a more clear error
