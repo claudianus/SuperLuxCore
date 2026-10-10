@@ -83,8 +83,20 @@ Spectrum HitPointFieldTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 			}
 			// Direct meshes are already baked. Only wrappers need undoing;
 			// the cached map includes the base mesh's applied transform.
+			// Keep exact surface zeros stable when ray distance arithmetic
+			// places the hit just off its triangle plane. Preserve tangential
+			// bump offsets, as for Object coordinates above.
+			Point surfacePoint = hitPoint.p;
+			if (hitPoint.triangleIndex < hitPoint.mesh->GetTotalTriangleCount()) {
+				const Triangle &triangle = hitPoint.mesh->GetTriangles()[hitPoint.triangleIndex];
+				const Point anchor = hitPoint.mesh->GetVertex(hitPoint.localToWorld, triangle.v[0]);
+				const Vector n(hitPoint.geometryN);
+				const float n2 = Dot(n, n);
+				if (n2 > 0.f)
+					surfacePoint += (Dot(anchor - surfacePoint, n) / n2) * n;
+			}
 			const Point p = hitPoint.mesh->GetType() == TYPE_EXT_TRIANGLE ?
-					hitPoint.p : Inverse(hitPoint.localToWorld) * hitPoint.p;
+					surfacePoint : Inverse(hitPoint.localToWorld) * surfacePoint;
 			const auto &m = base->GetGeneratedTransform();
 			return Spectrum(
 					m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3],

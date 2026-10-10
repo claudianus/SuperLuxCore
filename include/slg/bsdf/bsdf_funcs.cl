@@ -113,6 +113,7 @@ OPENCL_FORCE_INLINE void BSDF_Init(
 	Frame_Set(&bsdf->frame, dpdu, dpdv, shadeN);
 
 	bsdf->isVolume = false;
+	bsdf->cyclesBSSRDFPhase = 0u;
 	bsdf->nullSelectionConditioned = false;
 }
 
@@ -180,11 +181,13 @@ OPENCL_FORCE_INLINE void BSDF_InitVolume(
 	Frame_SetFromZ(&bsdf->frame, geometryN);
 
 	bsdf->isVolume = true;
+	bsdf->cyclesBSSRDFPhase = 0u;
 	bsdf->nullSelectionConditioned = false;
 }
 
 OPENCL_FORCE_INLINE float3 BSDF_Albedo(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
+	if (bsdf->cyclesBSSRDFPhase == 2u) return WHITE;
 	return Material_Albedo(bsdf->materialIndex, &bsdf->hitPoint
 			MATERIALS_PARAM);
 }
@@ -230,8 +233,8 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 
 		// Check geometry normal and light direction side
 		const float sideTest = dotEyeDirNG * dotLightDirNG;
-		const BSDFEvent matEvents = Material_GetEventTypes(bsdf->materialIndex
-				MATERIALS_PARAM);
+		const BSDFEvent matEvents = bsdf->cyclesBSSRDFPhase == 2u ? (DIFFUSE | REFLECT) :
+				Material_GetEventTypes(bsdf->materialIndex MATERIALS_PARAM);
 		if (((sideTest > 0.f) && !(matEvents & REFLECT)) ||
 				((sideTest < 0.f) && !(matEvents & TRANSMIT)))
 			return BLACK;
@@ -247,9 +250,14 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 	const float3 localLightDir = Frame_ToLocal(frame, lightDir);
 	const float3 localEyeDir = Frame_ToLocal(frame, eyeDir);
 	float pdf0;
-	float3 result = Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
-			localLightDir, localEyeDir,	event, &pdf0
-			MATERIALS_PARAM);
+	float3 result;
+	if (bsdf->cyclesBSSRDFPhase == 2u) {
+		*event = DIFFUSE | REFLECT;
+		pdf0 = fabs(localLightDir.z * M_1_PI_F);
+		result = WHITE * pdf0;
+	} else
+		result = Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
+				localLightDir, localEyeDir, event, &pdf0 MATERIALS_PARAM);
 	if (Spectrum_IsBlack(result))
 		return BLACK;
 
@@ -262,9 +270,11 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 	float pdf1 = 0.f;
 	if (needSecond) {
 		BSDFEvent event1;
-		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
-				localEyeDir, localLightDir, &event1, &pdf1
-				MATERIALS_PARAM);
+		if (bsdf->cyclesBSSRDFPhase == 2u)
+			pdf1 = fabs(localEyeDir.z * M_1_PI_F);
+		else
+			Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
+					localEyeDir, localLightDir, &event1, &pdf1 MATERIALS_PARAM);
 	}
 	const float selectionProbability = bsdf->nullSelectionConditioned ? Material_GetNonNullSelectionProbability(bsdf->materialIndex,
 			&bsdf->hitPoint MATERIALS_PARAM) : 1.f;
@@ -280,7 +290,7 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
-		if (!mats[bsdf->materialIndex].ownsLobeNormals && (*event & REFLECT) &&
+		if ((!mats[bsdf->materialIndex].ownsLobeNormals || bsdf->cyclesBSSRDFPhase == 2u) && (*event & REFLECT) &&
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
 #if (SLG_SHADOW_TERMINATOR_MODE == 0)
 			if (*event & (DIFFUSE | GLOSSY))
@@ -323,6 +333,12 @@ OPENCL_FORCE_INLINE void BSDF_Pdf(__global const BSDF *bsdf,
 	const float3 localSampledDir = Frame_ToLocal(&bsdf->frame, sampledDir);
 	const float3 localFixedDir = Frame_ToLocal(&bsdf->frame,
 			VLOAD3F(&bsdf->hitPoint.fixedDir.x));
+	if (bsdf->cyclesBSSRDFPhase == 2u) {
+		if (directPdfW) *directPdfW = fabs(localSampledDir.z * M_1_PI_F);
+		if (reversePdfW) *reversePdfW = fabs(localFixedDir.z * M_1_PI_F);
+		return;
+	}
+
 	BSDFEvent event;
 	if (directPdfW)
 		Material_Evaluate(bsdf->materialIndex, &bsdf->hitPoint,
@@ -345,11 +361,16 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	const float3 localFixedDir = Frame_ToLocal(&bsdf->frame, fixedDir);
 	float3 localSampledDir;
 
-	float3 result = Material_Sample(bsdf->materialIndex, &bsdf->hitPoint,
-			localFixedDir, &localSampledDir, u0, u1,
-			bsdf->hitPoint.passThroughEvent,
-			pdfW, event
-			MATERIALS_PARAM);
+	float3 result;
+	if (bsdf->cyclesBSSRDFPhase == 2u) {
+		if (fabs(localFixedDir.z) < DEFAULT_COS_EPSILON_STATIC) return BLACK;
+		localSampledDir = (signbit(localFixedDir.z) ? -1.f : 1.f) * CosineSampleHemisphereWithPdf(u0, u1, pdfW);
+		*event = DIFFUSE | REFLECT;
+		result = WHITE;
+	} else
+		result = Material_Sample(bsdf->materialIndex, &bsdf->hitPoint,
+				localFixedDir, &localSampledDir, u0, u1,
+				bsdf->hitPoint.passThroughEvent, pdfW, event MATERIALS_PARAM);
 	if (Spectrum_IsBlack(result))
 		return BLACK;
 
@@ -370,7 +391,7 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 		// CPU BSDF::Sample uses lightDir = fromLight ? fixedDir : sampledDir
 		const float3 lightDir = fromLight ?
 				VLOAD3F(&bsdf->hitPoint.fixedDir.x) : *sampledDir;
-		if (!mats[bsdf->materialIndex].ownsLobeNormals && (*event & REFLECT) &&
+		if ((!mats[bsdf->materialIndex].ownsLobeNormals || bsdf->cyclesBSSRDFPhase == 2u) && (*event & REFLECT) &&
 				((shadeN.x != interpolatedN.x) || (shadeN.y != interpolatedN.y) || (shadeN.z != interpolatedN.z))) {
 #if (SLG_SHADOW_TERMINATOR_MODE == 0)
 			if (*event & (DIFFUSE | GLOSSY))

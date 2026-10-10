@@ -20,12 +20,14 @@
 
 OPENCL_FORCE_INLINE BSDFEvent BSDF_GetEventTypes(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
+	if (bsdf->cyclesBSSRDFPhase == 2u) return DIFFUSE | REFLECT;
 	return Material_GetEventTypes(bsdf->materialIndex
 			MATERIALS_PARAM);
 }
 
 OPENCL_FORCE_INLINE bool BSDF_IsDelta(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
+	if (bsdf->cyclesBSSRDFPhase == 2u) return false;
 	return Material_IsDelta(bsdf->materialIndex
 			MATERIALS_PARAM);
 }
@@ -87,6 +89,7 @@ OPENCL_FORCE_INLINE uint BSDF_GetMaterialExteriorVolume(__global const BSDF *bsd
 
 OPENCL_FORCE_INLINE float BSDF_GetGlossiness(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
+	if (bsdf->cyclesBSSRDFPhase == 2u) return 1.f;
 	return Material_GetGlossiness(bsdf->materialIndex
 			MATERIALS_PARAM);
 }

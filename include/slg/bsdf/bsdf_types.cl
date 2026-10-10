@@ -47,5 +47,7 @@ typedef struct {
 	Frame frame;
 
 	int isVolume, nullSelectionConditioned;
+	// 0: ordinary/entry, 1: nonlocal walk in flight, 2: white diffuse exit.
+	unsigned int cyclesBSSRDFPhase;
 } BSDF;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

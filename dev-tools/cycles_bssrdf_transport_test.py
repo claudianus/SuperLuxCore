@@ -24,7 +24,9 @@ W = H = 64
 BASE = {'film.width': W, 'film.height': H,
         'film.imagepipelines.0.0.type': 'NOP',
         'renderengine.type': 'PATHCPU', 'sampler.type': 'SOBOL',
-        'batch.haltspp': 256, 'native.threads.count': 8,
+        # Paired boundary tests need the same RNG stream per pixel. Multiple
+        # workers assign buckets to different per-thread streams by timing.
+        'batch.haltspp': 256, 'native.threads.count': 1, 'renderengine.seed': 131,
         'path.hybridbackforward.enable': False,
         'path.lighttracing.enable': False, 'path.lighttracing.auto': False,
         'path.mnee.enable': False, 'path.mnee.auto': False,
@@ -129,12 +131,13 @@ def session(scn, overrides=None):
 
 def render(scn, overrides=None):
     ses = session(scn, overrides)
+    target_spp = int((BASE | (overrides or {}))['batch.haltspp'])
     ses.Start()
     start = time.monotonic()
     try:
         while True:
             ses.UpdateStats()
-            if ses.GetStats().Get('stats.renderengine.pass').GetInt() >= 256:
+            if ses.GetStats().Get('stats.renderengine.pass').GetInt() >= target_spp:
                 break
             assert time.monotonic() - start < 120, 'BSSRDF fixture timed out'
             time.sleep(.05)

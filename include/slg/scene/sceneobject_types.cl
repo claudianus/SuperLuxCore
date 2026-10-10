@@ -26,6 +26,7 @@ typedef enum {
 typedef struct {
 	unsigned int objectID;
 	unsigned int materialIndex;
+	unsigned int subsurfaceGroupIndex;
 
 	unsigned int bakeMapIndex;
 	BakeMapType bakeMapType;

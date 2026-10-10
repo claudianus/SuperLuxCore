@@ -893,6 +893,16 @@ typedef struct {
 	SspTailVertex vtx[SSP_TAIL_MAX_VERTICES];
 } SspTail;
 
+// The nonlocal walk owns GPUTask::tmpHitPoint only while its BSDF phase is 1.
+// No light/volume shader uses that scratch slot in this phase. Keep this
+// smaller than HitPoint (host static_assert) without growing ordinary tasks.
+typedef struct {
+	unsigned int entryMesh, groupIndex, bounce;
+	Seed seed;
+	Spectrum sigmaT, alpha, throughput, probabilities;
+	float distance, anisotropy;
+} CyclesBSSRDFState;
+
 typedef struct {
 	// The task seed
 	Seed seed;

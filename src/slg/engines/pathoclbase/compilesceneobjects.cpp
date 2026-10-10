@@ -35,11 +35,15 @@ void CompiledScene::CompileSceneObjects() {
 
 	const u_int objCount = scene.GetObjects().GetSize();
 	sceneObjs.resize(objCount);
+	std::unordered_map<std::string, u_int> subsurfaceGroups;
 	for (u_int i = 0; i < objCount; ++i) {
 		slg::ocl::SceneObject &oclScnObj = sceneObjs[i];
 		auto& scnObj = scene.GetObjects().GetSceneObject(i);
 
 		oclScnObj.objectID = scnObj.GetID();
+		const auto &group = scnObj.GetSubsurfaceGroup();
+		oclScnObj.subsurfaceGroupIndex = group.empty() ? NULL_INDEX :
+				subsurfaceGroups.emplace(group, subsurfaceGroups.size()).first->second;
 
 		auto& m = scnObj.GetMaterial();
 		oclScnObj.materialIndex = scene.GetMaterials().GetMaterialIndex(m);

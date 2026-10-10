@@ -55,6 +55,173 @@ OPENCL_FORCE_INLINE float FocusAimRadius(
 // To: MK_HIT_NOTHING or MK_HIT_OBJECT or MK_RT_NEXT_VERTEX
 //------------------------------------------------------------------------------
 
+// Experimental nonlocal Cycles random walk. Each free flight is resolved by
+// the normal hardware trace pass; foreign hits retain the distance proposal.
+OPENCL_FORCE_INLINE float CyclesBSSRDF_Random(__global CyclesBSSRDFState *s) {
+	Seed seed = s->seed;
+	const float u = Rnd_FloatValue(&seed);
+	s->seed = seed;
+	return u;
+}
+
+OPENCL_FORCE_INLINE float CyclesBSSRDF_Alpha(const float albedo, const float g) {
+	const float a = 4.20863f * albedo + 4.09712f - sqrt(9.59217f + 41.6808f * albedo + 17.7126f * albedo * albedo);
+	return clamp((1.f - a * a) / (1.f - g * a * a), 0.f, .999999f);
+}
+
+OPENCL_FORCE_INLINE float3 CyclesBSSRDF_GGX(const float3 v, const float alpha, const float u0, const float u1) {
+	if (alpha == 0.f) return MAKE_FLOAT3(0.f, 0.f, 1.f);
+	const float3 vh = normalize(MAKE_FLOAT3(alpha * v.x, alpha * v.y, v.z));
+	const float l = vh.x * vh.x + vh.y * vh.y;
+	const float3 t1 = l > 0.f ? MAKE_FLOAT3(-vh.y, vh.x, 0.f) / sqrt(l) : MAKE_FLOAT3(1.f, 0.f, 0.f);
+	const float3 t2 = cross(vh, t1);
+	const float r = sqrt(u0), phi = 2.f * M_PI_F * u1;
+	const float x = r * cos(phi), mix = .5f * (1.f + vh.z);
+	const float y = (1.f - mix) * sqrt(fmax(0.f, 1.f - x * x)) + mix * r * sin(phi);
+	const float3 n = x * t1 + y * t2 + sqrt(fmax(0.f, 1.f - x * x - y * y)) * vh;
+	return normalize(MAKE_FLOAT3(alpha * n.x, alpha * n.y, fmax(0.f, n.z)));
+}
+
+OPENCL_FORCE_INLINE float3 CyclesBSSRDF_Phase(const float3 direction, const float g, const float u0, const float u1) {
+	float c;
+	if (fabs(g) < 1e-6f) c = 1.f - 2.f * u0;
+	else {
+		const float a = (1.f - g * g) / (1.f - g + 2.f * g * u0);
+		c = clamp((1.f + g * g - a * a) / (2.f * g), -1.f, 1.f);
+	}
+	float3 x, y;
+	CoordinateSystem(direction, &x, &y);
+	const float d = sqrt(fmax(0.f, 1.f - c * c)), phi = 2.f * M_PI_F * u1;
+	return normalize(d * cos(phi) * x + d * sin(phi) * y + c * direction);
+}
+
+OPENCL_FORCE_INLINE bool CyclesBSSRDF_QueueFlight(__global CyclesBSSRDFState *s, __global Ray *ray) {
+	const float3 weight = VLOAD3F(s->throughput.c), alpha = VLOAD3F(s->alpha.c);
+	float3 probabilities = fmax(weight * alpha, BLACK);
+	const float sum = probabilities.x + probabilities.y + probabilities.z;
+	if (!(sum > 0.f)) return false;
+	probabilities /= sum;
+	VSTORE3F(probabilities, s->probabilities.c);
+	float selector = CyclesBSSRDF_Random(s);
+	uint channel = 2u;
+	if (selector < probabilities.x) channel = 0u;
+	else if (selector - probabilities.x < probabilities.y) channel = 1u;
+	// Metal has no log1p. Correct log(1-u) for the rounded subtraction;
+	// if it rounded to one, u is the correctly rounded first-order value.
+	const float u = fmin(CyclesBSSRDF_Random(s), .99999994f), complement = 1.f - u;
+	const float opticalDistance = complement == 1.f ? u : -log(complement) * (u / (1.f - complement));
+	s->distance = opticalDistance / s->sigmaT.c[channel];
+	ray->mint = MachineEpsilon_E(0.f);
+	ray->maxt = s->distance;
+	return true;
+}
+
+// Returns 0 for the local-radius branch, 1 for a queued walk and -1 for
+// absorption/invalid entry. Local/nonlocal choice is probability compensated.
+OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUTaskState *state,
+		__global Ray *ray MATERIALS_PARAM_DECL) {
+	__global BSDF *bsdf = &state->bsdf;
+	uint matIndex = bsdf->materialIndex;
+	for (uint depth = 0u; depth < 16u && mats[matIndex].type == TWOSIDED; ++depth)
+		matIndex = bsdf->hitPoint.intoObject ? mats[matIndex].twosided.frontMatIndex : mats[matIndex].twosided.backMatIndex;
+	if (mats[matIndex].type != CYCLES_BSSRDF) return 0;
+	__global const CyclesBSSRDFParam *p = &mats[matIndex].cyclesbssrdf;
+	const float scale = Texture_GetFloatValue(p->scaleTexIndex, &bsdf->hitPoint TEXTURES_PARAM);
+	const float3 radius = fmax(Texture_GetSpectrumValue(p->radiusTexIndex, &bsdf->hitPoint TEXTURES_PARAM) * scale, BLACK);
+	task->tmpBsdf = *bsdf;
+	task->tmpBsdf.hitPoint.spectralEmissionEval = 2u;
+	const float3 radiusRGB = fmax(Texture_GetSpectrumValue(p->radiusTexIndex, &task->tmpBsdf.hitPoint TEXTURES_PARAM) * scale, BLACK);
+	task->tmpBsdf.hitPoint.spectralEmissionEval = bsdf->hitPoint.spectralEmissionEval;
+	if (radiusRGB.x < 1e-8f && radiusRGB.y < 1e-8f && radiusRGB.z < 1e-8f) return 0;
+	const float3 color = clamp(Texture_GetSpectrumValue(p->kdTexIndex, &bsdf->hitPoint TEXTURES_PARAM), BLACK, WHITE);
+	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
+	s->seed = state->seedPassThroughEvent;
+	(void)CyclesBSSRDF_Random(s);
+	float3 throughput = MAKE_FLOAT3(color.x > 0.f ? 1.f : 0.f, color.y > 0.f ? 1.f : 0.f, color.z > 0.f ? 1.f : 0.f);
+	if (radiusRGB.x < 1e-8f || radiusRGB.y < 1e-8f || radiusRGB.z < 1e-8f) {
+		const float total = color.x + color.y + color.z;
+		const float local = (radiusRGB.x < 1e-8f ? color.x : 0.f) + (radiusRGB.y < 1e-8f ? color.y : 0.f) + (radiusRGB.z < 1e-8f ? color.z : 0.f);
+		const float probability = total > 0.f ? local / total : 1.f;
+		if (CyclesBSSRDF_Random(s) < probability) {
+			const float3 mask = MAKE_FLOAT3(radiusRGB.x < 1e-8f ? 1.f / probability : 0.f, radiusRGB.y < 1e-8f ? 1.f / probability : 0.f, radiusRGB.z < 1e-8f ? 1.f / probability : 0.f);
+			VSTORE3F(VLOAD3F(state->throughput.c) * mask, state->throughput.c);
+			return 0;
+		}
+		throughput = MAKE_FLOAT3(radiusRGB.x < 1e-8f ? 0.f : throughput.x / (1.f - probability), radiusRGB.y < 1e-8f ? 0.f : throughput.y / (1.f - probability), radiusRGB.z < 1e-8f ? 0.f : throughput.z / (1.f - probability));
+	}
+	s->anisotropy = clamp(Texture_GetFloatValue(p->anisotropyTexIndex, &bsdf->hitPoint TEXTURES_PARAM), -.99f, .99f);
+	float3 alpha = MAKE_FLOAT3(CyclesBSSRDF_Alpha(color.x, s->anisotropy), CyclesBSSRDF_Alpha(color.y, s->anisotropy), CyclesBSSRDF_Alpha(color.z, s->anisotropy));
+	for (uint i = 0u; i < 3u; ++i) {
+		const bool local = radiusRGB[i] < 1e-8f;
+		s->sigmaT.c[i] = local ? 1.f : 1.f / fmax(radius[i], 1e-16f);
+		if (local) alpha[i] = 0.f;
+		else if (alpha[i] < .2f) { throughput[i] *= alpha[i] / .2f; alpha[i] = .2f; }
+	}
+	VSTORE3F(alpha, s->alpha.c);
+	VSTORE3F(throughput, s->throughput.c);
+	const float roughness = clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
+	const float ior = clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f);
+	const float3 wo = Frame_ToLocal(&bsdf->frame, VLOAD3F(&bsdf->hitPoint.fixedDir.x));
+	if (!(wo.z > 0.f)) return -1;
+	const float3 h = CyclesBSSRDF_GGX(wo, roughness, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
+	const float eta = 1.f / ior, cosHI = dot(h, wo);
+	const float cosHT = sqrt(fmax(0.f, 1.f - eta * eta * (1.f - cosHI * cosHI)));
+	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, -eta * wo + (eta * cosHI - cosHT) * h));
+	if (!(dot(direction, VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f)) return -1;
+	const float time = ray->time;
+	Ray_Init2(ray, BSDF_GetRayOrigin(bsdf, direction), direction, time);
+	s->entryMesh = bsdf->sceneObjectIndex;
+	s->groupIndex = sceneObjs[s->entryMesh].subsurfaceGroupIndex;
+	s->bounce = 0u;
+	if (!CyclesBSSRDF_QueueFlight(s, ray)) return -1;
+	bsdf->cyclesBSSRDFPhase = 1u;
+	state->state = MK_RT_NEXT_VERTEX;
+	return 1;
+}
+
+OPENCL_FORCE_INLINE void CyclesBSSRDF_Resolve(__global GPUTask *task, __global GPUTaskState *state,
+		__global EyePathInfo *pathInfo, __global Ray *ray, __global RayHit *hit MATERIALS_PARAM_DECL) {
+	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
+	bool escaped = hit->meshIndex != NULL_INDEX && (hit->meshIndex == s->entryMesh ||
+			(s->groupIndex != NULL_INDEX && sceneObjs[hit->meshIndex].subsurfaceGroupIndex == s->groupIndex));
+	if (hit->meshIndex != NULL_INDEX && !escaped) {
+		const float next = hit->t + MachineEpsilon_E(hit->t);
+		if (next > ray->mint && next < s->distance) { ray->mint = next; return; }
+	}
+	const float distance = escaped ? hit->t : s->distance;
+	const float3 sigmaT = VLOAD3F(s->sigmaT.c), alpha = VLOAD3F(s->alpha.c);
+	const float3 transmittance = exp(-sigmaT * distance);
+	const float3 factor = transmittance * (escaped ? WHITE : sigmaT);
+	const float3 probabilities = VLOAD3F(s->probabilities.c);
+	const float pdf = dot(probabilities, factor);
+	if (!(pdf > 0.f) || !isfinite(pdf)) { state->state = MK_SPLAT_SAMPLE; return; }
+	float3 throughput = VLOAD3F(s->throughput.c) * factor / pdf;
+	if (!escaped) throughput *= alpha;
+	if (escaped) {
+		VSTORE3F(VLOAD3F(state->throughput.c) * throughput, state->throughput.c);
+		BSDF_Init(&state->bsdf, false, ray, hit, CyclesBSSRDF_Random(s), &pathInfo->volume MATERIALS_PARAM);
+		VSTORE3F(VLOAD3F(&state->bsdf.hitPoint.geometryN.x), &state->bsdf.hitPoint.fixedDir.x);
+		state->bsdf.hitPoint.intoObject = true;
+		state->bsdf.triangleLightSourceIndex = NULL_INDEX;
+		state->bsdf.nullSelectionConditioned = false;
+		state->bsdf.cyclesBSSRDFPhase = 2u;
+		state->state = MK_HIT_OBJECT;
+		return;
+	}
+	if (s->bounce >= 8u) {
+		const float survival = clamp(fmax(throughput.x, fmax(throughput.y, throughput.z)), .05f, .95f);
+		if (CyclesBSSRDF_Random(s) >= survival) { state->state = MK_SPLAT_SAMPLE; return; }
+		throughput /= survival;
+	}
+	VSTORE3F(throughput, s->throughput.c);
+	if (++s->bounce >= 256u) { state->state = MK_SPLAT_SAMPLE; return; }
+	const float3 origin = VLOAD3F(&ray->o.x) + distance * VLOAD3F(&ray->d.x);
+	const float3 direction = CyclesBSSRDF_Phase(VLOAD3F(&ray->d.x), s->anisotropy, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
+	const float time = ray->time;
+	Ray_Init2(ray, origin, direction, time);
+	if (!CyclesBSSRDF_QueueFlight(s, ray)) state->state = MK_SPLAT_SAMPLE;
+}
+
 __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 		KERNEL_ARGS
 		) {
@@ -92,6 +259,11 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 	//--------------------------------------------------------------------------
 	// End of variables setup
 	//--------------------------------------------------------------------------
+
+	if (taskState->bsdf.cyclesBSSRDFPhase == 1u) {
+		CyclesBSSRDF_Resolve(&tasks[gid], taskState, pathInfo, &rays[gid], &rayHits[gid] MATERIALS_PARAM);
+		return;
+	}
 
 	float3 connectionThroughput;
 
@@ -322,7 +494,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	// Something was hit
 
-	if (taskState->albedoToDo && BSDF_IsAlbedoEndPoint(bsdf, taskConfig->pathTracer.albedo.specularSetting,
+	if (bsdf->cyclesBSSRDFPhase != 2u && taskState->albedoToDo && BSDF_IsAlbedoEndPoint(bsdf, taskConfig->pathTracer.albedo.specularSetting,
 			taskConfig->pathTracer.albedo.specularGlossinessThreshold MATERIALS_PARAM)) {
 		const float3 albedo = VLOAD3F(taskState->throughput.c) * BSDF_Albedo(bsdf
 				MATERIALS_PARAM);
@@ -332,7 +504,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 		taskState->albedoToDo = false;
 	}
 
-	if (pathInfo->depth.depth == 0) {
+	if (bsdf->cyclesBSSRDFPhase != 2u && pathInfo->depth.depth == 0) {
 		const bool isHoldout = BSDF_IsHoldout(bsdf
 				MATERIALS_PARAM);
 		if (isHoldout) sampleResult->alpha = 0.f;
@@ -435,6 +607,14 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 				sampleResult
 				LPE_PARAM
 				LIGHTS_PARAM);
+	}
+
+	if (bsdf->cyclesBSSRDFPhase == 0u) {
+		const int result = CyclesBSSRDF_Start(&tasks[gid], taskState, &rays[gid] MATERIALS_PARAM);
+		if (result != 0) {
+			if (result < 0) taskState->state = MK_SPLAT_SAMPLE;
+			return;
+		}
 	}
 
 	//----------------------------------------------------------------------

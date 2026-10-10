@@ -33,6 +33,11 @@ public:
 	Parameters Freeze(const HitPoint &hit) const;
 	std::string ExperimentalParameterFailure(bool spectral) const;
 	const MatteMaterial &GetExitMaterial() const { return exitMaterial; }
+	TextureConstPtr GetRadius() const { return radius; }
+	TextureConstPtr GetScale() const { return scale; }
+	TextureConstPtr GetIOR() const { return ior; }
+	TextureConstPtr GetRoughness() const { return roughness; }
+	TextureConstPtr GetAnisotropy() const { return anisotropy; }
 
 private:
 	TextureConstPtr radius, scale, ior, roughness, anisotropy;

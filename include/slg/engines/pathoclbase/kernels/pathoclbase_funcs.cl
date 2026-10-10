@@ -184,6 +184,7 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 
 	// Initialize the path state
 	taskState->state = MK_RT_NEXT_VERTEX;
+	taskState->bsdf.cyclesBSSRDFPhase = 0u;
 	VSTORE3F(WHITE, taskState->throughput.c);
 	taskState->albedoToDo = true;
 	VSTORE3F(BLACK, sampleResult->albedo.c);  // Just in case albedoToDo is never true

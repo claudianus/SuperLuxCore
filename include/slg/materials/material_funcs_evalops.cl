@@ -114,6 +114,7 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 		// MATTE
 		//----------------------------------------------------------------------
 		case MATTE:
+		case CYCLES_BSSRDF:
 			MatteMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
 		//----------------------------------------------------------------------

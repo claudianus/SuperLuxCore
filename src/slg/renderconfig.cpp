@@ -560,8 +560,25 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 	if (experimentalBSSRDF) {
 		const auto &props = GetConfig();
 		const string engine = props.Get(Property("renderengine.type")("PATHCPU")).Get<string>();
+		const bool deviceDiagnostic = engine == "PATHOCL" &&
+				props.Get(Property("path.cyclesbssrdf.experimental.device.enable")(false)).Get<bool>();
+		if (deviceDiagnostic) {
+			for (u_int i = 0; i < objects.GetSize(); ++i) {
+				const auto &material = objects.GetSceneObject(i).GetMaterial();
+				std::unordered_set<const Material *> referenced;
+				material.AddReferencedMaterials(referenced);
+				referenced.insert(&material);
+				for (const auto child : referenced)
+					// Grouped exits can land on other material partitions too.
+					if ((child->GetType() == CYCLES_BSSRDF || !objects.GetSceneObject(i).GetSubsurfaceGroup().empty()) &&
+							(child->GetBumpTexture() || child->HasAnyVolume() || GetScene().HasDefaultWorldVolume()))
+						throw runtime_error("Experimental cyclesbssrdf device exit Normal/Bump and explicit Volume contexts remain unverified: " + child->GetName());
+			}
+			if (props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>())
+				throw runtime_error("Experimental cyclesbssrdf device adjoint/vertex connection is not implemented yet");
+		}
 		if (!props.Get(Property("path.cyclesbssrdf.experimental.enable")(false)).Get<bool>() ||
-				engine != "PATHCPU" ||
+				(engine != "PATHCPU" && !deviceDiagnostic) ||
 				props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.only")(false)).Get<bool>() ||
@@ -569,7 +586,7 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 				props.Get(Property("path.restir.pt.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>())
-			throw runtime_error("Experimental cyclesbssrdf currently requires explicit CPU eye-only diagnostics; Metal, light tracing, BIDIR and caches remain unverified");
+			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics (and device opt-in for PATHOCL); light tracing, BIDIR and caches remain unsupported");
 	}
 #if defined(LUXRAYS_DISABLE_OPENCL)
 	// This is a specific test for OpenCL-less version in order to print

@@ -42,6 +42,7 @@
 #include "slg/materials/glossycoating.h"
 #include "slg/materials/glossytranslucent.h"
 #include "slg/materials/matte.h"
+#include "slg/materials/cyclesbssrdf.h"
 #include "slg/materials/mattetranslucent.h"
 #include "slg/materials/metal2.h"
 #include "slg/materials/mirror.h"
@@ -163,6 +164,7 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 		// Materials without sub-nodes
 		//----------------------------------------------------------------------
 		case MATTE:
+		case CYCLES_BSSRDF:
 		case MIRROR:
 		case GLASS:
 		case ARCHGLASS:
@@ -745,8 +747,17 @@ void CompiledScene::CompileMaterials() {
 
 		// Material specific parameters
 		switch (m.GetType()) {
-			case CYCLES_BSSRDF:
-				throw runtime_error("cyclesbssrdf nonlocal Metal/OpenCL transport is not implemented yet");
+			case CYCLES_BSSRDF: {
+				const auto &mm = static_cast<const CyclesBSSRDFMaterial &>(m);
+				mat->type = slg::ocl::CYCLES_BSSRDF;
+				mat->cyclesbssrdf.kdTexIndex = scene.GetTextures().GetTextureIndex(mm.GetKd());
+				mat->cyclesbssrdf.radiusTexIndex = scene.GetTextures().GetTextureIndex(mm.GetRadius());
+				mat->cyclesbssrdf.scaleTexIndex = scene.GetTextures().GetTextureIndex(mm.GetScale());
+				mat->cyclesbssrdf.iorTexIndex = scene.GetTextures().GetTextureIndex(mm.GetIOR());
+				mat->cyclesbssrdf.roughnessTexIndex = scene.GetTextures().GetTextureIndex(mm.GetRoughness());
+				mat->cyclesbssrdf.anisotropyTexIndex = scene.GetTextures().GetTextureIndex(mm.GetAnisotropy());
+				break;
+			}
 			case MATTE: {
 				auto& mm = dynamic_cast<const MatteMaterial &>(m);
 

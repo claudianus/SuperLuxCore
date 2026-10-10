@@ -83,6 +83,12 @@ typedef struct {
 } MatteParam;
 
 typedef struct {
+	// Keep kd first: local-radius and entry AOV operations use Matte ops.
+	unsigned int kdTexIndex, radiusTexIndex, scaleTexIndex;
+	unsigned int iorTexIndex, roughnessTexIndex, anisotropyTexIndex;
+} CyclesBSSRDFParam;
+
+typedef struct {
     unsigned int kdTexIndex;
     unsigned int sigmaTexIndex;
 } RoughMatteParam;
@@ -523,6 +529,7 @@ typedef struct {
 
 	union {
 		MatteParam matte;
+		CyclesBSSRDFParam cyclesbssrdf;
 		RoughMatteParam roughmatte;
 		MirrorParam mirror;
 		GlassParam glass;

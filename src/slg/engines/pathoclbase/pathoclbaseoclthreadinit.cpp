@@ -961,6 +961,7 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 
 	//--------------------------------------------------------------------------
 	// Allocate tasksBuff
+	static_assert(sizeof(slg::ocl::pathoclbase::CyclesBSSRDFState) <= sizeof(slg::ocl::HitPoint), "BSSRDF scratch must fit the exclusive HitPoint slot");
 	//--------------------------------------------------------------------------
 
 	intersectionDevice.AllocBufferRW(&tasksBuff, nullptr, sizeof(slg::ocl::pathoclbase::GPUTask) * taskCount, "GPUTask");

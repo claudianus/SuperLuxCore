@@ -2080,6 +2080,17 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				case HITPOINT_GENERATED: {
 					__global const ExtMesh *mesh = &meshDescs[hitPoint->meshIndex];
 					float3 p = VLOAD3F(&hitPoint->p.x);
+					// Stable exact surface zeros; retain tangential bump offsets.
+					if (!(hitPoint->triangleIndex & RAYHIT_CURVE_FLAG)) {
+						__global const Triangle *triangle = &triangles[mesh->trisOffset + hitPoint->triangleIndex];
+						float3 anchor = VLOAD3F(&vertices[mesh->vertsOffset + triangle->v[0]].x);
+						if (mesh->type != TYPE_EXT_TRIANGLE)
+							anchor = Transform_ApplyPoint(&hitPoint->localToWorld, anchor);
+						const float3 n = VLOAD3F(&hitPoint->geometryN.x);
+						const float n2 = dot(n, n);
+						if (n2 > 0.f)
+							p += (dot(anchor - p, n) / n2) * n;
+					}
 					if (mesh->type != TYPE_EXT_TRIANGLE) {
 						__global const float (*mi)[4] = hitPoint->localToWorld.mInv.m;
 						p = MAKE_FLOAT3(
