@@ -56,13 +56,18 @@ reject('hybrid-validates-reverse-mixed-kernel',mixed,{},'adjoint mixed')
 slc.RenderSession(slc.RenderConfig(props(base|{'renderengine.type':'PATHCPU','path.hybridbackforward.enable':False,'path.lighttracing.enable':True}),body()))
 record('canonical-lighttracing-promotion-accepted')
 def render(scn,label,hybrid,partition=.8,*,adaptive=True,spectral=False,seed=131,regularization=0.):
+    # Sparse camera connections, including rough PSR and spectral transport,
+    # have substantial variance. Use the declared larger budget for every
+    # paired condition, retaining the same region and 3% mean gate.
+    min_eye = 65536
+    min_light = 81920
     config=base|{'renderengine.type':'PATHCPU','path.hybridbackforward.enable':hybrid,'path.hybridbackforward.partition':partition,'path.hybridbackforward.adaptivecaustic':adaptive,'path.spectral.enable':spectral,'renderengine.seed':seed,'path.regularization.sigma':regularization}
     (root/(label+'-config.cfg')).write_text(props(config).ToString())
     ses=slc.RenderSession(slc.RenderConfig(props(config),scn));ses.Start();start=time.monotonic()
     try:
         while True:
             ses.UpdateStats();stats=ses.GetStats();eye=stats.Get('stats.renderengine.pass.eye').GetInt();light=stats.Get('stats.renderengine.pass.light').GetInt()
-            if eye>=16384 and (not hybrid or partition==1. or light>=20480):break
+            if eye>=min_eye and (not hybrid or partition==1. or light>=min_light):break
             assert time.monotonic()-start<600,(label,eye,light)
             time.sleep(.1)
     finally:ses.Stop()
@@ -79,9 +84,13 @@ for case,values,caster,adaptive,spectral,seed in (
     ('mirror-rough',{'roughness':.4},True,True,False,131),
     ('mirror-sharp-psr',{'regularization':.03},True,True,False,131),
     ('mirror-rough-psr',{'roughness':.4,'regularization':.03},True,True,False,131),
+    ('mirror-rough-psr-seed-817',{'roughness':.4,'regularization':.03},True,True,False,817),
+    ('mirror-rough-psr-seed-919',{'roughness':.4,'regularization':.03},True,True,False,919),
     ('mirror-ordinary-matte-psr',{'kind':'matte','regularization':.03},True,True,False,131),
     ('mirror-colored-rgb',{'color':(.55,.2,.08),'radius':(1.,.3,.2)},True,True,False,131),
     ('mirror-colored-spectral',{'color':(.55,.2,.08),'radius':(1.,.3,.2)},True,True,True,131),
+    ('mirror-colored-spectral-seed-817',{'color':(.55,.2,.08),'radius':(1.,.3,.2)},True,True,True,817),
+    ('mirror-colored-spectral-seed-919',{'color':(.55,.2,.08),'radius':(1.,.3,.2)},True,True,True,919),
     ('mirror-partial-local',{'radius':(0.,1.,1.)},True,True,False,131),
     ('mirror-all-local',{'radius':(0.,0.,0.)},True,True,False,131),
     ('mirror-sharp-independent-seed',{},True,True,False,817)):
@@ -99,7 +108,7 @@ for case,values,caster,adaptive,spectral,seed in (
     means={label:data[0][m].mean(axis=0).tolist() for label,data in outputs.items()}
     assert all(np.isfinite(v).all() for v in means.values()),(case,means)
     error=float(np.max(np.abs(np.array(means['hybrid'])-means['eye'])/np.maximum(means['eye'],1e-4)))
-    detail={'pixels':int(m.sum()),'seed':seed,'adaptive':adaptive,'spectral':spectral,'regularization':values.get('regularization',0.),'means':means,'max_relative_channel_error':error,'sample_counts':{label:{'eye':data[2],'light':data[3]} for label,data in outputs.items()}}
+    detail={'pixels':int(m.sum()),'seed':seed,'adaptive':adaptive,'spectral':spectral,'regularization':values.get('regularization',0.),'minimum_eye_samples':65536,'minimum_light_samples':81920,'means':means,'max_relative_channel_error':error,'sample_counts':{label:{'eye':data[2],'light':data[3]} for label,data in outputs.items()}}
     (root/(case+'-comparison.json')).write_text(json.dumps(detail,indent=2)+'\n')
     if 'eye-hole' in means:
         loss=1.-float(np.mean(means['eye-hole'])/np.mean(means['eye']))
