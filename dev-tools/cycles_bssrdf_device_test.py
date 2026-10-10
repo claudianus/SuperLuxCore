@@ -123,6 +123,31 @@ for mode in ('off', 'on'):
     assert np.allclose(measured, .475, atol=.008), measured
     record(mode + '-mixed-local-radius-selected-leaf', rgb_mean=measured.tolist())
 
+
+    for amount, additive, nested in ((0., False, False), (.5, False, False), (1., False, False),
+                                     (.5, True, False), (.4, False, True)):
+        label = 'null-mix-' + str(amount) + '-add-' + str(additive) + '-nested-' + str(nested)
+        pixels = render(ns['transparent_scene'](amount=amount, additive=additive, nested=nested), overrides)
+        measured = pixels['RGB'][center].mean(axis=(0, 1))
+        expected = ns['transparent_references'][label]
+        error = float(np.abs(measured - expected).max())
+        assert error < .02, (label, measured, expected)
+        record(mode + '-' + label + '-nonlocal', rgb_mean=measured.tolist(), cpu_rgb_mean=expected.tolist(), max_error=error)
+        local = render(ns['transparent_scene'](radius=(0., 0., 0.), amount=amount, additive=additive, nested=nested), overrides)
+        ordinary = render(ns['transparent_scene'](kind='matte', amount=amount, additive=additive, nested=nested), overrides)
+        error = float(np.abs(local['RGB'][center].mean(axis=(0, 1)) - ordinary['RGB'][center].mean(axis=(0, 1))).max())
+        alpha_error = float(np.abs(local['ALPHA'][center].mean() - ordinary['ALPHA'][center].mean()))
+        assert error < .015 and alpha_error < .015, (label, error, alpha_error)
+        record(mode + '-' + label + '-local-vs-ordinary', max_error=error, alpha_mean_error=alpha_error)
+
+
+    inside = render(ns['inside_scene'](), overrides)
+    measured = inside['RGB'][center].mean(axis=(0, 1))
+    expected = ns['inside_mean']
+    error = float(np.abs(measured - expected).max())
+    assert np.isfinite(inside['RGB']).all() and error < .02 and np.all(measured > .505), (measured, expected)
+    record(mode + '-inside-back-facing-entry-random-walk', rgb_mean=measured.tolist(), cpu_rgb_mean=expected.tolist(), max_error=error)
+
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 (folder / 'device-metrics.json').write_text(json.dumps({
     'native_sha256': identity['native_sha256'], 'experimental': True,

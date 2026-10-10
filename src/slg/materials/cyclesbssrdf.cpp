@@ -104,10 +104,16 @@ const CyclesBSSRDFMaterial *slg::ResolveCyclesBSSRDF(MaterialConstRef material, 
 }
 
 bool slg::SelectCyclesBSSRDFClosure(BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
+	bool selectedBranch = false;
 	for (unsigned depth = 0; depth < 64; ++depth) {
 		const auto selected = bsdf.GetMaterial();
-		if (!selected->HasCyclesBSSRDF() || selected->GetType() == CYCLES_BSSRDF)
+		if ((!selected->HasCyclesBSSRDF() && !selected->HasNullLobes()) || selected->GetType() == CYCLES_BSSRDF) {
+			// The old entry variate is restricted by transparent selection.
+			// A newly chosen opaque component needs a fresh uniform variate
+			// for its internal lobe sampler (including ordinary subtrees).
+			if (selectedBranch) bsdf.hitPoint.passThroughEvent = rng.floatValue();
 			return true;
+		}
 		MaterialConstPtr child;
 		if (selected->GetType() == TWOSIDED) {
 			const auto &two = static_cast<const TwoSidedMaterial &>(*selected);
@@ -115,13 +121,19 @@ bool slg::SelectCyclesBSSRDFClosure(BSDF &bsdf, TauswortheRandomGenerator &rng, 
 		} else if (selected->GetType() == MIX) {
 			const auto &mix = static_cast<const MixMaterial &>(*selected);
 			const float amount = mix.IsAdditive() ? .5f : Clamp(mix.GetMixFactor().GetFloatValue(bsdf.hitPoint), 0.f, 1.f);
-			child = rng.floatValue() < 1.f - amount ? &mix.GetMaterialA() : &mix.GetMaterialB();
-			// Mix's physical branch weight equals its sampling probability.
-			// Add's two unit weights use p=1/2, requiring a factor of two.
+			const float massA = (1.f - amount) * mix.GetMaterialA().GetNonNullSelectionProbability(bsdf.hitPoint);
+			const float massB = amount * mix.GetMaterialB().GetNonNullSelectionProbability(bsdf.hitPoint);
+			const float total = massA + massB;
+			if (!(total > 0.f)) return false;
+			child = rng.floatValue() < massA / total ? &mix.GetMaterialA() : &mix.GetMaterialB();
+			// Conditioning both the component contribution and its PDF on
+			// non-null selection cancels their shared mass. Add retains its
+			// two unit weights, giving a factor of two at each Add level.
 			if (mix.IsAdditive()) weight *= 2.f;
 		} else
 			return false;
 		bsdf.SetSubsurfaceScatteringMaterial(*child);
+		selectedBranch = true;
 	}
 	return false;
 }
@@ -219,7 +231,11 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 			alpha.c[i] = .2f;
 		}
 	}
-	const Vector wo = bsdf.GetFrame().ToLocal(bsdf.hitPoint.fixedDir);
+	const Vector fixed = bsdf.GetFrame().ToLocal(bsdf.hitPoint.fixedDir);
+	const float side = fixed.z < 0.f ? -1.f : 1.f;
+	const Vector wo = side * fixed;
+	// Cycles face-forwards its shading frame at an inside/back-facing
+	// entry too. Transparent branches can expose that side of a shell.
 	if (!(wo.z > 0.f)) {
 		weight = Spectrum();
 		return false;
@@ -227,8 +243,8 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 	const Vector h = SampleVisibleGGX(wo, p.roughness, rng.floatValue(), rng.floatValue());
 	const float eta = 1.f / p.ior, cosHI = Dot(h, wo);
 	const float cosHT = sqrtf(Max(0.f, 1.f - eta * eta * (1.f - cosHI * cosHI)));
-	const Vector direction = Normalize(bsdf.GetFrame().ToWorld(-eta * wo + (eta * cosHI - cosHT) * h));
-	if (!(Dot(direction, bsdf.hitPoint.geometryN) < 0.f)) {
+	const Vector direction = Normalize(bsdf.GetFrame().ToWorld(side * (-eta * wo + (eta * cosHI - cosHT) * h)));
+	if (!(side * Dot(direction, bsdf.hitPoint.geometryN) < 0.f)) {
 		weight = Spectrum();
 		return false;
 	}
@@ -291,6 +307,11 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 			const Point exit = walk(boundary.t);
 			bsdf.Init(scene, boundary.meshIndex, boundary.triangleIndex, exit,
 					boundary.b1, boundary.b2, entryRay.time, rng.floatValue(), &volumes);
+			// Cycles shades the escape with a reversed ray, so an outside
+			// walk returning into the shell must scatter on its inside face.
+			const float exitSide = Dot(walk.d, bsdf.hitPoint.geometryN) < 0.f ? -1.f : 1.f;
+			bsdf.hitPoint.fixedDir = exitSide * Vector(bsdf.hitPoint.geometryN);
+			bsdf.hitPoint.intoObject = exitSide > 0.f;
 			bsdf.SetSubsurfaceExitMaterial(material->GetExitMaterial());
 			weight *= throughput;
 			return true;

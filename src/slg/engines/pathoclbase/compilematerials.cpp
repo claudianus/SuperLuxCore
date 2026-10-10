@@ -148,6 +148,12 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 		return evalOpStackSize + 3;
 	}
 	if (opType == slg::ocl::EVAL_GET_NON_NULL_SELECTION_PROBABILITY) {
+		if (mat->type == slg::ocl::TWOSIDED && mat->hasNullLobes) {
+			evalOpStackSize += CompileMaterialOps(matIndex, slg::ocl::EVAL_TWOSIDED_SETUP, evalOps);
+			evalOpStackSize += CompileMaterialConditionalOps(matIndex,
+					mat->twosided.frontMatIndex, opType, mat->twosided.backMatIndex, opType, evalOps);
+			return evalOpStackSize;
+		}
 		if (mat->type == slg::ocl::MIX && mat->hasNullLobes) {
 			evalOpStackSize += CompileMaterialOps(mat->mix.matAIndex, opType, evalOps);
 			evalOpStackSize += CompileMaterialOps(mat->mix.matBIndex, opType, evalOps);

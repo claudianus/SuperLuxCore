@@ -541,21 +541,21 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 			for (const auto material : referenced)
 				mixed |= material->GetType() == MIX && material->HasCyclesBSSRDF();
 			// A selected component currently shares the entry frame. Reject
-			// contexts requiring conditional null selection or a new frame.
+			// explicit opacity overrides and contexts requiring a new frame.
 			if (mixed) {
 				for (const auto material : referenced)
-					if (material->HasNullLobes() || material->GetFrontTransparencyTexture() ||
-							material->GetBackTransparencyTexture() || material->GetBumpTexture() ||
+					if ((material->GetType() != NULLMAT && (material->GetFrontTransparencyTexture() ||
+							material->GetBackTransparencyTexture())) || material->GetBumpTexture() ||
 							material->GetInteriorVolume() || material->GetExteriorVolume() ||
 							GetScene().HasDefaultWorldVolume())
-						throw runtime_error("Experimental cyclesbssrdf mixed closures with null, Normal/Bump or Volume contexts remain unsupported: " + material->GetName());
+						throw runtime_error("Experimental cyclesbssrdf mixed closures with explicit opacity, Normal/Bump or Volume contexts remain unsupported: " + material->GetName());
 			}
 			std::vector<std::pair<const Material *, unsigned>> pending{{&root, 0u}};
 			while (!pending.empty()) {
 				const auto entry = pending.back();
 				pending.pop_back();
 				const auto material = entry.first;
-				if (!material->HasCyclesBSSRDF()) continue;
+				if (!material->HasCyclesBSSRDF() && !material->HasNullLobes()) continue;
 				if (entry.second >= 64u)
 					throw runtime_error("Experimental cyclesbssrdf closure selection exceeds 64 levels");
 				if (material->GetType() == MIX) {

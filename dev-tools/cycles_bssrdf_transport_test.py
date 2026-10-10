@@ -189,14 +189,14 @@ for name, overrides in (
 session(scene(nested_mix=True))
 record('nested-twosided-mix-accepted', {})
 null_mix = scene(nested_mix=True)
-null_mix.Parse(properties({'scene.materials.other.type': 'null'}))
+null_mix.Parse(properties({'scene.materials.mix.type': 'mix', 'scene.materials.mix.material1': 'body', 'scene.materials.mix.material2': 'other', 'scene.materials.mix.transparency': .25}))
 try:
     session(null_mix)
 except RuntimeError as error:
-    assert 'mixed closures with null' in str(error), str(error)
-    record('nested-null-mix-rejected-before-workers', {'message': str(error)})
+    assert 'mixed closures with explicit opacity' in str(error), str(error)
+    record('mixed-explicit-opacity-rejected-before-workers', {'message': str(error)})
 else:
-    raise AssertionError('Null-conditioned mixed BSSRDF must reject before workers start')
+    raise AssertionError('Explicit opacity mixed BSSRDF must reject before workers start')
 
 session(scene(unused=True), {'path.cyclesbssrdf.experimental.enable': None})
 record('unused-experimental-material-does-not-block-ordinary-scene', {})
@@ -358,6 +358,60 @@ expected = (positive['RGB'][center] + other['RGB'][center]).mean(axis=(0, 1))
 error = float(np.abs(measured - expected).max())
 assert error < .025, (measured, expected)
 record('nested-add-unit-weights', {'rgb_mean': measured.tolist(), 'expected': expected.tolist(), 'max_error': error})
+
+
+def transparent_scene(kind='cyclesbssrdf', radius=(.3, .3, .3), amount=.5, additive=False, nested=False):
+    scn = scene(kind=kind, radius=radius, nested_mix=True)
+    values = {'scene.materials.other.type': 'null', 'scene.materials.other.transparency': (1., 1., 1.),
+              'scene.materials.mix.type': 'mix', 'scene.materials.mix.material1': 'body',
+              'scene.materials.mix.material2': 'other', 'scene.materials.mix.amount': amount,
+              'scene.materials.mix.additive': additive,
+              'scene.materials.wrap.type': 'twosided', 'scene.materials.wrap.frontmaterial': 'mix',
+              'scene.materials.wrap.backmaterial': 'mix', 'scene.materials.wrap.id': 991}
+    if nested:
+        scn.Parse(properties({'scene.materials.clear.type': 'null',
+                              'scene.materials.ordinary.type': 'matte', 'scene.materials.ordinary.kd': .2}))
+        values.update({'scene.materials.other.type': 'mix', 'scene.materials.other.material1': 'ordinary',
+                       'scene.materials.other.material2': 'clear', 'scene.materials.other.amount': .7})
+        values.pop('scene.materials.other.transparency')
+    scn.Parse(properties(values))
+    return scn
+
+transparent_references = {}
+for amount, additive, nested in ((0., False, False), (.5, False, False), (1., False, False),
+                                 (.5, True, False), (.4, False, True)):
+    label = 'null-mix-' + str(amount) + '-add-' + str(additive) + '-nested-' + str(nested)
+    local = render(transparent_scene(radius=(0., 0., 0.), amount=amount, additive=additive, nested=nested))
+    ordinary = render(transparent_scene(kind='matte', amount=amount, additive=additive, nested=nested))
+    error = float(np.abs(local['RGB'][center].mean(axis=(0, 1)) - ordinary['RGB'][center].mean(axis=(0, 1))).max())
+    assert error < .015, (label, error)
+    alpha_error = float(np.abs(local['ALPHA'][center].mean() - ordinary['ALPHA'][center].mean()))
+    assert alpha_error < .015, (label, alpha_error)
+    record(label + '-local-vs-ordinary', {'max_mean_error': error, 'alpha_mean_error': alpha_error})
+    nonlocal_pixels = render(transparent_scene(amount=amount, additive=additive, nested=nested))
+    mean = nonlocal_pixels['RGB'][center].mean(axis=(0, 1))
+    assert np.isfinite(nonlocal_pixels['RGB']).all() and np.all(mean > .05), (label, mean)
+    if amount == 0.:
+        assert np.max(np.abs(mean - reference_mean)) < .015, mean
+    if amount == 1.:
+        assert np.allclose(mean, 1., atol=.008), mean
+    transparent_references[label] = mean
+    record(label + '-nonlocal-reference', {'rgb_mean': mean.tolist(), 'alpha_mean': float(nonlocal_pixels['ALPHA'][center].mean())})
+
+
+def inside_scene():
+    scn = transparent_scene(amount=.5)
+    scn.Parse(properties({'scene.camera.type': 'orthographic',
+                          'scene.camera.lookat.orig': (0., 0., 0.),
+                          'scene.camera.lookat.target': (0., 4., 0.),
+                          'scene.camera.up': (0., 0., 1.),
+                          'scene.camera.screenwindow': (-1.3, 1.3, -1.3, 1.3)}))
+    return scn
+
+inside = render(inside_scene())
+inside_mean = inside['RGB'][center].mean(axis=(0, 1))
+assert np.isfinite(inside['RGB']).all() and np.all(inside_mean > .505), inside_mean
+record('inside-back-facing-entry-random-walk', {'rgb_mean': inside_mean.tolist()})
 
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 folder.mkdir(parents=True, exist_ok=True)

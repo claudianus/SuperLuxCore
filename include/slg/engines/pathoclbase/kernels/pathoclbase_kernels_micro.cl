@@ -126,22 +126,30 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
 	s->seed = state->seedPassThroughEvent;
 	(void)CyclesBSSRDF_Random(s);
+	bool selectedBranch = false;
 	for (uint depth = 0u; depth < 64u; ++depth) {
-		if (!mats[matIndex].hasCyclesBSSRDF || mats[matIndex].type == CYCLES_BSSRDF) break;
+		if ((!mats[matIndex].hasCyclesBSSRDF && !mats[matIndex].hasNullLobes) || mats[matIndex].type == CYCLES_BSSRDF) break;
 		if (mats[matIndex].type == TWOSIDED)
 			matIndex = bsdf->hitPoint.intoObject ? mats[matIndex].twosided.frontMatIndex : mats[matIndex].twosided.backMatIndex;
 		else if (mats[matIndex].type == MIX) {
 			const bool additive = mats[matIndex].mix.additive;
 			const float amount = additive ? .5f : clamp(Texture_GetFloatValue(
 					mats[matIndex].mix.mixFactorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
-			matIndex = CyclesBSSRDF_Random(s) < 1.f - amount ? mats[matIndex].mix.matAIndex : mats[matIndex].mix.matBIndex;
+			const uint childA = mats[matIndex].mix.matAIndex, childB = mats[matIndex].mix.matBIndex;
+			const float massA = (1.f - amount) * Material_GetNonNullSelectionProbability(childA, &bsdf->hitPoint MATERIALS_PARAM);
+			const float massB = amount * Material_GetNonNullSelectionProbability(childB, &bsdf->hitPoint MATERIALS_PARAM);
+			const float total = massA + massB;
+			if (!(total > 0.f)) return -1;
+			matIndex = CyclesBSSRDF_Random(s) < massA / total ? childA : childB;
 			if (additive) VSTORE3F(2.f * VLOAD3F(state->throughput.c), state->throughput.c);
 		} else return -1;
 		bsdf->materialIndex = matIndex;
 		bsdf->nullSelectionConditioned = false;
+		selectedBranch = true;
 	}
+	if (selectedBranch) bsdf->hitPoint.passThroughEvent = CyclesBSSRDF_Random(s);
 	if (mats[matIndex].type != CYCLES_BSSRDF)
-		return mats[matIndex].hasCyclesBSSRDF ? -1 : 0;
+		return mats[matIndex].hasCyclesBSSRDF || mats[matIndex].hasNullLobes ? -1 : 0;
 	__global const CyclesBSSRDFParam *p = &mats[matIndex].cyclesbssrdf;
 	const float scale = Texture_GetFloatValue(p->scaleTexIndex, &bsdf->hitPoint TEXTURES_PARAM);
 	const float3 radius = fmax(Texture_GetSpectrumValue(p->radiusTexIndex, &bsdf->hitPoint TEXTURES_PARAM) * scale, BLACK);
@@ -179,13 +187,15 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	}
 	const float roughness = clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
 	const float ior = clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f);
-	const float3 wo = Frame_ToLocal(&bsdf->frame, VLOAD3F(&bsdf->hitPoint.fixedDir.x));
+	const float3 fixed = Frame_ToLocal(&bsdf->frame, VLOAD3F(&bsdf->hitPoint.fixedDir.x));
+	const float side = fixed.z < 0.f ? -1.f : 1.f;
+	const float3 wo = side * fixed;
 	if (!(wo.z > 0.f)) return -1;
 	const float3 h = CyclesBSSRDF_GGX(wo, roughness, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
 	const float eta = 1.f / ior, cosHI = dot(h, wo);
 	const float cosHT = sqrt(fmax(0.f, 1.f - eta * eta * (1.f - cosHI * cosHI)));
-	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, -eta * wo + (eta * cosHI - cosHT) * h));
-	if (!(dot(direction, VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f)) return -1;
+	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, side * (-eta * wo + (eta * cosHI - cosHT) * h)));
+	if (!(side * dot(direction, VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f)) return -1;
 	const float time = ray->time;
 	Ray_Init2(ray, BSDF_GetRayOrigin(bsdf, direction), direction, time);
 	s->entryMesh = bsdf->sceneObjectIndex;
@@ -218,8 +228,9 @@ OPENCL_FORCE_INLINE void CyclesBSSRDF_Resolve(__global GPUTask *task, __global G
 	if (escaped) {
 		VSTORE3F(VLOAD3F(state->throughput.c) * throughput, state->throughput.c);
 		BSDF_Init(&state->bsdf, false, ray, hit, CyclesBSSRDF_Random(s), &pathInfo->volume MATERIALS_PARAM);
-		VSTORE3F(VLOAD3F(&state->bsdf.hitPoint.geometryN.x), &state->bsdf.hitPoint.fixedDir.x);
-		state->bsdf.hitPoint.intoObject = true;
+		const float exitSide = dot(VLOAD3F(&ray->d.x), VLOAD3F(&state->bsdf.hitPoint.geometryN.x)) < 0.f ? -1.f : 1.f;
+		VSTORE3F(exitSide * VLOAD3F(&state->bsdf.hitPoint.geometryN.x), &state->bsdf.hitPoint.fixedDir.x);
+		state->bsdf.hitPoint.intoObject = exitSide > 0.f;
 		state->bsdf.triangleLightSourceIndex = NULL_INDEX;
 		state->bsdf.nullSelectionConditioned = false;
 		state->bsdf.cyclesBSSRDFPhase = 2u;

@@ -39,6 +39,15 @@ public:
 	bool HasCyclesBSSRDF() const override { return frontMat->HasCyclesBSSRDF() || backMat->HasCyclesBSSRDF(); }
 	virtual BSDFEvent GetEventTypes() const { return eventTypes; };
 
+	bool HasNullLobes() const override {
+		return !(frontTransparencyTex || backTransparencyTex) &&
+				(frontMat->HasNullLobes() || backMat->HasNullLobes());
+	}
+	float GetNonNullSelectionProbability(const HitPoint &hitPoint) const override {
+		return HasNullLobes() ? (hitPoint.intoObject ? frontMat : backMat)->
+				GetNonNullSelectionProbability(hitPoint) : 1.f;
+	}
+
 	virtual bool IsLightSource() const { return isLightSource; }
 	virtual bool IsDelta() const { return isDelta; }
 
