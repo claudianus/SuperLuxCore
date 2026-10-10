@@ -60,6 +60,10 @@ public:
 	MaterialRef GetMaterial() { return mat; }
 	u_int GetID() const { return objID; }
 	bool IsCameraInvisible() const { return cameraInvisible; }
+	// Explicit identity of one scattering object split into material meshes.
+	// Object/AOV IDs may be shared by unrelated objects and are not this identity.
+	const std::string &GetSubsurfaceGroup() const { return subsurfaceGroup; }
+	void SetSubsurfaceGroup(const std::string &group) { subsurfaceGroup = group; }
 
 	// Cryptomatte float id (murmur3 of the object name), lazily cached.
 	float GetCryptoID() const {
@@ -122,6 +126,7 @@ private:
 	u_int bakeMapUVIndex;
 
 	bool cameraInvisible;
+	std::string subsurfaceGroup;
 
 	u_longlong linkGroupMask = 0, linkAcceptMask = 0;
 	bool linkExclude = false;

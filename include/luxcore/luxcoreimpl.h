@@ -454,6 +454,7 @@ public:
 	void UpdateObjectMaterial(
 		const std::string &objName, const std::string &matName
 	);
+	void SetObjectSubsurfaceGroup(const std::string &objName, const std::string &group);
 
 	void DeleteObject(const std::string &objName);
 	void DeleteObjects(std::vector<std::string> &objNames);

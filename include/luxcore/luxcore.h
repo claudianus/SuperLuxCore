@@ -1307,6 +1307,13 @@ public:
 	 */
 	static luxrays::TriangleBuffer AllocTrianglesBuffer(const unsigned int meshTriCount);
 
+	/*!
+	 * \brief Group material partitions of one subsurface scattering object.
+	 * Empty groups retain mesh-local boundaries. Assign a distinct group to
+	 * every duplicated instance; DuplicateObject never inherits this group.
+	 */
+	virtual void SetObjectSubsurfaceGroup(const std::string &objName, const std::string &group) = 0;
+
 protected:
 	Scene() = default;
 	virtual void DefineImageMapUChar(const std::string &imgMapName,

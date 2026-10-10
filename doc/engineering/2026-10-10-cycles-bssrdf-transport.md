@@ -95,3 +95,5 @@ Native harness: `dev-tools/cycles_bssrdf_transport_test.py`.
 Blender harnesses in the sibling addon checkout:
 `dev-tools/cycles-bssrdf-experimental-test.py` and
 `dev-tools/cycles-bssrdf-experimental-scene-test.py`.
+
+Follow-up: [CPU material partition and instance boundary verification](2026-10-10-cycles-bssrdf-object-groups.md). The original candidate evidence above remains preserved separately.

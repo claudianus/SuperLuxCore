@@ -1709,6 +1709,13 @@ void SceneImpl::UpdateObjectMaterial(const std::string &objName, const std::stri
 	API_END();
 }
 
+void SceneImpl::SetObjectSubsurfaceGroup(const std::string &objName, const std::string &group) {
+	API_BEGIN("{}, {}", ToArgString(objName), ToArgString(group));
+	scenePropertiesCache->Clear();
+	GetSlgScene().SetObjectSubsurfaceGroup(objName, group);
+	API_END();
+}
+
 void SceneImpl::DeleteObject(const string &objName) {
 	API_BEGIN("{}", ToArgString(objName));
 

@@ -241,6 +241,7 @@ public:
 	void DuplicateObject(const std::string &srcObjName, const std::string &dstObjName,
 			const luxrays::MotionSystem &ms, const u_int dstObjID);
 	void UpdateObjectMaterial(const std::string &objName, const std::string &matName);
+	void SetObjectSubsurfaceGroup(const std::string &objName, const std::string &group);
 	void UpdateObjectTransformation(const std::string &objName, const luxrays::Transform &trans);
 
 	void RemoveUnusedImageMaps();

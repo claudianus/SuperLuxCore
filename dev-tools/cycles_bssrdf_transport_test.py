@@ -50,7 +50,8 @@ def properties(values):
 
 
 def scene(kind='cyclesbssrdf', color=(.45, .45, .45), radius=(.3, .3, .3),
-          nested_mix=False, embedded=False, unused=False):
+          nested_mix=False, embedded=False, unused=False, partitioned=False,
+          grouped=True, foreign_shared_id=False):
     props = properties({
         'scene.camera.type': 'orthographic',
         'scene.camera.lookat.orig': (0., -4., 0.),
@@ -75,6 +76,23 @@ def scene(kind='cyclesbssrdf', color=(.45, .45, .45), radius=(.3, .3, .3),
         'scene.lights.env.type': 'constantinfinite',
         'scene.lights.env.color': (1., 1., 1.),
     })
+    if partitioned:
+        # Same closed object, but its camera-facing material partition has
+        # only two triangles. The other material must bound the walk without
+        # re-evaluating its black color as the entry scattering coefficients.
+        vertices = [props.Get('scene.objects.body.vertices').GetFloat(i) for i in range(24)]
+        faces = [props.Get('scene.objects.body.faces').GetInt(i) for i in range(36)]
+        props.Set(properties({'scene.objects.body.faces': faces[12:18],
+                              'scene.materials.partition.type': 'matte',
+                              'scene.materials.partition.kd': 0.,
+                              'scene.objects.partition.material': 'partition',
+                              'scene.objects.partition.vertices': vertices,
+                              'scene.objects.partition.faces': faces[:12] + faces[18:],
+                              'scene.objects.partition.id': 777,
+                              'scene.objects.body.subsurfacegroup': 'one-physical-object' if grouped else '',
+                              'scene.objects.partition.subsurfacegroup': 'one-physical-object' if grouped else ''}))
+    if foreign_shared_id:
+        props.Set(properties({'scene.objects.body.subsurfacegroup': 'one-physical-object'}))
     if nested_mix:
         props.Set(properties({'scene.materials.other.type': 'matte',
                               'scene.materials.other.kd': .5,
@@ -92,6 +110,9 @@ def scene(kind='cyclesbssrdf', color=(.45, .45, .45), radius=(.3, .3, .3),
                               'scene.objects.foreign.vertices': (-.9, 0., -.9, .9, 0., -.9,
                                                                  .9, 0., .9, -.9, 0., .9),
                               'scene.objects.foreign.faces': (0, 1, 2, 0, 2, 3)}))
+        if foreign_shared_id:
+            props.Set(properties({'scene.objects.foreign.id': 432,
+                                  'scene.objects.foreign.subsurfacegroup': 'different-physical-object'}))
     if unused:
         props.Set(properties({'scene.materials.ordinary.type': 'matte',
                               'scene.materials.ordinary.kd': .5,
@@ -243,6 +264,53 @@ assert np.isfinite(overlap['RGB']).all()
 delta = float(np.abs(positive['RGB'][center] - overlap['RGB'][center]).mean())
 assert delta < .005, delta
 record('foreign-interior-mesh-does-not-become-bssrdf-boundary', {'pixel_mae': delta})
+same_id_overlap = render(scene(embedded=True, foreign_shared_id=True))
+delta = float(np.abs(positive['RGB'][center] - same_id_overlap['RGB'][center]).mean())
+assert delta < .006, delta
+record('shared-aov-object-id-does-not-join-foreign-boundary', {'pixel_mae': delta, 'shared_object_id': 432})
+partitioned = render(scene(partitioned=True))
+delta = float(np.abs(positive['RGB'][center] - partitioned['RGB'][center]).mean())
+reference_mean = positive['RGB'][center].mean(axis=(0, 1))
+partition_mean = partitioned['RGB'][center].mean(axis=(0, 1))
+mean_error = float(np.abs(reference_mean - partition_mean).max())
+# Mesh partitioning changes the traversal and stochastic escape sequence.
+# Test the restored radiance plus a noise guard, not pixel/bit equality.
+assert mean_error < .008 and delta < .02, (mean_error, delta, reference_mean, partition_mean)
+check_entry_aovs(partitioned, 'material-partition-entry-aovs-retained')
+record('material-partitions-form-one-scattering-boundary',
+       {'pixel_mae_vs_whole_object': delta, 'max_channel_mean_error': mean_error,
+        'whole_object_rgb_mean': reference_mean.tolist(), 'partitioned_rgb_mean': partition_mean.tolist()})
+ungrouped = render(scene(partitioned=True, grouped=False))
+ratio = float(ungrouped['RGB'][center].mean() / positive['RGB'][center].mean())
+# A large share can still escape back through the front partition. The
+# missing side/back boundaries lose the remainder, rather than all paths.
+assert ratio < .85, ratio
+record('ungrouped-open-entry-partition-reproduces-dark-failure', {'mean_ratio': ratio})
+
+# Group updates invalidate the public properties cache. Raw native duplicate
+# APIs cannot know which material partitions form each copy, so they start
+# isolated and receive their explicit instance group from the exporter.
+group_scene = scene(partitioned=True)
+assert group_scene.ToProperties().Get('scene.objects.body.subsurfacegroup').GetString() == 'one-physical-object'
+group_scene.SetObjectSubsurfaceGroup('body', 'updated-group')
+assert group_scene.ToProperties().Get('scene.objects.body.subsurfacegroup').GetString() == 'updated-group'
+group_scene.SetObjectSubsurfaceGroup('body', '')
+assert not group_scene.ToProperties().IsDefined('scene.objects.body.subsurfacegroup')
+record('subsurface-group-roundtrip-set-clear-cache', {})
+try:
+    group_scene.SetObjectSubsurfaceGroup('missing-object', 'group')
+except RuntimeError as error:
+    assert 'Unknown object' in str(error), str(error)
+    record('subsurface-group-setter-rejects-unknown-object', {})
+else:
+    raise AssertionError('Unknown scattering objects must not be silently defined')
+matrix = [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 4., 0., 0., 1.]
+for part in ('body', 'partition'):
+    group_scene.DuplicateObject(part, part + '-copy', matrix, 432)
+    assert not group_scene.ToProperties().IsDefined('scene.objects.' + part + '-copy.subsurfacegroup')
+    group_scene.SetObjectSubsurfaceGroup(part + '-copy', 'one-distinct-copy')
+    assert group_scene.ToProperties().Get('scene.objects.' + part + '-copy.subsurfacegroup').GetString() == 'one-distinct-copy'
+record('duplicated-material-partitions-do-not-inherit-source-group', {'copy_group': 'one-distinct-copy'})
 local = render(scene(radius=(0., 0., 0.)))
 matte = render(scene(kind='matte'))
 delta = float(np.abs(local['RGB'] - matte['RGB']).mean())

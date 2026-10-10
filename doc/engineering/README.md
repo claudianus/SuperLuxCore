@@ -83,3 +83,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Verified2.11.27 SSS constant-expression deployment](2026-10-10-deployment-2.11.27.md):154 guarded CI/fresh/actual checks,17 reviewed sheets; full goal active and incomplete.
 
 - [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.
+
+- [Cycles BSSRDF material partition boundaries](2026-10-10-cycles-bssrdf-object-groups.md): CPU33 contracts, exporter3 contracts and7 reviewed720p pairs; instance and hair boundaries stay separate, full goal remains active.

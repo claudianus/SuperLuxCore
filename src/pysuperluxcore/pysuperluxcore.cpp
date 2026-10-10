@@ -2894,6 +2894,8 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .def("UpdateObjectTransformation", &Scene_UpdateObjectTransformation)
     .def("UpdateObjectMaterial", &luxcore::detail::SceneImpl::UpdateObjectMaterial,
          py::call_guard<py::gil_scoped_release>())
+    .def("SetObjectSubsurfaceGroup", &luxcore::detail::SceneImpl::SetObjectSubsurfaceGroup,
+         py::call_guard<py::gil_scoped_release>())
     .def("DeleteObject", &luxcore::detail::SceneImpl::DeleteObject,
          py::call_guard<py::gil_scoped_release>())
     .def("DeleteLight", &luxcore::detail::SceneImpl::DeleteLight,

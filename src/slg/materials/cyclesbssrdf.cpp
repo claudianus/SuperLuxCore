@@ -3,6 +3,7 @@
 #include "slg/materials/twosided.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
+#include "slg/scene/sceneobjectdefs.h"
 #include "slg/utils/pathvolumeinfo.h"
 #include "luxrays/core/geometry/frame.h"
 #include "luxrays/core/color/spectral.h"
@@ -213,6 +214,7 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 	Ray walk = entryRay;
 	walk.o = bsdf.GetRayOrigin(direction);
 	walk.d = direction;
+	const std::string &entryGroup = scene.GetObjects().GetSceneObject(entryHit.meshIndex).GetSubsurfaceGroup();
 	for (unsigned bounce = 0; bounce < 256; ++bounce) {
 		float probabilities[COLOR_SAMPLES], sum = 0.f;
 		for (unsigned i = 0; i < COLOR_SAMPLES; ++i) {
@@ -238,7 +240,12 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 			const bool hit = device.TraceRay(&walk, &boundary);
 			if (!hit)
 				break;
-			if (boundary.meshIndex == entryHit.meshIndex) { escaped = true; break; }
+			if (boundary.meshIndex == entryHit.meshIndex ||
+					(!entryGroup.empty() && scene.GetObjects().GetSceneObject(boundary.meshIndex).
+							GetSubsurfaceGroup() == entryGroup)) {
+				escaped = true;
+				break;
+			}
 			// Object-local walk: overlapping objects must not become its
 			// boundary, shading closure, or a different scattering medium.
 			const float next = boundary.t + MachineEpsilon::E(boundary.t);

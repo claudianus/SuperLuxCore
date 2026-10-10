@@ -66,6 +66,8 @@ PropertiesUPtr SceneObject::ToProperties(const ExtMeshCache &extMeshCache,
 	props->Set(Property("scene.objects." + name + ".ply")(fileName));
 	props->Set(Property("scene.objects." + name + ".camerainvisible")(cameraInvisible));
 	props->Set(Property("scene.objects." + name + ".id")(objID));
+	if (!subsurfaceGroup.empty())
+		props->Set(Property("scene.objects." + name + ".subsurfacegroup")(subsurfaceGroup));
 
 	// Light linking
 	if (linkGroupNames) {

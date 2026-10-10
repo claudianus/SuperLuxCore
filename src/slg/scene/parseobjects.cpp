@@ -213,6 +213,7 @@ SceneObjectUPtr Scene::CreateObject(const u_int defaultObjID, const string &objN
 	// Build the scene object
 	auto scnObj = std::make_unique<SceneObject>(mesh, mat, objID, cameraInvisible);
 	scnObj->SetName(objName);
+	scnObj->SetSubsurfaceGroup(props.Get(Property(propName + ".subsurfacegroup")("")).Get<string>());
 
 	// Light linking: scene.objects.<name>.linkgroups = "a,b" and
 	// .linkmode = include|exclude (include = default)

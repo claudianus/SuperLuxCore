@@ -54,6 +54,13 @@ void Scene::UpdateObjectTransformation(const string &objName, const Transform &t
 	}
 }
 
+void Scene::SetObjectSubsurfaceGroup(const string &objName, const string &group) {
+	if (!objDefs->IsSceneObjectDefined(objName))
+		throw runtime_error("Unknown object in Scene::SetObjectSubsurfaceGroup(): " + objName);
+	objDefs->GetSceneObject(objName).SetSubsurfaceGroup(group);
+	editActions.AddActions(GEOMETRY_EDIT);
+}
+
 void Scene::UpdateObjectMaterial(const string &objName, const string &matName) {
 
 	if (!objDefs->IsSceneObjectDefined(objName))
