@@ -84,3 +84,73 @@ and these images do not close production SSS compatibility or convergence.
 The pure-LIGHTCPU rough/sharp regression is still running at publication of
 this initial source commit. CI and installed deployment remain unverified for
 this revision until their exact artifacts pass the relevant checks.
+
+## Exact CI artifact validation
+
+[CI run 38068653417](https://github.com/claudianus/SuperLuxCore/actions/runs/38068653417)
+built source commit `2536c51691f089ee55be6283fc5778ee71e94819`. Both macOS
+architectures, Linux and Windows wheels, CUDA NVRTC compilation, attestations
+and [rolling publication](https://github.com/claudianus/SuperLuxCore/releases/tag/wheels-latest)
+completed successfully. The signed statement's source commit and four wheel
+digests match the published release assets. The ARM wheel SHA256 is
+`7a5d8e3f45e83291b4a3543270fd033a7581f1192766699ec275eee9880ab62a`;
+the loaded native SHA256 is
+`8c05e75cf59e5c2577a55b5d2426531731ac924e40af983836a405f120ea96a2`.
+Package metadata remains 2.11.27; these hashes identify the rolling revision.
+
+That complete, unchanged CI wheel passed CPU50/hybrid23, CPU50/rough22/sharp18,
+actual Metal57, ordinary PSR3, guarded emission/MNEE15 and CPU black-film halt3.
+Maximum channel-mean errors were 1.1821% hybrid, 2.5111% rough adjoint and
+0.7177% sharp adjoint. The declared 3% gates and sample budgets were unchanged;
+no retries or relaxed thresholds were used for these transport runs. Twelve
+original 1280x720 Cycles/native PNGs were directly reviewed. Against the same
+wheel's independent CPU eye, body-region errors were 0.8944%/0.4744% for
+sharp/rough hybrid and 0.9204%/0.0864% for Metal eye. Authored graph fingerprints
+stayed unchanged. Chromatic hybrid grain remains visible, and these fixed
+private diagnostic scenes do not accept arbitrary production convergence or
+the production Cycles SSS adapter.
+
+A separate profile combined the exact CI core with the actual stable adapter.
+CPU and Metal 1280x720/128-sample renders of the ordinary Principled, 4D Voronoi,
+coat, sheen, blue glass and area-light scene completed with finite raw pixels
+and no exporter errors. Both original images were directly reviewed, including
+orientation, material colors and reflections. Residual noise remains. This
+completed preview profile was removed after whole-wheel and 266 runtime Python
+file checks; raw images and package identities are preserved under the parent
+workspace's `test-scenes/validation-2026-10-11/metropolis-startup/ci`.
+
+## Actual Blender installation
+
+The complete signed ARM CI wheel was installed into the actual Blender 5.2
+site-packages and addon wheel cache. Fresh Blender 5.2.1 LTS processes (build
+`9e2066aef7ef`) loaded native SHA `8c05e75c...` and metadata 2.11.27. Every
+wheel-owned payload file, the complete cached wheel, 266 runtime adapter Python
+files, all 374 adapter/developer Python files and user settings were checked.
+The stable Cycles reader remains SHA
+`7dd35540ac9a1fcffdbd4b1aeb2684957f51164e799a30b93cc6d271fcb6a235`;
+the production BSSRDF adapter was not switched. Fresh registration was checked
+again after both renders and the installed PSR3 regression completed.
+
+Actual installed CPU and Metal 1280x720/128-sample spectral renders of the same
+ordinary-material scene produced finite raw pixels and no exporter errors.
+Both original PNGs were directly reviewed. Their maximum relative channel-mean
+difference was 0.1246%. Residual grain at this denoiser-off budget is visible;
+these frames do not establish arbitrary-scene convergence or a speedup.
+The runs report the known ignored Eevee-only light-probe-volume flags.
+
+The previous exact CI whole wheel (native SHA `aba55215...`, wheel SHA
+`814210ce...`) is already preserved as a rollback artifact; the installation
+records its path and verifies the complete previous payload without creating
+another duplicate wheel. An initial installation preflight stopped before any
+core writes because it compared runtime-only Python inventory with installed
+developer tools. That diagnostic is preserved, the inventory scope was fixed,
+and all 374 files were subsequently verified unchanged. It is excluded from
+passing render evidence.
+
+After all owned children completed and were reaped, the CI temporary profile
+was removed following 459 profile-file and 75 source-file checks. Complete CI
+wheel, numerical results, original raw/PNG images, signatures, failed diagnostics
+and identities remain in the workspace evidence directory. The full Cycles
+scene goal remains active: production positive-radius SSS adapter exposure,
+GPU adjoint/mixed/textured/spatial PDF/MIS, chromatic grain and broader workflows
+are not closed by this common-core deployment. GUI hot reload was not verified.
