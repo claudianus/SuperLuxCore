@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "slg/materials/cyclesbssrdf.h"
+#include "slg/materials/cyclesbssrdf_boundary.h"
 #include "slg/materials/twosided.h"
 #include "slg/materials/mix.h"
 #include "slg/bsdf/bsdf.h"
@@ -138,20 +139,6 @@ bool slg::SelectCyclesBSSRDFClosure(BSDF &bsdf, TauswortheRandomGenerator &rng, 
 	return false;
 }
 
-static Vector SampleVisibleGGX(const Vector &v, float alpha, float u0, float u1) {
-	if (alpha == 0.f)
-		return Vector(0.f, 0.f, 1.f);
-	const Vector vh = Normalize(Vector(alpha * v.x, alpha * v.y, v.z));
-	const float lensq = vh.x * vh.x + vh.y * vh.y;
-	const Vector t1 = lensq > 0.f ? Vector(-vh.y, vh.x, 0.f) / sqrtf(lensq) : Vector(1.f, 0.f, 0.f);
-	const Vector t2 = Cross(vh, t1);
-	const float r = sqrtf(u0), phi = 2.f * M_PI * u1;
-	const float x = r * cosf(phi), s = .5f * (1.f + vh.z);
-	const float y = (1.f - s) * sqrtf(Max(0.f, 1.f - x * x)) + s * r * sinf(phi);
-	const Vector nh = x * t1 + y * t2 + sqrtf(Max(0.f, 1.f - x * x - y * y)) * vh;
-	return Normalize(Vector(alpha * nh.x, alpha * nh.y, Max(0.f, nh.z)));
-}
-
 static float VanDeHulstAlpha(float albedo, float g) {
 	const float s = 4.20863f * albedo + 4.09712f -
 			sqrtf(9.59217f + 41.6808f * albedo + 17.7126f * albedo * albedo);
@@ -240,10 +227,9 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 		weight = Spectrum();
 		return false;
 	}
-	const Vector h = SampleVisibleGGX(wo, p.roughness, rng.floatValue(), rng.floatValue());
-	const float eta = 1.f / p.ior, cosHI = Dot(h, wo);
-	const float cosHT = sqrtf(Max(0.f, 1.f - eta * eta * (1.f - cosHI * cosHI)));
-	const Vector direction = Normalize(bsdf.GetFrame().ToWorld(side * (-eta * wo + (eta * cosHI - cosHT) * h)));
+	const auto boundary = cyclesbssrdfboundary::CyclesBSSRDF_SampleEntryBoundary(
+			wo, p.ior, p.roughness, rng.floatValue(), rng.floatValue());
+	const Vector direction = Normalize(bsdf.GetFrame().ToWorld(side * boundary.direction));
 	if (!(side * Dot(direction, bsdf.hitPoint.geometryN) < 0.f)) {
 		weight = Spectrum();
 		return false;

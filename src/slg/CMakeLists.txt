@@ -98,6 +98,7 @@ endif(APPLE)
 ###########################################################################
 
 set(SLG_KERNELS
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/cyclesbssrdf_boundary.cl
   ${PROJECT_SOURCE_DIR}/include/slg/cameras/camera_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/cameras/camera_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/engines/caches/photongi/pgic_types.cl
@@ -579,6 +580,7 @@ file(MAKE_DIRECTORY ${generated_kernels_dir})
 PreprocessOCLKernels(${generated_kernels_dir} slg ${SLG_KERNELS})
 
 set(SLG_KERNEL_SRCS
+  ${generated_kernels_dir}/cyclesbssrdf_boundary_kernel.cpp
   ${generated_kernels_dir}/sampler_types_kernel.cpp
   ${generated_kernels_dir}/sampler_funcs_kernel.cpp
   ${generated_kernels_dir}/sampler_random_funcs_kernel.cpp

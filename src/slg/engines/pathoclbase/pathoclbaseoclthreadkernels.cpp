@@ -216,6 +216,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 	ssKernel <<
 			slg::ocl::KernelSource_materialdefs_funcs_generic <<
 			slg::ocl::KernelSource_materialdefs_funcs_microfacet <<
+			slg::ocl::KernelSource_cyclesbssrdf_boundary <<
 			slg::ocl::KernelSource_materialdefs_funcs_default <<
 			slg::ocl::KernelSource_materialdefs_funcs_thinfilmcoating <<
 			slg::ocl::KernelSource_materialdefs_funcs_archglass <<

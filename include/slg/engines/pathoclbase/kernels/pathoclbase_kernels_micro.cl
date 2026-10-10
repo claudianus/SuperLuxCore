@@ -69,19 +69,6 @@ OPENCL_FORCE_INLINE float CyclesBSSRDF_Alpha(const float albedo, const float g) 
 	return clamp((1.f - a * a) / (1.f - g * a * a), 0.f, .999999f);
 }
 
-OPENCL_FORCE_INLINE float3 CyclesBSSRDF_GGX(const float3 v, const float alpha, const float u0, const float u1) {
-	if (alpha == 0.f) return MAKE_FLOAT3(0.f, 0.f, 1.f);
-	const float3 vh = normalize(MAKE_FLOAT3(alpha * v.x, alpha * v.y, v.z));
-	const float l = vh.x * vh.x + vh.y * vh.y;
-	const float3 t1 = l > 0.f ? MAKE_FLOAT3(-vh.y, vh.x, 0.f) / sqrt(l) : MAKE_FLOAT3(1.f, 0.f, 0.f);
-	const float3 t2 = cross(vh, t1);
-	const float r = sqrt(u0), phi = 2.f * M_PI_F * u1;
-	const float x = r * cos(phi), mix = .5f * (1.f + vh.z);
-	const float y = (1.f - mix) * sqrt(fmax(0.f, 1.f - x * x)) + mix * r * sin(phi);
-	const float3 n = x * t1 + y * t2 + sqrt(fmax(0.f, 1.f - x * x - y * y)) * vh;
-	return normalize(MAKE_FLOAT3(alpha * n.x, alpha * n.y, fmax(0.f, n.z)));
-}
-
 OPENCL_FORCE_INLINE float3 CyclesBSSRDF_Phase(const float3 direction, const float g, const float u0, const float u1) {
 	float c;
 	if (fabs(g) < 1e-6f) c = 1.f - 2.f * u0;
@@ -191,10 +178,9 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	const float side = fixed.z < 0.f ? -1.f : 1.f;
 	const float3 wo = side * fixed;
 	if (!(wo.z > 0.f)) return -1;
-	const float3 h = CyclesBSSRDF_GGX(wo, roughness, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
-	const float eta = 1.f / ior, cosHI = dot(h, wo);
-	const float cosHT = sqrt(fmax(0.f, 1.f - eta * eta * (1.f - cosHI * cosHI)));
-	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, side * (-eta * wo + (eta * cosHI - cosHT) * h)));
+	const CyclesBSSRDFBoundarySample boundary = CyclesBSSRDF_SampleEntryBoundary(
+			wo, ior, roughness, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
+	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, side * boundary.direction));
 	if (!(side * dot(direction, VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f)) return -1;
 	const float time = ray->time;
 	Ray_Init2(ray, BSDF_GetRayOrigin(bsdf, direction), direction, time);

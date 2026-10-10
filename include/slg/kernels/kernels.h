@@ -74,6 +74,7 @@ extern std::string KernelSource_materialdefs_funcs_matte;
 extern std::string KernelSource_materialdefs_funcs_matte_translucent;
 extern std::string KernelSource_materialdefs_funcs_metal2;
 extern std::string KernelSource_materialdefs_funcs_microfacet;
+extern std::string KernelSource_cyclesbssrdf_boundary;
 extern std::string KernelSource_materialdefs_funcs_mirror;
 extern std::string KernelSource_materialdefs_funcs_mix;
 extern std::string KernelSource_materialdefs_funcs_openpbr;
