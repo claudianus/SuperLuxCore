@@ -1157,12 +1157,15 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		// Record the camera-visible entry's AOVs and emission before a
 		// nonlocal walk moves this scattering vertex to another surface.
 		// Absorption terminates the path; it is not a miss/environment hit.
-		if (ResolveCyclesBSSRDF(*bsdf.GetMaterial(), bsdf.hitPoint)) {
+		if (bsdf.GetMaterial()->HasCyclesBSSRDF()) {
 			TauswortheRandomGenerator subsurfaceRng(passThrough);
 			subsurfaceRng.uintValue();
+			if (!SelectCyclesBSSRDFClosure(bsdf, subsurfaceRng, pathThroughput))
+				break;
 			if (!SampleCyclesBSSRDF(scene, device, eyeRay, eyeRayHit,
 					pathInfo.volume, bsdf, subsurfaceRng, pathThroughput))
 				break;
+			sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolume());
 		}
 
 		// Path guiding: the pending record's target is radiance arriving

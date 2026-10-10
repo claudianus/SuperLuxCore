@@ -79,6 +79,7 @@ void MixMaterial::Preprocess() {
 
 	isLightSource = IsLightSourceImpl();
 	isDelta = IsDeltaImpl();
+	hasCyclesBSSRDF = matA->HasCyclesBSSRDF() || matB->HasCyclesBSSRDF();
 	// An explicit material-opacity override replaces child pass-through
 	// selection, so it must not trigger null-closure conditioning.
 	hasNullLobes = !(frontTransparencyTex || backTransparencyTex) &&

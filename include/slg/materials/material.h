@@ -106,6 +106,7 @@ public:
 	bool IsUsingPrimitiveArea() const { return usePrimitiveArea; }
 
 	virtual MaterialType GetType() const = 0;
+	virtual bool HasCyclesBSSRDF() const { return GetType() == CYCLES_BSSRDF; }
 	virtual BSDFEvent GetEventTypes() const = 0;
 
 	virtual bool IsLightSource() const {

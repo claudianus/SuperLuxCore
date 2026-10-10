@@ -222,6 +222,12 @@ public:
 	luxrays::Spectrum GetBakeMapValue() const;
 
 	void SetNullSelectionConditioned() { nullSelectionConditioned = material->HasNullLobes(); }
+	// Entry AOVs/emission are recorded before the nonlocal mixture selects
+	// a scattering component. Opaque, unbumped mixtures retain this frame.
+	void SetSubsurfaceScatteringMaterial(MaterialConstRef selected) {
+		material = &selected;
+		nullSelectionConditioned = false;
+	}
 	void SetSubsurfaceExitMaterial(MaterialConstRef diffuseExit) {
 		material = &diffuseExit;
 		triangleLightSource = nullptr;

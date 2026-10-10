@@ -102,9 +102,30 @@ for mode in ('off', 'on'):
     assert np.allclose(means, .45, atol=.008), means
     record(mode + '-dynamic-zero-scale', rgb_mean=means.tolist())
 
+
+    for amount, additive in ((0., False), (.25, False), (.75, False), (1., False), (.5, True)):
+        mixed_scene = scene(nested_mix=True)
+        mixed_scene.Parse(props({'scene.materials.mix.type': 'mix',
+                                'scene.materials.mix.material1': 'body',
+                                'scene.materials.mix.material2': 'other',
+                                'scene.materials.mix.amount': amount,
+                                'scene.materials.mix.additive': additive}))
+        mixed = render(mixed_scene, overrides)
+        measured = mixed['RGB'][center].mean(axis=(0, 1))
+        expected = mean + .5 if additive else (1. - amount) * mean + amount * .5
+        error = float(np.abs(measured - expected).max())
+        assert error < .015, (amount, additive, measured, expected)
+        record(mode + '-mixed-weight-' + str(amount) + '-add-' + str(additive),
+               rgb_mean=measured.tolist(), expected=expected.tolist(), max_error=error)
+    mixed_local = scene(nested_mix=True, radius=(0., 0., 0.))
+    pixels = render(mixed_local, overrides)
+    measured = pixels['RGB'][center].mean(axis=(0, 1))
+    assert np.allclose(measured, .475, atol=.008), measured
+    record(mode + '-mixed-local-radius-selected-leaf', rgb_mean=measured.tolist())
+
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 (folder / 'device-metrics.json').write_text(json.dumps({
     'native_sha256': identity['native_sha256'], 'experimental': True,
-    'production_acceptance': False, 'cpu_contracts': 33,
+    'production_acceptance': False, 'cpu_contracts': len(ns['records']),
     'records': records}, indent=2) + '\n')
 print('BSSRDF_DEVICE_COMPLETE', len(records), flush=True)

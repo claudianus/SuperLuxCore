@@ -35,6 +35,7 @@ public:
 			MaterialConstRef mA, MaterialConstRef mB, TextureConstPtr mix, const bool additive = false);
 
 	virtual MaterialType GetType() const { return MIX; }
+	bool HasCyclesBSSRDF() const override { return hasCyclesBSSRDF; }
 	virtual BSDFEvent GetEventTypes() const { return eventTypes; };
 
 	virtual bool IsLightSource() const { return isLightSource; }
@@ -108,6 +109,7 @@ private:
 	// Cached values for performance with very large material node trees
 	BSDFEvent eventTypes;
 	bool isLightSource, isDelta, hasNullLobes;
+	bool hasCyclesBSSRDF;
 
 };
 

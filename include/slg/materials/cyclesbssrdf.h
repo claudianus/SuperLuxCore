@@ -46,6 +46,8 @@ private:
 };
 
 const CyclesBSSRDFMaterial *ResolveCyclesBSSRDF(MaterialConstRef material, const HitPoint &hit);
+bool SelectCyclesBSSRDFClosure(BSDF &bsdf, luxrays::TauswortheRandomGenerator &rng,
+		luxrays::Spectrum &weight);
 bool SampleCyclesBSSRDF(SceneConstRef scene, luxrays::IntersectionDeviceRef device,
 		const luxrays::Ray &entryRay,
 		const luxrays::RayHit &entryHit, const PathVolumeInfo &volumes,

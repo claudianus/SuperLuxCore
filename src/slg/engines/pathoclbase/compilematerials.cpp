@@ -744,6 +744,7 @@ void CompiledScene::CompileMaterials() {
 		mat->eventTypes = m.GetEventTypes();
 		mat->isDelta = m.IsDelta();
 		mat->hasNullLobes = m.HasNullLobes();
+		mat->hasCyclesBSSRDF = m.HasCyclesBSSRDF();
 
 		// Material specific parameters
 		switch (m.GetType()) {

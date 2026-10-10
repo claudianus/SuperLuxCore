@@ -34,6 +34,8 @@
 #include "slg/renderconfig.h"
 #include "slg/materials/materialdefs.h"
 #include "slg/materials/cyclesbssrdf.h"
+#include "slg/materials/mix.h"
+#include "slg/materials/twosided.h"
 #include "slg/scene/sceneobjectdefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/film/film.h"
@@ -534,9 +536,38 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 		for (const auto material : referenced)
 			contains |= material->GetType() == CYCLES_BSSRDF;
 		if (contains) {
-			// A two-sided wrapper can itself contain a mix/coating subtree.
-			// Reject that subtree too, rather than losing its BSSRDF branch.
 			referenced.insert(&root);
+			bool mixed = false;
+			for (const auto material : referenced)
+				mixed |= material->GetType() == MIX && material->HasCyclesBSSRDF();
+			// A selected component currently shares the entry frame. Reject
+			// contexts requiring conditional null selection or a new frame.
+			if (mixed) {
+				for (const auto material : referenced)
+					if (material->HasNullLobes() || material->GetFrontTransparencyTexture() ||
+							material->GetBackTransparencyTexture() || material->GetBumpTexture() ||
+							material->GetInteriorVolume() || material->GetExteriorVolume() ||
+							GetScene().HasDefaultWorldVolume())
+						throw runtime_error("Experimental cyclesbssrdf mixed closures with null, Normal/Bump or Volume contexts remain unsupported: " + material->GetName());
+			}
+			std::vector<std::pair<const Material *, unsigned>> pending{{&root, 0u}};
+			while (!pending.empty()) {
+				const auto entry = pending.back();
+				pending.pop_back();
+				const auto material = entry.first;
+				if (!material->HasCyclesBSSRDF()) continue;
+				if (entry.second >= 64u)
+					throw runtime_error("Experimental cyclesbssrdf closure selection exceeds 64 levels");
+				if (material->GetType() == MIX) {
+					const auto &mix = static_cast<const MixMaterial &>(*material);
+					pending.emplace_back(&mix.GetMaterialA(), entry.second + 1u);
+					pending.emplace_back(&mix.GetMaterialB(), entry.second + 1u);
+				} else if (material->GetType() == TWOSIDED) {
+					const auto &two = static_cast<const TwoSidedMaterial &>(*material);
+					pending.emplace_back(two.GetFrontMaterial().get(), entry.second + 1u);
+					pending.emplace_back(two.GetBackMaterial().get(), entry.second + 1u);
+				}
+			}
 			for (const auto material : referenced) {
 				if (material->GetType() == CYCLES_BSSRDF) {
 					const auto &closure = static_cast<const CyclesBSSRDFMaterial &>(*material);
@@ -546,7 +577,7 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 						throw runtime_error("Experimental cyclesbssrdf material " + closure.GetName() + ": " + failure);
 					continue;
 				}
-				if (material->GetType() == TWOSIDED)
+				if (material->GetType() == TWOSIDED || material->GetType() == MIX)
 					continue;
 				std::unordered_set<const Material *> children;
 				material->AddReferencedMaterials(children);
@@ -571,7 +602,7 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 				for (const auto child : referenced)
 					// Grouped exits can land on other material partitions too.
 					if ((child->GetType() == CYCLES_BSSRDF || !objects.GetSceneObject(i).GetSubsurfaceGroup().empty()) &&
-							(child->GetBumpTexture() || child->HasAnyVolume() || GetScene().HasDefaultWorldVolume()))
+							(child->GetBumpTexture() || child->GetInteriorVolume() || child->GetExteriorVolume() || GetScene().HasDefaultWorldVolume()))
 						throw runtime_error("Experimental cyclesbssrdf device exit Normal/Bump and explicit Volume contexts remain unverified: " + child->GetName());
 			}
 			if (props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>())

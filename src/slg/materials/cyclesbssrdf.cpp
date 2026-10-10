@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "slg/materials/cyclesbssrdf.h"
 #include "slg/materials/twosided.h"
+#include "slg/materials/mix.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/scene/scene.h"
 #include "slg/scene/sceneobjectdefs.h"
@@ -89,10 +90,9 @@ PropertiesUPtr CyclesBSSRDFMaterial::ToProperties(const ImageMapCache &cache, bo
 
 const CyclesBSSRDFMaterial *slg::ResolveCyclesBSSRDF(MaterialConstRef material, const HitPoint &hit) {
 	MaterialConstPtr selected(&material);
-	// Only pure standalone closures and their two-sided wrapper are enabled
-	// in this first transport implementation. Mixed closures are rejected by
-	// RenderConfig until their selection and nonlocal densities are wired.
-	for (unsigned depth = 0; depth < 16; ++depth) {
+	// Mixed branches are selected before transport. Resolve deterministic
+	// wrappers here for callers inspecting a standalone closure.
+	for (unsigned depth = 0; depth < 64; ++depth) {
 		if (selected->GetType() == CYCLES_BSSRDF)
 			return static_cast<const CyclesBSSRDFMaterial *>(selected.get());
 		if (selected->GetType() != TWOSIDED)
@@ -101,6 +101,29 @@ const CyclesBSSRDFMaterial *slg::ResolveCyclesBSSRDF(MaterialConstRef material, 
 		selected = hit.intoObject ? two.GetFrontMaterial() : two.GetBackMaterial();
 	}
 	return nullptr;
+}
+
+bool slg::SelectCyclesBSSRDFClosure(BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
+	for (unsigned depth = 0; depth < 64; ++depth) {
+		const auto selected = bsdf.GetMaterial();
+		if (!selected->HasCyclesBSSRDF() || selected->GetType() == CYCLES_BSSRDF)
+			return true;
+		MaterialConstPtr child;
+		if (selected->GetType() == TWOSIDED) {
+			const auto &two = static_cast<const TwoSidedMaterial &>(*selected);
+			child = bsdf.hitPoint.intoObject ? two.GetFrontMaterial() : two.GetBackMaterial();
+		} else if (selected->GetType() == MIX) {
+			const auto &mix = static_cast<const MixMaterial &>(*selected);
+			const float amount = mix.IsAdditive() ? .5f : Clamp(mix.GetMixFactor().GetFloatValue(bsdf.hitPoint), 0.f, 1.f);
+			child = rng.floatValue() < 1.f - amount ? &mix.GetMaterialA() : &mix.GetMaterialB();
+			// Mix's physical branch weight equals its sampling probability.
+			// Add's two unit weights use p=1/2, requiring a factor of two.
+			if (mix.IsAdditive()) weight *= 2.f;
+		} else
+			return false;
+		bsdf.SetSubsurfaceScatteringMaterial(*child);
+	}
+	return false;
 }
 
 static Vector SampleVisibleGGX(const Vector &v, float alpha, float u0, float u1) {

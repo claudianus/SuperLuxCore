@@ -186,13 +186,17 @@ for name, overrides in (
     else:
         raise AssertionError(name + ' must reject unsupported nonlocal transport')
 
+session(scene(nested_mix=True))
+record('nested-twosided-mix-accepted', {})
+null_mix = scene(nested_mix=True)
+null_mix.Parse(properties({'scene.materials.other.type': 'null'}))
 try:
-    session(scene(nested_mix=True))
+    session(null_mix)
 except RuntimeError as error:
-    assert 'mixed closures' in str(error), str(error)
-    record('nested-twosided-mix-rejected', {'message': str(error)})
+    assert 'mixed closures with null' in str(error), str(error)
+    record('nested-null-mix-rejected-before-workers', {'message': str(error)})
 else:
-    raise AssertionError('Nested mix must not silently become a local closure')
+    raise AssertionError('Null-conditioned mixed BSSRDF must reject before workers start')
 
 session(scene(unused=True), {'path.cyclesbssrdf.experimental.enable': None})
 record('unused-experimental-material-does-not-block-ordinary-scene', {})
@@ -333,6 +337,27 @@ assert np.all(means > .2) and np.all(means < .7), means
 check_entry_aovs(partial, 'partial-radius-rgb-entry-aovs')
 record('partial-radius-rgb-local-channel-weight',
        {'rgb_mean': means.tolist(), 'local_reference_red': reference_red})
+
+# The box has no re-entrant exterior transport: under a constant environment,
+# the mixed image must be the affine combination of its independent closures.
+other = render(scene(kind='matte', color=(.5, .5, .5)))
+for amount in (0., .25, .75, 1.):
+    mixed_scene = scene(nested_mix=True)
+    mixed_scene.Parse(properties({'scene.materials.mix.type': 'mix', 'scene.materials.mix.material1': 'body', 'scene.materials.mix.material2': 'other', 'scene.materials.mix.amount': amount}))
+    mixed = render(mixed_scene)
+    measured = mixed['RGB'][center].mean(axis=(0, 1))
+    expected = ((1. - amount) * positive['RGB'][center] + amount * other['RGB'][center]).mean(axis=(0, 1))
+    error = float(np.abs(measured - expected).max())
+    assert error < .015, (amount, measured, expected)
+    record('nested-mix-affine-' + str(amount), {'rgb_mean': measured.tolist(), 'expected': expected.tolist(), 'max_error': error})
+add_scene = scene(nested_mix=True)
+add_scene.Parse(properties({'scene.materials.mix.type': 'mix', 'scene.materials.mix.material1': 'body', 'scene.materials.mix.material2': 'other', 'scene.materials.mix.additive': True}))
+added = render(add_scene)
+measured = added['RGB'][center].mean(axis=(0, 1))
+expected = (positive['RGB'][center] + other['RGB'][center]).mean(axis=(0, 1))
+error = float(np.abs(measured - expected).max())
+assert error < .025, (measured, expected)
+record('nested-add-unit-weights', {'rgb_mean': measured.tolist(), 'expected': expected.tolist(), 'max_error': error})
 
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 folder.mkdir(parents=True, exist_ok=True)

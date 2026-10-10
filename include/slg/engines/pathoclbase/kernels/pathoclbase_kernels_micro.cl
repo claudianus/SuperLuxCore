@@ -122,9 +122,26 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 		__global Ray *ray MATERIALS_PARAM_DECL) {
 	__global BSDF *bsdf = &state->bsdf;
 	uint matIndex = bsdf->materialIndex;
-	for (uint depth = 0u; depth < 16u && mats[matIndex].type == TWOSIDED; ++depth)
-		matIndex = bsdf->hitPoint.intoObject ? mats[matIndex].twosided.frontMatIndex : mats[matIndex].twosided.backMatIndex;
-	if (mats[matIndex].type != CYCLES_BSSRDF) return 0;
+	if (!mats[matIndex].hasCyclesBSSRDF) return 0;
+	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
+	s->seed = state->seedPassThroughEvent;
+	(void)CyclesBSSRDF_Random(s);
+	for (uint depth = 0u; depth < 64u; ++depth) {
+		if (!mats[matIndex].hasCyclesBSSRDF || mats[matIndex].type == CYCLES_BSSRDF) break;
+		if (mats[matIndex].type == TWOSIDED)
+			matIndex = bsdf->hitPoint.intoObject ? mats[matIndex].twosided.frontMatIndex : mats[matIndex].twosided.backMatIndex;
+		else if (mats[matIndex].type == MIX) {
+			const bool additive = mats[matIndex].mix.additive;
+			const float amount = additive ? .5f : clamp(Texture_GetFloatValue(
+					mats[matIndex].mix.mixFactorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
+			matIndex = CyclesBSSRDF_Random(s) < 1.f - amount ? mats[matIndex].mix.matAIndex : mats[matIndex].mix.matBIndex;
+			if (additive) VSTORE3F(2.f * VLOAD3F(state->throughput.c), state->throughput.c);
+		} else return -1;
+		bsdf->materialIndex = matIndex;
+		bsdf->nullSelectionConditioned = false;
+	}
+	if (mats[matIndex].type != CYCLES_BSSRDF)
+		return mats[matIndex].hasCyclesBSSRDF ? -1 : 0;
 	__global const CyclesBSSRDFParam *p = &mats[matIndex].cyclesbssrdf;
 	const float scale = Texture_GetFloatValue(p->scaleTexIndex, &bsdf->hitPoint TEXTURES_PARAM);
 	const float3 radius = fmax(Texture_GetSpectrumValue(p->radiusTexIndex, &bsdf->hitPoint TEXTURES_PARAM) * scale, BLACK);
@@ -134,9 +151,6 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	task->tmpBsdf.hitPoint.spectralEmissionEval = bsdf->hitPoint.spectralEmissionEval;
 	if (radiusRGB.x < 1e-8f && radiusRGB.y < 1e-8f && radiusRGB.z < 1e-8f) return 0;
 	const float3 color = clamp(Texture_GetSpectrumValue(p->kdTexIndex, &bsdf->hitPoint TEXTURES_PARAM), BLACK, WHITE);
-	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
-	s->seed = state->seedPassThroughEvent;
-	(void)CyclesBSSRDF_Random(s);
 	float3 throughput = MAKE_FLOAT3(color.x > 0.f ? 1.f : 0.f, color.y > 0.f ? 1.f : 0.f, color.z > 0.f ? 1.f : 0.f);
 	if (radiusRGB.x < 1e-8f || radiusRGB.y < 1e-8f || radiusRGB.z < 1e-8f) {
 		const float total = color.x + color.y + color.z;
@@ -620,6 +634,10 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 			return;
 		}
 	}
+
+	// Closure selection (or the nonlocal exit) determines the event budget.
+	sampleResult->lastPathVertex = PathDepthInfo_IsLastPathVertexVol(&pathInfo->depth,
+			&taskConfig->pathTracer.maxPathDepth, BSDF_GetEventTypes(bsdf MATERIALS_PARAM), bsdf->isVolume);
 
 	//----------------------------------------------------------------------
 	// Check if I can use the photon cache

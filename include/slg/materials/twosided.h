@@ -36,6 +36,7 @@ public:
 			MaterialConstRef frontMat, MaterialConstRef backMat);
 
 	virtual MaterialType GetType() const { return TWOSIDED; }
+	bool HasCyclesBSSRDF() const override { return frontMat->HasCyclesBSSRDF() || backMat->HasCyclesBSSRDF(); }
 	virtual BSDFEvent GetEventTypes() const { return eventTypes; };
 
 	virtual bool IsLightSource() const { return isLightSource; }

@@ -512,6 +512,7 @@ typedef struct {
 	int isDelta;
 	int hasNullLobes;
 	int ownsLobeNormals;
+	int hasCyclesBSSRDF;
 
 	// Cryptomatte float id (host-computed murmur3 of the material name)
 	float cryptoID;
