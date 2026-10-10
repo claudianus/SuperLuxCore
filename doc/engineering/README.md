@@ -64,8 +64,12 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Cycles Backfacing spectrum](2026-10-10-cycles-backfacing.md): front/back emission color/strength fix; 28 private CPU/Metal checks; the scoped fix is included in verified2.11.24 deployment.
 
-- [Current 2.11.24 standalone positive SSS boundary diagnostic](2026-10-10-cycles-positive-sss-diagnostic.md): confirmed remaining defect; auxiliary models excluded from production acceptance.
+- [Current 2.11.25 standalone positive SSS boundary diagnostic](2026-10-10-cycles-positive-sss-diagnostic.md): confirmed remaining defect; auxiliary models excluded from production acceptance.
 
 - [Verified2.11.24 Incoming, Backfacing, valid-zero and Microfiber deployment](2026-10-10-deployment-2.11.24.md): 591 guarded CI/fresh/actual CPU and Metal checks; full-scene goal remains active.
 
-- [Cycles Bump zero Filter Width](2026-10-10-cycles-bump-zero-filter.md): 78 private CPU/Metal, spectral and smooth geometry checks; public deployment pending.
+- [Cycles Bump zero Filter Width](2026-10-10-cycles-bump-zero-filter.md): 78 private CPU/Metal, spectral and smooth geometry checks; scoped fix included in verified 2.11.25 deployment.
+
+- [Verified 2.11.25 Bump zero-width and SSS local diffuse deployment](2026-10-10-deployment-2.11.25.md): 627 guarded CI/fresh/actual checks; goal remains active and incomplete.
+
+- [Cycles SSS all-channel local diffuse limit](2026-10-10-cycles-sss-local-limit.md): adapter-only fix; ordinary positive SSS remains open.
