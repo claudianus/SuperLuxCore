@@ -151,14 +151,18 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	}
 	s->anisotropy = clamp(Texture_GetFloatValue(p->anisotropyTexIndex, &bsdf->hitPoint TEXTURES_PARAM), -.99f, .99f);
 	float3 alpha = MAKE_FLOAT3(CyclesBSSRDF_Alpha(color.x, s->anisotropy), CyclesBSSRDF_Alpha(color.y, s->anisotropy), CyclesBSSRDF_Alpha(color.z, s->anisotropy));
-	for (uint i = 0u; i < 3u; ++i) {
-		const bool local = radiusRGB[i] < 1e-8f;
-		s->sigmaT.c[i] = local ? 1.f : 1.f / fmax(radius[i], 1e-16f);
-		if (local) alpha[i] = 0.f;
-		else if (alpha[i] < .2f) { throughput[i] *= alpha[i] / .2f; alpha[i] = .2f; }
-	}
 	VSTORE3F(alpha, s->alpha.c);
 	VSTORE3F(throughput, s->throughput.c);
+	for (uint i = 0u; i < 3u; ++i) {
+		// CUDA's float3 has no operator[]. Spectrum's scalar storage is
+		// shared by all backends, with explicit vector component reads.
+		const float rgbRadius = i == 0u ? radiusRGB.x : (i == 1u ? radiusRGB.y : radiusRGB.z);
+		const float transportRadius = i == 0u ? radius.x : (i == 1u ? radius.y : radius.z);
+		const bool local = rgbRadius < 1e-8f;
+		s->sigmaT.c[i] = local ? 1.f : 1.f / fmax(transportRadius, 1e-16f);
+		if (local) s->alpha.c[i] = 0.f;
+		else if (s->alpha.c[i] < .2f) { s->throughput.c[i] *= s->alpha.c[i] / .2f; s->alpha.c[i] = .2f; }
+	}
 	const float roughness = clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
 	const float ior = clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f);
 	const float3 wo = Frame_ToLocal(&bsdf->frame, VLOAD3F(&bsdf->hitPoint.fixedDir.x));
@@ -190,7 +194,7 @@ OPENCL_FORCE_INLINE void CyclesBSSRDF_Resolve(__global GPUTask *task, __global G
 	}
 	const float distance = escaped ? hit->t : s->distance;
 	const float3 sigmaT = VLOAD3F(s->sigmaT.c), alpha = VLOAD3F(s->alpha.c);
-	const float3 transmittance = exp(-sigmaT * distance);
+	const float3 transmittance = Spectrum_Exp(-sigmaT * distance);
 	const float3 factor = transmittance * (escaped ? WHITE : sigmaT);
 	const float3 probabilities = VLOAD3F(s->probabilities.c);
 	const float pdf = dot(probabilities, factor);

@@ -58,7 +58,7 @@ switched to this model.
 ## Current verification
 
 The complete private wheel's staged native SHA256 is
-`bf43e75044a86f0137b27110df8d40423cec6c61035fb078547d084e5cfc7cbf`.
+`4cfb861d93b8d10b8509418e5c48ae928fda30082e3260b3d1bac95ebaba835d`.
 Metadata remains 2.11.27; this is not the released 2.11.27 module. Identity
 verification covers the complete wheel RECORD, cached wheel, 266 addon
 Python files, 459 profile entries and critical source files.
@@ -79,6 +79,15 @@ Harness: `dev-tools/cycles_bssrdf_device_test.py`, including current CPU
 regressions from `cycles_bssrdf_transport_test.py`. Private Blender harnesses
 accept `SUPERLUXCORE_BSSRDF_DEVICE=CPU` or `METAL` and fingerprint the original
 Cycles graphs/settings before and after rendering.
+
+## CUDA portability
+
+The first GitHub NVRTC gate rejected dynamic `float3` indexing and vector
+`exp`. Metal accepts both, but CUDA's OpenCL-emulation type does not. Channel
+updates now use Spectrum's scalar array with explicit vector component
+reads; transmittance uses the existing portable `Spectrum_Exp` helper.
+The failed gate blocked all wheels and publication. Local lint checks 180
+kernel files; the actual NVRTC CI gate remains necessary before distribution.
 
 ## Remaining full-goal work
 
