@@ -125,7 +125,16 @@ void Scene::ParseMaterials(const Properties &props) {
 
 		if (matDefs->IsMaterialDefined(matName)) {
 			//// A replacement for an existing material
-			//auto& oldMat = matDefs->GetMaterial(matName);
+			auto &oldMat = matDefs->GetMaterial(matName);
+			// A changed leaf also changes every owning Mix/TwoSided graph.
+			// Capture their emission state before the dependency caches update.
+			vector<pair<const SceneObject *, bool>> affectedObjects;
+			for (u_int i = 0; i < objDefs->GetSize(); ++i) {
+				const auto &object = objDefs->GetSceneObject(i);
+				const auto &root = object.GetMaterial();
+				if (root == oldMat || root.IsReferencing(oldMat))
+					affectedObjects.emplace_back(&object, root.IsLightSource());
+			}
 
 			// Add to material list
 			auto [newMatRef, oldMatPtr] = matDefs->DefineMaterial(std::move(newMat));
@@ -140,16 +149,20 @@ void Scene::ParseMaterials(const Properties &props) {
 			} catch(std::bad_cast&) {
 			}
 
-			// If old material was emitting light, delete all TriangleLight
-			if (cachedIsLightSource[&oldMatRef])
-				lightDefs->DeleteLightSourceByMaterial(oldMatRef);
-
 			// Replace old material direct references with new one
 			objDefs->UpdateMaterialReferences(oldMatRef, newMatRef);
 
-			// If new material is emitting light, create all TriangleLight
-			if (newMatRef.IsLightSource())
-				objDefs->DefineIntersectableLights(*lightDefs, newMatRef);
+			// Rebuild lights by owning object, including indirect references.
+			// Deleting by the leaf material misses parent-owned TriangleLights.
+			for (const auto &[object, wasLightSource] : affectedObjects) {
+				const bool isLightSource = object->GetMaterial().IsLightSource();
+				if (wasLightSource || isLightSource) {
+					lightDefs->DeleteLightSourceStartWith(EncodeTriangleLightNamePrefix(object->GetName()));
+					if (isLightSource)
+						objDefs->DefineIntersectableLights(*lightDefs, *object);
+					editActions.AddActions(LIGHTS_EDIT | LIGHT_TYPES_EDIT);
+				}
+			}
 
 			// Check if the old material was or the new material is a light source
 			if (cachedIsLightSource[&oldMatRef] || newMatRef.IsLightSource())

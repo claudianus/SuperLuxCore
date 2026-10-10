@@ -525,7 +525,7 @@ std::unique_ptr<Sampler> RenderConfig::AllocSampler(
 	return Sampler::FromProperties(props, rndGen, FilmPtr(&film), flmSplatter, sharedData);
 }
 
-RenderEngineUPtr RenderConfig::AllocRenderEngine() {
+void RenderConfig::ValidateCyclesBSSRDF() const {
 	bool experimentalBSSRDF = false;
 	const auto &objects = GetScene().GetObjects();
 	for (u_int i = 0; i < objects.GetSize(); ++i) {
@@ -619,6 +619,10 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 				props.Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>())
 			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics (and device opt-in for PATHOCL); light tracing, BIDIR and caches remain unsupported");
 	}
+}
+
+RenderEngineUPtr RenderConfig::AllocRenderEngine() {
+	ValidateCyclesBSSRDF();
 #if defined(LUXRAYS_DISABLE_OPENCL)
 	// This is a specific test for OpenCL-less version in order to print
 	// a more clear error

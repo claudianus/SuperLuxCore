@@ -99,6 +99,8 @@ public:
 
 
 	RenderEngineUPtr AllocRenderEngine();
+	// Apply the same nonlocal transport limits at allocation and live edits.
+	void ValidateCyclesBSSRDF() const;
 
 	PropertiesRPtr ToProperties() const;
 

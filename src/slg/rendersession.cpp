@@ -113,6 +113,11 @@ void RenderSession::BeginSceneEdit() {
 }
 
 void RenderSession::EndSceneEdit() {
+	// Workers are stopped by BeginSceneEdit(). Validate before resetting the
+	// film or restarting transport: adding BSSRDF to an ordinary live scene
+	// must not bypass allocation-time backend/PDF/MIS restrictions. A rejected
+	// edit can be repaired and EndSceneEdit() retried while still in edit mode.
+	renderConfig.ValidateCyclesBSSRDF();
 	// Make a copy of the edit actions
 	const EditActionList editActions(renderConfig.GetScene().GetEditActions());
 

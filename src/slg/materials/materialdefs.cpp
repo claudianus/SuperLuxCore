@@ -34,6 +34,13 @@ using namespace slg;
 
 std::tuple<Material&, MaterialUPtr>
 MaterialDefinitions::DefineMaterial(MaterialUPtr&& mat) {
+	// Existing parents can be rewired to subtrees created later. Container
+	// order then differs from dependency order, and refreshing a parent first
+	// leaves its cached event/null/BSSRDF flags one replacement behind.
+	// Sort the old acyclic graph before the replacement changes its edges.
+	vector<string> updateOrder;
+	if (mats.IsObjDefined(mat->GetName()))
+		GetMaterialSortedNames(updateOrder);
 
 	// Add new material to material container
 	auto [newMatRef, oldMatPtr] = mats.DefineObj<Material>(std::move(mat));
@@ -41,9 +48,9 @@ MaterialDefinitions::DefineMaterial(MaterialUPtr&& mat) {
 	if (oldMatPtr) {  // An object was replaced
 		auto& oldMatRef = *oldMatPtr;
 		// Update all references
-		for(NamedObjectRef o: mats.ViewObjs()) {
+		for (const auto &name : updateOrder) {
 			// Update all references in material/volume (note: volume is also a material)
-			auto& m = dynamic_cast<MaterialRef>(o);
+			auto &m = GetMaterial(name);
 			m.UpdateMaterialReferences(oldMatRef, newMatRef);
 		}
 	}
