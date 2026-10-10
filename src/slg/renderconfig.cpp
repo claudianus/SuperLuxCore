@@ -527,6 +527,10 @@ std::unique_ptr<Sampler> RenderConfig::AllocSampler(
 
 void RenderConfig::ValidateCyclesBSSRDF() const {
 	bool experimentalBSSRDF = false;
+	const auto &props = GetConfig();
+	const string engine = props.Get(Property("renderengine.type")("PATHCPU")).Get<string>();
+	const bool adjointDiagnostic = engine == "LIGHTCPU" &&
+			props.Get(Property("path.cyclesbssrdf.experimental.adjoint.enable")(false)).Get<bool>();
 	const auto &objects = GetScene().GetObjects();
 	for (u_int i = 0; i < objects.GetSize(); ++i) {
 		const Material &root = objects.GetSceneObject(i).GetMaterial();
@@ -536,6 +540,19 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 		for (const auto material : referenced)
 			contains |= material->GetType() == CYCLES_BSSRDF;
 		if (contains) {
+			if (adjointDiagnostic && (root.GetType() != CYCLES_BSSRDF || root.GetBumpTexture() ||
+					root.GetFrontTransparencyTexture() || root.GetBackTransparencyTexture() ||
+					root.GetInteriorVolume() || root.GetExteriorVolume() || GetScene().HasDefaultWorldVolume()))
+				throw runtime_error("Experimental cyclesbssrdf adjoint mixed, partitioned, Normal/Bump, opacity and Volume kernels remain unsupported");
+			if (adjointDiagnostic) {
+				const auto &group = objects.GetSceneObject(i).GetSubsurfaceGroup();
+				if (!group.empty()) {
+					for (u_int j = 0; j < objects.GetSize(); ++j)
+						if (objects.GetSceneObject(j).GetSubsurfaceGroup() == group &&
+								&objects.GetSceneObject(j).GetMaterial() != &root)
+							throw runtime_error("Experimental cyclesbssrdf adjoint partitioned groups require nonlocal kernel reconstruction");
+				}
+			}
 			referenced.insert(&root);
 			bool mixed = false;
 			for (const auto material : referenced)
@@ -575,6 +592,12 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 							GetConfig().Get(Property("path.spectral.enable")(false)).Get<bool>());
 					if (!failure.empty())
 						throw runtime_error("Experimental cyclesbssrdf material " + closure.GetName() + ": " + failure);
+					if (adjointDiagnostic) {
+						const auto adjointFailure = closure.ExperimentalAdjointParameterFailure(
+								props.Get(Property("path.spectral.enable")(false)).Get<bool>());
+						if (!adjointFailure.empty())
+							throw runtime_error("Experimental cyclesbssrdf material " + closure.GetName() + ": " + adjointFailure);
+					}
 					continue;
 				}
 				if (material->GetType() == TWOSIDED || material->GetType() == MIX)
@@ -589,8 +612,6 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 		experimentalBSSRDF |= contains;
 	}
 	if (experimentalBSSRDF) {
-		const auto &props = GetConfig();
-		const string engine = props.Get(Property("renderengine.type")("PATHCPU")).Get<string>();
 		const bool deviceDiagnostic = engine == "PATHOCL" &&
 				props.Get(Property("path.cyclesbssrdf.experimental.device.enable")(false)).Get<bool>();
 		if (deviceDiagnostic) {
@@ -609,15 +630,16 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 				throw runtime_error("Experimental cyclesbssrdf device adjoint/vertex connection is not implemented yet");
 		}
 		if (!props.Get(Property("path.cyclesbssrdf.experimental.enable")(false)).Get<bool>() ||
-				(engine != "PATHCPU" && !deviceDiagnostic) ||
+				(engine != "PATHCPU" && !deviceDiagnostic && !adjointDiagnostic) ||
 				props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.lighttracing.only")(false)).Get<bool>() ||
+				props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.restir.gi.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.restir.pt.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>())
-			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics (and device opt-in for PATHOCL); light tracing, BIDIR and caches remain unsupported");
+			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics (device opt-in for PATHOCL) or adjoint opt-in for LIGHTCPU; hybrid, BIDIR, vertex connections and caches remain unsupported");
 	}
 }
 

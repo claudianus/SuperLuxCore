@@ -20,8 +20,64 @@ CyclesBSSRDFMaterial::CyclesBSSRDFMaterial(TextureConstPtr front, TextureConstPt
 		TextureConstPtr roughness, TextureConstPtr anisotropy) :
 		MatteMaterial(front, back, emitted, bump, color), radius(radius), scale(scale),
 		ior(ior), roughness(roughness), anisotropy(anisotropy), white(1.f),
-		exitMaterial(nullptr, nullptr, nullptr, nullptr, TextureConstPtr(&white)) {
+	exitMaterial(nullptr, nullptr, nullptr, nullptr, TextureConstPtr(&white)),
+	adjointBoundary(*this, TextureConstPtr(&white)) {
 	exitMaterial.SetName("__cycles_bssrdf_diffuse_exit__");
+}
+
+CyclesBSSRDFAdjointBoundary::CyclesBSSRDFAdjointBoundary(const CyclesBSSRDFMaterial &source,
+		TextureConstPtr white) : MatteMaterial(nullptr, nullptr, nullptr, nullptr, white), source(source) {
+	SetName("__cycles_bssrdf_adjoint_entry__");
+}
+
+bool CyclesBSSRDFAdjointBoundary::IsDelta() const {
+	const auto roughness = source.GetRoughness();
+	if (roughness->GetType() != CONST_FLOAT && roughness->GetType() != CONST_FLOAT3)
+		return false;
+	HitPoint hit;
+	hit.Init();
+	return roughness->GetFloatValue(hit) <= 0.f;
+}
+
+BSDFEvent CyclesBSSRDFAdjointBoundary::GetEventTypes() const {
+	return (IsDelta() ? SPECULAR : DIFFUSE) | TRANSMIT;
+}
+
+Spectrum CyclesBSSRDFAdjointBoundary::Evaluate(const HitPoint &hit,
+		const Vector &light, const Vector &eye, BSDFEvent *event,
+		float *directPdf, float *reversePdf) const {
+	const float side = Dot(hit.fixedDir, hit.geometryN) < 0.f ? 1.f : -1.f;
+	const auto p = cyclesbssrdfboundary::CyclesBSSRDF_BoundaryDensities(side * eye, side * light,
+			Clamp(source.GetIOR()->GetFloatValue(hit), 1.01f, 3.8f),
+			Clamp(source.GetRoughness()->GetFloatValue(hit), 0.f, 1.f));
+	*event = DIFFUSE | TRANSMIT;
+	if (directPdf) *directPdf = p.reversePdf;
+	if (reversePdf) *reversePdf = p.forwardPdf;
+	// This is f*cos(theta_light) for the original eye-side directional
+	// kernel. BSDF::Evaluate supplies the geometry-cosine transpose.
+	return Spectrum(p.valid && !p.delta ? p.forwardPdf : 0.f);
+}
+
+Spectrum CyclesBSSRDFAdjointBoundary::Sample(const HitPoint &hit,
+		const Vector &fixed, Vector *sampled, const float u0, const float u1,
+		const float, float *pdf, BSDFEvent *event) const {
+	const float side = Dot(hit.fixedDir, hit.geometryN) < 0.f ? 1.f : -1.f;
+	const auto s = cyclesbssrdfboundary::CyclesBSSRDF_SampleAdjointBoundary(side * fixed,
+			Clamp(source.GetIOR()->GetFloatValue(hit), 1.01f, 3.8f),
+			Clamp(source.GetRoughness()->GetFloatValue(hit), 0.f, 1.f), u0, u1);
+	*event = (s.densities.delta ? SPECULAR : DIFFUSE) | TRANSMIT;
+	*pdf = s.densities.delta ? s.densities.reverseMass : s.densities.reversePdf;
+	if (!s.valid || !(*pdf > 0.f)) return Spectrum();
+	*sampled = side * Normalize(s.direction);
+	if (s.densities.delta)
+		return Spectrum(s.densities.adjointWeight * fabsf(fixed.z / sampled->z));
+	return Spectrum(s.densities.forwardPdf / s.densities.reversePdf);
+}
+
+void CyclesBSSRDFAdjointBoundary::Pdf(const HitPoint &hit, const Vector &light,
+		const Vector &eye, float *directPdf, float *reversePdf) const {
+	BSDFEvent event;
+	Evaluate(hit, light, eye, &event, directPdf, reversePdf);
 }
 
 CyclesBSSRDFMaterial::Parameters CyclesBSSRDFMaterial::Freeze(const HitPoint &hit) const {
@@ -61,6 +117,27 @@ std::string CyclesBSSRDFMaterial::ExperimentalParameterFailure(bool spectral) co
 	}
 	if (spectral && anyLocal && !allLocal)
 		return "partial-radius spectral closure mapping is not implemented yet";
+	return "";
+}
+
+std::string CyclesBSSRDFMaterial::ExperimentalAdjointParameterFailure(bool spectral) const {
+	const auto prior = ExperimentalParameterFailure(spectral);
+	if (!prior.empty()) return prior;
+	for (auto t : {GetKd(), radius, scale, ior, roughness, anisotropy})
+		if (t->GetType() != CONST_FLOAT && t->GetType() != CONST_FLOAT3)
+			return "adjoint textured coefficients require nonlocal kernel reconstruction";
+	HitPoint hit;
+	hit.Init();
+	const auto p = Freeze(hit);
+	for (unsigned i = 0; i < COLOR_SAMPLES; ++i)
+		if (!std::isfinite(p.color.c[i]) || !std::isfinite(p.radius.c[i]))
+			return "adjoint color and radius must be finite";
+	if (!std::isfinite(p.ior) || !std::isfinite(p.roughness) || !std::isfinite(p.anisotropy))
+		return "adjoint IOR, roughness and anisotropy must be finite";
+	bool nonlocal = false;
+	for (unsigned i = 0; i < COLOR_SAMPLES; ++i) nonlocal |= p.radiusRGB.c[i] >= 1e-8f;
+	if (nonlocal && !(p.roughness > 0.f))
+		return "adjoint sharp camera boundaries require internal-vertex/manifold connections";
 	return "";
 }
 
@@ -160,10 +237,10 @@ static Vector SampleBSSRDFPhase(const Vector &direction, float g, float u0, floa
 	return Normalize(s * cosf(phi) * x + s * sinf(phi) * y + c * direction);
 }
 
-bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
+static bool SampleCyclesBSSRDFWalk(SceneConstRef scene, IntersectionDeviceRef device,
 		const Ray &entryRay, const RayHit &entryHit,
 		const PathVolumeInfo &volumes, BSDF &bsdf, TauswortheRandomGenerator &rng,
-		Spectrum &weight) {
+		Spectrum &weight, const bool adjoint) {
 	const auto *material = ResolveCyclesBSSRDF(*bsdf.GetMaterial(), bsdf.hitPoint);
 	if (!material)
 		return true;
@@ -227,9 +304,25 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 		weight = Spectrum();
 		return false;
 	}
-	const auto boundary = cyclesbssrdfboundary::CyclesBSSRDF_SampleEntryBoundary(
-			wo, p.ior, p.roughness, rng.floatValue(), rng.floatValue());
-	const Vector direction = Normalize(bsdf.GetFrame().ToWorld(side * boundary.direction));
+	Vector direction;
+	if (adjoint) {
+		// Transpose the white diffuse escape, rather than refracting again
+		// on the light side. Draw the interior direction under the geometry
+		// cosine measure and retain the escape's shading/geometry correction.
+		const float geometrySide = Dot(bsdf.hitPoint.fixedDir, bsdf.hitPoint.geometryN) < 0.f ? -1.f : 1.f;
+		const Normal landing = geometrySide * bsdf.hitPoint.geometryN;
+		Vector x, y;
+		CoordinateSystem(Vector(landing), &x, &y);
+		const Vector local = CosineSampleHemisphere(rng.floatValue(), rng.floatValue());
+		direction = Normalize(local.x * x + local.y * y - local.z * Vector(landing));
+		const float geometryCos = AbsDot(bsdf.hitPoint.fixedDir, bsdf.hitPoint.geometryN);
+		if (!(geometryCos > 0.f)) { weight = Spectrum(); return false; }
+		throughput *= AbsDot(bsdf.hitPoint.fixedDir, bsdf.hitPoint.shadeN) / geometryCos;
+	} else {
+		const auto boundary = cyclesbssrdfboundary::CyclesBSSRDF_SampleEntryBoundary(
+				wo, p.ior, p.roughness, rng.floatValue(), rng.floatValue());
+		direction = Normalize(bsdf.GetFrame().ToWorld(side * boundary.direction));
+	}
 	if (!(side * Dot(direction, bsdf.hitPoint.geometryN) < 0.f)) {
 		weight = Spectrum();
 		return false;
@@ -296,9 +389,16 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 			// Cycles shades the escape with a reversed ray, so an outside
 			// walk returning into the shell must scatter on its inside face.
 			const float exitSide = Dot(walk.d, bsdf.hitPoint.geometryN) < 0.f ? -1.f : 1.f;
-			bsdf.hitPoint.fixedDir = exitSide * Vector(bsdf.hitPoint.geometryN);
-			bsdf.hitPoint.intoObject = exitSide > 0.f;
-			bsdf.SetSubsurfaceExitMaterial(material->GetExitMaterial());
+			if (adjoint) {
+				bsdf.hitPoint.fromLight = true;
+				bsdf.hitPoint.fixedDir = -walk.d;
+				bsdf.hitPoint.intoObject = exitSide < 0.f;
+				bsdf.SetSubsurfaceExitMaterial(material->GetAdjointBoundary());
+			} else {
+				bsdf.hitPoint.fixedDir = exitSide * Vector(bsdf.hitPoint.geometryN);
+				bsdf.hitPoint.intoObject = exitSide > 0.f;
+				bsdf.SetSubsurfaceExitMaterial(material->GetExitMaterial());
+			}
 			weight *= throughput;
 			return true;
 		}
@@ -313,4 +413,16 @@ bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
 	}
 	weight = Spectrum();
 	return false;
+}
+
+bool slg::SampleCyclesBSSRDF(SceneConstRef scene, IntersectionDeviceRef device,
+		const Ray &entryRay, const RayHit &entryHit, const PathVolumeInfo &volumes,
+		BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
+	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, false);
+}
+
+bool slg::SampleCyclesBSSRDFAdjoint(SceneConstRef scene, IntersectionDeviceRef device,
+		const Ray &entryRay, const RayHit &entryHit, const PathVolumeInfo &volumes,
+		BSDF &bsdf, TauswortheRandomGenerator &rng, Spectrum &weight) {
+	return SampleCyclesBSSRDFWalk(scene, device, entryRay, entryHit, volumes, bsdf, rng, weight, true);
 }

@@ -35,6 +35,7 @@ void BSDF::Init(
 		SceneConstRef scene, const Ray &ray, const RayHit &rayHit,
 		const float passThroughEvent, const PathVolumeInfo *volInfo) {
 	nullSelectionConditioned = false;
+	surfaceIdentityMaterial = nullptr;
 	// Get the scene object
 	sceneObject = &scene.GetObjects().GetSceneObject(rayHit.meshIndex);
 
@@ -130,6 +131,7 @@ void BSDF::Init(
 		const PathVolumeInfo *volInfo
 ) {
 	nullSelectionConditioned = false;
+	surfaceIdentityMaterial = nullptr;
 	// Get the scene object
 	sceneObject = &scene.GetObjects().GetSceneObject(meshIndex);
 
@@ -198,6 +200,7 @@ void BSDF::Init(
 	const float passThroughEvent
 ) {
 	nullSelectionConditioned = false;
+	surfaceIdentityMaterial = nullptr;
 	hitPoint.fromLight = fixedFromLight;
 	hitPoint.throughShadowTransparency = throughShadowTransparency;
 	hitPoint.passThroughEvent = passThroughEvent;
@@ -287,7 +290,7 @@ static string MaterialNULLptrName = "NULL pointer";
 
 const string &BSDF::GetMaterialName() const {
 	if (material)
-		return material->GetName();
+		return GetIdentityMaterial().GetName();
 	else
 		return MaterialNULLptrName;
 }

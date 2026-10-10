@@ -2836,6 +2836,16 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 
 			lightPathFlux *= connectionThroughput;
 
+			const bool cyclesSubsurfaceVertex = bsdf.GetMaterial()->HasCyclesBSSRDF();
+			if (cyclesSubsurfaceVertex) {
+				TauswortheRandomGenerator subsurfaceRng(sampler.GetSample(sampleOffset));
+				subsurfaceRng.uintValue();
+				if (!SelectCyclesBSSRDFClosure(bsdf, subsurfaceRng, lightPathFlux) ||
+						!SampleCyclesBSSRDFAdjoint(scene, device, nextEventRay, nextEventRayHit,
+								pathInfo.volume, bsdf, subsurfaceRng, lightPathFlux))
+					break;
+			}
+
 			// Caustic focus cache: remember the first delta-specular
 			// vertex of this path - a successful camera connect credits
 			// it into the emitting light's hotspot ring
@@ -2891,7 +2901,11 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 			if (bsdfSample.Black())
 				break;
 
-			pathInfo.AddVertex(bsdf, bsdfEvent, hybridBackForwardGlossinessThreshold);
+			// The collapsed nonlocal SSS closure is one diffuse reflection,
+			// like the eye-side white escape. The internal inverse boundary's
+			// transmission event must not leak into user path-depth counters.
+			pathInfo.AddVertex(bsdf, cyclesSubsurfaceVertex ? (DIFFUSE | REFLECT) : bsdfEvent,
+					hybridBackForwardGlossinessThreshold);
 
 			// If it isn't anymore a (nearly) specular path, I can stop.
 			// Adaptive partition: the chain survives while vertices are

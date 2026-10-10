@@ -86,3 +86,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.
 
 - [Cycles BSSRDF material partition boundaries](2026-10-10-cycles-bssrdf-object-groups.md): CPU33 contracts, exporter3 contracts and7 reviewed720p pairs; instance and hair boundaries stay separate, full goal remains active.
+
+- [Experimental Cycles BSSRDF CPU adjoint transport](2026-10-10-cycles-bssrdf-adjoint-transport.md): homogeneous reverse walk, rough camera boundary and surface identity; full default-quality goal remains active.

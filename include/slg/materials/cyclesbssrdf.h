@@ -12,6 +12,25 @@ namespace slg {
 class BSDF;
 class Scene;
 class PathVolumeInfo;
+class CyclesBSSRDFMaterial;
+
+// Scene-owned inverse entry boundary used after a CPU adjoint random walk.
+// The sampler returns the kernel/proposal ratio before BSDF's geometry-cosine
+// adjoint correction. It does not model reciprocal rough glass.
+class CyclesBSSRDFAdjointBoundary : public MatteMaterial {
+public:
+	CyclesBSSRDFAdjointBoundary(const CyclesBSSRDFMaterial &source, TextureConstPtr white);
+	BSDFEvent GetEventTypes() const override;
+	bool IsDelta() const override;
+	luxrays::Spectrum Evaluate(const HitPoint &, const luxrays::Vector &localLight,
+			const luxrays::Vector &localEye, BSDFEvent *, float *, float *) const override;
+	luxrays::Spectrum Sample(const HitPoint &, const luxrays::Vector &localFixed,
+			luxrays::Vector *localSampled, float, float, float, float *, BSDFEvent *) const override;
+	void Pdf(const HitPoint &, const luxrays::Vector &localLight,
+			const luxrays::Vector &localEye, float *, float *) const override;
+private:
+	const CyclesBSSRDFMaterial &source;
+};
 
 // Experimental nonlocal closure. RenderConfig rejects unsupported transport
 // rather than allowing it to become a local diffuse/volume approximation.
@@ -32,7 +51,9 @@ public:
 	};
 	Parameters Freeze(const HitPoint &hit) const;
 	std::string ExperimentalParameterFailure(bool spectral) const;
+	std::string ExperimentalAdjointParameterFailure(bool spectral) const;
 	const MatteMaterial &GetExitMaterial() const { return exitMaterial; }
+	const CyclesBSSRDFAdjointBoundary &GetAdjointBoundary() const { return adjointBoundary; }
 	TextureConstPtr GetRadius() const { return radius; }
 	TextureConstPtr GetScale() const { return scale; }
 	TextureConstPtr GetIOR() const { return ior; }
@@ -43,6 +64,7 @@ private:
 	TextureConstPtr radius, scale, ior, roughness, anisotropy;
 	ConstFloatTexture white;
 	MatteMaterial exitMaterial;
+	CyclesBSSRDFAdjointBoundary adjointBoundary;
 };
 
 const CyclesBSSRDFMaterial *ResolveCyclesBSSRDF(MaterialConstRef material, const HitPoint &hit);
@@ -52,6 +74,10 @@ bool SampleCyclesBSSRDF(SceneConstRef scene, luxrays::IntersectionDeviceRef devi
 		const luxrays::Ray &entryRay,
 		const luxrays::RayHit &entryHit, const PathVolumeInfo &volumes,
 		BSDF &bsdf, luxrays::TauswortheRandomGenerator &rng, luxrays::Spectrum &weight);
+bool SampleCyclesBSSRDFAdjoint(SceneConstRef scene, luxrays::IntersectionDeviceRef device,
+		const luxrays::Ray &entryRay, const luxrays::RayHit &entryHit,
+		const PathVolumeInfo &volumes, BSDF &bsdf,
+		luxrays::TauswortheRandomGenerator &rng, luxrays::Spectrum &weight);
 
 }
 #endif

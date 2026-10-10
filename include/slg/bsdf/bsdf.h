@@ -158,7 +158,7 @@ public:
 		const float albedoSpecularGlossinessThreshold) const;
 	u_int GetObjectID() const;
 	const std::string &GetMaterialName() const;
-	u_int GetMaterialID() const { return material->GetID(); }
+	u_int GetMaterialID() const { return GetIdentityMaterial().GetID(); }
 	u_int GetLightID() const { return material->GetLightID(); }
 	// Cryptomatte float ids (0.f when there is no scene object, i.e.
 	// volumes): the empty-slot marker, so misses never claim one.
@@ -170,7 +170,7 @@ public:
 	u_longlong GetLinkAcceptMask() const {
 		return (sceneObject) ? sceneObject->GetLinkAcceptMask() : ~0ull;
 	}
-	float GetCryptoMaterialID() const { return material->GetCryptoID(); }
+	float GetCryptoMaterialID() const { return GetIdentityMaterial().GetCryptoID(); }
 
 	VolumeConstPtr GetMaterialInteriorVolume() const {
 		return material->GetInteriorVolume(hitPoint, hitPoint.passThroughEvent);
@@ -229,6 +229,9 @@ public:
 		nullSelectionConditioned = false;
 	}
 	void SetSubsurfaceExitMaterial(MaterialConstRef diffuseExit) {
+		// Internal transport proxies must not replace the visible surface's
+		// material/cryptomatte identity with their shared implementation name.
+		surfaceIdentityMaterial = material;
 		material = &diffuseExit;
 		triangleLightSource = nullptr;
 		nullSelectionConditioned = false;
@@ -237,12 +240,16 @@ public:
 	HitPoint hitPoint;
 
 private:
+	MaterialConstRef GetIdentityMaterial() const {
+		return surfaceIdentityMaterial ? *surfaceIdentityMaterial : *material;
+	}
 	// Nota: following properties are intrisecally const. However, due to
 	// design particulars, they are not initialized in constructor, but in
 	// Init(). Therefore they have to be modifiable somehow, thus the mutable
 	// attribute (not fully satisfying, however).
 	mutable SceneObjectConstPtr sceneObject;  // Optional reference, owned by scene
 	mutable MaterialConstPtr material;  // Optional reference, owned by scene
+	MaterialConstPtr surfaceIdentityMaterial;
 	mutable TriangleLightConstPtr triangleLightSource; // != NULL only if it is an area light, optional, owned by scen
 	luxrays::Frame frame;
 	bool nullSelectionConditioned = false;
