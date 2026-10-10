@@ -137,12 +137,13 @@ public:
 	// its phase lobe can never aim at a small light.
 	bool IsAdaptiveCausticPath(const BSDFEvent event, const float glossiness,
 			const float terminalGlossiness, const float connectProb,
-			const float lightSolidAngle, const bool terminalIsVolume = false) const {
+			const float lightSolidAngle, const bool terminalIsVolume = false,
+			const bool terminalMaterialDelta = false) const {
 		return isAdaptiveCaustic && (depth.depth + 1 > 1) &&
 				(((event & (SPECULAR | GLOSSY)) != 0) ||
 						(terminalIsVolume && causticHasSurface)) &&
 				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
-						((event & SPECULAR) != 0) || terminalIsVolume,
+						((event & SPECULAR) != 0) || terminalIsVolume || terminalMaterialDelta,
 						glossiness, lightSolidAngle);
 	}
 	// Direct emitter hit variant: the terminal is the last added vertex
@@ -152,7 +153,7 @@ public:
 				(((lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) ||
 						(lastFromVolume && causticHasSurface)) &&
 				IsAdaptiveTerminalHard(terminalGlossiness, connectProb,
-						((lastBSDFEvent & SPECULAR) != 0) || lastFromVolume,
+						((lastBSDFEvent & SPECULAR) != 0) || lastFromVolume || lastMaterialDelta,
 						lastGlossiness, lightSolidAngle);
 	}
 
@@ -163,6 +164,9 @@ public:
 	float lastGlossiness;
 	luxrays::Normal lastShadeN;
 	bool lastFromVolume, isTransmittedPath;
+	// PSR widens transport while the eye/light partition uses the source
+	// material's delta classification, matching LightPathInfo's terminal.
+	bool lastMaterialDelta;
 	// The last vertex restricts direct-light sampling to infinite lights
 	// (shadow catcher): its NEE proposal was the infinite distribution, so
 	// DirectHit MIS must measure the hit against that same distribution

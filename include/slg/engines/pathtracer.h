@@ -499,11 +499,12 @@ private:
 			const SspTail *sspTail,
 			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
-	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera
+	// Imported sharp SSS camera connection; caustic is classified on the
+	// external path, where the complete nonlocal closure is one diffuse vertex.
 	void ConnectCyclesBSSRDFSharpToEye(luxrays::IntersectionDeviceRef device,
 			SceneConstRef scene, FilmConstRef film, float time, const LightSource &light,
 			const BSDF &escape, u_int entryMesh, const CyclesBSSRDFAdjointVertex &vertex,
-			const LightPathInfo &pathInfo, luxrays::TauswortheRandomGenerator &rng,
+			const LightPathInfo &pathInfo, bool caustic, luxrays::TauswortheRandomGenerator &rng,
 			std::vector<SampleResult> &sampleResults, u_int &used) const;
 
 	// LMNEE: light-side manifold connect x0 -> specular vertex -> camera

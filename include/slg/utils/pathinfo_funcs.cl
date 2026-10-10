@@ -32,6 +32,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_Init(__global EyePathInfo *pathInfo) {
 	pathInfo->lastBSDFPdfW = 1.f;
 	pathInfo->lastGlossiness = 0.f;
 	pathInfo->lastFromVolume = false;
+	pathInfo->lastMaterialDelta = false;
 	pathInfo->isTransmittedPath = true;
 	pathInfo->lastOnlyInfiniteLights = false;
 	pathInfo->linkAcceptMask = ~0ull;
@@ -131,7 +132,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	// later vertex must be non-diffuse or medium so the chain
 	// concentrates light.
 	pathInfo->isAdaptiveCaustic = (pathInfo->depth.depth == 1) ?
-		!(event & SPECULAR) :
+		!(event & SPECULAR) && (bsdf->isVolume || !mats[bsdf->materialIndex].isDelta) :
 		(pathInfo->isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) ||
 			BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM)));
 
@@ -144,6 +145,7 @@ OPENCL_FORCE_INLINE void EyePathInfo_AddVertex(__global EyePathInfo *pathInfo,
 	const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 	VSTORE3F(bsdf->hitPoint.intoObject ? shadeN : -shadeN, &pathInfo->lastShadeN.x);
 	pathInfo->lastFromVolume =  bsdf->isVolume;
+	pathInfo->lastMaterialDelta = !bsdf->isVolume && mats[bsdf->materialIndex].isDelta;
 	pathInfo->lastGlossiness = glossiness;
 	// Inlined BSDF_IsShadowCatcherOnlyInfiniteLights() (bsdf_funcs.cl is
 	// concatenated AFTER this file, so the helper is not declared yet)
@@ -223,7 +225,8 @@ OPENCL_FORCE_INLINE bool CausticPath_IsTerminalHard(
 OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticPath(__global EyePathInfo *pathInfo,
 		const BSDFEvent event, const float glossiness,
 		const float terminalGlossiness, const float connectProb,
-		const float lightSolidAngle, const bool terminalIsVolume) {
+		const float lightSolidAngle, const bool terminalIsVolume,
+		const bool terminalMaterialDelta) {
 	// Note: the +1 is there for the event passed as method arguments.
 	// A medium terminal counts as hard once the chain saw a surface:
 	// its phase lobe can never aim at a small light.
@@ -231,7 +234,7 @@ OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticPath(__global EyePathInfo 
 			(((event & (SPECULAR | GLOSSY)) != 0) ||
 					(terminalIsVolume && pathInfo->causticHasSurface)) &&
 			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
-					((event & SPECULAR) != 0) || terminalIsVolume,
+					((event & SPECULAR) != 0) || terminalIsVolume || terminalMaterialDelta,
 					glossiness, lightSolidAngle);
 }
 
@@ -245,7 +248,7 @@ OPENCL_FORCE_INLINE bool EyePathInfo_IsAdaptiveCausticHitPath(__global EyePathIn
 			(((pathInfo->lastBSDFEvent & (SPECULAR | GLOSSY)) != 0) ||
 					(pathInfo->lastFromVolume && pathInfo->causticHasSurface)) &&
 			CausticPath_IsTerminalHard(terminalGlossiness, connectProb,
-					((pathInfo->lastBSDFEvent & SPECULAR) != 0) || pathInfo->lastFromVolume,
+					((pathInfo->lastBSDFEvent & SPECULAR) != 0) || pathInfo->lastFromVolume || pathInfo->lastMaterialDelta,
 					pathInfo->lastGlossiness, lightSolidAngle);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

@@ -52,7 +52,7 @@ bool PathInfo::CanBeNearlySpecular(const BSDF &bsdf, const float glossinessThres
 
 EyePathInfo::EyePathInfo() : isPassThroughPath(true),
 		lastBSDFPdfW(1.f), lastGlossiness(0.f), lastFromVolume(false),
-		isTransmittedPath(true), lastOnlyInfiniteLights(false),
+		isTransmittedPath(true), lastMaterialDelta(false), lastOnlyInfiniteLights(false),
 		linkAcceptMask(~0ull),
 		isAdaptiveCaustic(false), causticHasSurface(false),
 		lpeAutomata(nullptr), lpeCount(0),
@@ -122,7 +122,7 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	// Adaptive partition: the receiver only has to be non-delta, later
 	// vertices must be non-diffuse or medium (see pathinfo_funcs.cl)
 	isAdaptiveCaustic = (depth.depth == 1) ?
-		!(event & SPECULAR) :
+		!(event & SPECULAR) && !bsdf.GetMaterial()->IsDelta() :
 		(isAdaptiveCaustic && (((event & (SPECULAR | GLOSSY)) != 0) || isVol));
 
 	// Chain touched a surface beyond the receiver: distinguishes
@@ -134,6 +134,7 @@ void EyePathInfo::AddVertex(const BSDF &bsdf,
 	lastBSDFPdfW = pdfW;
 	lastShadeN = bsdf.hitPoint.intoObject ? bsdf.hitPoint.shadeN : -bsdf.hitPoint.shadeN;
 	lastFromVolume =  bsdf.IsVolume();
+	lastMaterialDelta = bsdf.GetMaterial()->IsDelta();
 	lastGlossiness = glossiness;
 	lastOnlyInfiniteLights = bsdf.IsShadowCatcherOnlyInfiniteLights();
 	linkAcceptMask = bsdf.GetLinkAcceptMask();

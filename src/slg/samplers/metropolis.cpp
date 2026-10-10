@@ -333,7 +333,12 @@ void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults
 
 	// Calculate accept probability from old and new image sample
 	float accProb;
-	if ((currentLuminance > 0.f) && (consecRejects < maxRejects))
+	// Never force a rejected proposal into the chain. Sparse camera
+	// connections (including nonlocal SSS) can legitimately reject far
+	// more than the legacy limit: resetting then loses their dwell weight
+	// and changes the stationary distribution. Keep maxRejects only for
+	// serialization compatibility with existing scenes.
+	if (currentLuminance > 0.f)
 		accProb = Min<float>(1.f, newLuminance / currentLuminance);
 	else
 		accProb = 1.f;
@@ -423,7 +428,8 @@ void MetropolisSampler::NextSampleImpl(const vector<SampleResult> &sampleResults
 		std::copy_n(currentSamples.begin(), requestedSamples, samples.begin());
 		std::copy_n(currentSampleStamps.begin(), requestedSamples, sampleStamps.begin());
 
-		++consecRejects;
+		if (consecRejects < std::numeric_limits<u_int>::max())
+			++consecRejects;
 	}
 
 	// Cooldown is used in order to not have problems in the estimation of meanIntensity

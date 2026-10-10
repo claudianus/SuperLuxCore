@@ -122,6 +122,7 @@ private:
 
 	std::shared_ptr<MetropolisSamplerSharedData> sharedData;;
 
+	// Legacy scene property; retained for round trips, never forces acceptance.
 	u_int maxRejects;
 	float largeMutationProbability, imageMutationRange;
 	bool addOnlyCuastics;

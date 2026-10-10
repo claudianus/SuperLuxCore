@@ -160,7 +160,10 @@ OPENCL_FORCE_INLINE void MetropolisSampler_SplatSample(
 		uint consecutiveRejects = sample->consecutiveRejects;
 
 		float accProb;
-		if ((currentI > 0.f) && (consecutiveRejects < taskConfig->sampler.metropolis.maxRejects))
+		// Match CPU: a rejection limit must not force a zero/low-energy
+		// proposal into the chain and bias sparse contributions. The legacy
+		// maxRejects field remains in the configuration/ABI for old scenes.
+		if (currentI > 0.f)
 			accProb = min(1.f, proposedI / currentI);
 		else
 			accProb = 1.f;
@@ -204,7 +207,9 @@ OPENCL_FORCE_INLINE void MetropolisSampler_SplatSample(
 			norm = newWeight / (proposedI * invMeanI + taskConfig->sampler.metropolis.largeMutationProbability);
 			contrib = sampleResult;
 
-			++consecutiveRejects;
+			// Zero is also the accepted-state marker below; never wrap to it.
+			if (consecutiveRejects < 0xffffffffu)
+				++consecutiveRejects;
 		}
 
 		if (norm > 0.f) {

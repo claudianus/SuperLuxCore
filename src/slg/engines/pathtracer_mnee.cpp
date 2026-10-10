@@ -2458,7 +2458,7 @@ static void LMneeSplat(FilmConstRef film, const LightSource &light,
 void PathTracer::ConnectCyclesBSSRDFSharpToEye(IntersectionDeviceRef device,
 		SceneConstRef scene, FilmConstRef film, const float time, const LightSource &light,
 		const BSDF &escape, const u_int entryMesh, const CyclesBSSRDFAdjointVertex &vertex,
-		const LightPathInfo &pathInfo, TauswortheRandomGenerator &rng,
+		const LightPathInfo &pathInfo, const bool caustic, TauswortheRandomGenerator &rng,
 		vector<SampleResult> &sampleResults, u_int &used) const {
 	if (vertex.flux.Black())
 		return;
@@ -2651,7 +2651,7 @@ void PathTracer::ConnectCyclesBSSRDFSharpToEye(IntersectionDeviceRef device,
 	result.filmY = filmY;
 	result.pixelX = Floor2UInt(filmX);
 	result.pixelY = Floor2UInt(filmY);
-	result.isCaustic = false; // the complete imported closure is diffuse
+	result.isCaustic = caustic; // external L S+ D partition, not the inverse entry delta
 	result.cryptoMaterialID = boundary.GetCryptoMaterialID();
 	result.cryptoObjectID = boundary.GetCryptoObjectID();
 	result.radiance[light.GetID()] = radiance;

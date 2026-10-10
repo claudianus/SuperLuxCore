@@ -160,6 +160,7 @@ OPENCL_FORCE_INLINE void MirrorMaterial_Sample(__global const Material* restrict
 		EvalStack_PushFloat3(sampledDirReg);
 		EvalStack_PushFloat(pdfW);
 		EvalStack_PushBSDFEvent(GLOSSY | REFLECT);
+		return;
 	}
 
 	const BSDFEvent event = SPECULAR | REFLECT;

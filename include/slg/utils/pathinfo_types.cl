@@ -30,6 +30,8 @@ typedef struct {
 	float lastGlossiness;
 	Normal lastShadeN;
 	bool lastFromVolume, isTransmittedPath;
+	// Static terminal classification survives PSR's widened transport event.
+	bool lastMaterialDelta;
 	// The last vertex restricts direct-light sampling to infinite lights
 	// (shadow catcher): its NEE proposal was the infinite distribution, so
 	// DirectHit MIS must measure the hit against that same distribution

@@ -341,7 +341,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 									hybridBackForwardTerminalGlossiness,
 									hybridBackForwardConnectProb,
 									LightConnectionSolidAngle(*light, bsdf.hitPoint.p),
-									bsdf.IsChainTransparentMedium()) :
+									bsdf.IsChainTransparentMedium(), bsdf.GetMaterial()->IsDelta()) :
 							!pathInfo.IsCausticPath(event, bsdf.GetGlossiness(), hybridBackForwardGlossinessThreshold,
 									bsdf.IsChainTransparentMedium())))) {
 					verify (!isnan(bsdfPdfW) && !isinf(bsdfPdfW));
@@ -2844,10 +2844,20 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 				scene.GetCamera().SampleLens(time, sampler.GetSample(6), sampler.GetSample(7),
 						&pathInfo.lensPoint);
 				const BSDF escape = bsdf;
+				// The delta inverse entry is internal to a diffuse nonlocal
+				// closure. Hybrid's light sampler must classify L S+ SSS as
+				// L S+ D, using the same light-adjacent terminal as the eye.
+				const bool caustic = pathInfo.firstVertexSeen &&
+						(hybridBackForwardAdaptiveCaustic ?
+							pathInfo.IsAdaptiveCausticPath(DIFFUSE | REFLECT,
+								hybridBackForwardTerminalGlossiness, hybridBackForwardConnectProb,
+								LightConnectionSolidAngle(*light, pathInfo.firstVertexP)) :
+							pathInfo.IsCausticPath(DIFFUSE | REFLECT, 1.f,
+								hybridBackForwardGlossinessThreshold));
 				const CyclesBSSRDFAdjointConnect connect = [&](const CyclesBSSRDFAdjointVertex &vertex,
 						TauswortheRandomGenerator &connectRng) {
 					ConnectCyclesBSSRDFSharpToEye(device, scene, film, time, *light, escape,
-							nextEventRayHit.meshIndex, vertex, pathInfo, connectRng, sampleResults, used);
+							nextEventRayHit.meshIndex, vertex, pathInfo, caustic, connectRng, sampleResults, used);
 				};
 				TauswortheRandomGenerator subsurfaceRng(sampler.GetSample(sampleOffset));
 				subsurfaceRng.uintValue();

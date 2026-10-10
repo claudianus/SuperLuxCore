@@ -148,6 +148,19 @@ for mode in ('off', 'on'):
     assert np.isfinite(inside['RGB']).all() and error < .02 and np.all(measured > .505), (measured, expected)
     record(mode + '-inside-back-facing-entry-random-walk', rgb_mean=measured.tolist(), cpu_rgb_mean=expected.tolist(), max_error=error)
 
+# Execute the changed device acceptance kernel, including an old scene's
+# unusually low rejection limit. The limit must never force a biased restart.
+for mode in ('off', 'on'):
+    for legacy_limit in (1, 512):
+        pixels = render(scene(), {'pathocl.wavefront': mode,
+                         'sampler.type': 'METROPOLIS',
+                         'sampler.metropolis.maxconsecutivereject': legacy_limit})
+        measured = pixels['RGB'][center].mean(axis=(0, 1))
+        error = float(np.abs(measured - reference).max())
+        assert np.isfinite(pixels['RGB']).all() and error < .008, (mode, legacy_limit, measured, reference)
+        record(mode + '-metropolis-legacy-reject-limit-' + str(legacy_limit),
+               rgb_mean=measured.tolist(), cpu_rgb_mean=reference.tolist(), max_error=error)
+
 folder = Path(os.environ['SUPERLUXCORE_AUDIT_DIR'])
 (folder / 'device-metrics.json').write_text(json.dumps({
     'native_sha256': identity['native_sha256'], 'experimental': True,
