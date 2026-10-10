@@ -233,8 +233,7 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 
 		// Check geometry normal and light direction side
 		const float sideTest = dotEyeDirNG * dotLightDirNG;
-		const BSDFEvent matEvents = bsdf->cyclesBSSRDFPhase == 2u ? (DIFFUSE | REFLECT) :
-				Material_GetEventTypes(bsdf->materialIndex MATERIALS_PARAM);
+		const BSDFEvent matEvents = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 		if (((sideTest > 0.f) && !(matEvents & REFLECT)) ||
 				((sideTest < 0.f) && !(matEvents & TRANSMIT)))
 			return BLACK;
@@ -249,6 +248,19 @@ OPENCL_FORCE_INLINE float3 BSDF_EvaluateRev(__global const BSDF *bsdf,
 	__global const Frame *frame = &bsdf->frame;
 	const float3 localLightDir = Frame_ToLocal(frame, lightDir);
 	const float3 localEyeDir = Frame_ToLocal(frame, eyeDir);
+	if (bsdf->cyclesBSSRDFPhase == 3u) {
+		const float side = dot(fixedDir, geometryN) < 0.f ? 1.f : -1.f;
+		__global const CyclesBSSRDFParam *p = &mats[bsdf->materialIndex].cyclesbssrdf;
+		const CyclesBSSRDFBoundaryDensities boundary = CyclesBSSRDF_BoundaryDensities(
+				side * localEyeDir, side * localLightDir,
+				clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f),
+				clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f));
+		*event = DIFFUSE | TRANSMIT;
+		if (directPdfW) *directPdfW = boundary.reversePdf;
+		if (reversePdfW) *reversePdfW = boundary.forwardPdf;
+		return boundary.valid && !boundary.delta ? WHITE *
+				(boundary.forwardPdf * (fromLight ? absDotEyeDirNG / absDotLightDirNG : 1.f)) : BLACK;
+	}
 	float pdf0;
 	float3 result;
 	if (bsdf->cyclesBSSRDFPhase == 2u) {
@@ -338,6 +350,17 @@ OPENCL_FORCE_INLINE void BSDF_Pdf(__global const BSDF *bsdf,
 		if (reversePdfW) *reversePdfW = fabs(localFixedDir.z * M_1_PI_F);
 		return;
 	}
+	if (bsdf->cyclesBSSRDFPhase == 3u) {
+		const float side = dot(VLOAD3F(&bsdf->hitPoint.fixedDir.x), VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f ? 1.f : -1.f;
+		__global const CyclesBSSRDFParam *p = &mats[bsdf->materialIndex].cyclesbssrdf;
+		const CyclesBSSRDFBoundaryDensities boundary = CyclesBSSRDF_BoundaryDensities(
+				side * localSampledDir, side * localFixedDir,
+				clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f),
+				clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f));
+		if (directPdfW) *directPdfW = boundary.reversePdf;
+		if (reversePdfW) *reversePdfW = boundary.forwardPdf;
+		return;
+	}
 
 	BSDFEvent event;
 	if (directPdfW)
@@ -360,6 +383,26 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
 	const float3 localFixedDir = Frame_ToLocal(&bsdf->frame, fixedDir);
 	float3 localSampledDir;
+	if (bsdf->cyclesBSSRDFPhase == 3u) {
+		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+		const float side = dot(fixedDir, geometryN) < 0.f ? 1.f : -1.f;
+		__global const CyclesBSSRDFParam *p = &mats[bsdf->materialIndex].cyclesbssrdf;
+		const CyclesBSSRDFBoundarySample boundary = CyclesBSSRDF_SampleAdjointBoundary(
+				side * localFixedDir,
+				clamp(Texture_GetFloatValue(p->iorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 1.01f, 3.8f),
+				clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f), u0, u1);
+		*event = (boundary.densities.delta ? SPECULAR : DIFFUSE) | TRANSMIT;
+		*pdfW = boundary.densities.delta ? boundary.densities.reverseMass : boundary.densities.reversePdf;
+		if (!boundary.valid || !(*pdfW > 0.f)) return BLACK;
+		localSampledDir = side * normalize(boundary.direction);
+		*sampledDir = Frame_ToWorld(&bsdf->frame, localSampledDir);
+		*absCosSampledDir = fabs(localSampledDir.z);
+		const float materialWeight = boundary.densities.delta ? boundary.densities.adjointWeight *
+				fabs(localFixedDir.z / localSampledDir.z) : boundary.densities.forwardPdf / boundary.densities.reversePdf;
+		// The internal boundary already supplies its directional transpose.
+		// Apply only BSDF::Sample's geometry-cosine correction, once.
+		return WHITE * (materialWeight * fabs(dot(*sampledDir, geometryN)) / fabs(dot(fixedDir, geometryN)));
+	}
 
 	float3 result;
 	if (bsdf->cyclesBSSRDFPhase == 2u) {

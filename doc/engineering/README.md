@@ -93,3 +93,5 @@ docs live in `doc/features/` (see its README for the index).
 - [Experimental sharp Cycles BSSRDF CPU adjoint connections](2026-10-10-cycles-bssrdf-sharp-transport.md): initial diffuse and internal HG camera connections; full default-quality goal remains active.
 
 - [Experimental Cycles BSSRDF CPU hybrid transport](2026-10-10-cycles-bssrdf-hybrid-transport.md): external caustic classification and CPU/device Metropolis rejection-bias repair; production adapter and full compatibility remain open.
+
+- [Experimental Cycles BSSRDF device adjoint transport](2026-10-11-cycles-bssrdf-device-adjoint.md): uniform rough Metal light walks and inverse boundaries; sharp camera connections, mixed reverse transport and production acceptance remain open.

@@ -531,13 +531,18 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 	const string engine = props.Get(Property("renderengine.type")("PATHCPU")).Get<string>();
 	const bool adjointOptIn =
 			props.Get(Property("path.cyclesbssrdf.experimental.adjoint.enable")(false)).Get<bool>();
+	const bool deviceDiagnostic = engine == "PATHOCL" &&
+			props.Get(Property("path.cyclesbssrdf.experimental.device.enable")(false)).Get<bool>();
+	const bool deviceAdjointDiagnostic = deviceDiagnostic && adjointOptIn &&
+			(props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
+			 props.Get(Property("path.lighttracing.enable")(false)).Get<bool>());
 	// CPU hybrid uses the same reverse walk as LIGHTCPU, with its existing
 	// disjoint eye/caustic partition. Both ways of promoting PATHCPU to
 	// hybrid must validate the reverse kernel before worker creation.
 	const bool cpuHybridDiagnostic = engine == "PATHCPU" && adjointOptIn &&
 			(props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() ||
 			 props.Get(Property("path.lighttracing.enable")(false)).Get<bool>());
-	const bool adjointDiagnostic = (engine == "LIGHTCPU" && adjointOptIn) || cpuHybridDiagnostic;
+	const bool adjointDiagnostic = (engine == "LIGHTCPU" && adjointOptIn) || cpuHybridDiagnostic || deviceAdjointDiagnostic;
 	const auto &objects = GetScene().GetObjects();
 	for (u_int i = 0; i < objects.GetSize(); ++i) {
 		const Material &root = objects.GetSceneObject(i).GetMaterial();
@@ -604,6 +609,14 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 								props.Get(Property("path.spectral.enable")(false)).Get<bool>());
 						if (!adjointFailure.empty())
 							throw runtime_error("Experimental cyclesbssrdf material " + closure.GetName() + ": " + adjointFailure);
+						if (deviceAdjointDiagnostic) {
+							HitPoint hit;
+							hit.Init();
+							const auto p = closure.Freeze(hit);
+							if (p.roughness == 0.f && (p.radiusRGB.c[0] >= 1e-8f ||
+									p.radiusRGB.c[1] >= 1e-8f || p.radiusRGB.c[2] >= 1e-8f))
+								throw runtime_error("Experimental cyclesbssrdf GPU sharp boundary camera connections remain unimplemented");
+						}
 					}
 					continue;
 				}
@@ -619,8 +632,6 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 		experimentalBSSRDF |= contains;
 	}
 	if (experimentalBSSRDF) {
-		const bool deviceDiagnostic = engine == "PATHOCL" &&
-				props.Get(Property("path.cyclesbssrdf.experimental.device.enable")(false)).Get<bool>();
 		if (deviceDiagnostic) {
 			for (u_int i = 0; i < objects.GetSize(); ++i) {
 				const auto &material = objects.GetSceneObject(i).GetMaterial();
@@ -635,20 +646,20 @@ void RenderConfig::ValidateCyclesBSSRDF() const {
 			}
 			if ((props.Get(Property("path.vertexconnection.enable")(false)).Get<bool>() ||
 					props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>()))
-				throw runtime_error("Experimental cyclesbssrdf device adjoint/vertex connection is not implemented yet");
+				throw runtime_error("Experimental cyclesbssrdf device vertex connection is not implemented yet");
 		}
 		if (!props.Get(Property("path.cyclesbssrdf.experimental.enable")(false)).Get<bool>() ||
 				(engine != "PATHCPU" && !deviceDiagnostic && !adjointDiagnostic) ||
-				(props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() && !cpuHybridDiagnostic) ||
-				(props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() && !cpuHybridDiagnostic) ||
-				props.Get(Property("path.lighttracing.only")(false)).Get<bool>() ||
+				(props.Get(Property("path.hybridbackforward.enable")(true)).Get<bool>() && !cpuHybridDiagnostic && !deviceAdjointDiagnostic) ||
+				(props.Get(Property("path.lighttracing.enable")(false)).Get<bool>() && !cpuHybridDiagnostic && !deviceAdjointDiagnostic) ||
+				(props.Get(Property("path.lighttracing.only")(false)).Get<bool>() && !deviceAdjointDiagnostic) ||
 				(props.Get(Property("path.vertexconnection.enable")(false)).Get<bool>() ||
 					props.Get(Property("path.vertexconnect.enable")(false)).Get<bool>()) ||
 				props.Get(Property("path.restir.gi.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.restir.pt.enable")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>() ||
 				props.Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>())
-			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics (device opt-in for PATHOCL) or adjoint opt-in for LIGHTCPU/CPU hybrid; device hybrid, BIDIR, vertex connections and caches remain unsupported");
+			throw runtime_error("Experimental cyclesbssrdf requires explicit eye-only diagnostics or adjoint opt-in for LIGHTCPU/CPU hybrid and PATHOCL device light/hybrid; PATHOCL requires device opt-in, and BIDIR, vertex connections and caches remain unsupported");
 	}
 }
 

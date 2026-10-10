@@ -50,7 +50,8 @@ assert '1' in mask, 'This contract requires actual Metal execution; no skip acce
 
 base = {'film.width': W, 'film.height': H, 'film.imagepipelines.0.0.type': 'NOP',
         'film.filter.type': 'NONE', 'sampler.type': 'SOBOL', 'batch.haltspp': 0,
-        'native.threads.count': 8, 'opencl.task.count': 8192,
+        'native.threads.count': 8, 'opencl.task.count': 16384,
+        'opencl.native.threads.count': 0,
         'opencl.devices.select': mask, 'opencl.cpu.use': False, 'opencl.gpu.use': True,
         'renderengine.seed': 817, 'path.hybridbackforward.partition': .8,
         'path.hybridbackforward.adaptivecaustic': True,
@@ -84,6 +85,8 @@ for engine, mode in (('PATHCPU', 'cpu'), ('PATHOCL', 'off'), ('PATHOCL', 'on')):
                 stats = session.GetStats()
                 eye = stats.Get('stats.renderengine.pass.eye').GetInt()
                 light = stats.Get('stats.renderengine.pass.light').GetInt()
+                if hybrid and partition < 1. and time.monotonic() - start >= 20.:
+                    assert light > 0, ('hybrid requires actual light samples', label, eye, light)
                 if eye >= 16384 and (not hybrid or partition == 1. or light >= 20480):
                     break
                 assert time.monotonic() - start < 600, (label, eye, light)

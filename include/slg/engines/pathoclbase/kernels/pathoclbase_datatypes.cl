@@ -897,7 +897,7 @@ typedef struct {
 // No light/volume shader uses that scratch slot in this phase. Keep this
 // smaller than HitPoint (host static_assert) without growing ordinary tasks.
 typedef struct {
-	unsigned int entryMesh, groupIndex, bounce;
+	unsigned int entryMesh, groupIndex, bounce, entryMaterial;
 	Seed seed;
 	Spectrum sigmaT, alpha, throughput, probabilities;
 	float distance, anisotropy;

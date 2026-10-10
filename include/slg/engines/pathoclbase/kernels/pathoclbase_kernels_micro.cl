@@ -106,7 +106,7 @@ OPENCL_FORCE_INLINE bool CyclesBSSRDF_QueueFlight(__global CyclesBSSRDFState *s,
 // Returns 0 for the local-radius branch, 1 for a queued walk and -1 for
 // absorption/invalid entry. Local/nonlocal choice is probability compensated.
 OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUTaskState *state,
-		__global Ray *ray MATERIALS_PARAM_DECL) {
+		__global Ray *ray, const bool adjoint MATERIALS_PARAM_DECL) {
 	__global BSDF *bsdf = &state->bsdf;
 	uint matIndex = bsdf->materialIndex;
 	if (!mats[matIndex].hasCyclesBSSRDF) return 0;
@@ -178,29 +178,54 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	const float side = fixed.z < 0.f ? -1.f : 1.f;
 	const float3 wo = side * fixed;
 	if (!(wo.z > 0.f)) return -1;
-	const CyclesBSSRDFBoundarySample boundary = CyclesBSSRDF_SampleEntryBoundary(
-			wo, ior, roughness, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
-	const float3 direction = normalize(Frame_ToWorld(&bsdf->frame, side * boundary.direction));
+	// Keep each write to the shared RNG state in its own expression.
+	const float boundaryU0 = CyclesBSSRDF_Random(s);
+	const float boundaryU1 = CyclesBSSRDF_Random(s);
+	float3 direction;
+	if (adjoint) {
+		// Transpose the eye walk's white diffuse escape under the geometry
+		// cosine measure. Keep the CPU shading/geometry correction once.
+		const float3 fixedWorld = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
+		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+		const float geometrySide = dot(fixedWorld, geometryN) < 0.f ? -1.f : 1.f;
+		const float3 landing = geometrySide * geometryN;
+		float3 x, y;
+		CoordinateSystem(landing, &x, &y);
+		const float3 local = CosineSampleHemisphere(boundaryU0, boundaryU1);
+		direction = normalize(local.x * x + local.y * y - local.z * landing);
+		const float geometryCos = fabs(dot(fixedWorld, geometryN));
+		if (!(geometryCos > 0.f)) return -1;
+		VSTORE3F(VLOAD3F(s->throughput.c) *
+				(fabs(dot(fixedWorld, VLOAD3F(&bsdf->hitPoint.shadeN.x))) / geometryCos), s->throughput.c);
+	} else {
+		const CyclesBSSRDFBoundarySample boundary = CyclesBSSRDF_SampleEntryBoundary(
+				wo, ior, roughness, boundaryU0, boundaryU1);
+		direction = normalize(Frame_ToWorld(&bsdf->frame, side * boundary.direction));
+	}
 	if (!(side * dot(direction, VLOAD3F(&bsdf->hitPoint.geometryN.x)) < 0.f)) return -1;
 	const float time = ray->time;
 	Ray_Init2(ray, BSDF_GetRayOrigin(bsdf, direction), direction, time);
 	s->entryMesh = bsdf->sceneObjectIndex;
+	s->entryMaterial = matIndex;
 	s->groupIndex = sceneObjs[s->entryMesh].subsurfaceGroupIndex;
 	s->bounce = 0u;
 	if (!CyclesBSSRDF_QueueFlight(s, ray)) return -1;
-	bsdf->cyclesBSSRDFPhase = 1u;
-	state->state = MK_RT_NEXT_VERTEX;
+	bsdf->cyclesBSSRDFPhase = adjoint ? 4u : 1u;
+	state->state = adjoint ? MK_LIGHT_VERTEX : MK_RT_NEXT_VERTEX;
 	return 1;
 }
 
-OPENCL_FORCE_INLINE void CyclesBSSRDF_Resolve(__global GPUTask *task, __global GPUTaskState *state,
-		__global EyePathInfo *pathInfo, __global Ray *ray, __global RayHit *hit MATERIALS_PARAM_DECL) {
+// -1 absorbs the walk, 0 queues another hardware flight, 1 resolves an exit.
+// Eye and light schedulers retain ownership of their own path/film states.
+OPENCL_FORCE_INLINE int CyclesBSSRDF_Resolve(__global GPUTask *task, __global GPUTaskState *state,
+		__global PathVolumeInfo *volume, __global Ray *ray, __global RayHit *hit MATERIALS_PARAM_DECL) {
 	__global CyclesBSSRDFState *s = (__global CyclesBSSRDFState *)&task->tmpHitPoint;
+	const bool adjoint = state->bsdf.cyclesBSSRDFPhase == 4u;
 	bool escaped = hit->meshIndex != NULL_INDEX && (hit->meshIndex == s->entryMesh ||
 			(s->groupIndex != NULL_INDEX && sceneObjs[hit->meshIndex].subsurfaceGroupIndex == s->groupIndex));
 	if (hit->meshIndex != NULL_INDEX && !escaped) {
 		const float next = hit->t + MachineEpsilon_E(hit->t);
-		if (next > ray->mint && next < s->distance) { ray->mint = next; return; }
+		if (next > ray->mint && next < s->distance) { ray->mint = next; return 0; }
 	}
 	const float distance = escaped ? hit->t : s->distance;
 	const float3 sigmaT = VLOAD3F(s->sigmaT.c), alpha = VLOAD3F(s->alpha.c);
@@ -208,33 +233,41 @@ OPENCL_FORCE_INLINE void CyclesBSSRDF_Resolve(__global GPUTask *task, __global G
 	const float3 factor = transmittance * (escaped ? WHITE : sigmaT);
 	const float3 probabilities = VLOAD3F(s->probabilities.c);
 	const float pdf = dot(probabilities, factor);
-	if (!(pdf > 0.f) || !isfinite(pdf)) { state->state = MK_SPLAT_SAMPLE; return; }
+	if (!(pdf > 0.f) || !isfinite(pdf)) return -1;
 	float3 throughput = VLOAD3F(s->throughput.c) * factor / pdf;
 	if (!escaped) throughput *= alpha;
 	if (escaped) {
 		VSTORE3F(VLOAD3F(state->throughput.c) * throughput, state->throughput.c);
-		BSDF_Init(&state->bsdf, false, ray, hit, CyclesBSSRDF_Random(s), &pathInfo->volume MATERIALS_PARAM);
+		const uint entryMaterial = s->entryMaterial;
+		BSDF_Init(&state->bsdf, false, ray, hit, CyclesBSSRDF_Random(s), volume MATERIALS_PARAM);
 		const float exitSide = dot(VLOAD3F(&ray->d.x), VLOAD3F(&state->bsdf.hitPoint.geometryN.x)) < 0.f ? -1.f : 1.f;
-		VSTORE3F(exitSide * VLOAD3F(&state->bsdf.hitPoint.geometryN.x), &state->bsdf.hitPoint.fixedDir.x);
-		state->bsdf.hitPoint.intoObject = exitSide > 0.f;
+		if (adjoint) {
+			VSTORE3F(-VLOAD3F(&ray->d.x), &state->bsdf.hitPoint.fixedDir.x);
+			state->bsdf.hitPoint.intoObject = exitSide < 0.f;
+			state->bsdf.materialIndex = entryMaterial;
+		} else {
+			VSTORE3F(exitSide * VLOAD3F(&state->bsdf.hitPoint.geometryN.x), &state->bsdf.hitPoint.fixedDir.x);
+			state->bsdf.hitPoint.intoObject = exitSide > 0.f;
+		}
 		state->bsdf.triangleLightSourceIndex = NULL_INDEX;
 		state->bsdf.nullSelectionConditioned = false;
-		state->bsdf.cyclesBSSRDFPhase = 2u;
-		state->state = MK_HIT_OBJECT;
-		return;
+		state->bsdf.cyclesBSSRDFPhase = adjoint ? 3u : 2u;
+		return 1;
 	}
 	if (s->bounce >= 8u) {
 		const float survival = clamp(fmax(throughput.x, fmax(throughput.y, throughput.z)), .05f, .95f);
-		if (CyclesBSSRDF_Random(s) >= survival) { state->state = MK_SPLAT_SAMPLE; return; }
+		if (CyclesBSSRDF_Random(s) >= survival) return -1;
 		throughput /= survival;
 	}
 	VSTORE3F(throughput, s->throughput.c);
-	if (++s->bounce >= 256u) { state->state = MK_SPLAT_SAMPLE; return; }
+	if (++s->bounce >= 256u) return -1;
 	const float3 origin = VLOAD3F(&ray->o.x) + distance * VLOAD3F(&ray->d.x);
-	const float3 direction = CyclesBSSRDF_Phase(VLOAD3F(&ray->d.x), s->anisotropy, CyclesBSSRDF_Random(s), CyclesBSSRDF_Random(s));
+	const float phaseU0 = CyclesBSSRDF_Random(s);
+	const float phaseU1 = CyclesBSSRDF_Random(s);
+	const float3 direction = CyclesBSSRDF_Phase(VLOAD3F(&ray->d.x), s->anisotropy, phaseU0, phaseU1);
 	const float time = ray->time;
 	Ray_Init2(ray, origin, direction, time);
-	if (!CyclesBSSRDF_QueueFlight(s, ray)) state->state = MK_SPLAT_SAMPLE;
+	return CyclesBSSRDF_QueueFlight(s, ray) ? 0 : -1;
 }
 
 __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
@@ -276,7 +309,9 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 	//--------------------------------------------------------------------------
 
 	if (taskState->bsdf.cyclesBSSRDFPhase == 1u) {
-		CyclesBSSRDF_Resolve(&tasks[gid], taskState, pathInfo, &rays[gid], &rayHits[gid] MATERIALS_PARAM);
+		const int result = CyclesBSSRDF_Resolve(&tasks[gid], taskState, &pathInfo->volume, &rays[gid], &rayHits[gid] MATERIALS_PARAM);
+		if (result < 0) taskState->state = MK_SPLAT_SAMPLE;
+		else if (result > 0) taskState->state = MK_HIT_OBJECT;
 		return;
 	}
 
@@ -625,7 +660,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	}
 
 	if (bsdf->cyclesBSSRDFPhase == 0u) {
-		const int result = CyclesBSSRDF_Start(&tasks[gid], taskState, &rays[gid] MATERIALS_PARAM);
+		const int result = CyclesBSSRDF_Start(&tasks[gid], taskState, &rays[gid], false MATERIALS_PARAM);
 		if (result != 0) {
 			if (result < 0) taskState->state = MK_SPLAT_SAMPLE;
 			return;
@@ -3166,6 +3201,9 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 			SAMPLER_PARAM);
 
 	LightPathInfo_Init(lpi);
+	// An absorbed random walk can end while its BSDF still owns phase 4.
+	// A fresh emitted path must start with an ordinary unresolved surface.
+	taskState->bsdf.cyclesBSSRDFPhase = 0u;
 	// PSR: light-side vertices regularize identically (vertex connect /
 	// splat consistency with the eye side)
 	lpi->depth.regularization = taskConfig->pathTracer.regularizationSigma;
@@ -3791,7 +3829,24 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 	const uint sampleOffset = pathTracer->lightTracing.lightSampleBootSize +
 			lpi->depth.depth * pathTracer->lightTracing.lightSampleStepSize;
 
-	float3 connectionThroughput;
+	const bool resolvingSubsurface = taskState->bsdf.cyclesBSSRDFPhase == 4u;
+	if (resolvingSubsurface) {
+		const int result = CyclesBSSRDF_Resolve(task, taskState, &lpi->volume,
+				&rays[gid], &rayHits[gid] MATERIALS_PARAM);
+		if (result <= 0) {
+			if (result < 0) {
+				lpi->pathDone = true;
+				rays[gid].flags = RAY_FLAGS_MASKED;
+				taskState->state = MK_LIGHT_INIT;
+			}
+			task->seed = seedValue;
+			return;
+		}
+		HitPoint_SetRayContext(&taskState->bsdf.hitPoint, LIGHT_RAY | INDIRECT_RAY,
+				lpi->lastBSDFEvent, &lpi->depth, rayHits[gid].t, rayHits[gid].t);
+	}
+
+	float3 connectionThroughput = WHITE;
 	// CPU draws the path-ray pass-through event at sampleOffset + 0
 	const float passThroughEvent = Sampler_GetLightSample(taskConfig,
 			sampleOffset SAMPLER_PARAM);
@@ -3802,7 +3857,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 			lpi->volume.currentVolumeIndex : scene->defaultVolumeIndex;
 
 	int throughShadowTransparency = taskState->throughShadowTransparency;
-	const bool continueToTrace = Scene_Intersect(taskConfig,
+	const bool continueToTrace = !resolvingSubsurface && Scene_Intersect(taskConfig,
 			LIGHT_RAY | INDIRECT_RAY,
 			&lpi->depth, lpi->lastBSDFEvent,
 			&throughShadowTransparency,
@@ -3969,6 +4024,21 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 
 			VSTORE3F(connectionThroughput * VLOAD3F(taskState->throughput.c),
 					taskState->throughput.c);
+			if (!resolvingSubsurface && mats[bsdf->materialIndex].hasCyclesBSSRDF) {
+				Seed subsurfaceSeed;
+				Rnd_InitFloat(passThroughEvent, &subsurfaceSeed);
+				taskState->seedPassThroughEvent = subsurfaceSeed;
+				const int result = CyclesBSSRDF_Start(task, taskState, &rays[gid], true MATERIALS_PARAM);
+				if (result != 0) {
+					if (result < 0) {
+						lpi->pathDone = true;
+						rays[gid].flags = RAY_FLAGS_MASKED;
+						taskState->state = MK_LIGHT_INIT;
+					}
+					task->seed = seedValue;
+					return;
+				}
+			}
 
 			if (pathTracer->vertexConnect.enabled) {
 				// Vertex connection (M6) light-prefix MIS fold
@@ -4236,7 +4306,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 				if (Spectrum_IsBlack(bsdfSample))
 					terminate = true;
 				else {
-					LightPathInfo_AddVertex(lpi, bsdf, bsdfEvent,
+					LightPathInfo_AddVertex(lpi, bsdf, bsdf->cyclesBSSRDFPhase == 3u ? (DIFFUSE | REFLECT) : bsdfEvent,
 							pathTracer->hybridBackForward.glossinessThreshold
 							MATERIALS_PARAM);
 

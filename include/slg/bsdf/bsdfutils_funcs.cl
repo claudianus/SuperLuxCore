@@ -21,6 +21,11 @@
 OPENCL_FORCE_INLINE BSDFEvent BSDF_GetEventTypes(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
 	if (bsdf->cyclesBSSRDFPhase == 2u) return DIFFUSE | REFLECT;
+	if (bsdf->cyclesBSSRDFPhase == 3u) {
+		const float roughness = Texture_GetFloatValue(mats[bsdf->materialIndex].cyclesbssrdf.roughnessTexIndex,
+				&bsdf->hitPoint TEXTURES_PARAM);
+		return (roughness <= 0.f ? SPECULAR : DIFFUSE) | TRANSMIT;
+	}
 	return Material_GetEventTypes(bsdf->materialIndex
 			MATERIALS_PARAM);
 }
@@ -28,6 +33,9 @@ OPENCL_FORCE_INLINE BSDFEvent BSDF_GetEventTypes(__global const BSDF *bsdf
 OPENCL_FORCE_INLINE bool BSDF_IsDelta(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
 	if (bsdf->cyclesBSSRDFPhase == 2u) return false;
+	if (bsdf->cyclesBSSRDFPhase == 3u)
+		return Texture_GetFloatValue(mats[bsdf->materialIndex].cyclesbssrdf.roughnessTexIndex,
+				&bsdf->hitPoint TEXTURES_PARAM) <= 0.f;
 	return Material_IsDelta(bsdf->materialIndex
 			MATERIALS_PARAM);
 }
@@ -89,7 +97,7 @@ OPENCL_FORCE_INLINE uint BSDF_GetMaterialExteriorVolume(__global const BSDF *bsd
 
 OPENCL_FORCE_INLINE float BSDF_GetGlossiness(__global const BSDF *bsdf
 		MATERIALS_PARAM_DECL) {
-	if (bsdf->cyclesBSSRDFPhase == 2u) return 1.f;
+	if (bsdf->cyclesBSSRDFPhase == 2u || bsdf->cyclesBSSRDFPhase == 3u) return 1.f;
 	return Material_GetGlossiness(bsdf->materialIndex
 			MATERIALS_PARAM);
 }
