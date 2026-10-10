@@ -64,7 +64,7 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Cycles Backfacing spectrum](2026-10-10-cycles-backfacing.md): front/back emission color/strength fix; 28 private CPU/Metal checks; the scoped fix is included in verified2.11.24 deployment.
 
-- [Current 2.11.25 standalone positive SSS boundary diagnostic](2026-10-10-cycles-positive-sss-diagnostic.md): confirmed remaining defect; auxiliary models excluded from production acceptance.
+- [Current 2.11.26 standalone positive SSS boundary diagnostic](2026-10-10-cycles-positive-sss-diagnostic.md): confirmed remaining defect; auxiliary models excluded from production acceptance.
 
 - [Verified2.11.24 Incoming, Backfacing, valid-zero and Microfiber deployment](2026-10-10-deployment-2.11.24.md): 591 guarded CI/fresh/actual CPU and Metal checks; full-scene goal remains active.
 
@@ -74,4 +74,6 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Cycles SSS all-channel local diffuse limit](2026-10-10-cycles-sss-local-limit.md): adapter-only fix; ordinary positive SSS remains open.
 
-- [Cycles SSS constant RGB/Vector Scale coercion](2026-10-10-cycles-sss-scale-coercion.md): private CPU/Metal46 checks and6 reviewed sheets;2.11.26 deployment pending, full goal active.
+- [Cycles SSS constant RGB/Vector Scale coercion](2026-10-10-cycles-sss-scale-coercion.md): 46 private CPU/Metal checks and6 reviewed sheets; verified public2.11.26 deployment with86 guarded checks and9 sheets.
+
+- [Verified 2.11.26 SSS RGB/Vector Scale coercion deployment](2026-10-10-deployment-2.11.26.md):86 guarded CI/fresh/actual checks; full goal remains active and incomplete.
