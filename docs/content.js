@@ -1641,8 +1641,8 @@ window.SLC_DATA = {
       "ko": "03 / 모든 기능을 이미지로"
     },
     "toolkitHeading": {
-      "en": "Material atlas / renderer index.",
-      "ko": "재질 아틀라스 · 렌더러 인덱스."
+      "en": "Renderer index / documented scope.",
+      "ko": "렌더러 인덱스 · 지원 범위."
     },
     "toolkitIntro": {
       "en": "Read the native output first. Then inspect the material, pass, backend and documented scope.",
