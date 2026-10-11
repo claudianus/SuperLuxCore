@@ -9,6 +9,10 @@ merges, and the explicit counters-only reset retains its previous behavior.
 No sampling strength, convergence threshold or rendering quality default
 changes.
 
+PATHOCL's hybrid native workers reuse their shared thread film on edits.
+They now call `Reset()` when restarting, so the same rule applies to their
+adaptive moments, rather than preserving them with a merge-only `Clear()`.
+
 `dev-tools/film_edit_reset_contract.py` builds a temporary C++ bridge with the
 actual Release flags and calls the loaded module's real sample splatter and
 film methods. The earlier whole-wheel build accumulated moments, preserved

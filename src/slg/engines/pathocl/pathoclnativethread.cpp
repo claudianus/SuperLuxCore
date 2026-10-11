@@ -77,8 +77,9 @@ void PathOCLNativeRenderThread::Start() {
 
 void PathOCLNativeRenderThread::StartRenderThread() {
 	if (threadIndex == 0) {
-		// Clear the film (i.e. the thread can be started/stopped multiple times)
-		threadFilm->Clear();
+		// Scene edits restart the native eye passes too. Drop the previous
+		// scene's luminance moments, unlike a radiance-only merge clear.
+		threadFilm->Reset();
 	}
 
 	PathOCLBaseNativeRenderThread::StartRenderThread();

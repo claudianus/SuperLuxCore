@@ -48,13 +48,14 @@ with tempfile.TemporaryDirectory(prefix='slc-blackbody-contract-') as temporary:
                        stderr=subprocess.STDOUT, check=True)
     sys.path.insert(0, str(args.module_dir or build / 'src/pysuperluxcore/Release'))
     import pysuperluxcore as lux
-    native = ctypes.CDLL(lux.__file__, mode=ctypes.RTLD_GLOBAL)
+    native_path = getattr(lux, 'pysuperluxcore', lux).__file__
+    native = ctypes.CDLL(native_path, mode=ctypes.RTLD_GLOBAL)
     bridge = ctypes.CDLL(str(bridge_path))
     bridge.slc_blackbody_exact_cache_contract.restype = ctypes.c_int
     assert bridge.slc_blackbody_exact_cache_contract() == 1
     proof = {'passed': True, 'exact_float_bits': True, 'workers': 4,
              'evaluations': 6912, 'bounded_entries_per_worker': 1,
-             'native_sha256': hashlib.sha256(Path(lux.__file__).read_bytes()).hexdigest(),
+             'native_sha256': hashlib.sha256(Path(native_path).read_bytes()).hexdigest(),
              'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest()}
 proof['temporary_bridge_removed'] = not Path(temporary).exists()
 args.output.write_text(json.dumps(proof, indent=2) + '\n')
