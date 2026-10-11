@@ -42,7 +42,8 @@ window.SLC_DATA = {
       "upstreamCommits": 51,
       "areas": 8,
       "controls": 48,
-      "scenes": 13,
+      "scenes": 4,
+      "historicalScenes": 13,
       "upstreamHead": "4209d6537",
       "date": "2026-10-12"
     },
@@ -51,110 +52,422 @@ window.SLC_DATA = {
         "id": "transport",
         "count": 148,
         "feature": "restirdi",
-        "image": "assets/studio/interior-raw.jpg",
-        "badge": {"en": "EXTENDED", "ko": "확장"},
-        "title": {"en": "Hard light paths get more choices.", "ko": "어려운 빛의 경로에 선택지가 생깁니다."},
-        "outcome": {"en": "Reservoirs, guiding and caustic solvers give artists a way to target the paths that matter.", "ko": "Reservoir·guiding·커스틱 솔버로 중요한 빛의 경로를 직접 겨냥할 수 있습니다."},
-        "scope": {"en": "Opt-in and scene-dependent; no blanket speed claim.", "ko": "선택 기능이며 장면에 따라 다릅니다. 일괄적인 속도 향상은 주장하지 않습니다."},
-        "chips": ["CPU", "GPU", "OPT-IN"]
+        "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+        "badge": {
+          "en": "EXTENDED",
+          "ko": "확장"
+        },
+        "title": {
+          "en": "Hard light paths get more choices.",
+          "ko": "어려운 빛의 경로에 선택지가 생깁니다."
+        },
+        "outcome": {
+          "en": "Reservoirs, guiding and caustic solvers give artists a way to target the paths that matter.",
+          "ko": "Reservoir·guiding·커스틱 솔버로 중요한 빛의 경로를 직접 겨냥할 수 있습니다."
+        },
+        "scope": {
+          "en": "Opt-in and scene-dependent; no blanket speed claim.",
+          "ko": "선택 기능이며 장면에 따라 다릅니다. 일괄적인 속도 향상은 주장하지 않습니다."
+        },
+        "chips": [
+          "CPU",
+          "GPU",
+          "OPT-IN"
+        ]
       },
       {
         "id": "volumes",
         "count": 86,
         "feature": "volume",
-        "image": "assets/studio/atmosphere.jpg",
-        "badge": {"en": "EXTENDED", "ko": "확장"},
-        "title": {"en": "Volumes keep their depth.", "ko": "볼륨의 깊이를 잃지 않습니다."},
-        "outcome": {"en": "Heterogeneous density, phase functions and photon beams make smoke, glass and atmosphere read as light, not a flat tint.", "ko": "이질 밀도·위상 함수·광자 빔으로 연기와 유리, 대기가 평면 색이 아니라 빛으로 읽힙니다."},
-        "scope": {"en": "Volume paths vary by backend and material setup.", "ko": "볼륨 경로의 지원 범위는 백엔드와 재질 설정에 따라 다릅니다."},
-        "chips": ["CPU", "METAL", "VOLUME"]
+        "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+        "badge": {
+          "en": "EXTENDED",
+          "ko": "확장"
+        },
+        "title": {
+          "en": "Volumes keep their depth.",
+          "ko": "볼륨의 깊이를 잃지 않습니다."
+        },
+        "outcome": {
+          "en": "Heterogeneous density, phase functions and photon beams make smoke, glass and atmosphere read as light, not a flat tint.",
+          "ko": "이질 밀도·위상 함수·광자 빔으로 연기와 유리, 대기가 평면 색이 아니라 빛으로 읽힙니다."
+        },
+        "scope": {
+          "en": "Volume paths vary by backend and material setup.",
+          "ko": "볼륨 경로의 지원 범위는 백엔드와 재질 설정에 따라 다릅니다."
+        },
+        "chips": [
+          "CPU",
+          "METAL",
+          "VOLUME"
+        ]
       },
       {
         "id": "infrastructure",
         "count": 80,
         "feature": "outofcore",
-        "image": "assets/studio/architecture-raw.jpg",
-        "badge": {"en": "POLISH", "ko": "기반 개선"},
-        "title": {"en": "Large scenes use the memory they need.", "ko": "큰 씬은 필요한 메모리만 사용합니다."},
-        "outcome": {"en": "Out-of-core geometry, image staging and bounded task memory keep production scenes workable as they grow.", "ko": "아웃 오브 코어 지오메트리·이미지 스테이징·제한된 태스크 메모리로 씬이 커져도 작업을 이어갑니다."},
-        "scope": {"en": "Resource behavior is measured by scene and backend, not a render-quality shortcut.", "ko": "리소스 동작은 장면과 백엔드별로 측정하며 렌더 품질을 낮추는 지름길이 아닙니다."},
-        "chips": ["CPU", "GPU", "RESOURCE"]
+        "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+        "badge": {
+          "en": "POLISH",
+          "ko": "기반 개선"
+        },
+        "title": {
+          "en": "Large scenes use the memory they need.",
+          "ko": "큰 씬은 필요한 메모리만 사용합니다."
+        },
+        "outcome": {
+          "en": "Out-of-core geometry, image staging and bounded task memory keep production scenes workable as they grow.",
+          "ko": "아웃 오브 코어 지오메트리·이미지 스테이징·제한된 태스크 메모리로 씬이 커져도 작업을 이어갑니다."
+        },
+        "scope": {
+          "en": "Resource behavior is measured by scene and backend, not a render-quality shortcut.",
+          "ko": "리소스 동작은 장면과 백엔드별로 측정하며 렌더 품질을 낮추는 지름길이 아닙니다."
+        },
+        "chips": [
+          "CPU",
+          "GPU",
+          "RESOURCE"
+        ]
       },
       {
         "id": "hardware",
         "count": 74,
         "feature": "metal",
-        "image": "assets/studio/fan.jpg",
-        "badge": {"en": "NEW PATH", "ko": "새 경로"},
-        "title": {"en": "Apple GPU is a native render path.", "ko": "Apple GPU가 네이티브 렌더 경로가 됩니다."},
-        "outcome": {"en": "Metal compute, hardware ray tracing, instancing, motion and native curves meet in the same renderer.", "ko": "Metal 연산·하드웨어 레이 트레이싱·인스턴싱·모션·네이티브 커브를 하나의 렌더러에서 사용합니다."},
-        "scope": {"en": "Supported Apple hardware; the motion scene is credited context, not a speed test.", "ko": "지원되는 Apple 하드웨어 범위입니다. 모션 장면은 출처가 있는 맥락이며 속도 측정이 아닙니다."},
-        "chips": ["METAL", "HWRT", "CURVES"]
+        "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+        "badge": {
+          "en": "NEW PATH",
+          "ko": "새 경로"
+        },
+        "title": {
+          "en": "Apple GPU is a native render path.",
+          "ko": "Apple GPU가 네이티브 렌더 경로가 됩니다."
+        },
+        "outcome": {
+          "en": "Metal compute, hardware ray tracing, instancing, motion and native curves meet in the same renderer.",
+          "ko": "Metal 연산·하드웨어 레이 트레이싱·인스턴싱·모션·네이티브 커브를 하나의 렌더러에서 사용합니다."
+        },
+        "scope": {
+          "en": "Supported Apple hardware; the motion scene is credited context, not a speed test.",
+          "ko": "지원되는 Apple 하드웨어 범위입니다. 모션 장면은 출처가 있는 맥락이며 속도 측정이 아닙니다."
+        },
+        "chips": [
+          "METAL",
+          "HWRT",
+          "CURVES"
+        ]
       },
       {
         "id": "workflow",
         "count": 60,
         "feature": "cryptomatte",
-        "image": "assets/studio/interior-crypto-objects.jpg",
-        "badge": {"en": "WORKFLOW", "ko": "제작 흐름"},
-        "title": {"en": "The beauty render keeps its evidence.", "ko": "작품 렌더가 근거를 함께 남깁니다."},
-        "outcome": {"en": "Cryptomatte, LPE, variance, motion and depth channels turn one render into a usable finishing set.", "ko": "Cryptomatte·LPE·분산·모션·깊이 채널로 한 번의 렌더가 실제 마무리 세트가 됩니다."},
-        "scope": {"en": "Pass availability follows the selected engine and scene.", "ko": "패스 제공 여부는 선택한 엔진과 장면에 따라 달라집니다."},
-        "chips": ["AOV", "LPE", "BLENDER"]
+        "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+        "badge": {
+          "en": "WORKFLOW",
+          "ko": "제작 흐름"
+        },
+        "title": {
+          "en": "The beauty render keeps its evidence.",
+          "ko": "작품 렌더가 근거를 함께 남깁니다."
+        },
+        "outcome": {
+          "en": "Cryptomatte, LPE, variance, motion and depth channels turn one render into a usable finishing set.",
+          "ko": "Cryptomatte·LPE·분산·모션·깊이 채널로 한 번의 렌더가 실제 마무리 세트가 됩니다."
+        },
+        "scope": {
+          "en": "Pass availability follows the selected engine and scene.",
+          "ko": "패스 제공 여부는 선택한 엔진과 장면에 따라 달라집니다."
+        },
+        "chips": [
+          "AOV",
+          "LPE",
+          "BLENDER"
+        ]
       },
       {
         "id": "materials",
         "count": 58,
         "feature": "multiscatter",
-        "image": "assets/studio/audio-detail.jpg",
-        "badge": {"en": "EXTENDED", "ko": "확장"},
-        "title": {"en": "Surfaces stop losing the light they should keep.", "ko": "표면이 간직해야 할 빛을 덜 잃습니다."},
-        "outcome": {"en": "OpenPBR, transmission, rough conductors, multiple scattering, sheen and hair models widen the material vocabulary.", "ko": "OpenPBR·투과·거친 도체·다중 산란·sheen·헤어 모델로 재질 표현 범위를 넓힙니다."},
-        "scope": {"en": "Several controls are opt-in or backend-specific; the comparison recipe is disclosed.", "ko": "일부 제어는 선택 기능 또는 백엔드별 기능이며 비교 레시피를 공개합니다."},
-        "chips": ["OPENPBR", "ENERGY", "FIBRE"]
+        "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+        "badge": {
+          "en": "EXTENDED",
+          "ko": "확장"
+        },
+        "title": {
+          "en": "Surfaces stop losing the light they should keep.",
+          "ko": "표면이 간직해야 할 빛을 덜 잃습니다."
+        },
+        "outcome": {
+          "en": "OpenPBR, transmission, rough conductors, multiple scattering, sheen and hair models widen the material vocabulary.",
+          "ko": "OpenPBR·투과·거친 도체·다중 산란·sheen·헤어 모델로 재질 표현 범위를 넓힙니다."
+        },
+        "scope": {
+          "en": "Several controls are opt-in or backend-specific; the comparison recipe is disclosed.",
+          "ko": "일부 제어는 선택 기능 또는 백엔드별 기능이며 비교 레시피를 공개합니다."
+        },
+        "chips": [
+          "OPENPBR",
+          "ENERGY",
+          "FIBRE"
+        ]
       },
       {
         "id": "release",
         "count": 58,
         "feature": "blender",
-        "image": "assets/studio/heritage-raw.jpg",
-        "badge": {"en": "SHIP IT", "ko": "배포"},
-        "title": {"en": "Install the renderer without archaeology.", "ko": "찾아 헤매지 않고 렌더러를 설치합니다."},
-        "outcome": {"en": "Platform wheels, Blender extension bundles, version banners and provenance make the build you installed legible.", "ko": "플랫폼별 wheel·Blender 확장 번들·버전 배너·provenance로 설치한 빌드를 확인할 수 있습니다."},
-        "scope": {"en": "Build and package evidence is separate from runtime feature acceptance.", "ko": "빌드·패키지 근거와 런타임 기능 검수는 구분합니다."},
-        "chips": ["MAC", "WINDOWS", "LINUX"]
+        "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+        "badge": {
+          "en": "SHIP IT",
+          "ko": "배포"
+        },
+        "title": {
+          "en": "Install the renderer without archaeology.",
+          "ko": "찾아 헤매지 않고 렌더러를 설치합니다."
+        },
+        "outcome": {
+          "en": "Platform wheels, Blender extension bundles, version banners and provenance make the build you installed legible.",
+          "ko": "플랫폼별 wheel·Blender 확장 번들·버전 배너·provenance로 설치한 빌드를 확인할 수 있습니다."
+        },
+        "scope": {
+          "en": "Build and package evidence is separate from runtime feature acceptance.",
+          "ko": "빌드·패키지 근거와 런타임 기능 검수는 구분합니다."
+        },
+        "chips": [
+          "MAC",
+          "WINDOWS",
+          "LINUX"
+        ]
       },
       {
         "id": "maintenance",
         "count": 97,
         "feature": "cycles",
-        "image": "assets/studio/heritage-normal.jpg",
-        "badge": {"en": "POLISH", "ko": "다듬기"},
-        "title": {"en": "The small fixes artists feel every day.", "ko": "매일 체감하는 작은 수정들."},
-        "outcome": {"en": "Graph refreshes, camera transforms, safe bounds, deadlock fixes and clearer diagnostics remove friction between edits.", "ko": "그래프 갱신·카메라 변환·안전한 경계·교착 수정·진단 개선으로 편집과 렌더 사이의 마찰을 줄입니다."},
-        "scope": {"en": "The area includes fixes, reverts and tooling; it is not 97 new features.", "ko": "수정·되돌림·도구 작업을 포함한 영역이며 새 기능 97개를 뜻하지 않습니다."},
-        "chips": ["CYCLES", "STABILITY", "DIAGNOSTICS"]
+        "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+        "badge": {
+          "en": "POLISH",
+          "ko": "다듬기"
+        },
+        "title": {
+          "en": "The small fixes artists feel every day.",
+          "ko": "매일 체감하는 작은 수정들."
+        },
+        "outcome": {
+          "en": "Graph refreshes, camera transforms, safe bounds, deadlock fixes and clearer diagnostics remove friction between edits.",
+          "ko": "그래프 갱신·카메라 변환·안전한 경계·교착 수정·진단 개선으로 편집과 렌더 사이의 마찰을 줄입니다."
+        },
+        "scope": {
+          "en": "The area includes fixes, reverts and tooling; it is not 97 new features.",
+          "ko": "수정·되돌림·도구 작업을 포함한 영역이며 새 기능 97개를 뜻하지 않습니다."
+        },
+        "chips": [
+          "CYCLES",
+          "STABILITY",
+          "DIAGNOSTICS"
+        ]
       }
     ],
     "spotlights": [
-      {"feature": "diffraction", "image": "assets/studio/music.jpg", "badge": {"en": "FORK ADDITION", "ko": "포크 추가"}},
-      {"feature": "hair", "image": "assets/studio/textile.jpg", "badge": {"en": "FORK ADDITION", "ko": "포크 추가"}},
-      {"feature": "sss", "image": "assets/studio/beauty.jpg", "badge": {"en": "EXPERIMENTAL", "ko": "실험 기능"}},
-      {"feature": "adaptivecaustic", "image": "assets/studio/jewelry.jpg", "badge": {"en": "EXTENDED", "ko": "확장"}}
+      {
+        "feature": "diffraction",
+        "image": "assets/studio/new-delta/holo_packaging-superlux-detail.png",
+        "badge": {
+          "en": "FORK ADDITION",
+          "ko": "포크 추가"
+        }
+      },
+      {
+        "feature": "openpbr",
+        "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-detail.png",
+        "badge": {
+          "en": "FORK ADDITION",
+          "ko": "포크 추가"
+        }
+      },
+      {
+        "feature": "hair",
+        "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-detail.png",
+        "badge": {
+          "en": "EXPERIMENTAL",
+          "ko": "실험 기능"
+        }
+      },
+      {
+        "feature": "sellmeier",
+        "image": "assets/studio/new-delta/smart_glass_atrium-superlux-detail.png",
+        "badge": {
+          "en": "EXTENDED",
+          "ko": "확장"
+        }
+      }
     ],
     "micro": [
-      {"kind": {"en": "SHADER DETAIL", "ko": "셰이더 디테일"}, "title": {"en": "Smoothstep spot falloff", "ko": "Smoothstep 스폿 감쇠"}, "body": {"en": "Cycles-style penumbra control survives the adapter.", "ko": "Cycles식 penumbra 제어를 어댑터에서 유지합니다."}},
-      {"kind": {"en": "SHADER DETAIL", "ko": "셰이더 디테일"}, "title": {"en": "Filter glossy and clamp controls", "ko": "Filter glossy·clamp 제어"}, "body": {"en": "Glossy filtering and direct/indirect limits are explicit scene controls.", "ko": "Glossy 필터와 direct/indirect 제한을 씬 제어로 명시합니다."}},
-      {"kind": {"en": "GRAPH FIDELITY", "ko": "그래프 충실도"}, "title": {"en": "Object, generated and world position", "ko": "Object·Generated·World Position"}, "body": {"en": "Procedural coordinates remain available to material graphs.", "ko": "프로시저럴 좌표를 머티리얼 그래프에서 계속 사용할 수 있습니다."}},
-      {"kind": {"en": "GRAPH FIDELITY", "ko": "그래프 충실도"}, "title": {"en": "Bump, normal and coat direction", "ko": "Bump·Normal·Coat 방향"}, "body": {"en": "Normal spaces and displacement directions are mapped instead of silently dropped.", "ko": "노멀 공간과 디스플레이스 방향을 버리지 않고 매핑합니다."}},
-      {"kind": {"en": "LIGHT", "ko": "조명"}, "title": {"en": "Two-sided emission and mapped lights", "ko": "양면 방출·텍스처 조명"}, "body": {"en": "Emission orientation, area spread and texture inputs are kept visible.", "ko": "방출 방향·에어리어 확산·텍스처 입력을 그대로 확인할 수 있습니다."}},
-      {"kind": {"en": "VOLUME", "ko": "볼륨"}, "title": {"en": "VDB index and reconstruction", "ko": "VDB 인덱스·재구성"}, "body": {"en": "Linear and cubic density reconstruction are available for volume work.", "ko": "볼륨 작업에서 선형·큐빅 밀도 재구성을 사용할 수 있습니다."}},
-      {"kind": {"en": "CAMERA", "ko": "카메라"}, "title": {"en": "Transform cache and raster centers", "ko": "변환 캐시·래스터 중심"}, "body": {"en": "Camera updates stay precise while the scene is edited.", "ko": "씬을 편집해도 카메라 갱신 정밀도를 유지합니다."}},
-      {"kind": {"en": "BLENDER", "ko": "Blender"}, "title": {"en": "Nested material refresh", "ko": "중첩 재질 갱신"}, "body": {"en": "Material and mesh-light edits invalidate the right render state.", "ko": "재질·메시 라이트 수정이 필요한 렌더 상태만 갱신합니다."}},
-      {"kind": {"en": "PASSES", "ko": "패스"}, "title": {"en": "View depth and variance", "ko": "ViewDepth·Variance"}, "body": {"en": "Depth and noise evidence remain available beside the beauty image.", "ko": "작품 옆에 깊이와 노이즈 근거를 함께 확인합니다."}},
-      {"kind": {"en": "SAFETY", "ko": "안정성"}, "title": {"en": "Bounds, NaN and lifecycle guards", "ko": "경계·NaN·수명 보호"}, "body": {"en": "Failure paths are handled as renderer behavior, not hidden crashes.", "ko": "실패 경로를 숨은 충돌이 아니라 렌더러 동작으로 처리합니다."}},
-      {"kind": {"en": "CLI", "ko": "CLI"}, "title": {"en": "Version and help banners", "ko": "버전·도움말 배너"}, "body": {"en": "The binary tells artists what they are running before the first frame.", "ko": "첫 프레임 전에 현재 실행 중인 빌드를 확인할 수 있습니다."}},
-      {"kind": {"en": "RELEASE", "ko": "릴리스"}, "title": {"en": "Wheel and bundle provenance", "ko": "Wheel·번들 provenance"}, "body": {"en": "Installed artifacts carry enough identity to reproduce a report.", "ko": "설치된 아티팩트의 식별 정보를 보고서에 남길 수 있습니다."}}
+      {
+        "kind": {
+          "en": "SHADER DETAIL",
+          "ko": "셰이더 디테일"
+        },
+        "title": {
+          "en": "Smoothstep spot falloff",
+          "ko": "Smoothstep 스폿 감쇠"
+        },
+        "body": {
+          "en": "Cycles-style penumbra control survives the adapter.",
+          "ko": "Cycles식 penumbra 제어를 어댑터에서 유지합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "SHADER DETAIL",
+          "ko": "셰이더 디테일"
+        },
+        "title": {
+          "en": "Filter glossy and clamp controls",
+          "ko": "Filter glossy·clamp 제어"
+        },
+        "body": {
+          "en": "Glossy filtering and direct/indirect limits are explicit scene controls.",
+          "ko": "Glossy 필터와 direct/indirect 제한을 씬 제어로 명시합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "GRAPH FIDELITY",
+          "ko": "그래프 충실도"
+        },
+        "title": {
+          "en": "Object, generated and world position",
+          "ko": "Object·Generated·World Position"
+        },
+        "body": {
+          "en": "Procedural coordinates remain available to material graphs.",
+          "ko": "프로시저럴 좌표를 머티리얼 그래프에서 계속 사용할 수 있습니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "GRAPH FIDELITY",
+          "ko": "그래프 충실도"
+        },
+        "title": {
+          "en": "Bump, normal and coat direction",
+          "ko": "Bump·Normal·Coat 방향"
+        },
+        "body": {
+          "en": "Normal spaces and displacement directions are mapped instead of silently dropped.",
+          "ko": "노멀 공간과 디스플레이스 방향을 버리지 않고 매핑합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "LIGHT",
+          "ko": "조명"
+        },
+        "title": {
+          "en": "Two-sided emission and mapped lights",
+          "ko": "양면 방출·텍스처 조명"
+        },
+        "body": {
+          "en": "Emission orientation, area spread and texture inputs are kept visible.",
+          "ko": "방출 방향·에어리어 확산·텍스처 입력을 그대로 확인할 수 있습니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "VOLUME",
+          "ko": "볼륨"
+        },
+        "title": {
+          "en": "VDB index and reconstruction",
+          "ko": "VDB 인덱스·재구성"
+        },
+        "body": {
+          "en": "Linear and cubic density reconstruction are available for volume work.",
+          "ko": "볼륨 작업에서 선형·큐빅 밀도 재구성을 사용할 수 있습니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "CAMERA",
+          "ko": "카메라"
+        },
+        "title": {
+          "en": "Transform cache and raster centers",
+          "ko": "변환 캐시·래스터 중심"
+        },
+        "body": {
+          "en": "Camera updates stay precise while the scene is edited.",
+          "ko": "씬을 편집해도 카메라 갱신 정밀도를 유지합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "BLENDER",
+          "ko": "Blender"
+        },
+        "title": {
+          "en": "Nested material refresh",
+          "ko": "중첩 재질 갱신"
+        },
+        "body": {
+          "en": "Material and mesh-light edits invalidate the right render state.",
+          "ko": "재질·메시 라이트 수정이 필요한 렌더 상태만 갱신합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "PASSES",
+          "ko": "패스"
+        },
+        "title": {
+          "en": "View depth and variance",
+          "ko": "ViewDepth·Variance"
+        },
+        "body": {
+          "en": "Depth and noise evidence remain available beside the beauty image.",
+          "ko": "작품 옆에 깊이와 노이즈 근거를 함께 확인합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "SAFETY",
+          "ko": "안정성"
+        },
+        "title": {
+          "en": "Bounds, NaN and lifecycle guards",
+          "ko": "경계·NaN·수명 보호"
+        },
+        "body": {
+          "en": "Failure paths are handled as renderer behavior, not hidden crashes.",
+          "ko": "실패 경로를 숨은 충돌이 아니라 렌더러 동작으로 처리합니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "CLI",
+          "ko": "CLI"
+        },
+        "title": {
+          "en": "Version and help banners",
+          "ko": "버전·도움말 배너"
+        },
+        "body": {
+          "en": "The binary tells artists what they are running before the first frame.",
+          "ko": "첫 프레임 전에 현재 실행 중인 빌드를 확인할 수 있습니다."
+        }
+      },
+      {
+        "kind": {
+          "en": "RELEASE",
+          "ko": "릴리스"
+        },
+        "title": {
+          "en": "Wheel and bundle provenance",
+          "ko": "Wheel·번들 provenance"
+        },
+        "body": {
+          "en": "Installed artifacts carry enough identity to reproduce a report.",
+          "ko": "설치된 아티팩트의 식별 정보를 보고서에 남길 수 있습니다."
+        }
+      }
     ]
   },
   "features": [
@@ -174,16 +487,16 @@ window.SLC_DATA = {
         "en": "Apple GPU",
         "ko": "Apple GPU"
       },
-      "image": "assets/studio/architecture.jpg",
-      "scene": "architecture",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         35,
         32
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -202,16 +515,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/prism.jpg",
-      "scene": "prism",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         48,
         49
       ],
       "visualNote": {
-        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
-        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -230,16 +543,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/prism.jpg",
-      "scene": "prism",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         61,
         66
       ],
       "visualNote": {
-        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
-        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -258,16 +571,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/beauty.jpg",
-      "scene": "beauty",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         44,
         48
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -286,16 +599,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         57,
         65
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -314,16 +627,16 @@ window.SLC_DATA = {
         "en": "Blender 5.2",
         "ko": "Blender 5.2"
       },
-      "image": "assets/studio/heritage.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         40,
         47
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -342,16 +655,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/audio.jpg",
-      "scene": "audio",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         53,
         64
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -370,16 +683,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         36,
         46
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -398,16 +711,16 @@ window.SLC_DATA = {
         "en": "OpenCL · Metal",
         "ko": "OpenCL · Metal"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         49,
         63
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -426,16 +739,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/textile.jpg",
-      "scene": "textile",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         62,
         45
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -454,16 +767,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/interior-crypto-objects.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": true,
       "position": [
         45,
         62
       ],
       "visualNote": {
-        "en": "An actual native renderer output, displayed as data. This view is not a final beauty or a timing comparison.",
-        "ko": "실제 네이티브 렌더러 출력을 데이터로 표시한 보기입니다. 최종 작품이나 속도 비교가 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -482,16 +795,16 @@ window.SLC_DATA = {
         "en": "2.11.27 · CPU/GPU",
         "ko": "2.11.27 · CPU/GPU"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         58,
         44
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -510,16 +823,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         41,
         61
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -538,16 +851,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/heritage.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         54,
         43
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -566,16 +879,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/heritage-raw.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         37,
         60
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -594,16 +907,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/prism.jpg",
-      "scene": "prism",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         50,
         42
       ],
       "visualNote": {
-        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
-        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -622,16 +935,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/music.jpg",
-      "scene": "music",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         63,
         59
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -650,16 +963,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/pearl.jpg",
-      "scene": "pearl",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         46,
         41
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -678,16 +991,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/audio.jpg",
-      "scene": "audio",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         59,
         58
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -706,16 +1019,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/beauty.jpg",
-      "scene": "beauty",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         42,
         40
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -734,16 +1047,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/beauty.jpg",
-      "scene": "beauty",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         55,
         57
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -762,16 +1075,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/textile.jpg",
-      "scene": "textile",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         38,
         39
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -790,16 +1103,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         51,
         56
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -818,16 +1131,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         64,
         38
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -846,16 +1159,16 @@ window.SLC_DATA = {
         "en": "Documented limits",
         "ko": "지원 범위 문서화"
       },
-      "image": "assets/studio/heritage.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         47,
         55
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -874,16 +1187,16 @@ window.SLC_DATA = {
         "en": "Scoped compatibility",
         "ko": "기능별 호환"
       },
-      "image": "assets/studio/heritage-normal.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": true,
       "position": [
         60,
         37
       ],
       "visualNote": {
-        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
-        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -902,16 +1215,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         43,
         54
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -930,16 +1243,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         56,
         36
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -958,16 +1271,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/heritage.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         39,
         53
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -986,16 +1299,16 @@ window.SLC_DATA = {
         "en": "Metal · OpenCL film",
         "ko": "Metal · OpenCL 필름"
       },
-      "image": "assets/studio/heritage.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         52,
         35
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1014,16 +1327,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/fan.jpg",
-      "scene": "fan",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         35,
         52
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1042,16 +1355,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         48,
         34
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1070,16 +1383,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/beauty.jpg",
-      "scene": "beauty",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         61,
         51
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1098,16 +1411,16 @@ window.SLC_DATA = {
         "en": "Path engines only",
         "ko": "패스 엔진 전용"
       },
-      "image": "assets/studio/perfume-albedo.jpg",
-      "scene": "perfume",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": true,
       "position": [
         44,
         33
       ],
       "visualNote": {
-        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
-        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1126,16 +1439,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/fan.jpg",
-      "scene": "fan",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         57,
         50
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1154,16 +1467,16 @@ window.SLC_DATA = {
         "en": "CPU residency · host spill",
         "ko": "CPU 상주 관리 · 호스트 저장소"
       },
-      "image": "assets/studio/architecture.jpg",
-      "scene": "architecture",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         40,
         32
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1182,16 +1495,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         53,
         49
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1210,16 +1523,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         36,
         66
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1238,16 +1551,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         49,
         48
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1266,16 +1579,16 @@ window.SLC_DATA = {
         "en": "OpenCL · Metal",
         "ko": "OpenCL · Metal"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         62,
         65
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1294,16 +1607,16 @@ window.SLC_DATA = {
         "en": "Auto + explicit control",
         "ko": "자동 + 명시적 제어"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": false,
       "position": [
         45,
         47
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1322,16 +1635,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/jewelry-raw.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         58,
         64
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1350,16 +1663,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         41,
         46
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1378,16 +1691,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU light tracing",
         "ko": "CPU · GPU 라이트 트레이싱"
       },
-      "image": "assets/studio/jewelry.jpg",
-      "scene": "jewelry",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         54,
         63
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1406,16 +1719,16 @@ window.SLC_DATA = {
         "en": "Opt-in · OpenCL/Metal",
         "ko": "선택 기능 · OpenCL/Metal"
       },
-      "image": "assets/studio/heritage-normal.jpg",
-      "scene": "heritage",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
+      "scene": "holo_packaging",
       "technical": true,
       "position": [
         37,
         45
       ],
       "visualNote": {
-        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
-        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1434,16 +1747,16 @@ window.SLC_DATA = {
         "en": "Experimental",
         "ko": "실험 기능"
       },
-      "image": "assets/studio/architecture.jpg",
-      "scene": "architecture",
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "scene": "ev_candy_clearcoat",
       "technical": false,
       "position": [
         50,
         62
       ],
       "visualNote": {
-        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1462,16 +1775,16 @@ window.SLC_DATA = {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
       },
-      "image": "assets/studio/interior.jpg",
-      "scene": "interior",
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "scene": "knit_sneaker_lab",
       "technical": false,
       "position": [
         63,
         44
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     },
     {
@@ -1490,16 +1803,16 @@ window.SLC_DATA = {
         "en": "CPU · GPU paths",
         "ko": "CPU · GPU 경로"
       },
-      "image": "assets/studio/atmosphere.jpg",
-      "scene": "atmosphere",
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "scene": "smart_glass_atrium",
       "technical": false,
       "position": [
         46,
         61
       ],
       "visualNote": {
-        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
-        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
+        "en": "New matched CPU scene study. The image is visual context; the comparison receipt records the exact upstream and fork recipes.",
+        "ko": "새 CPU 매칭 장면 스터디입니다. 이미지는 시각적 맥락이며, 정확한 업스트림·포크 레시피는 비교 영수증에 기록되어 있습니다."
       }
     }
   ],
@@ -1572,8 +1885,8 @@ window.SLC_DATA = {
         "ko": "모든 이미지가 이번 버전의 새 렌더인가요?"
       },
       {
-        "en": "Yes. All thirteen scenes were rebuilt for this October 11 refresh, using 32 credited CC0 model, PBR texture and HDRI families. Both official fork-baseline and current SuperLuxCore binaries were rendered where labelled. Beauty uses OCIO ACES 2.0; technical passes show actual scene data. Asset credits, scene recipes and render fingerprints are available below.",
-        "ko": "네. 10월 11일 개편을 위해 13개 씬을 모두 다시 만들고, 출처를 명시한 CC0 모델·PBR 텍스처·HDRI 32종을 활용했습니다. 표시된 비교에는 공식 포크 기준 버전과 현재 SuperLuxCore 바이너리를 각각 사용했습니다. 작품에는 OCIO ACES 2.0을, 기술 패스에는 실제 씬 데이터를 표시합니다. 에셋 크레딧·장면 레시피·렌더 지문도 공개합니다."
+        "en": "The four new side-by-side pairs are matched CPU technical studies with Linear+Gamma display proof; the manifest records the limitation. They are separate from the renderer capability claims and do not reuse the legacy render wall.",
+        "ko": "새 side-by-side 페어 4종은 Linear+Gamma 디스플레이 증거를 사용하는 CPU 기술 스터디이며, 매니페스트에 한계를 기록했습니다. 렌더러 기능 주장과 분리된 자료이며 기존 렌더 벽을 재사용하지 않습니다."
       }
     ],
     [
@@ -1649,8 +1962,8 @@ window.SLC_DATA = {
       "ko": "확장 설치"
     },
     "renderCredit": {
-      "en": "Rendered with SuperLuxCore · ACES 2.0",
-      "ko": "SuperLuxCore 실제 렌더 · ACES 2.0"
+      "en": "SuperLuxCore matched CPU study · 64 spp",
+      "ko": "SuperLuxCore CPU 매칭 스터디 · 64 spp"
     },
     "manifesto": {
       "en": "One renderer.\nMeasured in light.",
@@ -1665,12 +1978,12 @@ window.SLC_DATA = {
       "ko": "04 / 렌더링 분야"
     },
     "workHeading": {
-      "en": "Six scenes.\nSix light problems.",
-      "ko": "여섯 장면.\n여섯 가지 빛의 문제."
+      "en": "Four scenes. Four material questions.",
+      "ko": "네 장면. 네 가지 재질 질문."
     },
     "workIntro": {
-      "en": "A focused set of native renders. Each discipline isolates a different material, transport or production question.",
-      "ko": "각기 다른 재질, 빛의 전달, 제작 문제를 하나씩 보여주는 네이티브 렌더 모음입니다."
+      "en": "New authored studies cover optical packaging, automotive coat, footwear sheen and architectural glazing. Each is rendered in the same upstream/fork pair.",
+      "ko": "광학 패키징·오토모티브 코트·풋웨어 sheen·건축 글레이징을 새 장면으로 만들었습니다. 모든 장면은 업스트림·포크 쌍으로 렌더했습니다."
     },
     "capabilityEyebrow": {
       "en": "CAPABILITY MAP / CURRENT BUILD",
@@ -1761,8 +2074,8 @@ window.SLC_DATA = {
       "ko": "전체 비교 기록 열기"
     },
     "deltaProofBody": {
-      "en": "The inventory snapshot through bb48fedc0 contains 509 engine commits from e9ced7e7a through adba86f43, plus eight website commits in the fork divergence. The current upstream check is 4209d6537 with 51 commits since the same baseline, mostly refactors and kernel/cache, SPIR-V and OIDN work. Later homepage polish is docs-only. Area counts overlap because one commit can touch more than one area; fixes, reversions, experiments and tooling are included.",
-      "ko": "bb48fedc0까지의 원장 스냅샷에는 e9ced7e7a부터 adba86f43까지 509개 엔진 커밋과 포크 분기 이후 홈페이지 커밋 8개가 포함됩니다. 같은 기준점에서 현재 업스트림 4209d6537까지는 51개 커밋이며, 주로 리팩터링과 커널·캐시·SPIR-V·OIDN 작업입니다. 이후 홈페이지 다듬기는 문서 커밋입니다. 하나의 커밋이 여러 분야에 걸칠 수 있어 분야 합계는 중복되며, 수정·되돌림·실험·도구 작업도 포함합니다."
+      "en": "The inventory snapshot through bb48fedc0 contains 509 engine commits from e9ced7e7a through adba86f43, plus eight website commits in the fork divergence. The current upstream check is 4209d6537 with 51 commits since the same baseline, mostly refactors and kernel/cache, SPIR-V and OIDN work. Later homepage polish is docs-only. The current homepage publishes four new technical comparison scenes; the retired thirteen-scene showcase remains historical evidence only. Area counts overlap because one commit can touch more than one area; fixes, reversions, experiments and tooling are included.",
+      "ko": "bb48fedc0까지의 원장 스냅샷에는 e9ced7e7a부터 adba86f43까지 509개 엔진 커밋과 포크 분기 이후 홈페이지 커밋 8개가 포함됩니다. 같은 기준점에서 현재 업스트림 4209d6537까지는 51개 커밋이며, 주로 리팩터링과 커널·캐시·SPIR-V·OIDN 작업입니다. 이후 홈페이지 다듬기는 문서 커밋입니다. 현재 홈페이지에는 새 기술 비교 장면 4종을 공개하며, 폐기한 13종 스튜디오 세트는 역사적 근거로만 남깁니다. 하나의 커밋이 여러 분야에 걸칠 수 있어 분야 합계는 중복되며, 수정·되돌림·실험·도구 작업도 포함합니다."
     },
     "deltaAnalysis": {
       "en": "Read the scoped analysis",
@@ -1833,8 +2146,8 @@ window.SLC_DATA = {
       "ko": "추가된 가능성.\n눈에 보이는 차이."
     },
     "compareIntro": {
-      "en": "Get close to the material. Drag the divider to see the difference under the same light.",
-      "ko": "재질에 가까이 다가가 보세요. 같은 빛 아래에서, 경계선을 움직이며 차이를 확인하세요."
+      "en": "Four new authored product and architecture studies, rendered side by side from the same geometry and light. Expand a pair to inspect the recipe and limitations.",
+      "ko": "새로 만든 제품·건축 장면 4종을 동일한 형상과 조명으로 나란히 렌더했습니다. 각 쌍을 열어 레시피와 한계를 확인하세요."
     },
     "comparisonWallEyebrow": {
       "en": "SIDE BY SIDE / MATCHED SCENE",
@@ -1845,8 +2158,8 @@ window.SLC_DATA = {
       "ko": "같은 장면에서, 포크의 차이를."
     },
     "comparisonWallIntro": {
-      "en": "Every card keeps the camera, geometry, lights, exposure, display transform and target samples fixed. The left image is the LuxCoreRender 2.11.2 reference; the right image is the SuperLuxCore result. Open a card to scrub the boundary or inspect the full scene.",
-      "ko": "모든 카드는 카메라·형상·조명·노출·색 변환·목표 샘플을 고정했습니다. 왼쪽은 LuxCoreRender 2.11.2 기준 렌더, 오른쪽은 SuperLuxCore 결과입니다. 카드를 열면 경계선을 움직이거나 전체 장면을 볼 수 있습니다."
+      "en": "Four new authored product and architecture studies, rendered side by side from the same geometry and light. Expand a pair to inspect the recipe and limitations.",
+      "ko": "새로 만든 제품·건축 장면 4종을 동일한 형상과 조명으로 나란히 렌더했습니다. 각 쌍을 열어 레시피와 한계를 확인하세요."
     },
     "compareOpen": {
       "en": "Open matched comparison",
@@ -1925,8 +2238,8 @@ window.SLC_DATA = {
       "ko": "장면으로 보기"
     },
     "passNote": {
-      "en": "Technical passes visualize scene data. Beauty images use ACES 2.0; normals, IDs and coverage are data views.",
-      "ko": "기술 패스는 실제 씬 데이터를 시각화합니다. 작품은 ACES 2.0을 적용하며, 노멀·ID·커버리지는 데이터 보기입니다."
+      "en": "The four new comparison pairs are matched CPU technical studies exported with OIDN and a Linear+Gamma display proof. The receipt records the exact recipe; they are not presented as final ACES 2.0 beauty plates.",
+      "ko": "새 비교 페어 4종은 OIDN과 Linear+Gamma 디스플레이 증거로 출력한 CPU 기술 스터디입니다. 정확한 레시피는 영수증에 기록했으며 최종 ACES 2.0 작품판으로 제시하지 않습니다."
     },
     "downloadEyebrow": {
       "en": "07 / YOUR NEXT IMAGE",
@@ -2021,8 +2334,8 @@ window.SLC_DATA = {
       "ko": "이미지 크레딧 · 렌더 정보"
     },
     "scope": {
-      "en": "Comparisons use the 2.11.2 fork baseline. New material models are shown against clearly labelled baseline alternatives; results depend on the scene and controls.",
-      "ko": "비교 기준은 포크 출발점 2.11.2입니다. 추가된 재질 모델은 표시된 기존 대안과 비교하며, 결과는 씬과 설정에 따라 달라집니다."
+      "en": "Matched CPU technical evidence. Upstream-only features use the closest supported approximation and are labelled in each receipt; this wall is a material comparison, not a universal speed claim.",
+      "ko": "CPU 매칭 기술 근거입니다. 업스트림에 없는 기능은 가장 가까운 지원 근사로 표시했으며, 이 벽은 보편적인 속도 주장이 아닌 재질 비교입니다."
     },
     "free": {
       "en": "OPEN SOURCE. FREE TO CREATE.",
@@ -2035,428 +2348,246 @@ window.SLC_DATA = {
   },
   "projects": [
     {
-      "id": "beauty",
-      "name": "MORNING",
+      "id": "holo_packaging",
+      "name": "AURORA / Serum packaging",
       "area": {
-        "en": "Still life / breakfast",
-        "ko": "정물 · 아침 식탁"
+        "en": "Product / optical packaging",
+        "ko": "제품 · 광학 패키징"
       },
       "description": {
-        "en": "Scanned pastry, floral porcelain, woven linen and fresh coffee.",
-        "ko": "스캔한 페이스트리, 꽃무늬 도자기, 리넨과 커피."
+        "en": "A sculpted serum bottle with a precision foil label, glass transmission and a metal cap under controlled studio light.",
+        "ko": "정밀 포일 라벨과 유리 투과, 금속 캡을 통제된 스튜디오 조명으로 검증하는 세럼 패키지."
       },
       "tags": [
-        "Food photogrammetry",
-        "OpenPBR",
-        "Micro-surface detail"
+        "Glass transmission",
+        "Diffraction foil",
+        "Metal cap"
       ],
       "features": [
-        "sss",
-        "ssspresets"
+        "diffraction",
+        "sellmeier"
       ],
-      "image": "assets/studio/beauty.jpg",
-      "group": "product"
-    },
-    {
-      "id": "heritage",
-      "name": "ANALOG",
-      "area": {
-        "en": "Product / heritage camera",
-        "ko": "제품 · 빈티지 카메라"
-      },
-      "description": {
-        "en": "Detailed camera hardware, leather, paper and softbox reflections.",
-        "ko": "카메라의 기계적 디테일, 가죽과 종이, 정돈된 소프트박스 반사."
-      },
-      "tags": [
-        "Detailed CC0 model",
-        "PBR metal & plastic",
-        "Depth of field"
-      ],
-      "features": [
-        "cryptomatte",
-        "displacement"
-      ],
-      "image": "assets/studio/heritage.jpg",
-      "group": "product"
-    },
-    {
-      "id": "perfume",
-      "name": "VINEA",
-      "area": {
-        "en": "Product / wine editorial",
-        "ko": "제품 · 와인 에디토리얼"
-      },
-      "description": {
-        "en": "Scanned wine packaging and printed labels, polished lacquer, fruit and controlled studio reflections.",
-        "ko": "스캔한 와인 패키징과 인쇄 라벨, 매끈한 래커 마감, 과일과 정돈된 스튜디오 반사."
-      },
-      "tags": [
-        "Scanned packaging",
-        "Polished lacquer",
-        "Fruit scans"
-      ],
-      "features": [
-        "openpbr"
-      ],
-      "image": "assets/studio/perfume.jpg",
+      "image": "assets/studio/new-delta/holo_packaging-superlux-full.png",
       "group": "product",
       "renderNote": {
-        "en": "Metal artwork · intentionally opaque lacquered packaging; not a liquid-absorption demonstration.",
-        "ko": "Metal 렌더 · 불투명 래커 패키징 연출이며 액체의 빛 흡수 시연이 아닙니다."
+        "en": "New procedural study. Upstream is the closest supported approximation; SuperLuxCore applies the fork-only material override in the receipt.",
+        "ko": "새 절차 메시 스터디입니다. 업스트림은 가장 가까운 지원 근사이며, SuperLuxCore는 영수증에 적힌 포크 전용 재질 오버라이드를 적용했습니다."
       }
     },
     {
-      "id": "music",
-      "name": "REWIND",
+      "id": "ev_candy_clearcoat",
+      "name": "ION / Candy clearcoat",
       "area": {
-        "en": "Product / listening desk",
-        "ko": "제품 · 리스닝 데스크"
+        "en": "Automotive / clearcoat",
+        "ko": "오토모티브 · 클리어코트"
       },
       "description": {
-        "en": "Analogue electronics meet the colour of a real diffraction grating.",
-        "ko": "빈티지 오디오와 실제 회절 격자가 만드는 색."
+        "en": "A candy-painted EV study with a transparent cabin, conductor trim and a fork-only OpenPBR coat response.",
+        "ko": "캔디 페인트 EV 스터디에 투명 캐빈, 도체 트림과 포크 전용 OpenPBR 코트 응답을 적용했습니다."
       },
       "tags": [
-        "Diffraction CD",
-        "120 mm proportions",
-        "Detailed PBR electronics"
+        "OpenPBR coat",
+        "Clearcoat energy",
+        "Conductor trim"
       ],
       "features": [
-        "diffraction"
+        "openpbr",
+        "ggx",
+        "multiscatter"
       ],
-      "image": "assets/studio/music.jpg",
-      "group": "product"
+      "image": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png",
+      "group": "product",
+      "renderNote": {
+        "en": "New procedural study. Upstream is the closest supported approximation; SuperLuxCore applies the fork-only material override in the receipt.",
+        "ko": "새 절차 메시 스터디입니다. 업스트림은 가장 가까운 지원 근사이며, SuperLuxCore는 영수증에 적힌 포크 전용 재질 오버라이드를 적용했습니다."
+      }
     },
     {
-      "id": "jewelry",
-      "name": "THE NAVIGATOR",
+      "id": "knit_sneaker_lab",
+      "name": "KINETIC / Knit sneaker",
       "area": {
-        "en": "Product / personal objects",
-        "ko": "제품 · 개인 소품"
+        "en": "Product / footwear materials",
+        "ko": "제품 · 풋웨어 소재"
       },
       "description": {
-        "en": "An engraved compass, spectacles and worn paper in a quiet close-up.",
-        "ko": "음각 나침반과 안경, 손때 묻은 종이를 담은 근접 촬영."
+        "en": "A knit-forward footwear study separating the upper, sole, laces and badge so sheen and roughness are easy to read.",
+        "ko": "어퍼·솔·끈·배지를 분리해 sheen과 거칠기 응답을 읽기 쉽게 만든 니트 풋웨어 스터디입니다."
       },
       "tags": [
-        "Engraved metal",
-        "Tangent normals",
-        "Physical camera"
-      ],
-      "features": [
-        "sellmeier",
-        "mnee"
-      ],
-      "image": "assets/studio/jewelry.jpg",
-      "group": "product"
-    },
-    {
-      "id": "audio",
-      "name": "PATINA",
-      "area": {
-        "en": "Material / brass still life",
-        "ko": "소재 · 황동 정물"
-      },
-      "description": {
-        "en": "Engraved vessels, weathered brass and textured timber.",
-        "ko": "섬세한 음각, 오래된 황동과 실제 목재의 질감."
-      },
-      "tags": [
-        "Rough conductor",
-        "Multi-scatter compensation",
-        "PBR maps"
-      ],
-      "features": [
-        "multiscatter",
-        "ggx"
-      ],
-      "image": "assets/studio/audio.jpg",
-      "group": "product"
-    },
-    {
-      "id": "pearl",
-      "name": "PORCELAIN",
-      "area": {
-        "en": "Material / ceramic & film",
-        "ko": "소재 · 도자기와 박막"
-      },
-      "description": {
-        "en": "Blue-and-white porcelain and the delicate colour of soap film.",
-        "ko": "청화 도자기와 비눗막의 섬세한 색."
-      },
-      "tags": [
-        "Thin-film interference",
-        "Glazed ceramic",
-        "Native glass"
-      ],
-      "features": [
-        "thinfilm",
-        "openpbr"
-      ],
-      "image": "assets/studio/pearl.jpg",
-      "group": "material"
-    },
-    {
-      "id": "textile",
-      "name": "SOFT HOURS",
-      "area": {
-        "en": "Material / wool & leather",
-        "ko": "소재 · 울과 가죽"
-      },
-      "description": {
-        "en": "A curled sheepskin groom on a detailed leather lounge chair.",
-        "ko": "세밀한 가죽 라운지 체어 위에 놓인 곱슬 양모."
-      },
-      "tags": [
-        "Huang fibres",
-        "Native strand geometry",
-        "Leather PBR"
+        "OpenPBR sheen",
+        "Knit upper",
+        "Rough rubber"
       ],
       "features": [
         "hair",
-        "sheen"
+        "sss"
       ],
-      "image": "assets/studio/textile.jpg",
-      "group": "material"
+      "image": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png",
+      "group": "product",
+      "renderNote": {
+        "en": "New procedural study. Upstream is the closest supported approximation; SuperLuxCore applies the fork-only material override in the receipt.",
+        "ko": "새 절차 메시 스터디입니다. 업스트림은 가장 가까운 지원 근사이며, SuperLuxCore는 영수증에 적힌 포크 전용 재질 오버라이드를 적용했습니다."
+      }
     },
     {
-      "id": "interior",
-      "name": "AFTERNOON",
+      "id": "smart_glass_atrium",
+      "name": "LUMEN / Smart-glass atrium",
       "area": {
-        "en": "Space / living room",
-        "ko": "공간 · 거실"
+        "en": "Architecture / glazing",
+        "ko": "건축 · 스마트 글레이징"
       },
       "description": {
-        "en": "Upholstery, foliage and timber in a furnished afternoon room.",
-        "ko": "가구와 식물, 목재가 어우러진 오후의 거실."
+        "en": "An architectural glazing bay with layered panes, a metal frame, a planted interior and Sellmeier glass controls.",
+        "ko": "다층 유리, 금속 프레임, 식재 인테리어와 Sellmeier 유리 제어를 함께 보여주는 글레이징 베이입니다."
       },
       "tags": [
-        "Metric architecture",
-        "PBR upholstery",
-        "Cryptomatte"
-      ],
-      "features": [
-        "proctextures",
-        "guiding"
-      ],
-      "image": "assets/studio/interior.jpg",
-      "group": "space"
-    },
-    {
-      "id": "architecture",
-      "name": "COURTYARD",
-      "area": {
-        "en": "Space / shaded terrace",
-        "ko": "공간 · 그늘진 테라스"
-      },
-      "description": {
-        "en": "A furnished terrace, slatted roof and a real dielectric water surface.",
-        "ko": "가구와 차양이 있는 테라스, 실제 투과와 반사를 계산한 물."
-      },
-      "tags": [
-        "Daylight",
-        "Water refraction",
-        "Photographic surfaces"
-      ],
-      "features": [
-        "metal",
-        "outofcore"
-      ],
-      "image": "assets/studio/architecture.jpg",
-      "group": "space"
-    },
-    {
-      "id": "atmosphere",
-      "name": "SLOW LIGHT",
-      "area": {
-        "en": "Space / reading room",
-        "ko": "공간 · 독서 공간"
-      },
-      "description": {
-        "en": "Window light moves through a furnished room and a participating medium.",
-        "ko": "가구가 있는 공간과 참여 매질을 통과하는 창의 빛."
-      },
-      "tags": [
-        "Volume scattering",
-        "Window structure",
-        "Daylight"
+        "Sellmeier glass",
+        "Layered transmission",
+        "Interior lighting"
       ],
       "features": [
         "volume",
-        "photonbeams"
-      ],
-      "image": "assets/studio/atmosphere.jpg",
-      "group": "space"
-    },
-    {
-      "id": "fan",
-      "name": "AIR / STILL",
-      "area": {
-        "en": "Space / motion study",
-        "ko": "공간 · 모션 스터디"
-      },
-      "description": {
-        "en": "A real wooden ceiling fan photographed in a furnished room.",
-        "ko": "가구가 있는 공간에서 촬영한 실제 목재 천장 팬."
-      },
-      "tags": [
-        "Native motion blur",
-        "Wood grain",
-        "Metric scene"
-      ],
-      "features": [
-        "motion",
-        "temporal"
-      ],
-      "image": "assets/studio/fan.jpg",
-      "group": "product"
-    },
-    {
-      "id": "prism",
-      "name": "SPECTRUM",
-      "area": {
-        "en": "Optics / flint glass",
-        "ko": "광학 · 플린트 유리"
-      },
-      "description": {
-        "en": "A precision optical prism with wavelength-dependent flint glass.",
-        "ko": "파장에 따라 굴절률이 달라지는 플린트 유리 프리즘."
-      },
-      "image": "assets/studio/prism.jpg",
-      "group": "material",
-      "tags": [
-        "Sellmeier N-SF6",
-        "RGB dispersion",
-        "Optical edges"
-      ],
-      "features": [
+        "thinfilm",
         "sellmeier"
       ],
+      "image": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png",
+      "group": "space",
       "renderNote": {
-        "en": "Metal RGB wavelength-sampled dispersion · N-SF6 Sellmeier glass.",
-        "ko": "Metal RGB 파장 샘플링 분산 · N-SF6 Sellmeier 유리."
+        "en": "New procedural study. Upstream is the closest supported approximation; SuperLuxCore applies the fork-only material override in the receipt.",
+        "ko": "새 절차 메시 스터디입니다. 업스트림은 가장 가까운 지원 근사이며, SuperLuxCore는 영수증에 적힌 포크 전용 재질 오버라이드를 적용했습니다."
       }
     }
   ],
   "comparisons": [
     {
-      "id": "diffraction",
+      "id": "holo_packaging",
+      "project": "holo_packaging",
       "tab": {
-        "en": "CD / diffraction",
-        "ko": "CD · 회절"
+        "en": "Packaging / diffraction",
+        "ko": "패키징 · 회절"
       },
       "title": {
-        "en": "This rainbow is a shader.",
-        "ko": "이 무지개는 셰이더입니다."
+        "en": "Foil becomes a wavelength cue.",
+        "ko": "포일이 파장 정보를 보여줍니다."
       },
       "body": {
-        "en": "A compact disc under directional studio light. The new diffraction-grating material separates light into spectral orders. The upstream baseline uses a silver metal approximation — it has no equivalent diffraction shader.",
-        "ko": "좁은 스튜디오 조명 아래의 CD. 새 회절 격자 재질이 빛을 파장별 회절 차수로 나눕니다. 기준 버전은 은 금속 근사를 사용하며, 동등한 회절 셰이더가 없습니다."
+        "en": "The same serum bottle is rendered once with upstream metal2 foil and once with SuperLuxCore diffraction. The label is the authored difference.",
+        "ko": "같은 세럼 병을 업스트림 metal2 포일과 SuperLuxCore 회절 재질로 각각 렌더했습니다. 라벨 재질만 의도적으로 달랐습니다."
       },
-      "before": "assets/studio/music-baseline-detail.jpg",
-      "after": "assets/studio/music-detail.jpg",
+      "before": "assets/studio/new-delta/holo_packaging-upstream-detail.png",
+      "after": "assets/studio/new-delta/holo_packaging-superlux-detail.png",
       "left": {
-        "en": "UPSTREAM / SILVER METAL APPROXIMATION",
-        "ko": "업스트림 / 은 금속 근사"
+        "en": "UPSTREAM / METAL2 APPROXIMATION",
+        "ko": "업스트림 / METAL2 근사"
       },
       "right": {
-        "en": "SUPERLUXCORE / DIFFRACTION SHADER",
-        "ko": "SUPERLUXCORE / 회절 셰이더"
+        "en": "SUPERLUXCORE / DIFFRACTION",
+        "ko": "SUPERLUXCORE / 회절"
       },
       "scope": {
-        "en": "Official upstream binary with metal2 silver. Same geometry, lights, seed, samples, exposure and display transform. This is a new-shader comparison, not spectral on/off.",
-        "ko": "공식 업스트림 바이너리의 metal2 은 재질. 형상·조명·시드·샘플·노출·색 변환을 맞췄습니다. 스펙트럴 켜기/끄기 비교가 아닌, 추가된 셰이더 비교입니다."
+        "en": "New procedural scene; LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27, PATHCPU, seed 42, matched camera/light/geometry and 64 target spp. The receipt labels unsupported fork materials as closest-supported upstream approximations.",
+        "ko": "새 절차 장면입니다. LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27을 PATHCPU, seed 42, 동일 카메라·조명·형상·목표 64 spp로 렌더했습니다. 포크 전용 재질은 영수증에 업스트림의 가장 가까운 지원 근사로 표시했습니다."
       },
-      "fullBefore": "assets/studio/music-baseline.jpg",
-      "fullAfter": "assets/studio/music.jpg"
+      "fullBefore": "assets/studio/new-delta/holo_packaging-upstream-full.png",
+      "fullAfter": "assets/studio/new-delta/holo_packaging-superlux-full.png"
     },
     {
-      "id": "energy",
+      "id": "ev_candy_clearcoat",
+      "project": "ev_candy_clearcoat",
       "tab": {
-        "en": "Metal / energy",
-        "ko": "금속 · 에너지"
+        "en": "Automotive / clearcoat",
+        "ko": "오토모티브 · 클리어코트"
       },
       "title": {
-        "en": "Roughness deserves radiance.",
-        "ko": "거칠어도, 빛을 잃지 않게."
+        "en": "Clearcoat shapes the studio reflection.",
+        "ko": "클리어코트가 스튜디오 반사를 만듭니다."
       },
       "body": {
-        "en": "Engraved brass vessels under a broad window. At high roughness, the added multiple-scattering correction preserves reflected energy without changing the light or exposure.",
-        "ko": "큰 창 아래의 새겨진 황동 기물. 거칠기가 높을 때 추가된 다중 산란 보정이 조명이나 노출을 바꾸지 않고 반사 에너지를 보존합니다."
+        "en": "Identical EV geometry and lighting. Upstream uses glossy2; SuperLuxCore applies the OpenPBR coat override to make coat weight and roughness explicit.",
+        "ko": "동일한 EV 형상과 조명입니다. 업스트림은 glossy2를, SuperLuxCore는 코트 무게와 거칠기를 명시하는 OpenPBR 코트 오버라이드를 사용합니다."
       },
-      "before": "assets/studio/audio-baseline-detail.jpg",
-      "after": "assets/studio/audio-detail.jpg",
+      "before": "assets/studio/new-delta/ev_candy_clearcoat-upstream-detail.png",
+      "after": "assets/studio/new-delta/ev_candy_clearcoat-superlux-detail.png",
       "left": {
-        "en": "UPSTREAM / SINGLE SCATTERING",
-        "ko": "업스트림 / 단일 산란"
+        "en": "UPSTREAM / GLOSSY2 APPROXIMATION",
+        "ko": "업스트림 / GLOSSY2 근사"
       },
       "right": {
-        "en": "SUPERLUXCORE / MULTIPLE SCATTERING",
-        "ko": "SUPERLUXCORE / 다중 산란 보정"
+        "en": "SUPERLUXCORE / OPENPBR COAT",
+        "ko": "SUPERLUXCORE / OPENPBR COAT"
       },
       "scope": {
-        "en": "Official LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27. The same textured Disney brass uses roughness 0.98; multibounce is enabled only in the fork. Camera, light, target samples and display match.",
-        "ko": "공식 LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27. 동일한 텍스처를 쓰는 Disney 황동의 거칠기는 0.98, 포크에서만 multibounce를 켰습니다. 카메라·조명·목표 샘플·색 변환은 같습니다."
+        "en": "New procedural scene; LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27, PATHCPU, seed 42, matched camera/light/geometry and 64 target spp. The receipt labels unsupported fork materials as closest-supported upstream approximations.",
+        "ko": "새 절차 장면입니다. LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27을 PATHCPU, seed 42, 동일 카메라·조명·형상·목표 64 spp로 렌더했습니다. 포크 전용 재질은 영수증에 업스트림의 가장 가까운 지원 근사로 표시했습니다."
       },
-      "fullBefore": "assets/studio/audio-baseline.jpg",
-      "fullAfter": "assets/studio/audio.jpg"
+      "fullBefore": "assets/studio/new-delta/ev_candy_clearcoat-upstream-full.png",
+      "fullAfter": "assets/studio/new-delta/ev_candy_clearcoat-superlux-full.png"
     },
     {
-      "id": "hair",
+      "id": "knit_sneaker_lab",
+      "project": "knit_sneaker_lab",
       "tab": {
-        "en": "Hair / fibre scattering",
-        "ko": "헤어 · 섬유 산란"
+        "en": "Footwear / sheen",
+        "ko": "풋웨어 · sheen"
       },
       "title": {
-        "en": "The softness is in the scattering.",
-        "ko": "부드러움은 빛의 산란에서."
+        "en": "Sheen changes the knit read.",
+        "ko": "Sheen이 니트의 인상을 바꿉니다."
       },
       "body": {
-        "en": "The same curled sheepskin groom on a leather lounge chair. SuperLuxCore uses the Huang fibre model; the upstream reference uses a labelled Glossy2 surface approximation.",
-        "ko": "가죽 라운지 체어 위의 동일한 곱슬 양모입니다. SuperLuxCore는 Huang 섬유 모델을, 업스트림 기준 렌더는 명시된 Glossy2 표면 근사를 사용합니다."
+        "en": "The same footwear study uses a glossy2 upper upstream and the fork OpenPBR sheen controls in SuperLuxCore. Sole, lace and light stay fixed.",
+        "ko": "같은 풋웨어 스터디에서 업스트림은 glossy2 어퍼를, SuperLuxCore는 OpenPBR sheen 제어를 사용합니다. 솔·끈·조명은 고정했습니다."
       },
-      "before": "assets/studio/textile-baseline-detail.jpg",
-      "after": "assets/studio/textile-detail.jpg",
+      "before": "assets/studio/new-delta/knit_sneaker_lab-upstream-detail.png",
+      "after": "assets/studio/new-delta/knit_sneaker_lab-superlux-detail.png",
       "left": {
-        "en": "UPSTREAM / GLOSSY STRAND APPROXIMATION",
-        "ko": "업스트림 / 일반 광택 스트랜드 근사"
+        "en": "UPSTREAM / GLOSSY2 UPPER",
+        "ko": "업스트림 / GLOSSY2 어퍼"
       },
       "right": {
-        "en": "SUPERLUXCORE / HUANG FIBRE SHADER",
-        "ko": "SUPERLUXCORE / Huang 섬유 셰이더"
+        "en": "SUPERLUXCORE / OPENPBR SHEEN",
+        "ko": "SUPERLUXCORE / OPENPBR SHEEN"
       },
       "scope": {
-        "en": "Official upstream uses a glossy2 surface approximation on the identical strand geometry. The fork uses the added Huang hair BSDF. Shared lights, sampling, exposure and display; this is a shader comparison, not the best possible upstream artistic setup.",
-        "ko": "공식 업스트림에서는 같은 스트랜드 형상에 glossy2 표면 근사를, 포크에서는 추가된 Huang 헤어 BSDF를 사용합니다. 조명·샘플·노출·색 변환을 공유하는 셰이더 비교입니다. 업스트림에서 가능한 모든 아트 디렉션의 한계를 뜻하지 않습니다."
+        "en": "New procedural scene; LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27, PATHCPU, seed 42, matched camera/light/geometry and 64 target spp. The receipt labels unsupported fork materials as closest-supported upstream approximations.",
+        "ko": "새 절차 장면입니다. LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27을 PATHCPU, seed 42, 동일 카메라·조명·형상·목표 64 spp로 렌더했습니다. 포크 전용 재질은 영수증에 업스트림의 가장 가까운 지원 근사로 표시했습니다."
       },
-      "fullBefore": "assets/studio/textile-baseline.jpg",
-      "fullAfter": "assets/studio/textile.jpg"
+      "fullBefore": "assets/studio/new-delta/knit_sneaker_lab-upstream-full.png",
+      "fullAfter": "assets/studio/new-delta/knit_sneaker_lab-superlux-full.png"
+    },
+    {
+      "id": "smart_glass_atrium",
+      "project": "smart_glass_atrium",
+      "tab": {
+        "en": "Architecture / glass",
+        "ko": "건축 · 유리"
+      },
+      "title": {
+        "en": "Refraction carries the room.",
+        "ko": "굴절이 공간을 전달합니다."
+      },
+      "body": {
+        "en": "The same glazing bay is compared with upstream Cauchy glass and the fork Sellmeier/thin-film override. The upstream side is the closest supported approximation, not feature parity.",
+        "ko": "같은 글레이징 베이를 업스트림 Cauchy 유리와 포크 Sellmeier·박막 오버라이드로 비교합니다. 업스트림 쪽은 기능 동등성이 아닌 가장 가까운 지원 근사입니다."
+      },
+      "before": "assets/studio/new-delta/smart_glass_atrium-upstream-detail.png",
+      "after": "assets/studio/new-delta/smart_glass_atrium-superlux-detail.png",
+      "left": {
+        "en": "UPSTREAM / CAUCHY GLASS",
+        "ko": "업스트림 / CAUCHY 유리"
+      },
+      "right": {
+        "en": "SUPERLUXCORE / SELLMEIER + FILM",
+        "ko": "SUPERLUXCORE / SELLMEIER + FILM"
+      },
+      "scope": {
+        "en": "New procedural scene; LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27, PATHCPU, seed 42, matched camera/light/geometry and 64 target spp. The receipt labels unsupported fork materials as closest-supported upstream approximations.",
+        "ko": "새 절차 장면입니다. LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27을 PATHCPU, seed 42, 동일 카메라·조명·형상·목표 64 spp로 렌더했습니다. 포크 전용 재질은 영수증에 업스트림의 가장 가까운 지원 근사로 표시했습니다."
+      },
+      "fullBefore": "assets/studio/new-delta/smart_glass_atrium-upstream-full.png",
+      "fullAfter": "assets/studio/new-delta/smart_glass_atrium-superlux-full.png"
     }
   ],
-  "controlComparisons": [
-    {
-      "id": "thin-film-toggle",
-      "tab": {"en": "Thin film / control", "ko": "박막 / 제어"},
-      "title": {"en": "Colour appears when the film is there.", "ko": "박막이 있을 때 색이 나타납니다."},
-      "body": {"en": "The same porcelain scene with the thin-film layer disabled and enabled. This isolates the fork control for artists who need a predictable material switch.", "ko": "같은 도자기 장면에서 박막 레이어를 끈 상태와 켠 상태를 나란히 놓았습니다. 아티스트가 예측 가능한 재질 스위치를 확인할 수 있는 포크 내부 제어 비교입니다."},
-      "before": "assets/studio/pearl-film-off.jpg",
-      "after": "assets/studio/pearl.jpg",
-      "left": {"en": "SUPERLUXCORE / FILM OFF", "ko": "SUPERLUXCORE / 박막 OFF"},
-      "right": {"en": "SUPERLUXCORE / THIN FILM ON", "ko": "SUPERLUXCORE / 박막 ON"},
-      "scope": {"en": "Controlled fork toggle rendered with the same scene and camera. This is additional fork evidence, not a LuxCoreRender upstream binary comparison.", "ko": "같은 장면과 카메라로 포크 내부 옵션만 바꾼 제어 비교입니다. LuxCoreRender 업스트림 바이너리 비교 자료가 아닙니다."}
-    },
-    {
-      "id": "sss-toggle",
-      "tab": {"en": "SSS / control", "ko": "SSS / 제어"},
-      "title": {"en": "Transmission has a controllable boundary.", "ko": "투과의 경계를 제어합니다."},
-      "body": {"en": "A beauty frame with random-walk subsurface scattering disabled beside the same frame with the model enabled. The change is visible in the soft interior response and edge falloff.", "ko": "랜덤 워크 서브서피스 산란을 끈 뷰티 프레임과 켠 프레임을 나란히 놓았습니다. 부드러운 내부 반응과 가장자리 감쇠 차이가 보입니다."},
-      "before": "assets/studio/beauty-sss-off.jpg",
-      "after": "assets/studio/beauty.jpg",
-      "left": {"en": "SUPERLUXCORE / SSS OFF", "ko": "SUPERLUXCORE / SSS OFF"},
-      "right": {"en": "SUPERLUXCORE / RANDOM-WALK SSS", "ko": "SUPERLUXCORE / RANDOM-WALK SSS"},
-      "scope": {"en": "Controlled fork toggle rendered with identical geometry, light and camera. It supplements the three upstream pairings; it does not claim upstream parity.", "ko": "동일한 형상·조명·카메라에서 포크 내부 옵션만 바꾼 제어 비교입니다. 세 가지 업스트림 페어를 보완하며 업스트림 동등성을 주장하지 않습니다."}
-    }
-  ],
-  "hero": "prism"
+  "controlComparisons": [],
+  "hero": "holo_packaging"
 };
