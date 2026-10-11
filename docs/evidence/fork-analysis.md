@@ -1,6 +1,6 @@
 # What SuperLuxCore adds after the LuxCoreRender fork
 
-Snapshot: **11 October 2026**, engine source `adba86f43`, native **2.11.27**.
+Snapshot: **12 October 2026**, engine source `adba86f43`, native **2.11.27**.
 The comparison starts at **LuxCoreRender 2.11.2 / `e9ced7e7a`**.
 [All 509 post-fork commits](commit-audit.json) are inventoried with their dates,
 subjects, changed paths and overlapping change areas. Every commit was included;
@@ -8,9 +8,17 @@ current source and feature documents were checked for the claims marketed here.
 This is not a line-by-line review of every historical diff. A change inventory
 includes fixes, reversions, experiments and tools, not 509 new shipped features.
 
-Upstream is still developing. Its observed head on this date was
-[`de8707e7232`](https://github.com/LuxCoreRender/LuxCore/commit/de8707e7232cd6c03692a92755e776e6df6ff9d1).
-These comparisons describe the fork point, not all later upstream releases.
+The inventory snapshot through `bb48fedc0` is **517 commits ahead of the common
+ancestor** when the eight website and evidence commits after the engine audit
+are included. The subsequent homepage polish is docs-only and does not change
+the 509-commit engine audit. The complete fork-vs-upstream ledger is
+[available here](fork-commit-inventory-2026-10-12.json).
+
+Upstream is still developing. Its observed `main` head on this date was
+[`4209d6537`](https://github.com/LuxCoreRender/LuxCore/commit/4209d6537445bda2e2add8d1131211cb8990dbfa),
+51 commits after the same baseline. These comparisons describe the fork delta
+through SuperLuxCore 2.11.27 and do not claim that later upstream refactors are
+unique to the fork.
 
 | Artist benefit | Added or changed implementation | Source and present scope |
 |---|---|---|

@@ -11,7 +11,7 @@ This record compares the fork against LuxCoreRender from common ancestor `e9ced7
 | website/docs after engine audit | 8 | current fork |
 | LuxCoreRender after baseline | 51 | `4209d6537445bda2e2add8d1131211cb8990dbfa` |
 
-The fork-only count against the current upstream head is **517** and the common ancestor is still `e9ced7e7a`. Commit count is change history, not feature count; one commit may touch multiple areas, and the inventory includes fixes, reversions, experiments, tooling and documentation.
+The fork-side count after the common ancestor is **517 hash-unique commits** in this comparison and the common ancestor is still `e9ced7e7a`. This is change history, not feature uniqueness: one commit may touch multiple areas, and the inventory includes fixes, reversions, experiments, tooling and documentation. Upstream's 51 commits include parallel kernel/cache, SPIR-V, OIDN and geometry-refactor work that should not be marketed as fork-only behavior.
 
 ## Area counts in the engine audit
 

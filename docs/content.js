@@ -1,6 +1,6 @@
 window.SLC_DATA = {
   "version": "2.11.27",
-  "date": "2026-10-11",
+  "date": "2026-10-12",
   "core": "https://github.com/claudianus/SuperLuxCore",
   "addon": "https://github.com/claudianus/SuperBlendLuxCore",
   "categories": {
@@ -32,6 +32,130 @@ window.SLC_DATA = {
       "en": "Blender & production",
       "ko": "Blender · 제작"
     }
+  },
+  "forkDelta": {
+    "snapshot": {
+      "baseline": "LuxCoreRender 2.11.2",
+      "baselineSha": "e9ced7e7a",
+      "engineCommits": 509,
+      "forkCommits": 517,
+      "upstreamCommits": 51,
+      "areas": 8,
+      "controls": 48,
+      "scenes": 13,
+      "upstreamHead": "4209d6537",
+      "date": "2026-10-12"
+    },
+    "areas": [
+      {
+        "id": "transport",
+        "count": 148,
+        "feature": "restirdi",
+        "image": "assets/studio/interior-raw.jpg",
+        "badge": {"en": "EXTENDED", "ko": "확장"},
+        "title": {"en": "Hard light paths get more choices.", "ko": "어려운 빛의 경로에 선택지가 생깁니다."},
+        "outcome": {"en": "Reservoirs, guiding and caustic solvers give artists a way to target the paths that matter.", "ko": "Reservoir·guiding·커스틱 솔버로 중요한 빛의 경로를 직접 겨냥할 수 있습니다."},
+        "scope": {"en": "Opt-in and scene-dependent; no blanket speed claim.", "ko": "선택 기능이며 장면에 따라 다릅니다. 일괄적인 속도 향상은 주장하지 않습니다."},
+        "chips": ["CPU", "GPU", "OPT-IN"]
+      },
+      {
+        "id": "volumes",
+        "count": 86,
+        "feature": "volume",
+        "image": "assets/studio/atmosphere.jpg",
+        "badge": {"en": "EXTENDED", "ko": "확장"},
+        "title": {"en": "Volumes keep their depth.", "ko": "볼륨의 깊이를 잃지 않습니다."},
+        "outcome": {"en": "Heterogeneous density, phase functions and photon beams make smoke, glass and atmosphere read as light, not a flat tint.", "ko": "이질 밀도·위상 함수·광자 빔으로 연기와 유리, 대기가 평면 색이 아니라 빛으로 읽힙니다."},
+        "scope": {"en": "Volume paths vary by backend and material setup.", "ko": "볼륨 경로의 지원 범위는 백엔드와 재질 설정에 따라 다릅니다."},
+        "chips": ["CPU", "METAL", "VOLUME"]
+      },
+      {
+        "id": "infrastructure",
+        "count": 80,
+        "feature": "outofcore",
+        "image": "assets/studio/architecture-raw.jpg",
+        "badge": {"en": "POLISH", "ko": "기반 개선"},
+        "title": {"en": "Large scenes use the memory they need.", "ko": "큰 씬은 필요한 메모리만 사용합니다."},
+        "outcome": {"en": "Out-of-core geometry, image staging and bounded task memory keep production scenes workable as they grow.", "ko": "아웃 오브 코어 지오메트리·이미지 스테이징·제한된 태스크 메모리로 씬이 커져도 작업을 이어갑니다."},
+        "scope": {"en": "Resource behavior is measured by scene and backend, not a render-quality shortcut.", "ko": "리소스 동작은 장면과 백엔드별로 측정하며 렌더 품질을 낮추는 지름길이 아닙니다."},
+        "chips": ["CPU", "GPU", "RESOURCE"]
+      },
+      {
+        "id": "hardware",
+        "count": 74,
+        "feature": "metal",
+        "image": "assets/studio/fan.jpg",
+        "badge": {"en": "NEW PATH", "ko": "새 경로"},
+        "title": {"en": "Apple GPU is a native render path.", "ko": "Apple GPU가 네이티브 렌더 경로가 됩니다."},
+        "outcome": {"en": "Metal compute, hardware ray tracing, instancing, motion and native curves meet in the same renderer.", "ko": "Metal 연산·하드웨어 레이 트레이싱·인스턴싱·모션·네이티브 커브를 하나의 렌더러에서 사용합니다."},
+        "scope": {"en": "Supported Apple hardware; the motion scene is credited context, not a speed test.", "ko": "지원되는 Apple 하드웨어 범위입니다. 모션 장면은 출처가 있는 맥락이며 속도 측정이 아닙니다."},
+        "chips": ["METAL", "HWRT", "CURVES"]
+      },
+      {
+        "id": "workflow",
+        "count": 60,
+        "feature": "cryptomatte",
+        "image": "assets/studio/interior-crypto-objects.jpg",
+        "badge": {"en": "WORKFLOW", "ko": "제작 흐름"},
+        "title": {"en": "The beauty render keeps its evidence.", "ko": "작품 렌더가 근거를 함께 남깁니다."},
+        "outcome": {"en": "Cryptomatte, LPE, variance, motion and depth channels turn one render into a usable finishing set.", "ko": "Cryptomatte·LPE·분산·모션·깊이 채널로 한 번의 렌더가 실제 마무리 세트가 됩니다."},
+        "scope": {"en": "Pass availability follows the selected engine and scene.", "ko": "패스 제공 여부는 선택한 엔진과 장면에 따라 달라집니다."},
+        "chips": ["AOV", "LPE", "BLENDER"]
+      },
+      {
+        "id": "materials",
+        "count": 58,
+        "feature": "multiscatter",
+        "image": "assets/studio/audio-detail.jpg",
+        "badge": {"en": "EXTENDED", "ko": "확장"},
+        "title": {"en": "Surfaces stop losing the light they should keep.", "ko": "표면이 간직해야 할 빛을 덜 잃습니다."},
+        "outcome": {"en": "OpenPBR, transmission, rough conductors, multiple scattering, sheen and hair models widen the material vocabulary.", "ko": "OpenPBR·투과·거친 도체·다중 산란·sheen·헤어 모델로 재질 표현 범위를 넓힙니다."},
+        "scope": {"en": "Several controls are opt-in or backend-specific; the comparison recipe is disclosed.", "ko": "일부 제어는 선택 기능 또는 백엔드별 기능이며 비교 레시피를 공개합니다."},
+        "chips": ["OPENPBR", "ENERGY", "FIBRE"]
+      },
+      {
+        "id": "release",
+        "count": 58,
+        "feature": "blender",
+        "image": "assets/studio/heritage-raw.jpg",
+        "badge": {"en": "SHIP IT", "ko": "배포"},
+        "title": {"en": "Install the renderer without archaeology.", "ko": "찾아 헤매지 않고 렌더러를 설치합니다."},
+        "outcome": {"en": "Platform wheels, Blender extension bundles, version banners and provenance make the build you installed legible.", "ko": "플랫폼별 wheel·Blender 확장 번들·버전 배너·provenance로 설치한 빌드를 확인할 수 있습니다."},
+        "scope": {"en": "Build and package evidence is separate from runtime feature acceptance.", "ko": "빌드·패키지 근거와 런타임 기능 검수는 구분합니다."},
+        "chips": ["MAC", "WINDOWS", "LINUX"]
+      },
+      {
+        "id": "maintenance",
+        "count": 97,
+        "feature": "cycles",
+        "image": "assets/studio/heritage-normal.jpg",
+        "badge": {"en": "POLISH", "ko": "다듬기"},
+        "title": {"en": "The small fixes artists feel every day.", "ko": "매일 체감하는 작은 수정들."},
+        "outcome": {"en": "Graph refreshes, camera transforms, safe bounds, deadlock fixes and clearer diagnostics remove friction between edits.", "ko": "그래프 갱신·카메라 변환·안전한 경계·교착 수정·진단 개선으로 편집과 렌더 사이의 마찰을 줄입니다."},
+        "scope": {"en": "The area includes fixes, reverts and tooling; it is not 97 new features.", "ko": "수정·되돌림·도구 작업을 포함한 영역이며 새 기능 97개를 뜻하지 않습니다."},
+        "chips": ["CYCLES", "STABILITY", "DIAGNOSTICS"]
+      }
+    ],
+    "spotlights": [
+      {"feature": "diffraction", "image": "assets/studio/music.jpg", "badge": {"en": "FORK ADDITION", "ko": "포크 추가"}},
+      {"feature": "hair", "image": "assets/studio/textile.jpg", "badge": {"en": "FORK ADDITION", "ko": "포크 추가"}},
+      {"feature": "sss", "image": "assets/studio/beauty.jpg", "badge": {"en": "EXPERIMENTAL", "ko": "실험 기능"}},
+      {"feature": "adaptivecaustic", "image": "assets/studio/jewelry.jpg", "badge": {"en": "EXTENDED", "ko": "확장"}}
+    ],
+    "micro": [
+      {"kind": {"en": "SHADER DETAIL", "ko": "셰이더 디테일"}, "title": {"en": "Smoothstep spot falloff", "ko": "Smoothstep 스폿 감쇠"}, "body": {"en": "Cycles-style penumbra control survives the adapter.", "ko": "Cycles식 penumbra 제어를 어댑터에서 유지합니다."}},
+      {"kind": {"en": "SHADER DETAIL", "ko": "셰이더 디테일"}, "title": {"en": "Filter glossy and clamp controls", "ko": "Filter glossy·clamp 제어"}, "body": {"en": "Glossy filtering and direct/indirect limits are explicit scene controls.", "ko": "Glossy 필터와 direct/indirect 제한을 씬 제어로 명시합니다."}},
+      {"kind": {"en": "GRAPH FIDELITY", "ko": "그래프 충실도"}, "title": {"en": "Object, generated and world position", "ko": "Object·Generated·World Position"}, "body": {"en": "Procedural coordinates remain available to material graphs.", "ko": "프로시저럴 좌표를 머티리얼 그래프에서 계속 사용할 수 있습니다."}},
+      {"kind": {"en": "GRAPH FIDELITY", "ko": "그래프 충실도"}, "title": {"en": "Bump, normal and coat direction", "ko": "Bump·Normal·Coat 방향"}, "body": {"en": "Normal spaces and displacement directions are mapped instead of silently dropped.", "ko": "노멀 공간과 디스플레이스 방향을 버리지 않고 매핑합니다."}},
+      {"kind": {"en": "LIGHT", "ko": "조명"}, "title": {"en": "Two-sided emission and mapped lights", "ko": "양면 방출·텍스처 조명"}, "body": {"en": "Emission orientation, area spread and texture inputs are kept visible.", "ko": "방출 방향·에어리어 확산·텍스처 입력을 그대로 확인할 수 있습니다."}},
+      {"kind": {"en": "VOLUME", "ko": "볼륨"}, "title": {"en": "VDB index and reconstruction", "ko": "VDB 인덱스·재구성"}, "body": {"en": "Linear and cubic density reconstruction are available for volume work.", "ko": "볼륨 작업에서 선형·큐빅 밀도 재구성을 사용할 수 있습니다."}},
+      {"kind": {"en": "CAMERA", "ko": "카메라"}, "title": {"en": "Transform cache and raster centers", "ko": "변환 캐시·래스터 중심"}, "body": {"en": "Camera updates stay precise while the scene is edited.", "ko": "씬을 편집해도 카메라 갱신 정밀도를 유지합니다."}},
+      {"kind": {"en": "BLENDER", "ko": "Blender"}, "title": {"en": "Nested material refresh", "ko": "중첩 재질 갱신"}, "body": {"en": "Material and mesh-light edits invalidate the right render state.", "ko": "재질·메시 라이트 수정이 필요한 렌더 상태만 갱신합니다."}},
+      {"kind": {"en": "PASSES", "ko": "패스"}, "title": {"en": "View depth and variance", "ko": "ViewDepth·Variance"}, "body": {"en": "Depth and noise evidence remain available beside the beauty image.", "ko": "작품 옆에 깊이와 노이즈 근거를 함께 확인합니다."}},
+      {"kind": {"en": "SAFETY", "ko": "안정성"}, "title": {"en": "Bounds, NaN and lifecycle guards", "ko": "경계·NaN·수명 보호"}, "body": {"en": "Failure paths are handled as renderer behavior, not hidden crashes.", "ko": "실패 경로를 숨은 충돌이 아니라 렌더러 동작으로 처리합니다."}},
+      {"kind": {"en": "CLI", "ko": "CLI"}, "title": {"en": "Version and help banners", "ko": "버전·도움말 배너"}, "body": {"en": "The binary tells artists what they are running before the first frame.", "ko": "첫 프레임 전에 현재 실행 중인 빌드를 확인할 수 있습니다."}},
+      {"kind": {"en": "RELEASE", "ko": "릴리스"}, "title": {"en": "Wheel and bundle provenance", "ko": "Wheel·번들 provenance"}, "body": {"en": "Installed artifacts carry enough identity to reproduce a report.", "ko": "설치된 아티팩트의 식별 정보를 보고서에 남길 수 있습니다."}}
+    ]
   },
   "features": [
     {
@@ -1537,8 +1661,8 @@ window.SLC_DATA = {
       "ko": "회절과 거친 도체부터 섬유, 볼륨, 제작 패스까지. 이미지를 먼저 보여주고 실제 데이터는 함께 보존합니다."
     },
     "workEyebrow": {
-      "en": "01 / RENDER DISCIPLINES",
-      "ko": "01 / 렌더링 분야"
+      "en": "04 / RENDER DISCIPLINES",
+      "ko": "04 / 렌더링 분야"
     },
     "workHeading": {
       "en": "Six scenes.\nSix light problems.",
@@ -1560,6 +1684,98 @@ window.SLC_DATA = {
       "en": "Read the renderer by the work it can do. Every label links to a documented control surface.",
       "ko": "렌더러가 실제로 해결하는 문제로 기능을 살펴보세요. 각 항목은 문서화된 제어로 연결됩니다."
     },
+    "delta": {
+      "en": "Delta",
+      "ko": "변화"
+    },
+    "deltaEyebrow": {
+      "en": "FORK DELTA / 02",
+      "ko": "포크 델타 / 02"
+    },
+    "deltaHeading": {
+      "en": "What changed after LuxCoreRender 2.11.2.",
+      "ko": "LuxCoreRender 2.11.2 이후, 달라진 것."
+    },
+    "deltaIntro": {
+      "en": "509 engine commits distilled into visible renderer behavior. Open a plate to see the scene, pass, backend and scope.",
+      "ko": "509개 엔진 커밋을 눈에 보이는 렌더러 동작으로 압축했습니다. 카드를 열어 장면·패스·백엔드·범위를 확인하세요."
+    },
+    "engineCommits": {
+      "en": "ENGINE COMMITS",
+      "ko": "엔진 커밋"
+    },
+    "areas": {
+      "en": "CHANGE AREAS",
+      "ko": "변경 분야"
+    },
+    "controls": {
+      "en": "DOCUMENTED CONTROLS",
+      "ko": "문서화된 제어"
+    },
+    "scenes": {
+      "en": "NATIVE SCENES",
+      "ko": "네이티브 씬"
+    },
+    "deltaBaseline": {
+      "en": "FORK BASELINE / LUXCORERENDER 2.11.2",
+      "ko": "포크 기준 / LUXCORERENDER 2.11.2"
+    },
+    "deltaCurrent": {
+      "en": "SUPERLUXCORE 2.11.27",
+      "ko": "SUPERLUXCORE 2.11.27"
+    },
+    "deltaUpstream": {
+      "en": "UPSTREAM CHECKED 2026-10-12 / +51 COMMITS",
+      "ko": "업스트림 확인 2026-10-12 / 기준 이후 +51 커밋"
+    },
+    "deltaCommits": {
+      "en": "commits tagged in this area",
+      "ko": "개 커밋이 이 분야에 포함"
+    },
+    "deltaSpotlightEyebrow": {
+      "en": "VISIBLE FORK ADDITIONS",
+      "ko": "눈에 보이는 포크 추가"
+    },
+    "deltaSpotlightHeading": {
+      "en": "Four changes you can see immediately.",
+      "ko": "바로 눈으로 확인하는 네 가지 변화."
+    },
+    "deltaSpotlightIntro": {
+      "en": "A CD can produce ordered diffraction colour. A strand can scatter as fibre. A translucent surface can carry a measured preset. A caustic can stay legible. These are visual controls, not commit slogans.",
+      "ko": "CD는 정렬된 회절 색을 만들고, 스트랜드는 섬유로 산란하며, 반투명 표면은 측정 프리셋을 사용하고, 커스틱은 형태를 유지합니다. 커밋 구호가 아니라 눈으로 확인하는 제어입니다."
+    },
+    "deltaMicroEyebrow": {
+      "en": "SMALL BUT REAL",
+      "ko": "작지만 실제로 체감되는 변화"
+    },
+    "deltaMicroHeading": {
+      "en": "The details between the frames.",
+      "ko": "프레임 사이를 매끄럽게 하는 디테일."
+    },
+    "deltaMicroIntro": {
+      "en": "Fixes, graph semantics, diagnostics and release details are part of the renderer artists use. The complete 509-commit inventory stays available below.",
+      "ko": "수정·그래프 의미·진단·릴리스 디테일까지 아티스트가 사용하는 렌더러의 일부입니다. 509개 전체 커밋 원장은 아래에서 확인할 수 있습니다."
+    },
+    "deltaProof": {
+      "en": "Open the complete comparison record",
+      "ko": "전체 비교 기록 열기"
+    },
+    "deltaProofBody": {
+      "en": "The inventory snapshot through bb48fedc0 contains 509 engine commits from e9ced7e7a through adba86f43, plus eight website commits in the fork divergence. The current upstream check is 4209d6537 with 51 commits since the same baseline, mostly refactors and kernel/cache, SPIR-V and OIDN work. Later homepage polish is docs-only. Area counts overlap because one commit can touch more than one area; fixes, reversions, experiments and tooling are included.",
+      "ko": "bb48fedc0까지의 원장 스냅샷에는 e9ced7e7a부터 adba86f43까지 509개 엔진 커밋과 포크 분기 이후 홈페이지 커밋 8개가 포함됩니다. 같은 기준점에서 현재 업스트림 4209d6537까지는 51개 커밋이며, 주로 리팩터링과 커널·캐시·SPIR-V·OIDN 작업입니다. 이후 홈페이지 다듬기는 문서 커밋입니다. 하나의 커밋이 여러 분야에 걸칠 수 있어 분야 합계는 중복되며, 수정·되돌림·실험·도구 작업도 포함합니다."
+    },
+    "deltaAnalysis": {
+      "en": "Read the scoped analysis",
+      "ko": "범위가 적힌 분석 보기"
+    },
+    "deltaSummary": {
+      "en": "Read the visual candidate summary",
+      "ko": "시각 후보 요약 보기"
+    },
+    "deltaLedger": {
+      "en": "Open the full commit ledger",
+      "ko": "전체 커밋 원장 보기"
+    },
     "archiveIntro": {
       "en": "Open the complete scene set, passes and render notes.",
       "ko": "전체 씬과 패스, 렌더 노트를 엽니다."
@@ -1573,8 +1789,8 @@ window.SLC_DATA = {
       "ko": "씬 아카이브 닫기"
     },
     "atlasEyebrow": {
-      "en": "02 / MATERIAL ATLAS",
-      "ko": "02 / 재질 아틀라스"
+      "en": "03 / MATERIAL ATLAS",
+      "ko": "03 / 재질 아틀라스"
     },
     "atlasHeading": {
       "en": "Four surfaces.\nFour ways light changes.",
@@ -1609,8 +1825,8 @@ window.SLC_DATA = {
       "ko": "소재"
     },
     "compareEyebrow": {
-      "en": "02 / THE DIFFERENCE",
-      "ko": "02 / 차이를 직접 보세요"
+      "en": "05 / THE DIFFERENCE",
+      "ko": "05 / 차이를 직접 보세요"
     },
     "compareHeading": {
       "en": "New possibilities.\nVisible differences.",
@@ -1619,6 +1835,34 @@ window.SLC_DATA = {
     "compareIntro": {
       "en": "Get close to the material. Drag the divider to see the difference under the same light.",
       "ko": "재질에 가까이 다가가 보세요. 같은 빛 아래에서, 경계선을 움직이며 차이를 확인하세요."
+    },
+    "comparisonWallEyebrow": {
+      "en": "SIDE BY SIDE / MATCHED SCENE",
+      "ko": "SIDE BY SIDE / 동일 조건 비교"
+    },
+    "comparisonWallHeading": {
+      "en": "The fork, frame by frame.",
+      "ko": "같은 장면에서, 포크의 차이를."
+    },
+    "comparisonWallIntro": {
+      "en": "Every card keeps the camera, geometry, lights, exposure, display transform and target samples fixed. The left image is the LuxCoreRender 2.11.2 reference; the right image is the SuperLuxCore result. Open a card to scrub the boundary or inspect the full scene.",
+      "ko": "모든 카드는 카메라·형상·조명·노출·색 변환·목표 샘플을 고정했습니다. 왼쪽은 LuxCoreRender 2.11.2 기준 렌더, 오른쪽은 SuperLuxCore 결과입니다. 카드를 열면 경계선을 움직이거나 전체 장면을 볼 수 있습니다."
+    },
+    "compareOpen": {
+      "en": "Open matched comparison",
+      "ko": "동일 조건 비교 열기"
+    },
+    "controlWallEyebrow": {
+      "en": "FORK CONTROLS / SAME SCENE",
+      "ko": "FORK CONTROLS / 같은 장면"
+    },
+    "controlWallHeading": {
+      "en": "More material proof, clearly scoped.",
+      "ko": "더 많은 재질 증거, 범위까지 명확하게."
+    },
+    "controlWallIntro": {
+      "en": "These pairs isolate a SuperLuxCore control on the same authored scene. They are useful for material decisions and are intentionally labelled separately from the upstream binary comparisons above.",
+      "ko": "이 페어는 같은 제작 장면에서 SuperLuxCore 제어 하나만 분리해 보여줍니다. 재질 판단에 유용하며, 위의 업스트림 바이너리 비교와 혼동하지 않도록 별도 범위로 표시했습니다."
     },
     "compareDrag": {
       "en": "Drag to compare",
@@ -1637,8 +1881,8 @@ window.SLC_DATA = {
       "ko": "비교 구성 보기"
     },
     "toolkitEyebrow": {
-      "en": "03 / THE VISUAL TOOLKIT",
-      "ko": "03 / 모든 기능을 이미지로"
+      "en": "06 / THE VISUAL TOOLKIT",
+      "ko": "06 / 모든 기능을 이미지로"
     },
     "toolkitHeading": {
       "en": "Renderer index / documented scope.",
@@ -1685,8 +1929,8 @@ window.SLC_DATA = {
       "ko": "기술 패스는 실제 씬 데이터를 시각화합니다. 작품은 ACES 2.0을 적용하며, 노멀·ID·커버리지는 데이터 보기입니다."
     },
     "downloadEyebrow": {
-      "en": "04 / YOUR NEXT IMAGE",
-      "ko": "04 / 다음 작품을 시작하세요"
+      "en": "07 / YOUR NEXT IMAGE",
+      "ko": "07 / 다음 작품을 시작하세요"
     },
     "downloadFirst": {
       "en": "Your imagination.",
@@ -2188,6 +2432,30 @@ window.SLC_DATA = {
       },
       "fullBefore": "assets/studio/textile-baseline.jpg",
       "fullAfter": "assets/studio/textile.jpg"
+    }
+  ],
+  "controlComparisons": [
+    {
+      "id": "thin-film-toggle",
+      "tab": {"en": "Thin film / control", "ko": "박막 / 제어"},
+      "title": {"en": "Colour appears when the film is there.", "ko": "박막이 있을 때 색이 나타납니다."},
+      "body": {"en": "The same porcelain scene with the thin-film layer disabled and enabled. This isolates the fork control for artists who need a predictable material switch.", "ko": "같은 도자기 장면에서 박막 레이어를 끈 상태와 켠 상태를 나란히 놓았습니다. 아티스트가 예측 가능한 재질 스위치를 확인할 수 있는 포크 내부 제어 비교입니다."},
+      "before": "assets/studio/pearl-film-off.jpg",
+      "after": "assets/studio/pearl.jpg",
+      "left": {"en": "SUPERLUXCORE / FILM OFF", "ko": "SUPERLUXCORE / 박막 OFF"},
+      "right": {"en": "SUPERLUXCORE / THIN FILM ON", "ko": "SUPERLUXCORE / 박막 ON"},
+      "scope": {"en": "Controlled fork toggle rendered with the same scene and camera. This is additional fork evidence, not a LuxCoreRender upstream binary comparison.", "ko": "같은 장면과 카메라로 포크 내부 옵션만 바꾼 제어 비교입니다. LuxCoreRender 업스트림 바이너리 비교 자료가 아닙니다."}
+    },
+    {
+      "id": "sss-toggle",
+      "tab": {"en": "SSS / control", "ko": "SSS / 제어"},
+      "title": {"en": "Transmission has a controllable boundary.", "ko": "투과의 경계를 제어합니다."},
+      "body": {"en": "A beauty frame with random-walk subsurface scattering disabled beside the same frame with the model enabled. The change is visible in the soft interior response and edge falloff.", "ko": "랜덤 워크 서브서피스 산란을 끈 뷰티 프레임과 켠 프레임을 나란히 놓았습니다. 부드러운 내부 반응과 가장자리 감쇠 차이가 보입니다."},
+      "before": "assets/studio/beauty-sss-off.jpg",
+      "after": "assets/studio/beauty.jpg",
+      "left": {"en": "SUPERLUXCORE / SSS OFF", "ko": "SUPERLUXCORE / SSS OFF"},
+      "right": {"en": "SUPERLUXCORE / RANDOM-WALK SSS", "ko": "SUPERLUXCORE / RANDOM-WALK SSS"},
+      "scope": {"en": "Controlled fork toggle rendered with identical geometry, light and camera. It supplements the three upstream pairings; it does not claim upstream parity.", "ko": "동일한 형상·조명·카메라에서 포크 내부 옵션만 바꾼 제어 비교입니다. 세 가지 업스트림 페어를 보완하며 업스트림 동등성을 주장하지 않습니다."}
     }
   ],
   "hero": "prism"
