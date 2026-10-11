@@ -2308,6 +2308,7 @@ void CompiledScene::CompileTextures() {
 				tex->densityGrid.ny = dgt.GetHeight();
 				tex->densityGrid.nz = dgt.GetDepth();
 				tex->densityGrid.imageMapIndex = scene.GetImageMaps().GetImageMapIndex(dgt.GetImageMap());
+				tex->densityGrid.interpolationType = dgt.GetInterpolationType();
 				break;
 			}
 			case FRESNELCOLOR_TEX: {

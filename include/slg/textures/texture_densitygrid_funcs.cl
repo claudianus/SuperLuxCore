@@ -37,9 +37,19 @@ OPENCL_FORCE_INLINE float3 DensityGridTexture_D(
 	return ImageMap_GetTexel_SpectrumValue(storageType, pixels, channelCount, index);
 }
 
+OPENCL_FORCE_INLINE float4 DensityGridTexture_CubicWeights(const float t) {
+	// Positive cubic B-spline weights, matching Cycles volume interpolation.
+	return MAKE_FLOAT4(
+			(((-1.f / 6.f) * t + .5f) * t - .5f) * t + (1.f / 6.f),
+			((.5f * t - 1.f) * t) * t + (2.f / 3.f),
+			((-.5f * t + .5f) * t + .5f) * t + (1.f / 6.f),
+			(1.f / 6.f) * t * t * t);
+}
+
 OPENCL_FORCE_NOT_INLINE float3 DensityGridTexture_ConstEvaluateSpectrum(__global const HitPoint *hitPoint,
 		const int nx, const int ny, const int nz,
-		const uint imageMapIndex, __global const TextureMapping3D *mapping
+		const uint imageMapIndex, const uint interpolationType,
+		__global const TextureMapping3D *mapping
 		TEXTURES_PARAM_DECL) {
 	__global const ImageMap *imageMap = &imageMapDescs[imageMapIndex];
 
@@ -98,14 +108,51 @@ OPENCL_FORCE_NOT_INLINE float3 DensityGridTexture_ConstEvaluateSpectrum(__global
 			vx = min(Floor2Int(x), nx - 1);
 			x -= vx;
 			y = clamp(P.y, 0.f, 1.f) * ny;
-			vy = min(Floor2Int(P.y * ny), ny - 1);
+			vy = min(Floor2Int(interpolationType == 1u ? y : P.y * ny), ny - 1);
 			y -= vy;
 			z = clamp(P.z, 0.f, 1.f) * nz;
-			vz = min(Floor2Int(P.z * nz), nz - 1);
+			vz = min(Floor2Int(interpolationType == 1u ? z : P.z * nz), nz - 1);
 			z -= vz;
 			break;
 		default:
 			return BLACK;
+	}
+
+	if (interpolationType == 1u) {
+		if (imageMap->wrapType == WRAP_CLAMP) {
+			// Cubic weights require a bounded fraction. The legacy linear
+			// y/z path uses the original coordinate for its integer part.
+			x = clamp(P.x, 0.f, 1.f) * nx;
+			y = clamp(P.y, 0.f, 1.f) * ny;
+			z = clamp(P.z, 0.f, 1.f) * nz;
+			vx = min(Floor2Int(x), nx - 1);
+			vy = min(Floor2Int(y), ny - 1);
+			vz = min(Floor2Int(z), nz - 1);
+			x -= vx;
+			y -= vy;
+			z -= vz;
+		}
+		const float4 wx = DensityGridTexture_CubicWeights(x);
+		const float4 wy = DensityGridTexture_CubicWeights(y);
+		const float4 wz = DensityGridTexture_CubicWeights(z);
+		float3 result = BLACK;
+		for (int k = 0; k < 4; ++k) {
+			float3 row = BLACK;
+			for (int j = 0; j < 4; ++j) {
+				float3 column = BLACK;
+				for (int i = 0; i < 4; ++i) {
+					const int sx = imageMap->wrapType == WRAP_REPEAT ? Mod(vx + i - 1, nx) : vx + i - 1;
+					const int sy = imageMap->wrapType == WRAP_REPEAT ? Mod(vy + j - 1, ny) : vy + j - 1;
+					const int sz = imageMap->wrapType == WRAP_REPEAT ? Mod(vz + k - 1, nz) : vz + k - 1;
+					column += wx[i] * DensityGridTexture_D(imageMap,
+							sx, sy, sz,
+							nx, ny, nz IMAGEMAPS_PARAM);
+				}
+				row += wy[j] * column;
+			}
+			result += wz[k] * row;
+		}
+		return result;
 	}
 
 	// Trilinear interpolation of the grid element
@@ -136,11 +183,12 @@ OPENCL_FORCE_NOT_INLINE float3 DensityGridTexture_ConstEvaluateSpectrum(__global
 
 OPENCL_FORCE_INLINE float DensityGridTexture_ConstEvaluateFloat(__global const HitPoint *hitPoint,
 		const int nx, const int ny, const int nz,
-		const uint imageMapIndex, __global const TextureMapping3D *mapping
+		const uint imageMapIndex, const uint interpolationType,
+		__global const TextureMapping3D *mapping
 		TEXTURES_PARAM_DECL) {
 	return Spectrum_Y(DensityGridTexture_ConstEvaluateSpectrum(hitPoint,
 			nx, ny, nz,
-			imageMapIndex, mapping
+			imageMapIndex, interpolationType, mapping
 			TEXTURES_PARAM));
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

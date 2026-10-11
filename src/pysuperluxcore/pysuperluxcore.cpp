@@ -41,6 +41,7 @@
 #include <pybind11/typing.h>
 
 #include <openvdb/openvdb.h>
+#include "slg/textures/openvdbgrid.h"
 #include <openvdb/io/File.h>
 
 
@@ -232,6 +233,7 @@ static void LuxCore_KernelCacheFill3(
 // OpenVDB helper functions
 //------------------------------------------------------------------------------
 py::list GetOpenVDBGridNames(const std::string &filePathStr) {
+  slg::EnsureOpenVDBGridTypes();
   py::list gridNames;
 
   openvdb::io::File file(filePathStr);
@@ -244,7 +246,8 @@ py::list GetOpenVDBGridNames(const std::string &filePathStr) {
 }
 
 
-py::tuple GetOpenVDBGridInfo(const std::string &filePathStr, const std::string &gridName) {
+py::tuple GetOpenVDBGridInfo(const std::string &filePathStr, const std::string &gridName, const bool activeBounds) {
+  slg::EnsureOpenVDBGridTypes();
   py::list bBox;
   py::list bBox_w;
   py::list trans_matrix;
@@ -279,7 +282,10 @@ py::tuple GetOpenVDBGridInfo(const std::string &filePathStr, const std::string &
   ovdbGrid = file.readGrid(gridName);
 
   openvdb::CoordBBox coordbbox;
-  ovdbGrid->baseTree().evalLeafBoundingBox(coordbbox);
+  if (activeBounds)
+    coordbbox = ovdbGrid->evalActiveVoxelBoundingBox();
+  else
+    ovdbGrid->baseTree().evalLeafBoundingBox(coordbbox);
   openvdb::BBoxd bbox_world = ovdbGrid->transform().indexToWorld(coordbbox);
 
   bBox.append(coordbbox.min()[0]);
@@ -3049,7 +3055,8 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 
   m.def("GetOpenVDBGridNames", &GetOpenVDBGridNames);
   RegisterMikkTangents(m);
-  m.def("GetOpenVDBGridInfo", &GetOpenVDBGridInfo);
+  m.def("GetOpenVDBGridInfo", &GetOpenVDBGridInfo,
+      py::arg("file_path"), py::arg("grid_name"), py::arg("active_bounds") = false);
 	m.def("BlenderMatrix4x4ToList", &blender::BlenderMatrix4x4ToList);
 
 

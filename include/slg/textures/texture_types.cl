@@ -454,6 +454,7 @@ typedef struct {
 
 	unsigned int nx, ny, nz;
 	unsigned int imageMapIndex;
+	unsigned int interpolationType;
 } DensityGridParam;
 
 typedef struct {

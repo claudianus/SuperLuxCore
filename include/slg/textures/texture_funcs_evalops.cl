@@ -519,7 +519,8 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				case EVAL_FLOAT: {
 					const float eval = DensityGridTexture_ConstEvaluateFloat(hitPoint,
 							texture->densityGrid.nx, texture->densityGrid.ny, texture->densityGrid.nz,
-							texture->densityGrid.imageMapIndex, &texture->densityGrid.mapping
+							texture->densityGrid.imageMapIndex, texture->densityGrid.interpolationType,
+							&texture->densityGrid.mapping
 							TEXTURES_PARAM);
 					EvalStack_PushFloat(eval);
 					break;
@@ -527,7 +528,8 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				case EVAL_SPECTRUM: {
 					const float3 eval = DensityGridTexture_ConstEvaluateSpectrum(hitPoint,
 							texture->densityGrid.nx, texture->densityGrid.ny, texture->densityGrid.nz,
-							texture->densityGrid.imageMapIndex, &texture->densityGrid.mapping
+							texture->densityGrid.imageMapIndex, texture->densityGrid.interpolationType,
+							&texture->densityGrid.mapping
 							TEXTURES_PARAM);
 					EvalStack_PushFloat3(eval);
 					break;

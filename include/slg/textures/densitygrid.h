@@ -27,11 +27,12 @@ namespace slg {
 //------------------------------------------------------------------------------
 // DensityGrid texture
 //------------------------------------------------------------------------------
-	
+
 class DensityGridTexture : public Texture {
 public:
+	enum InterpolationType { LINEAR = 0, CUBIC = 1 };
 	DensityGridTexture(TextureMapping3DUPtr&& mp, const u_int nx, const u_int ny, const u_int nz,
-            ImageMapConstRef imageMap);
+            ImageMapConstRef imageMap, const InterpolationType interpolationType = LINEAR);
 	virtual ~DensityGridTexture() { }
 
 	virtual TextureType GetType() const { return DENSITYGRID_TEX; }
@@ -44,12 +45,13 @@ public:
 	u_int GetHeight() const { return ny; }
 	u_int GetDepth() const { return nz; }
 	ImageMapConstRef GetImageMap() const { return imageMap; }
+	InterpolationType GetInterpolationType() const { return interpolationType; }
 
 	// Returns true and sets *maxValue to an upper bound of the texture value
 	// over the given world-space box, if the mapping type allows to bound it
 	// (i.e. affine GLOBALMAPPING3D/LOCALMAPPING3D). Since the grid is sampled
-	// with trilinear interpolation, the max over a region is the max over the
-	// voxel vertices covered by that region.
+	// with positive linear/cubic weights, the max over a region is bounded by
+	// the voxel vertices in its complete interpolation stencil.
 	bool GetMaxInWorldBBox(const luxrays::BBox &box, float *maxValue) const;
 
 	// Counterpart of GetMaxInWorldBBox(): a lower bound of the texture value
@@ -72,7 +74,8 @@ public:
 	static ImageMapUPtr ParseOpenVDB(const std::string &fileName, const std::string &gridName,
 			const u_int nx, const u_int ny, const u_int nz,
 			const ImageMapStorage::StorageType storageType,
-			const ImageMapStorage::WrapType wrapMode);
+			const ImageMapStorage::WrapType wrapMode,
+			const bool indexMode = false, const u_int padding = 0, const bool alphaComponent = false);
 
 private:
 	luxrays::Spectrum D(int x, int y, int z) const;
@@ -81,6 +84,7 @@ private:
     const int nx, ny, nz;
 
 	ImageMapConstRef imageMap;  // The image map is in the global cache, we just store ref to it
+	const InterpolationType interpolationType;
 };
 
 }

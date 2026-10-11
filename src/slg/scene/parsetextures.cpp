@@ -231,6 +231,9 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 				props.Get(Property(propName + ".wrap")("repeat")).Get<string>());
 		const ImageMapStorage::StorageType storageType = ImageMapStorage::String2StorageType(
 				props.Get(Property(propName + ".storage")("auto")).Get<string>());
+		const string interpolation = props.Get(Property(propName + ".interpolation")("linear")).Get<string>();
+		if (interpolation != "linear" && interpolation != "cubic")
+			throw runtime_error("Unknown densitygrid interpolation: " + interpolation);
 
 		ImageMapUPtr imgMap;
 		if (props.IsDefined(propName + ".data")) {
@@ -259,7 +262,17 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 			// Create an image map with the data
 			const string fileName = SLG_FileNameResolver.ResolveFile(props.Get(Property(propName + ".openvdb.file")).Get<string>());
 			const string gridName = props.Get(Property(propName + ".openvdb.grid")).Get<string>();
-			imgMap = DensityGridTexture::ParseOpenVDB(fileName, gridName, nx, ny, nz, storageType, wrapMode);
+			const string mode = props.Get(Property(propName + ".openvdb.mode")("legacy")).Get<string>();
+			if (mode != "legacy" && mode != "index")
+				throw runtime_error("Unknown OpenVDB densitygrid mode: " + mode);
+			const int padding = props.Get(Property(propName + ".openvdb.padding")(0)).Get<int>();
+			if (padding < 0)
+				throw runtime_error("Negative OpenVDB padding: " + propName);
+			const string component = props.Get(Property(propName + ".openvdb.component")("rgb")).Get<string>();
+			if ((component != "rgb" && component != "alpha") || (component == "alpha" && mode != "index"))
+				throw runtime_error("Invalid OpenVDB component for mode: " + component);
+			imgMap = DensityGridTexture::ParseOpenVDB(fileName, gridName, nx, ny, nz, storageType, wrapMode,
+					mode == "index", padding, component == "alpha");
 		} else
 			throw runtime_error("Missing data property or OpenVDB file in densitygrid texture: " + texName);
 
@@ -270,7 +283,7 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 
 		tex = std::make_unique<DensityGridTexture>(
 			CreateTextureMapping3D(propName + ".mapping", props),
-			nx, ny, nz, imgMapRef
+			nx, ny, nz, imgMapRef, interpolation == "cubic" ? DensityGridTexture::CUBIC : DensityGridTexture::LINEAR
 		);
 	} else if (texType == "mix") {
 		auto& amtTex = GetTexture(props.Get(Property(propName + ".amount")(.5f)));
