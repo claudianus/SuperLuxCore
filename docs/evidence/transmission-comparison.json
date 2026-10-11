@@ -1,0 +1,97 @@
+{
+  "date": "2026-10-11",
+  "before": {
+    "path": "assets/comparisons/upstream-transmission.jpg",
+    "sha256": "a565b1f34032b3404d78c3e08e7023a1ef6819cd10fa3c9be5840e75b484964c",
+    "dimensions": [
+      1600,
+      900
+    ],
+    "record": {
+      "scene": "transmission",
+      "engine": "upstream",
+      "version": "2.11.2",
+      "backend": "PATHCPU",
+      "sampler": "SOBOL",
+      "seed": 42,
+      "hardware": "Apple M5 Pro / CPU 8 threads",
+      "resolution": [
+        1600,
+        900
+      ],
+      "target_spp": 512,
+      "observed_spp": 512,
+      "spectral": false,
+      "native_sha256": "5fa5fe36251b42cd9844bc96abd3d7e0787d501cab42fff8a78e3b065f35a4d2",
+      "scene_sha256": "073ef2a578ebf69ee922691c67329b3a2370e5e04de4a111becdd5916a66d634",
+      "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+      "render_seconds": 240.823,
+      "display": {
+        "ocio_version": "2.6.0",
+        "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+        "input": "Linear Rec.709",
+        "display": "sRGB",
+        "view": "ACES 2.0",
+        "exposure": 1.0,
+        "per_image_normalization": false
+      },
+      "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+      "raw_rgb_sha256": "3bdc517bfae147e11e23456241b7b61ec583446abb26c46f52458f52e7313089",
+      "raw_rgb_max": 7.2348833084106445,
+      "raw_finite": true,
+      "image_sha256": "a565b1f34032b3404d78c3e08e7023a1ef6819cd10fa3c9be5840e75b484964c",
+      "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+      "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+      "upstream_workaround": "Optional OpenCL discovery disabled in memory; renderer bytes unchanged"
+    }
+  },
+  "after": {
+    "path": "assets/comparisons/superluxcore-transmission.jpg",
+    "sha256": "07f9f74a539f271d85389cd750be3c319a7a9c1ab05e8999856d2c6c07299b92",
+    "dimensions": [
+      1600,
+      900
+    ],
+    "record": {
+      "scene": "transmission",
+      "engine": "superluxcore",
+      "version": "2.11.27",
+      "backend": "PATHCPU",
+      "sampler": "SOBOL",
+      "seed": 42,
+      "hardware": "Apple M5 Pro / CPU 8 threads",
+      "resolution": [
+        1600,
+        900
+      ],
+      "target_spp": 512,
+      "observed_spp": 512,
+      "spectral": false,
+      "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+      "scene_sha256": "9d8d5678b88c09d66f425978a3fc5dd658faaaaf8e50be2226c25070396e5fd3",
+      "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+      "render_seconds": 260.209,
+      "display": {
+        "ocio_version": "2.6.0",
+        "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+        "input": "Linear Rec.709",
+        "display": "sRGB",
+        "view": "ACES 2.0",
+        "exposure": 1.0,
+        "per_image_normalization": false
+      },
+      "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+      "raw_rgb_sha256": "52a9993ac5cf628eaffb9ea68e7c65e5614cab8b99d10b544792388233f56735",
+      "raw_rgb_max": 7.675317764282227,
+      "raw_finite": true,
+      "image_sha256": "07f9f74a539f271d85389cd750be3c319a7a9c1ab05e8999856d2c6c07299b92",
+      "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+      "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+      "upstream_workaround": null
+    }
+  },
+  "controlled_difference": "Added Disney transmission=1 and IOR=1.45 on SuperLuxCore; upstream Disney has no integrated transmission",
+  "shared": "Geometry, camera, lighting, film dimensions, sampler, seed, exposure and OCIO display transform match within each pair",
+  "denoising_scope": "Both native engines use OIDN; versions/devices can differ. Denoised beauty images are not pixel-level accuracy or speed evidence",
+  "scope": "Fork baseline 2.11.2; spectral is an internal feature study. No universal speed or superiority claim"
+}

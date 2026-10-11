@@ -111,4 +111,6 @@ kernel_source_device_*.cl
 /image.png*
 /emissive-direct.hdr*
 renders/
+!docs/assets/renders/
+!docs/assets/renders/*.jpg
 dev-tools/gauntlet/results/

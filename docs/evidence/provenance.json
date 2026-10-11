@@ -1,0 +1,541 @@
+{
+  "editorial_snapshot": "2026-10-11",
+  "core_source": "adba86f43eb8c9dc9b95c6efc8293c62d877195d",
+  "addon_source": "6414cb1f9ef4395804db7c4b3b70133b6305dd23",
+  "native_version": "2.11.27",
+  "upstream_comparison_baseline": "Official LuxCoreRender 2.11.2; fork source e9ced7e7a",
+  "old_images_discarded": true,
+  "artificial_image_generation_used": false,
+  "recipe": "artist-scenes.py",
+  "unique_image_count": 11,
+  "all_images_newly_authored_and_rendered": true,
+  "upstream_wheel": {
+    "comment_text": null,
+    "core-metadata": {
+      "sha256": "7245dde12fb0323cc4d9d96f08aaef18a168ba39f3893e83ab1da4f037025c47"
+    },
+    "digests": {
+      "blake2b_256": "f08d298ea5d041cac6ac143f0c1b8d977319308b5dbaf8ef0852439d4418ecf5",
+      "md5": "d090cf01f2534f6623dabbb610d7e178",
+      "sha256": "c89c0882bda1b70a91b2f0fae51fbd533153b75482360cbf936530d0d232876e"
+    },
+    "downloads": -1,
+    "filename": "pyluxcore-2.11.2-cp313-cp313-macosx_14_0_arm64.whl",
+    "has_sig": false,
+    "md5_digest": "d090cf01f2534f6623dabbb610d7e178",
+    "packagetype": "bdist_wheel",
+    "python_version": "cp313",
+    "requires_python": ">=3.10",
+    "size": 83889541,
+    "upload_time": "2026-09-06T07:41:53",
+    "upload_time_iso_8601": "2026-09-06T07:41:53.049188Z",
+    "url": "https://files.pythonhosted.org/packages/f0/8d/298ea5d041cac6ac143f0c1b8d977319308b5dbaf8ef0852439d4418ecf5/pyluxcore-2.11.2-cp313-cp313-macosx_14_0_arm64.whl",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "fork_wheel_sha256": "66e58276d6637bee0a40d8e0e07e27e448e0db36ce25379307520a1d21045b99",
+  "comparison_metadata": [
+    "material-comparison.json",
+    "transmission-comparison.json",
+    "spectral-comparison.json"
+  ],
+  "assets": [
+    {
+      "path": "assets/renders/lookdev.jpg",
+      "sha256": "d83fba7d84a78b48ff31437fe34307d2de4b61694513b26a28827ea4faa3a368",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "metals",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 768,
+        "observed_spp": 768,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "213e371c8630c862e4ec488cc9824368c80c5059bd9520ac07c54f1667a48b06",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 768\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 241.553,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "e2900aa13376bcc0cfc0d1782551cf69e9ea91bd8e6d3c411ee66b4c4f7200e6",
+        "raw_rgb_max": 14.000975608825684,
+        "raw_finite": true,
+        "image_sha256": "d83fba7d84a78b48ff31437fe34307d2de4b61694513b26a28827ea4faa3a368",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/comparisons/upstream-material.jpg",
+      "sha256": "589bad62f1e8b46a2c8c3e9f6205c9f1e6cf5dc9e1c13344eff8703a63cc4e9e",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "metals",
+        "engine": "upstream",
+        "version": "2.11.2",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 768,
+        "observed_spp": 768,
+        "spectral": false,
+        "native_sha256": "5fa5fe36251b42cd9844bc96abd3d7e0787d501cab42fff8a78e3b065f35a4d2",
+        "scene_sha256": "88d685a434e6d39e85656cd08f0301d10bfb4f3437089ca3e89e80e93c537b8d",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 768\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 326.179,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 0.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "9ab944a5938a0cbb67590b432d7c30391f51916618c1ce7c37ba5f7b275977af",
+        "raw_rgb_max": 14.000000953674316,
+        "raw_finite": true,
+        "image_sha256": "589bad62f1e8b46a2c8c3e9f6205c9f1e6cf5dc9e1c13344eff8703a63cc4e9e",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": "Optional OpenCL discovery disabled in memory; renderer bytes unchanged"
+      }
+    },
+    {
+      "path": "assets/comparisons/upstream-transmission.jpg",
+      "sha256": "a565b1f34032b3404d78c3e08e7023a1ef6819cd10fa3c9be5840e75b484964c",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "transmission",
+        "engine": "upstream",
+        "version": "2.11.2",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 512,
+        "spectral": false,
+        "native_sha256": "5fa5fe36251b42cd9844bc96abd3d7e0787d501cab42fff8a78e3b065f35a4d2",
+        "scene_sha256": "073ef2a578ebf69ee922691c67329b3a2370e5e04de4a111becdd5916a66d634",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 240.823,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "3bdc517bfae147e11e23456241b7b61ec583446abb26c46f52458f52e7313089",
+        "raw_rgb_max": 7.2348833084106445,
+        "raw_finite": true,
+        "image_sha256": "a565b1f34032b3404d78c3e08e7023a1ef6819cd10fa3c9be5840e75b484964c",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": "Optional OpenCL discovery disabled in memory; renderer bytes unchanged"
+      }
+    },
+    {
+      "path": "assets/comparisons/superluxcore-transmission.jpg",
+      "sha256": "07f9f74a539f271d85389cd750be3c319a7a9c1ab05e8999856d2c6c07299b92",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "transmission",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 512,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "9d8d5678b88c09d66f425978a3fc5dd658faaaaf8e50be2226c25070396e5fd3",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 260.209,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "52a9993ac5cf628eaffb9ea68e7c65e5614cab8b99d10b544792388233f56735",
+        "raw_rgb_max": 7.675317764282227,
+        "raw_finite": true,
+        "image_sha256": "07f9f74a539f271d85389cd750be3c319a7a9c1ab05e8999856d2c6c07299b92",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/comparisons/diffraction-rgb.jpg",
+      "sha256": "a3bf63ff36a106bba983b59ead9835c6828d3a485a3dbc59ad21498f25a714c3",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "spectral",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 514,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "8b08e693a56b0ae7ccf05597a1bf01dbcaeab770f26727a585e6afcfee30be71",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 175.338,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "fcd8427d154edeae86c178fb0f92991e131288ee201745974b7d120d8946b667",
+        "raw_rgb_max": 38.660240173339844,
+        "raw_finite": true,
+        "image_sha256": "a3bf63ff36a106bba983b59ead9835c6828d3a485a3dbc59ad21498f25a714c3",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/comparisons/diffraction-spectral.jpg",
+      "sha256": "fbd22a648797e2f377f0e22c326f43c64a133094f0a9a010aa8c8e81fd221d93",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "spectral",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 512,
+        "spectral": true,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "8b08e693a56b0ae7ccf05597a1bf01dbcaeab770f26727a585e6afcfee30be71",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 1\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 178.465,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "a846416711afeba51bb0e144b56963d7c22484ee4eb7816540b88666eac67043",
+        "raw_rgb_max": 37.85195541381836,
+        "raw_finite": true,
+        "image_sha256": "fbd22a648797e2f377f0e22c326f43c64a133094f0a9a010aa8c8e81fd221d93",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/renders/orbs.jpg",
+      "sha256": "ac077a0f2a8500759bc9f28f6203ee2eb1737bc3e10c5ff5c894613aa1784cb4",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "orbs",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 768,
+        "observed_spp": 772,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "c600abaef318a3785fca1efa5ed139a27b96aba69f391caf40a63c540b728d99",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 768\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 415.053,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "2e3d5e94babf93a98accf6431f19d684e9b89e882d56dc5c063d570e8241a12d",
+        "raw_rgb_max": 24.000001907348633,
+        "raw_finite": true,
+        "image_sha256": "ac077a0f2a8500759bc9f28f6203ee2eb1737bc3e10c5ff5c894613aa1784cb4",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/renders/caustics.jpg",
+      "sha256": "74a40dcb74db13840bf4ddd95cb418e955ad5ac948ec58388798aaf6af2b10d8",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "caustics",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "BIDIRCPU",
+        "sampler": "METROPOLIS",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 768,
+        "observed_spp": 768,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "55a62b10f6316c679009a541ffd935ed9ac4dfaa15be802878ffcaf1ddc59689",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = BIDIRCPU\nnative.threads.count = 8\nsampler.type = METROPOLIS\nrenderengine.seed = 42\nbatch.haltspp = 768\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 462.827,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "7fdbb0c7ad49c82285344761ab364c7823435fece956f6de0be971d3a91c2e39",
+        "raw_rgb_max": 13.33995246887207,
+        "raw_finite": true,
+        "image_sha256": "74a40dcb74db13840bf4ddd95cb418e955ad5ac948ec58388798aaf6af2b10d8",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/renders/fur.jpg",
+      "sha256": "edbd3c0059ff7c25e74f755f0028684c51797b1ba950e20549a9a7b02f9f462c",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "fur",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 384,
+        "observed_spp": 384,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "8560aed0d65b8e70320d81f4baf97c5b7665167580f504104bcc2cf0cfc0adb6",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 384\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 325.888,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "36d4caf3660667109e6996cc52bb389374e975c16953b782cbd03ba11f615749",
+        "raw_rgb_max": 7.02299165725708,
+        "raw_finite": true,
+        "image_sha256": "edbd3c0059ff7c25e74f755f0028684c51797b1ba950e20549a9a7b02f9f462c",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/renders/godrays.jpg",
+      "sha256": "0aadb56494072ef4b160d8d0d192e4babe317b5b676212250b8bce3d468372dd",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "godrays",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 512,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "8a344baf462a98546dd90d1c54815bbf7d5e19bec8e0db6f9f9d26ebf5af1efb",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 556.547,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "89304d9505df70406c16128b9ba222d6d1d43a533940a412f83ee364aaba0fe0",
+        "raw_rgb_max": 518.204833984375,
+        "raw_finite": true,
+        "image_sha256": "0aadb56494072ef4b160d8d0d192e4babe317b5b676212250b8bce3d468372dd",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    },
+    {
+      "path": "assets/renders/spinner.jpg",
+      "sha256": "114a2802e733f06cf57de69d41403d461cb19698ed63a05f3f3c287d9cea2edf",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "record": {
+        "scene": "spinner",
+        "engine": "superluxcore",
+        "version": "2.11.27",
+        "backend": "PATHCPU",
+        "sampler": "SOBOL",
+        "seed": 42,
+        "hardware": "Apple M5 Pro / CPU 8 threads",
+        "resolution": [
+          1600,
+          900
+        ],
+        "target_spp": 512,
+        "observed_spp": 517,
+        "spectral": false,
+        "native_sha256": "8254e3af77e5db3be8fd9f89ce368d00ec1148101d5ee9250b10d67400ae7ee7",
+        "scene_sha256": "918d6d120d3ac92b7fc3f619b8bdb301a7ec382cd006dca1c8e3e6730b9138c3",
+        "config": "film.width = 1600\nfilm.height = 900\nrenderengine.type = PATHCPU\nnative.threads.count = 8\nsampler.type = SOBOL\nrenderengine.seed = 42\nbatch.haltspp = 512\npath.pathdepth.total = 10\npath.spectral.enable = 0\npath.regularization.auto = 0\npath.lighttracing.enable = 0\npath.mnee.auto = 0\nfilm.imagepipelines.0.0.type = INTEL_OIDN\nfilm.imagepipelines.0.0.sharpness = 0\nfilm.imagepipelines.0.0.prefilter.enable = 1\n",
+        "render_seconds": 236.354,
+        "display": {
+          "ocio_version": "2.6.0",
+          "config_sha256": "47a7d83e79c1d21f49ba6c505efe311da723471688c614b5c366e1da7eb8ea3a",
+          "input": "Linear Rec.709",
+          "display": "sRGB",
+          "view": "ACES 2.0",
+          "exposure": 1.0,
+          "per_image_normalization": false
+        },
+        "denoising": "Renderer INTEL_OIDN, sharpness 0; auxiliary prefilter requested, ALBEDO AOV unavailable in this recipe",
+        "raw_rgb_sha256": "6636371c97d9244d60b46d77f9ca0d2b63e75bc556d57f53885da43668f7341a",
+        "raw_rgb_max": 10.235794067382812,
+        "raw_finite": true,
+        "image_sha256": "114a2802e733f06cf57de69d41403d461cb19698ed63a05f3f3c287d9cea2edf",
+        "asset_origin": "New original procedural scene rendered on 2026-10-11; no previous website image reused",
+        "scope": "Art-directed feature illustration, not speed benchmark or final unbiased convergence evidence",
+        "upstream_workaround": null
+      }
+    }
+  ],
+  "quality_scope": "Original studio art direction, actual native renderer output, OIDN, common ACES 2.0 view; feature illustrations, not universal speed, final unbiased convergence or full Cycles scene equivalence evidence",
+  "timing_scope": "One or two bounded 8-thread workers; a volume worker was briefly suspended while the hair frame completed. Elapsed times are production logs, not benchmark comparisons"
+}

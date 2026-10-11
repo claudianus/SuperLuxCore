@@ -1,10 +1,11 @@
 ### SuperLuxCore
 
-> **SuperLuxCore** is an independent, actively maintained fork of LuxCoreRender
-> (upstream development stalled; this project is maintained separately with the
-> goal of becoming the state-of-the-art open renderer: path guiding on CPU+GPU,
-> modern samplers, MNEE caustics and more). Original LuxCoreRender README
-> follows below unchanged.
+> **SuperLuxCore** is an independent fork of LuxCoreRender, extending its
+> physically based foundation with native Apple Metal, spectral transport,
+> advanced caustics, modern materials and Blender integration.
+> Explore the [project website](https://claudianus.github.io/SuperLuxCore/)
+> for Korean/English feature descriptions, upstream differences, actual render
+> comparisons and platform downloads. Original LuxCoreRender README follows below.
 >
 > **Every feature added since the fork is documented** — what it is, why, with
 > references, new properties/API, test scenes, validation and platform support —
