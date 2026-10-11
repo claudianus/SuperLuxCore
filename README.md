@@ -4,8 +4,9 @@
 > physically based foundation with native Apple Metal, spectral transport,
 > advanced caustics, modern materials and Blender integration.
 > Explore the [project website](https://claudianus.github.io/SuperLuxCore/)
-> for Korean/English feature descriptions, upstream differences, actual render
-> comparisons and platform downloads. Original LuxCoreRender README follows below.
+> for a new studio portfolio, material close-up comparisons, a visual feature
+> toolkit and platform downloads, with automatic Korean/English switching.
+> Original LuxCoreRender README follows below.
 >
 > **Every feature added since the fork is documented** — what it is, why, with
 > references, new properties/API, test scenes, validation and platform support —

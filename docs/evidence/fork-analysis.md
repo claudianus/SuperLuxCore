@@ -32,26 +32,26 @@ was withdrawn; dense scheduling remains the automatic default. Vulkan remains
 experimental. The website reflects current behavior rather than treating every
 historical implementation as a default feature.
 
-## Fresh comparison design
+## Studio comparison design
 
-All old website and diagnostic pictures were removed. Eleven unique images were
-newly authored and actually rendered with [the procedural scene generator](artist-scenes.py).
-The collection uses sculptural studio lighting, physical geometry/materials,
-1600 × 900 output, renderer OIDN and the real OCIO **ACES 2.0** display view.
-No generative image, baked lighting or per-image normalization is used.
+The retired website images and their presentation recipes were removed. The
+new portfolio uses product, interior, textile, architectural and optical scenes
+with new art direction and 32 credited CC0 Poly Haven model, PBR texture and HDRI families.
+[The reproduction notes](studio-readme.md) and [image manifest](provenance.json)
+disclose native settings, sample counts, source credits and fingerprints.
 
-- **Rough-metal energy:** original official upstream 2.11.2 vs current 2.11.27,
-  identical Disney colors/roughness and studio setup, added multibounce on the
-  fork side. This demonstrates an added material model, not a speedup.
-- **Principled transmission:** identical scene; the fork's integrated
-  transmission changes how the lit backdrop appears through the braid.
-- **Diffraction:** current fork RGB approximation vs hero-wavelength transport.
-  Both are legitimate modes; this is not an upstream comparison or a claim
-  that every spectral frame is visibly superior.
+The three official upstream 2.11.2 comparisons show the added diffraction
+shader against a silver-metal alternative, Disney multiple-scattering energy
+compensation, and Huang fiber scattering against a labelled Glossy2 surface
+alternative. Geometry, lighting, sampling, exposure and ACES 2.0 match within
+pairs. Detail views use the same crop on both sides. They are material examples,
+not speed benchmarks or a claim that the baseline artwork is the best possible
+upstream artistic setup.
 
-Exposure is equal within every pair. OIDN is used for presentation on both
-engines; versions/devices can differ. Pair records disclose observed sample
-counts, configuration and native-library hashes. An original upstream M5
-OpenCL-discovery workaround disables only optional device discovery in memory;
-CPU renderer bytes are unchanged. These images are feature illustrations,
-not final unbiased convergence evidence or performance measurements.
+Separate optical artwork uses spectral CPU hybrid light transport to show
+Sellmeier dispersion and caustics. Beauty images use the real OCIO ACES 2.0
+view and native OIDN; albedo, normals and Cryptomatte are actual technical data
+views. There are no AI generated beauty images, baked light or per-image
+normalization. The visual toolkit distinguishes artwork context from actual
+render passes and does not infer GPU performance or blanket compatibility from
+these illustrations.

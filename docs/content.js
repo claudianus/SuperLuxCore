@@ -1,4 +1,3 @@
-/* Paired EN/KO editorial snapshot: 2026-10-11. Claims link to source documentation. */
 window.SLC_DATA = {
   "version": "2.11.27",
   "date": "2026-10-11",
@@ -34,706 +33,6 @@ window.SLC_DATA = {
       "ko": "Blender · 제작"
     }
   },
-  "copy": {
-    "title": {
-      "en": "SuperLuxCore — Give light room to create.",
-      "ko": "SuperLuxCore — 빛에 표현의 자유를."
-    },
-    "description": {
-      "en": "SuperLuxCore extends LuxCoreRender with Apple Metal, spectral transport, advanced caustics, production materials and Blender integration. Explore real render comparisons and download the Blender extension.",
-      "ko": "SuperLuxCore는 LuxCoreRender를 확장한 오픈 소스 물리 기반 렌더러입니다. Apple Metal, 스펙트럴 렌더링, 커스틱, 제작용 재질과 Blender 연동을 실제 비교 렌더로 확인하세요."
-    },
-    "skip": {
-      "en": "Skip to content",
-      "ko": "본문 바로가기"
-    },
-    "language": {
-      "en": "Language",
-      "ko": "언어"
-    },
-    "auto": {
-      "en": "Auto",
-      "ko": "자동"
-    },
-    "navigation": {
-      "en": "Main navigation",
-      "ko": "주요 메뉴"
-    },
-    "navFeatures": {
-      "en": "Features",
-      "ko": "기능"
-    },
-    "navDifferences": {
-      "en": "Upstream comparison",
-      "ko": "업스트림 비교"
-    },
-    "navRenders": {
-      "en": "Render comparisons",
-      "ko": "렌더 비교"
-    },
-    "navDownload": {
-      "en": "Download",
-      "ko": "다운로드"
-    },
-    "pill": {
-      "en": "2.11.27 · October 2026 snapshot",
-      "ko": "2.11.27 · 2026년 10월 기준"
-    },
-    "heroFirst": {
-      "en": "Give light",
-      "ko": "빛에"
-    },
-    "heroSecond": {
-      "en": "room to create.",
-      "ko": "표현의 자유를."
-    },
-    "heroDescription": {
-      "en": "Sculpt a rough metal. Bend a spectrum through glass. Bring every strand to life. SuperLuxCore expands LuxCoreRender with native Apple Metal, spectral optics and richer materials — inside your Blender workflow.",
-      "ko": "거친 금속의 빛을 살리고, 유리 속 스펙트럼을 펼치고, 헤어 한 올까지 표현하세요. SuperLuxCore는 LuxCoreRender에 네이티브 Apple Metal, 스펙트럴 광학과 풍부한 재질을 더해 Blender 작업의 가능성을 넓힙니다."
-    },
-    "download": {
-      "en": "Download for Blender",
-      "ko": "Blender용 다운로드"
-    },
-    "source": {
-      "en": "Explore the source",
-      "ko": "소스 코드 보기"
-    },
-    "heroNote": {
-      "en": "Open source · Blender 5.2 · macOS / Windows / Linux",
-      "ko": "오픈 소스 · Blender 5.2 · macOS / Windows / Linux"
-    },
-    "heroCaption": {
-      "en": "CHROMATIC / 01 · Original render · ACES 2.0",
-      "ko": "CHROMATIC / 01 · 신규 실제 렌더 · ACES 2.0"
-    },
-    "heroAlt": {
-      "en": "A polished chrome braid framing a jade subsurface sphere, with a gold orbit and cinematic bokeh",
-      "ko": "크롬 조형물 안의 비취 SSS 구체, 금빛 궤도와 영화적인 보케"
-    },
-    "compareEyebrow": {
-      "en": "Rendered, not imagined",
-      "ko": "실제 렌더로 확인"
-    },
-    "compareHeading": {
-      "en": "Better is something you can see.",
-      "ko": "개선은 눈으로 확인할 수 있어야 합니다."
-    },
-    "compareIntro": {
-      "en": "Two original-binary comparisons and one spectral feature study. Newly designed sculptural scenes, one camera per pair, matched lights and ACES 2.0. Slide across the image to see what the added models change.",
-      "ko": "원본 바이너리 비교 두 쌍과 스펙트럴 기능 비교 한 쌍입니다. 새로 만든 조형 장면을 각 쌍마다 같은 카메라·조명·ACES 2.0으로 렌더했습니다. 이미지를 가로질러 추가된 모델의 차이를 확인하세요."
-    },
-    "slider": {
-      "en": "Comparison position",
-      "ko": "비교 위치"
-    },
-    "before": {
-      "en": "Before",
-      "ko": "이전"
-    },
-    "after": {
-      "en": "After",
-      "ko": "이후"
-    },
-    "evidence": {
-      "en": "Render settings & provenance",
-      "ko": "렌더 설정 · 출처"
-    },
-    "fullImages": {
-      "en": "Open full-size images",
-      "ko": "원본 이미지 보기"
-    },
-    "compareNote": {
-      "en": "Material and transmission pairs compare official LuxCoreRender 2.11.2 with SuperLuxCore 2.11.27. The spectral pair compares RGB and hero-wavelength transport inside SuperLuxCore. Both sides use renderer OIDN and the same OCIO ACES 2.0 transform; denoised beauty renders illustrate features rather than establish pixel accuracy or speed.",
-      "ko": "재질·투과 비교는 공식 LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27, 스펙트럴 비교는 SuperLuxCore 내부 RGB·히어로 파장 경로를 사용합니다. 양쪽 모두 렌더러 OIDN과 동일한 OCIO ACES 2.0을 적용했습니다. 디노이즈된 작품 렌더로 기능 차이를 보여주며 픽셀 정확도나 속도 순위를 주장하지 않습니다."
-    },
-    "differenceEyebrow": {
-      "en": "Built on LuxCoreRender",
-      "ko": "LuxCoreRender를 기반으로"
-    },
-    "differenceHeading": {
-      "en": "A strong foundation. A wider horizon.",
-      "ko": "탄탄한 기반 위에, 더 넓은 가능성."
-    },
-    "differenceIntro": {
-      "en": "LuxCoreRender supplies the physically based foundation. SuperLuxCore extends the hardware, light transport, material system and artist workflow.",
-      "ko": "LuxCoreRender의 물리 기반 렌더링을 이어받아, 하드웨어와 빛의 전달, 재질, 아티스트의 작업 흐름을 확장했습니다."
-    },
-    "tableFeature": {
-      "en": "Area",
-      "ko": "영역"
-    },
-    "tableUpstream": {
-      "en": "LuxCoreRender 2.11.2 · fork baseline",
-      "ko": "LuxCoreRender 2.11.2 · 포크 기준"
-    },
-    "tableFork": {
-      "en": "SuperLuxCore · additions & changes",
-      "ko": "SuperLuxCore · 추가와 개선"
-    },
-    "baselineNote": {
-      "en": "Comparison scope: the 2.11.2 fork baseline (e9ced7e7a), not a claim about every future upstream release. Path tracing, bidirectional tracing, PhotonGI, OpenCL/CUDA and the existing material library are inherited capabilities. Upstream already includes RGB rendering and glass dispersion; SuperLuxCore adds wavelength-based transport and additional optical models.",
-      "ko": "비교 기준은 포크의 출발점인 2.11.2(e9ced7e7a)이며, 이후 업스트림의 모든 버전에 대한 주장이 아닙니다. 패스 트레이싱, 양방향 추적, PhotonGI, OpenCL/CUDA와 기존 재질은 이어받은 기능입니다. 업스트림에도 RGB 렌더링과 유리 분산이 있으며, SuperLuxCore는 파장 기반 전달과 추가 광학 모델을 확장했습니다."
-    },
-    "upstreamSource": {
-      "en": "Upstream project",
-      "ko": "업스트림 프로젝트"
-    },
-    "forkBaseline": {
-      "en": "Fork baseline source",
-      "ko": "포크 기준 소스"
-    },
-    "featuresEyebrow": {
-      "en": "The complete feature map",
-      "ko": "주요 기능 전체 보기"
-    },
-    "featuresHeading": {
-      "en": "More ways to shape light.",
-      "ko": "빛을 다루는 더 많은 방법."
-    },
-    "featuresIntro": {
-      "en": "Explore the engine and Blender integration by category. Backend coverage and opt-in or experimental status appear on each card; technical details are one click away.",
-      "ko": "엔진과 Blender 연동 기능을 분야별로 살펴보세요. 지원 범위와 선택 기능·실험 기능을 표시하고, 자세한 문서를 함께 연결했습니다."
-    },
-    "search": {
-      "en": "Search features, e.g. Metal, SSS, VDB…",
-      "ko": "기능 검색: Metal, SSS, VDB…"
-    },
-    "searchLabel": {
-      "en": "Search the feature catalog",
-      "ko": "기능 목록 검색"
-    },
-    "featureCount": {
-      "en": "features",
-      "ko": "개 기능"
-    },
-    "readDocs": {
-      "en": "Read the documentation ↗",
-      "ko": "자세한 문서 ↗"
-    },
-    "showAll": {
-      "en": "Show every feature",
-      "ko": "모든 기능 펼치기"
-    },
-    "showLess": {
-      "en": "Show highlights",
-      "ko": "주요 기능만 보기"
-    },
-    "noResults": {
-      "en": "No matching features. Try another search or category.",
-      "ko": "일치하는 기능이 없습니다. 검색어나 분야를 바꿔보세요."
-    },
-    "galleryEyebrow": {
-      "en": "Made with SuperLuxCore",
-      "ko": "SuperLuxCore로 제작"
-    },
-    "galleryHeading": {
-      "en": "The CHROMATIC collection.",
-      "ko": "CHROMATIC 컬렉션."
-    },
-    "galleryIntro": {
-      "en": "Seven newly authored studies of shape, surface and light. Chrome and jade, optical glass, copper fibers, atmospheric beams and motion — rendered in SuperLuxCore 2.11.27, finished through ACES 2.0.",
-      "ko": "형태·표면·빛을 다루는 새 작품 7종입니다. 크롬과 비취, 광학 유리, 구리빛 섬유, 대기의 빛과 움직임을 SuperLuxCore 2.11.27로 렌더하고 ACES 2.0으로 완성했습니다."
-    },
-    "galleryDate": {
-      "en": "Original scene · 11 October 2026 · ACES 2.0",
-      "ko": "신규 제작 씬 · 2026년 10월 11일 · ACES 2.0"
-    },
-    "galleryNote": {
-      "en": "Every image on this page is a fresh actual render. All previous showcase and diagnostic images were removed. The scene generator, sample counts, native-library fingerprints, color transform and image hashes are public in the render record.",
-      "ko": "이 페이지의 모든 이미지는 새 장면의 실제 렌더입니다. 기존 쇼케이스와 진단 이미지는 전부 교체했습니다. 씬 생성 코드, 샘플 수, 네이티브 라이브러리 지문, 색 변환과 이미지 해시는 렌더 기록에 공개합니다."
-    },
-    "downloadEyebrow": {
-      "en": "Get SuperLuxCore",
-      "ko": "SuperLuxCore 시작하기"
-    },
-    "downloadHeading": {
-      "en": "Your next render starts here.",
-      "ko": "다음 렌더를 여기서 시작하세요."
-    },
-    "downloadIntro": {
-      "en": "The Blender extension bundles the native renderer. Pick your platform, install the ZIP and select SuperLuxCore as your render engine.",
-      "ko": "Blender 확장에 네이티브 렌더러가 포함되어 있습니다. 플랫폼에 맞는 ZIP을 설치한 뒤, 렌더 엔진에서 SuperLuxCore를 선택하세요."
-    },
-    "downloadZip": {
-      "en": "Download extension ZIP ↗",
-      "ko": "확장 ZIP 다운로드 ↗"
-    },
-    "manual": {
-      "en": "Installation & manual",
-      "ko": "설치 · 사용 설명서"
-    },
-    "releaseNotes": {
-      "en": "Latest release",
-      "ko": "최신 릴리스"
-    },
-    "nativeWheels": {
-      "en": "Native Python wheels",
-      "ko": "네이티브 Python wheel"
-    },
-    "installOne": {
-      "en": "01 · Download",
-      "ko": "01 · 다운로드"
-    },
-    "installOneBody": {
-      "en": "Choose Apple silicon, Intel Mac, Windows x64 or Linux x64 above. Keep the downloaded extension as a ZIP.",
-      "ko": "Apple Silicon, Intel Mac, Windows x64, Linux x64 중에서 선택하세요. 다운로드한 확장은 ZIP 상태로 설치합니다."
-    },
-    "installTwo": {
-      "en": "02 · Install in Blender",
-      "ko": "02 · Blender에 설치"
-    },
-    "installTwoBody": {
-      "en": "In Blender 5.2, open Preferences → Get Extensions → menu → Install from Disk, and choose the ZIP.",
-      "ko": "Blender 5.2의 환경설정 → 확장 가져오기 → 메뉴 → 디스크에서 설치에서 ZIP을 선택하세요."
-    },
-    "installThree": {
-      "en": "03 · Start rendering",
-      "ko": "03 · 렌더 시작"
-    },
-    "installThreeBody": {
-      "en": "Enable the extension, select SuperLuxCore in Render Properties, then use the viewport or F12. See the manual for migration and feature settings.",
-      "ko": "확장을 활성화하고 렌더 속성에서 SuperLuxCore를 선택하세요. 뷰포트 또는 F12로 렌더합니다. 이전 설치와 기능 설정은 설명서를 참고하세요."
-    },
-    "rollingNote": {
-      "en": "Latest is a rolling prerelease. Snapshot: native 2.11.27, October 11, 2026; four platform bundles published with signed build attestations. macOS ARM64 has direct local render evidence; other platforms have CI build evidence, not equivalent local image review. Keep project backups when updating.",
-      "ko": "Latest는 수시로 갱신되는 프리릴리스입니다. 2026년 10월 11일 기준 네이티브 2.11.27이며, 네 플랫폼 번들과 서명된 빌드 증명이 공개되었습니다. macOS ARM64는 로컬 렌더 검증, 나머지는 CI 빌드 검증이며 동일한 로컬 이미지 검수를 의미하지 않습니다. 업데이트 전 프로젝트를 백업하세요."
-    },
-    "updatesEyebrow": {
-      "en": "Current development",
-      "ko": "최근 업데이트"
-    },
-    "updatesHeading": {
-      "en": "What is new in this snapshot.",
-      "ko": "이번 업데이트에 담긴 변화."
-    },
-    "supportEyebrow": {
-      "en": "Choose with confidence",
-      "ko": "지원 범위를 명확하게"
-    },
-    "supportHeading": {
-      "en": "What to expect today.",
-      "ko": "현재 지원 범위."
-    },
-    "faqHeading": {
-      "en": "A few useful answers.",
-      "ko": "자주 묻는 질문."
-    },
-    "statusDoc": {
-      "en": "Compatibility status",
-      "ko": "호환성 현황"
-    },
-    "allDocs": {
-      "en": "All feature docs",
-      "ko": "전체 기능 문서"
-    },
-    "footerDescription": {
-      "en": "An open-source extension of LuxCoreRender for physically based rendering and Blender. Built on the work of the LuxCoreRender community.",
-      "ko": "물리 기반 렌더링과 Blender를 위한 LuxCoreRender 확장 프로젝트입니다. LuxCoreRender 커뮤니티의 작업을 기반으로 개발합니다."
-    },
-    "footerLicense": {
-      "en": "Renderer: Apache-2.0 · Blender extension: GPL-3.0",
-      "ko": "렌더러: Apache-2.0 · Blender 확장: GPL-3.0"
-    },
-    "footerDate": {
-      "en": "Content verified against main · October 11, 2026",
-      "ko": "main 기준 내용 검수 · 2026년 10월 11일"
-    },
-    "renderProvenance": {
-      "en": "Image provenance",
-      "ko": "이미지 출처"
-    },
-    "auditEyebrow": {
-      "en": "509 commits, traced to the source",
-      "ko": "509개 커밋, 소스까지 추적"
-    },
-    "auditHeading": {
-      "en": "What the fork actually adds.",
-      "ko": "포크가 실제로 더한 것."
-    },
-    "auditIntro": {
-      "en": "We classified every engine commit after the 2.11.2 fork point and checked today’s implementation for the benefits below. Counts include fixes, experiments and tooling; the current feature map distinguishes shipped, opt-in and experimental work.",
-      "ko": "2.11.2 포크 시점 이후 엔진 커밋 전체를 분류하고, 아래 개선의 현재 구현을 확인했습니다. 집계에는 수정·실험·도구 작업도 포함하며, 현재 기능 목록에서 구현 기능·선택 기능·실험 기능을 구분합니다."
-    },
-    "auditInventory": {
-      "en": "Full 509-commit inventory ↗",
-      "ko": "509개 전체 커밋 목록 ↗"
-    },
-    "auditAnalysis": {
-      "en": "Source-linked analysis ↗",
-      "ko": "소스 근거가 있는 분석 ↗"
-    }
-  },
-  "stats": [
-    [
-      {
-        "en": "CPU + Metal",
-        "ko": "CPU + Metal"
-      },
-      {
-        "en": "Native Apple GPU · OpenCL / CUDA retained",
-        "ko": "Apple GPU 네이티브 · OpenCL / CUDA 유지"
-      }
-    ],
-    [
-      {
-        "en": "Spectral transport",
-        "ko": "스펙트럴 렌더링"
-      },
-      {
-        "en": "Hero wavelengths · richer optical models",
-        "ko": "히어로 파장 · 확장된 광학 모델"
-      }
-    ],
-    [
-      {
-        "en": "Blender 5.2",
-        "ko": "Blender 5.2"
-      },
-      {
-        "en": "Viewport · F12 · existing Cycles scenes",
-        "ko": "뷰포트 · F12 · 기존 Cycles 씬 지원"
-      }
-    ],
-    [
-      {
-        "en": "4 platform bundles",
-        "ko": "4개 플랫폼 번들"
-      },
-      {
-        "en": "macOS ARM / Intel · Windows · Linux",
-        "ko": "macOS ARM / Intel · Windows · Linux"
-      }
-    ]
-  ],
-  "highlights": [
-    [
-      {
-        "en": "Your Apple GPU, put to work.",
-        "ko": "Apple GPU를 렌더에 제대로."
-      },
-      {
-        "en": "Native Metal compute, hardware ray tracing and native curves extend the shared CPU/OpenCL/CUDA engine. Use the Mac’s rendering hardware directly.",
-        "ko": "공통 CPU/OpenCL/CUDA 엔진에 네이티브 Metal 연산, 하드웨어 레이 트레이싱과 커브를 추가했습니다. Mac의 렌더 하드웨어를 직접 활용하세요."
-      }
-    ],
-    [
-      {
-        "en": "Surfaces with more to say.",
-        "ko": "표면이 담아내는 더 풍부한 빛."
-      },
-      {
-        "en": "Keep rough-metal energy, refract within a Principled material, layer thin film and sculpt soft sheen. OpenPBR, SSS and physical hair broaden your palette.",
-        "ko": "거친 금속의 에너지를 보존하고, Principled 재질 안에서 굴절을 표현하고, 박막과 부드러운 광택을 더하세요. OpenPBR·SSS·물리 헤어로 재질의 폭을 넓혔습니다."
-      }
-    ],
-    [
-      {
-        "en": "A wider vocabulary for light.",
-        "ko": "빛을 표현하는 더 넓은 언어."
-      },
-      {
-        "en": "Hero-wavelength transport, Sellmeier glass and diffraction add spectral detail. MNEE, GPU light tracing and photon beams expand the paths used for concentrated and volumetric light.",
-        "ko": "히어로 파장 전달, Sellmeier 유리와 회절로 스펙트럴 표현을 확장했습니다. MNEE·GPU 라이트 트레이싱·광자 빔으로 집중된 빛과 볼륨 속 빛의 경로를 넓혔습니다."
-      }
-    ],
-    [
-      {
-        "en": "Less rebuilding. More creating.",
-        "ko": "다시 만드는 시간 대신, 창작에."
-      },
-      {
-        "en": "Reuse supported Cycles graphs, update a persistent scene and work in the viewport or F12. Cryptomatte, light linking and LPE bring control into the finish.",
-        "ko": "지원 Cycles 그래프를 재사용하고 씬을 유지한 채 갱신하며 뷰포트와 F12로 작업하세요. Cryptomatte·라이트 링크·LPE로 마무리 단계까지 제어합니다."
-      }
-    ]
-  ],
-  "comparisons": [
-    {
-      "id": "transmission",
-      "tab": {
-        "en": "Principled transmission",
-        "ko": "Principled 투과"
-      },
-      "kind": {
-        "en": "Original upstream binary comparison",
-        "ko": "원본 업스트림 바이너리 비교"
-      },
-      "title": {
-        "en": "One Principled material. Reflection and refraction.",
-        "ko": "하나의 Principled 재질로, 반사와 굴절을 함께."
-      },
-      "description": {
-        "en": "The fork adds integrated dielectric transmission to Disney. These blue and amber braids reveal and bend the illuminated backdrop through the same material. The baseline Disney model stays opaque; upstream can make glass with its separate glass materials. This comparison isolates the added integrated lobe, not a claim that upstream cannot render glass.",
-        "ko": "포크는 Disney에 유전체 투과를 통합했습니다. 청색·호박색 조형물이 같은 재질 안에서 뒤의 조명을 투과하고 굴절시킵니다. 기준 버전의 Disney 모델은 불투명하지만 업스트림도 별도의 유리 재질로 유리를 만들 수 있습니다. 통합된 추가 로브의 차이를 보여주는 비교입니다."
-      },
-      "before": "assets/comparisons/upstream-transmission.jpg",
-      "after": "assets/comparisons/superluxcore-transmission.jpg",
-      "left": {
-        "en": "LuxCoreRender · original Disney",
-        "ko": "LuxCoreRender · 기존 Disney"
-      },
-      "right": {
-        "en": "SuperLuxCore · transmission ON",
-        "ko": "SuperLuxCore · 투과 ON"
-      },
-      "meta": {
-        "en": "1600 × 900 · PATHCPU · OIDN · OCIO ACES 2.0",
-        "ko": "1600 × 900 · PATHCPU · OIDN · OCIO ACES 2.0"
-      },
-      "evidence": "evidence/transmission-comparison.json"
-    },
-    {
-      "id": "material",
-      "tab": {
-        "en": "Rough-metal energy",
-        "ko": "거친 금속의 에너지"
-      },
-      "kind": {
-        "en": "Original upstream binary comparison",
-        "ko": "원본 업스트림 바이너리 비교"
-      },
-      "title": {
-        "en": "Roughness should shape the highlight, not swallow the metal.",
-        "ko": "거칠기는 하이라이트를 바꾸고, 금속의 빛은 살립니다."
-      },
-      "description": {
-        "en": "Three sculptural Disney metals: gold, silver and copper at roughness 0.20, 0.55 and 0.82. Added multiple-scattering compensation restores part of the energy lost by the single-scatter microfacet model. Look at the broad response on the rough copper braid. Geometry, camera, lights, seed and exposure match; compensation is explicitly enabled on the fork side.",
-        "ko": "금·은·구리색 Disney 조형물의 거칠기는 0.20, 0.55, 0.82입니다. 추가된 다중 산란 보정이 단일 산란 미세면 모델에서 빠지는 에너지 일부를 복원합니다. 거친 구리 조형물의 넓은 빛 반응을 확인하세요. 형상·카메라·조명·시드·노출은 같으며 포크 쪽에서 보정 옵션을 명시적으로 켰습니다."
-      },
-      "before": "assets/comparisons/upstream-material.jpg",
-      "after": "assets/renders/lookdev.jpg",
-      "left": {
-        "en": "LuxCoreRender 2.11.2",
-        "ko": "LuxCoreRender 2.11.2"
-      },
-      "right": {
-        "en": "SuperLuxCore · multibounce ON",
-        "ko": "SuperLuxCore · 다중 산란 ON"
-      },
-      "meta": {
-        "en": "1600 × 900 · 768 SPP target · PATHCPU · OIDN · ACES 2.0",
-        "ko": "1600 × 900 · 목표 768 SPP · PATHCPU · OIDN · ACES 2.0"
-      },
-      "evidence": "evidence/material-comparison.json"
-    },
-    {
-      "id": "spectral",
-      "tab": {
-        "en": "Wavelength optics",
-        "ko": "파장 기반 광학"
-      },
-      "kind": {
-        "en": "SuperLuxCore feature ON/OFF",
-        "ko": "SuperLuxCore 내부 기능 ON/OFF"
-      },
-      "title": {
-        "en": "Let wavelengths draw the color.",
-        "ko": "파장이 그려내는 색."
-      },
-      "description": {
-        "en": "A radial diffraction disc under narrow studio lights. The same grating is evaluated with RGB transport and hero-wavelength transport. The wavelength path resolves the grating’s spectral color pattern; the RGB path uses its built-in approximation. Camera, geometry, lighting and display transform are shared.",
-        "ko": "좁은 스튜디오 조명 아래 방사형 회절 디스크입니다. 같은 격자를 RGB 전달과 히어로 파장 전달로 계산합니다. 파장 경로는 격자의 스펙트럴 색 무늬를 풀어내고 RGB 경로는 내장 근사를 사용합니다. 카메라·형상·조명·디스플레이 변환을 공유합니다."
-      },
-      "before": "assets/comparisons/diffraction-rgb.jpg",
-      "after": "assets/comparisons/diffraction-spectral.jpg",
-      "left": {
-        "en": "SuperLuxCore · RGB",
-        "ko": "SuperLuxCore · RGB"
-      },
-      "right": {
-        "en": "SuperLuxCore · hero wavelength",
-        "ko": "SuperLuxCore · 히어로 파장"
-      },
-      "meta": {
-        "en": "1600 × 900 · PATHCPU · OIDN · OCIO ACES 2.0",
-        "ko": "1600 × 900 · PATHCPU · OIDN · OCIO ACES 2.0"
-      },
-      "evidence": "evidence/spectral-comparison.json"
-    }
-  ],
-  "matrix": [
-    [
-      {
-        "en": "Core rendering",
-        "ko": "렌더링 기반"
-      },
-      {
-        "en": "Physically based CPU/GPU rendering, path tracing, bidirectional tracing and PhotonGI.",
-        "ko": "물리 기반 CPU/GPU 렌더링, 패스 트레이싱, 양방향 추적과 PhotonGI."
-      },
-      {
-        "en": "Retains the foundation and extends optical models, caustic tools, sampling and production output.",
-        "ko": "기반을 유지하면서 광학 모델, 커스틱 도구, 샘플링과 제작용 출력을 확장."
-      },
-      "features/README.md"
-    ],
-    [
-      {
-        "en": "Apple GPU",
-        "ko": "Apple GPU"
-      },
-      {
-        "en": "OpenCL/CUDA infrastructure; no native Metal backend at the fork baseline.",
-        "ko": "OpenCL/CUDA 구조. 포크 기준 버전에는 네이티브 Metal 백엔드 없음."
-      },
-      {
-        "en": "Native Metal compute, hardware ray tracing, instancing, motion and native curve primitives on supported Macs.",
-        "ko": "지원 Mac에서 네이티브 Metal 연산, 하드웨어 레이 트레이싱, 인스턴싱, 모션과 커브 지원."
-      },
-      "features/metal-backend.md"
-    ],
-    [
-      {
-        "en": "Spectral & optics",
-        "ko": "스펙트럴 · 광학"
-      },
-      {
-        "en": "RGB transport with existing glass dispersion and optical materials.",
-        "ko": "RGB 전달, 기존 유리 분산과 광학 재질."
-      },
-      {
-        "en": "Hero-wavelength transport, wavelength reconstruction, Sellmeier dispersion, diffraction and expanded thin-film controls.",
-        "ko": "히어로 파장 전달과 색 재구성, Sellmeier 분산, 회절과 확장된 박막 제어."
-      },
-      "features/spectral.md"
-    ],
-    [
-      {
-        "en": "Caustics",
-        "ko": "커스틱"
-      },
-      {
-        "en": "Bidirectional rendering and PhotonGI already provide caustic paths.",
-        "ko": "양방향 렌더링과 PhotonGI로 커스틱 경로 지원."
-      },
-      {
-        "en": "MNEE/LMNEE/MGE, GPU light tracing, adaptive partitions and progressive caustic caches add more choices.",
-        "ko": "MNEE/LMNEE/MGE, GPU 라이트 트레이싱, 적응형 분할과 점진적 캐시로 선택지 확장."
-      },
-      "features/gpu_lighttracing.md"
-    ],
-    [
-      {
-        "en": "Sampling & guiding",
-        "ko": "샘플링 · 가이딩"
-      },
-      {
-        "en": "Established Sobol, random and Metropolis sampling.",
-        "ko": "기존 Sobol, Random, Metropolis 샘플링."
-      },
-      {
-        "en": "ReSTIR DI/GI, path guiding, PMJ02, blue-noise dithered Sobol and noise-level stopping; some paths are opt-in.",
-        "ko": "ReSTIR DI/GI, 경로 가이딩, PMJ02, 블루 노이즈 Sobol과 노이즈 기준 종료. 일부 경로는 선택 기능."
-      },
-      "features/restir-di.md"
-    ],
-    [
-      {
-        "en": "Surface materials",
-        "ko": "표면 재질"
-      },
-      {
-        "en": "Existing Disney, glass, glossy, metal and layered material library.",
-        "ko": "기존 Disney, 유리, 광택, 금속과 레이어 재질 라이브러리."
-      },
-      {
-        "en": "OpenPBR, integrated Disney transmission, GGX options, multi-scatter compensation, Charlie sheen and measured optical presets.",
-        "ko": "OpenPBR, Disney 통합 투과, GGX 옵션, 다중 산란 보정, Charlie 광택과 측정 광학 프리셋."
-      },
-      "features/multiscatter.md"
-    ],
-    [
-      {
-        "en": "Skin & hair",
-        "ko": "피부 · 헤어"
-      },
-      {
-        "en": "Existing volume/material and strand rendering foundation.",
-        "ko": "기존 볼륨·재질과 스트랜드 렌더링 기반."
-      },
-      {
-        "en": "Random-walk SSS, measured SSS presets, Chiang/Huang hair and native Metal curves. Cycles SSS equivalence is still scoped.",
-        "ko": "랜덤 워크 SSS, 측정 SSS 프리셋, Chiang/Huang 헤어와 Metal 커브. Cycles SSS 동등성은 제한적 검증 단계."
-      },
-      "features/hair.md"
-    ],
-    [
-      {
-        "en": "Volumes & fields",
-        "ko": "볼륨 · 필드"
-      },
-      {
-        "en": "Clear, homogeneous and heterogeneous volumes and procedural textures.",
-        "ko": "투명·균질·비균질 볼륨과 절차적 텍스처."
-      },
-      {
-        "en": "Null-collision/residual tracking, equiangular MIS, texturable temperature, named VDB fields and Blender interpolation/edge semantics.",
-        "ko": "Null-collision·Residual 추적, Equiangular MIS, 텍스처 온도, 이름 기반 VDB 필드와 Blender 보간·경계 의미 지원."
-      },
-      "features/volume-tracking.md"
-    ],
-    [
-      {
-        "en": "Blender workflow",
-        "ko": "Blender 작업 흐름"
-      },
-      {
-        "en": "BlendLuxCore integration supplies the original Blender workflow.",
-        "ko": "BlendLuxCore 연동으로 기존 Blender 작업 흐름 제공."
-      },
-      {
-        "en": "SuperBlendLuxCore adds Cycles-node translation, persistent/delta export, viewport coverage/reuse and current platform bundles.",
-        "ko": "SuperBlendLuxCore에서 Cycles 노드 변환, 지속·증분 내보내기, 뷰포트 커버리지·재사용과 최신 플랫폼 번들 추가."
-      },
-      "features/blender-adapter.md"
-    ],
-    [
-      {
-        "en": "Production passes",
-        "ko": "제작용 패스"
-      },
-      {
-        "en": "Existing render outputs, light groups and image pipeline.",
-        "ko": "기존 렌더 출력, 라이트 그룹과 이미지 파이프라인."
-      },
-      {
-        "en": "Object/material Cryptomatte, LPE in path engines, variance/motion channels, temporal accumulation and light linking.",
-        "ko": "오브젝트·재질 Cryptomatte, 패스 엔진 LPE, 분산·모션 채널, 시간 누적과 라이트 링크."
-      },
-      "engineering/cryptomatte.md"
-    ],
-    [
-      {
-        "en": "Large scenes",
-        "ko": "대규모 씬"
-      },
-      {
-        "en": "Scene/texture acceleration and established geometry infrastructure.",
-        "ko": "씬·텍스처 가속과 기존 지오메트리 구조."
-      },
-      {
-        "en": ".lxm proxies, CPU ray-driven residency and host memory spilling. GPU geometry still uploads in full; >VRAM device streaming remains a design.",
-        "ko": ".lxm 프록시, CPU의 광선 기반 상주 관리와 호스트 메모리 저장소 활용. GPU는 전체 지오메트리 업로드하며 VRAM 초과 장치 스트리밍은 설계 단계."
-      },
-      "engineering/out-of-core.md"
-    ],
-    [
-      {
-        "en": "Denoising & interaction",
-        "ko": "디노이즈 · 상호작용"
-      },
-      {
-        "en": "OIDN and the original film/image-pipeline infrastructure.",
-        "ko": "OIDN과 기존 필름·이미지 파이프라인 구조."
-      },
-      {
-        "en": "Metal OIDN integration, GPU film processing and viewport-oriented accumulation, smoothing and coverage controls.",
-        "ko": "Metal OIDN 연동, GPU 필름 처리와 뷰포트용 누적·스무딩·커버리지 제어."
-      },
-      "features/viewport-adaptive-temporal.md"
-    ]
-  ],
   "features": [
     {
       "id": "metal",
@@ -750,6 +49,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Apple GPU",
         "ko": "Apple GPU"
+      },
+      "image": "assets/studio/architecture.jpg",
+      "scene": "architecture",
+      "technical": false,
+      "position": [
+        35,
+        32
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -767,6 +77,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/prism.jpg",
+      "scene": "prism",
+      "technical": false,
+      "position": [
+        48,
+        49
+      ],
+      "visualNote": {
+        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
+        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
       }
     },
     {
@@ -784,6 +105,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/prism.jpg",
+      "scene": "prism",
+      "technical": false,
+      "position": [
+        61,
+        66
+      ],
+      "visualNote": {
+        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
+        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
       }
     },
     {
@@ -801,6 +133,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/beauty.jpg",
+      "scene": "beauty",
+      "technical": false,
+      "position": [
+        44,
+        48
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -818,6 +161,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        57,
+        65
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -835,6 +189,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Blender 5.2",
         "ko": "Blender 5.2"
+      },
+      "image": "assets/studio/heritage.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        40,
+        47
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -852,6 +217,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/audio.jpg",
+      "scene": "audio",
+      "technical": false,
+      "position": [
+        53,
+        64
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -869,6 +245,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        36,
+        46
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -886,6 +273,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "OpenCL · Metal",
         "ko": "OpenCL · Metal"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        49,
+        63
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -903,6 +301,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/textile.jpg",
+      "scene": "textile",
+      "technical": false,
+      "position": [
+        62,
+        45
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -920,6 +329,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/interior-crypto-objects.jpg",
+      "scene": "interior",
+      "technical": true,
+      "position": [
+        45,
+        62
+      ],
+      "visualNote": {
+        "en": "An actual native renderer output, displayed as data. This view is not a final beauty or a timing comparison.",
+        "ko": "실제 네이티브 렌더러 출력을 데이터로 표시한 보기입니다. 최종 작품이나 속도 비교가 아닙니다."
       }
     },
     {
@@ -937,6 +357,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "2.11.27 · CPU/GPU",
         "ko": "2.11.27 · CPU/GPU"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        58,
+        44
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -954,6 +385,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        41,
+        61
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -971,6 +413,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/heritage.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        54,
+        43
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -988,6 +441,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/heritage-raw.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        37,
+        60
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1005,6 +469,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/prism.jpg",
+      "scene": "prism",
+      "technical": false,
+      "position": [
+        50,
+        42
+      ],
+      "visualNote": {
+        "en": "Native Metal RGB-dispersion artwork providing optical scene context. This image is not an isolated spectral-transport validation or a performance benchmark. See the feature documentation for controls and coverage.",
+        "ko": "실제 Metal RGB 분산 렌더로 보는 광학 장면입니다. 이 이미지는 스펙트럴 전송의 단독 검증이나 속도 측정이 아닙니다. 제어와 지원 범위는 기능 문서에서 확인할 수 있습니다."
       }
     },
     {
@@ -1022,6 +497,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/music.jpg",
+      "scene": "music",
+      "technical": false,
+      "position": [
+        63,
+        59
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1039,6 +525,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/pearl.jpg",
+      "scene": "pearl",
+      "technical": false,
+      "position": [
+        46,
+        41
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1056,6 +553,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/audio.jpg",
+      "scene": "audio",
+      "technical": false,
+      "position": [
+        59,
+        58
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1073,6 +581,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/beauty.jpg",
+      "scene": "beauty",
+      "technical": false,
+      "position": [
+        42,
+        40
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1090,6 +609,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/beauty.jpg",
+      "scene": "beauty",
+      "technical": false,
+      "position": [
+        55,
+        57
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1107,6 +637,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/textile.jpg",
+      "scene": "textile",
+      "technical": false,
+      "position": [
+        38,
+        39
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1124,6 +665,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        51,
+        56
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1141,6 +693,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        64,
+        38
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1158,6 +721,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Documented limits",
         "ko": "지원 범위 문서화"
+      },
+      "image": "assets/studio/heritage.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        47,
+        55
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1175,6 +749,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Scoped compatibility",
         "ko": "기능별 호환"
+      },
+      "image": "assets/studio/heritage-normal.jpg",
+      "scene": "heritage",
+      "technical": true,
+      "position": [
+        60,
+        37
+      ],
+      "visualNote": {
+        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
+        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
       }
     },
     {
@@ -1192,6 +777,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        43,
+        54
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1209,6 +805,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        56,
+        36
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1226,6 +833,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/heritage.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        39,
+        53
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1243,6 +861,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Metal · OpenCL film",
         "ko": "Metal · OpenCL 필름"
+      },
+      "image": "assets/studio/heritage.jpg",
+      "scene": "heritage",
+      "technical": false,
+      "position": [
+        52,
+        35
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1260,6 +889,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/fan.jpg",
+      "scene": "fan",
+      "technical": false,
+      "position": [
+        35,
+        52
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1277,6 +917,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        48,
+        34
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1294,6 +945,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/beauty.jpg",
+      "scene": "beauty",
+      "technical": false,
+      "position": [
+        61,
+        51
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1311,6 +973,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Path engines only",
         "ko": "패스 엔진 전용"
+      },
+      "image": "assets/studio/perfume-albedo.jpg",
+      "scene": "perfume",
+      "technical": true,
+      "position": [
+        44,
+        33
+      ],
+      "visualNote": {
+        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
+        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
       }
     },
     {
@@ -1328,6 +1001,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/fan.jpg",
+      "scene": "fan",
+      "technical": false,
+      "position": [
+        57,
+        50
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1345,6 +1029,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU residency · host spill",
         "ko": "CPU 상주 관리 · 호스트 저장소"
+      },
+      "image": "assets/studio/architecture.jpg",
+      "scene": "architecture",
+      "technical": false,
+      "position": [
+        40,
+        32
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1362,6 +1057,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        53,
+        49
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1379,6 +1085,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        36,
+        66
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1396,6 +1113,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU",
         "ko": "CPU · GPU"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        49,
+        48
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1413,6 +1141,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "OpenCL · Metal",
         "ko": "OpenCL · Metal"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        62,
+        65
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1430,6 +1169,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Auto + explicit control",
         "ko": "자동 + 명시적 제어"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        45,
+        47
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1447,6 +1197,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/jewelry-raw.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        58,
+        64
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1464,6 +1225,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        41,
+        46
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1481,6 +1253,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU light tracing",
         "ko": "CPU · GPU 라이트 트레이싱"
+      },
+      "image": "assets/studio/jewelry.jpg",
+      "scene": "jewelry",
+      "technical": false,
+      "position": [
+        54,
+        63
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1498,6 +1281,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · OpenCL/Metal",
         "ko": "선택 기능 · OpenCL/Metal"
+      },
+      "image": "assets/studio/heritage-normal.jpg",
+      "scene": "heritage",
+      "technical": true,
+      "position": [
+        37,
+        45
+      ],
+      "visualNote": {
+        "en": "Actual native albedo or normal data from this scene. This is scene context, not an LPE, displacement or algorithm validation pass.",
+        "ko": "이 장면에서 출력한 실제 알베도 또는 노멀 데이터입니다. 사용 장면을 보여주며 LPE·디스플레이스먼트·알고리즘 검증 패스는 아닙니다."
       }
     },
     {
@@ -1515,6 +1309,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Experimental",
         "ko": "실험 기능"
+      },
+      "image": "assets/studio/architecture.jpg",
+      "scene": "architecture",
+      "technical": false,
+      "position": [
+        50,
+        62
+      ],
+      "visualNote": {
+        "en": "Native CPU artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 CPU 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1532,6 +1337,17 @@ window.SLC_DATA = {
       "badge": {
         "en": "Opt-in · CPU/GPU",
         "ko": "선택 기능 · CPU/GPU"
+      },
+      "image": "assets/studio/interior.jpg",
+      "scene": "interior",
+      "technical": false,
+      "position": [
+        63,
+        44
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
     },
     {
@@ -1549,125 +1365,18 @@ window.SLC_DATA = {
       "badge": {
         "en": "CPU · GPU paths",
         "ko": "CPU · GPU 경로"
+      },
+      "image": "assets/studio/atmosphere.jpg",
+      "scene": "atmosphere",
+      "technical": false,
+      "position": [
+        46,
+        61
+      ],
+      "visualNote": {
+        "en": "Native Apple Metal artwork providing scene context. Feature controls and coverage are documented here; this image is not an isolated algorithm test or a performance benchmark.",
+        "ko": "실제 Apple Metal 렌더로 보는 사용 장면입니다. 기능의 제어와 지원 범위는 문서에서 확인할 수 있으며, 이미지는 해당 알고리즘의 단독 검증이나 속도 측정이 아닙니다."
       }
-    }
-  ],
-  "gallery": [
-    [
-      "orbs",
-      {
-        "en": "01 / Jade orbit",
-        "ko": "01 / 비취의 궤도"
-      },
-      {
-        "en": "Chrome braid, jade OpenPBR subsurface and a gold orbit.",
-        "ko": "크롬 조형물, 비취 OpenPBR SSS와 금빛 궤도."
-      }
-    ],
-    [
-      "diffraction",
-      {
-        "en": "02 / Wavelengths in orbit",
-        "ko": "02 / 궤도 위의 파장"
-      },
-      {
-        "en": "A radial diffraction grating turns narrow studio lights into spectral bands.",
-        "ko": "방사형 회절 격자가 좁은 스튜디오 조명을 스펙트럴 무늬로 펼칩니다."
-      },
-      "assets/comparisons/diffraction-spectral.jpg"
-    ],
-    [
-      "caustics",
-      {
-        "en": "03 / Focused light",
-        "ko": "03 / 모이는 빛"
-      },
-      {
-        "en": "A refractive glass braid and amber sphere on a sculptural stage.",
-        "ko": "조형 무대 위 굴절 유리와 호박빛 구체."
-      }
-    ],
-    [
-      "lookdev",
-      {
-        "en": "04 / Metal studies",
-        "ko": "04 / 금속 연구"
-      },
-      {
-        "en": "Three roughness levels, three metals, added multiple-scattering compensation.",
-        "ko": "세 단계의 거칠기, 세 금속과 추가된 다중 산란 보정."
-      }
-    ],
-    [
-      "fur",
-      {
-        "en": "05 / Copper fibers",
-        "ko": "05 / 구리빛 섬유"
-      },
-      {
-        "en": "7,000 tapering strands with the Huang physical hair model.",
-        "ko": "Huang 물리 헤어 모델로 표현한 7,000개의 가늘어지는 스트랜드."
-      }
-    ],
-    [
-      "godrays",
-      {
-        "en": "06 / Atmospheric rings",
-        "ko": "06 / 대기 속의 고리"
-      },
-      {
-        "en": "Colored spotlights reveal scattering paths around polished rings.",
-        "ko": "반사 고리 주위에서 색 조명이 매질의 산란 경로를 드러냅니다."
-      }
-    ],
-    [
-      "spinner",
-      {
-        "en": "07 / Kinetic gold",
-        "ko": "07 / 움직이는 금빛"
-      },
-      {
-        "en": "A golden braid recorded across a moving shutter interval.",
-        "ko": "셔터 시간 동안 움직이는 금빛 조형물을 담았습니다."
-      }
-    ]
-  ],
-  "updates": [
-    {
-      "date": "2026-10-11",
-      "title": {
-        "en": "VDB reconstruction & field semantics",
-        "ko": "VDB 재구성 · 필드 의미"
-      },
-      "description": {
-        "en": "Named attributes, typed field output, Linear/Cubic interpolation, boundary halos and affine grid handling are recorded with CPU/Metal diagnostic renders.",
-        "ko": "이름 기반 속성, 타입별 필드 출력, Linear/Cubic 보간, 경계 Halo와 Affine Grid 처리를 CPU/Metal 진단 렌더와 함께 기록했습니다."
-      },
-      "href": "https://github.com/claudianus/SuperBlendLuxCore/blob/main/doc/engineering/2026-10-09-cycles-scene-goal.md"
-    },
-    {
-      "date": "2026-10-11",
-      "title": {
-        "en": "2.11.27 · four-platform publication",
-        "ko": "2.11.27 · 네 플랫폼 공개"
-      },
-      "description": {
-        "en": "Native wheels and Blender bundles for macOS ARM64/x64, Windows x64 and Linux x64 were published with build attestations. Local render evidence is scoped to macOS ARM64.",
-        "ko": "macOS ARM64/x64, Windows x64, Linux x64의 네이티브 wheel과 Blender 번들에 빌드 증명이 공개되었습니다. 로컬 렌더 근거는 macOS ARM64 범위입니다."
-      },
-      "href": "https://github.com/claudianus/SuperBlendLuxCore/actions/runs/38106825582"
-    },
-    {
-      "date": "2026-10-09 – 11",
-      "title": {
-        "en": "Cycles reuse, tracked per feature",
-        "ko": "기능별로 추적하는 Cycles 씬 재사용"
-      },
-      "description": {
-        "en": "Displacement, bump, surface nodes and volume mappings have focused implementation and validation records. Broader material, compositing and workflow acceptance remains explicit work.",
-        "ko": "디스플레이스먼트, 범프, 표면 노드와 볼륨 매핑에 대한 구현·검증을 기록했습니다. 더 넓은 재질, 합성, 작업 흐름 검수는 계속 추적합니다."
-      },
-      "href": "https://github.com/claudianus/SuperBlendLuxCore/blob/main/doc/engineering/2026-10-09-remaining-compatibility-audit.md"
     }
   ],
   "status": [
@@ -1739,8 +1448,8 @@ window.SLC_DATA = {
         "ko": "모든 이미지가 이번 버전의 새 렌더인가요?"
       },
       {
-        "en": "Yes. Every render image was created for this October 11 refresh with original procedural scenes. Both official upstream and current fork binaries were rendered where labeled; all images use OCIO ACES 2.0. No previous website render or AI-created beauty image is used. The full scene generator and fingerprints are published.",
-        "ko": "네. 모든 렌더 이미지를 이번 10월 11일 개편을 위해 새 절차적 씬으로 제작했습니다. 표시된 비교에는 공식 업스트림과 현재 포크 바이너리를 각각 사용했고 모두 OCIO ACES 2.0을 적용했습니다. 기존 사이트 렌더나 AI 작품 이미지는 사용하지 않았습니다. 전체 씬 생성 코드와 지문도 공개합니다."
+        "en": "Yes. All thirteen scenes were rebuilt for this October 11 refresh, using 32 credited CC0 model, PBR texture and HDRI families. Both official fork-baseline and current SuperLuxCore binaries were rendered where labelled. Beauty uses OCIO ACES 2.0; technical passes show actual scene data. Asset credits, scene recipes and render fingerprints are available below.",
+        "ko": "네. 10월 11일 개편을 위해 13개 씬을 모두 다시 만들고, 출처를 명시한 CC0 모델·PBR 텍스처·HDRI 32종을 활용했습니다. 표시된 비교에는 공식 포크 기준 버전과 현재 SuperLuxCore 바이너리를 각각 사용했습니다. 작품에는 OCIO ACES 2.0을, 기술 패스에는 실제 씬 데이터를 표시합니다. 에셋 크레딧·장면 레시피·렌더 지문도 공개합니다."
       }
     ],
     [
@@ -1754,94 +1463,692 @@ window.SLC_DATA = {
       }
     ]
   ],
-  "auditAreas": [
-    [
-      148,
-      {
-        "en": "Light transport",
-        "ko": "빛 전달"
+  "copy": {
+    "title": {
+      "en": "SuperLuxCore — Make it feel real.",
+      "ko": "SuperLuxCore — 시선을 사로잡다."
+    },
+    "description": {
+      "en": "An open-source renderer for images worth looking at. Native Apple Metal, richer materials and wave optics, inside Blender. Explore original product, interior, textile and architectural renders.",
+      "ko": "시선을 사로잡는 이미지를 위한 오픈 소스 렌더러. Blender 안에서 Apple Metal, 풍부한 재질과 파동 광학을 만나보세요. 제품·인테리어·텍스타일·건축 작품으로 확인하세요."
+    },
+    "skip": {
+      "en": "Skip to content",
+      "ko": "본문 바로가기"
+    },
+    "language": {
+      "en": "Language",
+      "ko": "언어"
+    },
+    "auto": {
+      "en": "Auto",
+      "ko": "자동"
+    },
+    "work": {
+      "en": "Selected work",
+      "ko": "작품"
+    },
+    "differences": {
+      "en": "The difference",
+      "ko": "눈으로 보는 차이"
+    },
+    "toolkit": {
+      "en": "Visual toolkit",
+      "ko": "비주얼 툴킷"
+    },
+    "download": {
+      "en": "Get SuperLuxCore",
+      "ko": "다운로드"
+    },
+    "heroTag": {
+      "en": "THE OPEN-SOURCE RENDERER FOR BLENDER",
+      "ko": "BLENDER를 위한 오픈 소스 렌더러"
+    },
+    "heroFirst": {
+      "en": "Make it",
+      "ko": "시선을"
+    },
+    "heroSecond": {
+      "en": "feel real.",
+      "ko": "사로잡다."
+    },
+    "heroBody": {
+      "en": "Light. Texture. Emotion.\nYour next image starts here.",
+      "ko": "빛, 질감, 감각.\n다음 작품은 여기서 시작됩니다."
+    },
+    "heroButton": {
+      "en": "Explore the work",
+      "ko": "작품 둘러보기"
+    },
+    "heroDownload": {
+      "en": "Free download",
+      "ko": "무료 다운로드"
+    },
+    "renderCredit": {
+      "en": "Rendered with SuperLuxCore · ACES 2.0",
+      "ko": "SuperLuxCore 실제 렌더 · ACES 2.0"
+    },
+    "manifesto": {
+      "en": "The smallest detail.\nThe biggest feeling.",
+      "ko": "작은 디테일이,\n큰 감각을 만듭니다."
+    },
+    "manifestoBody": {
+      "en": "A spectrum cast by glass. Light gathering on a surface. A reflection that reveals the material. Build images around the way light really behaves.",
+      "ko": "유리가 펼치는 스펙트럼. 표면에 모이는 빛. 재질을 드러내는 반사. 빛이 실제로 움직이는 방식으로 작품을 만드세요."
+    },
+    "workEyebrow": {
+      "en": "01 / SELECTED WORK",
+      "ko": "01 / 작품으로 먼저"
+    },
+    "workHeading": {
+      "en": "Made to be seen.",
+      "ko": "눈이 먼저 알아봅니다."
+    },
+    "workIntro": {
+      "en": "13 newly art-directed scenes. Products, places and materials you can actually put to work.",
+      "ko": "제품, 공간, 소재. 실제 제작을 위한 주제 13종을 새로 구성하고 렌더했습니다."
+    },
+    "viewProject": {
+      "en": "Open project",
+      "ko": "작품 열기"
+    },
+    "allWork": {
+      "en": "All work",
+      "ko": "전체"
+    },
+    "product": {
+      "en": "Product",
+      "ko": "제품"
+    },
+    "space": {
+      "en": "Spaces",
+      "ko": "공간"
+    },
+    "material": {
+      "en": "Materials",
+      "ko": "소재"
+    },
+    "compareEyebrow": {
+      "en": "02 / THE DIFFERENCE",
+      "ko": "02 / 차이를 직접 보세요"
+    },
+    "compareHeading": {
+      "en": "New possibilities.\nVisible differences.",
+      "ko": "추가된 가능성.\n눈에 보이는 차이."
+    },
+    "compareIntro": {
+      "en": "Get close to the material. Drag the divider to see the difference under the same light.",
+      "ko": "재질에 가까이 다가가 보세요. 같은 빛 아래에서, 경계선을 움직이며 차이를 확인하세요."
+    },
+    "compareDrag": {
+      "en": "Drag to compare",
+      "ko": "드래그해서 비교"
+    },
+    "before": {
+      "en": "LuxCoreRender 2.11.2",
+      "ko": "LuxCoreRender 2.11.2"
+    },
+    "after": {
+      "en": "SuperLuxCore 2.11.27",
+      "ko": "SuperLuxCore 2.11.27"
+    },
+    "comparisonDetails": {
+      "en": "How this comparison was made",
+      "ko": "비교 구성 보기"
+    },
+    "toolkitEyebrow": {
+      "en": "03 / THE VISUAL TOOLKIT",
+      "ko": "03 / 모든 기능을 이미지로"
+    },
+    "toolkitHeading": {
+      "en": "Find your next detail.",
+      "ko": "다음 작품의 디테일을 찾으세요."
+    },
+    "toolkitIntro": {
+      "en": "Every feature has a visual entry. Open the image to explore its scene, actual render passes, coverage and controls.",
+      "ko": "모든 기능에 시각 자료를 연결했습니다. 이미지를 열어 작품, 실제 렌더 패스, 지원 범위와 제어 방법을 살펴보세요."
+    },
+    "search": {
+      "en": "Find a feature or a material…",
+      "ko": "기능이나 소재 찾기…"
+    },
+    "searchLabel": {
+      "en": "Search the visual toolkit",
+      "ko": "비주얼 툴킷 검색"
+    },
+    "featureCount": {
+      "en": "visual entries",
+      "ko": "개의 시각 자료"
+    },
+    "noResults": {
+      "en": "No matching features. Try another word.",
+      "ko": "일치하는 기능이 없습니다. 다른 검색어를 입력하세요."
+    },
+    "docs": {
+      "en": "Explore the controls ↗",
+      "ko": "제어 방법 보기 ↗"
+    },
+    "detail": {
+      "en": "The detail",
+      "ko": "디테일 보기"
+    },
+    "technical": {
+      "en": "ACTUAL RENDER PASS",
+      "ko": "실제 렌더 패스"
+    },
+    "context": {
+      "en": "VISUAL CONTEXT",
+      "ko": "장면으로 보기"
+    },
+    "passNote": {
+      "en": "Technical passes visualize scene data. Beauty images use ACES 2.0; normals, IDs and coverage are data views.",
+      "ko": "기술 패스는 실제 씬 데이터를 시각화합니다. 작품은 ACES 2.0을 적용하며, 노멀·ID·커버리지는 데이터 보기입니다."
+    },
+    "downloadEyebrow": {
+      "en": "04 / YOUR NEXT IMAGE",
+      "ko": "04 / 다음 작품을 시작하세요"
+    },
+    "downloadFirst": {
+      "en": "Your imagination.",
+      "ko": "당신의 상상."
+    },
+    "downloadSecond": {
+      "en": "Our light.",
+      "ko": "그것을 비추는 빛."
+    },
+    "downloadBody": {
+      "en": "Free. Open source. Inside Blender.\nChoose your platform and start creating.",
+      "ko": "무료, 오픈 소스, Blender 안에서.\n플랫폼을 선택하고 작품을 시작하세요."
+    },
+    "downloadZip": {
+      "en": "Download extension ZIP ↓",
+      "ko": "확장 ZIP 다운로드 ↓"
+    },
+    "manual": {
+      "en": "Installation guide",
+      "ko": "설치 가이드"
+    },
+    "release": {
+      "en": "Latest release",
+      "ko": "최신 릴리스"
+    },
+    "installOne": {
+      "en": "Download",
+      "ko": "다운로드"
+    },
+    "installOneBody": {
+      "en": "Choose the ZIP for your platform.",
+      "ko": "플랫폼에 맞는 ZIP을 선택하세요."
+    },
+    "installTwo": {
+      "en": "Install in Blender",
+      "ko": "Blender에 설치"
+    },
+    "installTwoBody": {
+      "en": "Preferences → Get Extensions → Install from Disk.",
+      "ko": "환경설정 → 확장 가져오기 → 디스크에서 설치."
+    },
+    "installThree": {
+      "en": "Make your image",
+      "ko": "작품 시작"
+    },
+    "installThreeBody": {
+      "en": "Select SuperLuxCore. Preview or press F12.",
+      "ko": "SuperLuxCore 선택. 뷰포트 또는 F12로 렌더."
+    },
+    "support": {
+      "en": "Coverage & practical details",
+      "ko": "지원 범위 · 사용 안내"
+    },
+    "faq": {
+      "en": "A few useful answers.",
+      "ko": "시작하기 전에."
+    },
+    "close": {
+      "en": "Close",
+      "ko": "닫기"
+    },
+    "previous": {
+      "en": "Previous project",
+      "ko": "이전 작품"
+    },
+    "next": {
+      "en": "Next project",
+      "ko": "다음 작품"
+    },
+    "full": {
+      "en": "Open original image ↗",
+      "ko": "원본 이미지 열기 ↗"
+    },
+    "featureButton": {
+      "en": "See this feature",
+      "ko": "관련 기능 보기"
+    },
+    "sceneContext": {
+      "en": "Scene context",
+      "ko": "사용 장면"
+    },
+    "footerLine": {
+      "en": "Built on LuxCoreRender. Made for your next image.",
+      "ko": "LuxCoreRender를 기반으로. 당신의 다음 작품을 위해."
+    },
+    "credits": {
+      "en": "Image credits & render notes",
+      "ko": "이미지 크레딧 · 렌더 정보"
+    },
+    "scope": {
+      "en": "Comparisons use the 2.11.2 fork baseline. New material models are shown against clearly labelled baseline alternatives; results depend on the scene and controls.",
+      "ko": "비교 기준은 포크 출발점 2.11.2입니다. 추가된 재질 모델은 표시된 기존 대안과 비교하며, 결과는 씬과 설정에 따라 달라집니다."
+    },
+    "free": {
+      "en": "OPEN SOURCE. FREE TO CREATE.",
+      "ko": "오픈 소스. 창작은 자유롭게."
+    },
+    "artistNote": {
+      "en": "Native SuperLuxCore artwork. CC0 models, PBR textures & HDRIs credited to their Poly Haven creators.",
+      "ko": "SuperLuxCore 실제 렌더. CC0 모델·PBR 텍스처·HDRI: Poly Haven 제작자 크레딧 참조."
+    }
+  },
+  "projects": [
+    {
+      "id": "beauty",
+      "name": "MORNING",
+      "area": {
+        "en": "Still life / breakfast",
+        "ko": "정물 · 아침 식탁"
+      },
+      "description": {
+        "en": "Scanned pastry, floral porcelain, woven linen and fresh coffee.",
+        "ko": "스캔한 페이스트리, 꽃무늬 도자기, 리넨과 커피."
+      },
+      "tags": [
+        "Food photogrammetry",
+        "OpenPBR",
+        "Micro-surface detail"
+      ],
+      "features": [
+        "sss",
+        "ssspresets"
+      ],
+      "image": "assets/studio/beauty.jpg",
+      "group": "product"
+    },
+    {
+      "id": "heritage",
+      "name": "ANALOG",
+      "area": {
+        "en": "Product / heritage camera",
+        "ko": "제품 · 빈티지 카메라"
+      },
+      "description": {
+        "en": "Detailed camera hardware, leather, paper and softbox reflections.",
+        "ko": "카메라의 기계적 디테일, 가죽과 종이, 정돈된 소프트박스 반사."
+      },
+      "tags": [
+        "Detailed CC0 model",
+        "PBR metal & plastic",
+        "Depth of field"
+      ],
+      "features": [
+        "cryptomatte",
+        "displacement"
+      ],
+      "image": "assets/studio/heritage.jpg",
+      "group": "product"
+    },
+    {
+      "id": "perfume",
+      "name": "VINEA",
+      "area": {
+        "en": "Product / wine editorial",
+        "ko": "제품 · 와인 에디토리얼"
+      },
+      "description": {
+        "en": "Scanned wine packaging and printed labels, polished lacquer, fruit and controlled studio reflections.",
+        "ko": "스캔한 와인 패키징과 인쇄 라벨, 매끈한 래커 마감, 과일과 정돈된 스튜디오 반사."
+      },
+      "tags": [
+        "Scanned packaging",
+        "Polished lacquer",
+        "Fruit scans"
+      ],
+      "features": [
+        "openpbr"
+      ],
+      "image": "assets/studio/perfume.jpg",
+      "group": "product",
+      "renderNote": {
+        "en": "Metal artwork · intentionally opaque lacquered packaging; not a liquid-absorption demonstration.",
+        "ko": "Metal 렌더 · 불투명 래커 패키징 연출이며 액체의 빛 흡수 시연이 아닙니다."
       }
-    ],
-    [
-      86,
-      {
-        "en": "Volumes & textures",
-        "ko": "볼륨 · 텍스처"
+    },
+    {
+      "id": "music",
+      "name": "REWIND",
+      "area": {
+        "en": "Product / listening desk",
+        "ko": "제품 · 리스닝 데스크"
+      },
+      "description": {
+        "en": "Analogue electronics meet the colour of a real diffraction grating.",
+        "ko": "빈티지 오디오와 실제 회절 격자가 만드는 색."
+      },
+      "tags": [
+        "Diffraction CD",
+        "120 mm proportions",
+        "Detailed PBR electronics"
+      ],
+      "features": [
+        "diffraction"
+      ],
+      "image": "assets/studio/music.jpg",
+      "group": "product"
+    },
+    {
+      "id": "jewelry",
+      "name": "THE NAVIGATOR",
+      "area": {
+        "en": "Product / personal objects",
+        "ko": "제품 · 개인 소품"
+      },
+      "description": {
+        "en": "An engraved compass, spectacles and worn paper in a quiet close-up.",
+        "ko": "음각 나침반과 안경, 손때 묻은 종이를 담은 근접 촬영."
+      },
+      "tags": [
+        "Engraved metal",
+        "Tangent normals",
+        "Physical camera"
+      ],
+      "features": [
+        "sellmeier",
+        "mnee"
+      ],
+      "image": "assets/studio/jewelry.jpg",
+      "group": "product"
+    },
+    {
+      "id": "audio",
+      "name": "PATINA",
+      "area": {
+        "en": "Material / brass still life",
+        "ko": "소재 · 황동 정물"
+      },
+      "description": {
+        "en": "Engraved vessels, weathered brass and textured timber.",
+        "ko": "섬세한 음각, 오래된 황동과 실제 목재의 질감."
+      },
+      "tags": [
+        "Rough conductor",
+        "Multi-scatter compensation",
+        "PBR maps"
+      ],
+      "features": [
+        "multiscatter",
+        "ggx"
+      ],
+      "image": "assets/studio/audio.jpg",
+      "group": "product"
+    },
+    {
+      "id": "pearl",
+      "name": "PORCELAIN",
+      "area": {
+        "en": "Material / ceramic & film",
+        "ko": "소재 · 도자기와 박막"
+      },
+      "description": {
+        "en": "Blue-and-white porcelain and the delicate colour of soap film.",
+        "ko": "청화 도자기와 비눗막의 섬세한 색."
+      },
+      "tags": [
+        "Thin-film interference",
+        "Glazed ceramic",
+        "Native glass"
+      ],
+      "features": [
+        "thinfilm",
+        "openpbr"
+      ],
+      "image": "assets/studio/pearl.jpg",
+      "group": "material"
+    },
+    {
+      "id": "textile",
+      "name": "SOFT HOURS",
+      "area": {
+        "en": "Material / wool & leather",
+        "ko": "소재 · 울과 가죽"
+      },
+      "description": {
+        "en": "A curled sheepskin groom on a detailed leather lounge chair.",
+        "ko": "세밀한 가죽 라운지 체어 위에 놓인 곱슬 양모."
+      },
+      "tags": [
+        "Huang fibres",
+        "Native strand geometry",
+        "Leather PBR"
+      ],
+      "features": [
+        "hair",
+        "sheen"
+      ],
+      "image": "assets/studio/textile.jpg",
+      "group": "material"
+    },
+    {
+      "id": "interior",
+      "name": "AFTERNOON",
+      "area": {
+        "en": "Space / living room",
+        "ko": "공간 · 거실"
+      },
+      "description": {
+        "en": "Upholstery, foliage and timber in a furnished afternoon room.",
+        "ko": "가구와 식물, 목재가 어우러진 오후의 거실."
+      },
+      "tags": [
+        "Metric architecture",
+        "PBR upholstery",
+        "Cryptomatte"
+      ],
+      "features": [
+        "proctextures",
+        "guiding"
+      ],
+      "image": "assets/studio/interior.jpg",
+      "group": "space"
+    },
+    {
+      "id": "architecture",
+      "name": "COURTYARD",
+      "area": {
+        "en": "Space / shaded terrace",
+        "ko": "공간 · 그늘진 테라스"
+      },
+      "description": {
+        "en": "A furnished terrace, slatted roof and a real dielectric water surface.",
+        "ko": "가구와 차양이 있는 테라스, 실제 투과와 반사를 계산한 물."
+      },
+      "tags": [
+        "Daylight",
+        "Water refraction",
+        "Photographic surfaces"
+      ],
+      "features": [
+        "metal",
+        "outofcore"
+      ],
+      "image": "assets/studio/architecture.jpg",
+      "group": "space"
+    },
+    {
+      "id": "atmosphere",
+      "name": "SLOW LIGHT",
+      "area": {
+        "en": "Space / reading room",
+        "ko": "공간 · 독서 공간"
+      },
+      "description": {
+        "en": "Window light moves through a furnished room and a participating medium.",
+        "ko": "가구가 있는 공간과 참여 매질을 통과하는 창의 빛."
+      },
+      "tags": [
+        "Volume scattering",
+        "Window structure",
+        "Daylight"
+      ],
+      "features": [
+        "volume",
+        "photonbeams"
+      ],
+      "image": "assets/studio/atmosphere.jpg",
+      "group": "space"
+    },
+    {
+      "id": "fan",
+      "name": "AIR / STILL",
+      "area": {
+        "en": "Space / motion study",
+        "ko": "공간 · 모션 스터디"
+      },
+      "description": {
+        "en": "A real wooden ceiling fan photographed in a furnished room.",
+        "ko": "가구가 있는 공간에서 촬영한 실제 목재 천장 팬."
+      },
+      "tags": [
+        "Native motion blur",
+        "Wood grain",
+        "Metric scene"
+      ],
+      "features": [
+        "motion",
+        "temporal"
+      ],
+      "image": "assets/studio/fan.jpg",
+      "group": "product"
+    },
+    {
+      "id": "prism",
+      "name": "SPECTRUM",
+      "area": {
+        "en": "Optics / flint glass",
+        "ko": "광학 · 플린트 유리"
+      },
+      "description": {
+        "en": "A precision optical prism with wavelength-dependent flint glass.",
+        "ko": "파장에 따라 굴절률이 달라지는 플린트 유리 프리즘."
+      },
+      "image": "assets/studio/prism.jpg",
+      "group": "material",
+      "tags": [
+        "Sellmeier N-SF6",
+        "RGB dispersion",
+        "Optical edges"
+      ],
+      "features": [
+        "sellmeier"
+      ],
+      "renderNote": {
+        "en": "Metal RGB wavelength-sampled dispersion · N-SF6 Sellmeier glass.",
+        "ko": "Metal RGB 파장 샘플링 분산 · N-SF6 Sellmeier 유리."
       }
-    ],
-    [
-      74,
-      {
-        "en": "Hardware",
-        "ko": "하드웨어"
-      }
-    ],
-    [
-      58,
-      {
-        "en": "Materials",
-        "ko": "재질"
-      }
-    ],
-    [
-      60,
-      {
-        "en": "Film & workflow",
-        "ko": "필름 · 작업 흐름"
-      }
-    ],
-    [
-      58,
-      {
-        "en": "Build & release",
-        "ko": "빌드 · 배포"
-      }
-    ]
+    }
   ],
-  "auditBenefits": [
-    [
-      {
-        "en": "Hardware opened up",
-        "ko": "하드웨어 활용 확장"
+  "comparisons": [
+    {
+      "id": "diffraction",
+      "tab": {
+        "en": "CD / diffraction",
+        "ko": "CD · 회절"
       },
-      {
-        "en": "Metal compute → HWRT → native hair curves; all four platform packages rebuilt with published provenance.",
-        "ko": "Metal 연산 → HWRT → 네이티브 헤어 커브. 네 플랫폼 패키지를 빌드 증명과 함께 공개."
+      "title": {
+        "en": "This rainbow is a shader.",
+        "ko": "이 무지개는 셰이더입니다."
       },
-      "562a3bf5f"
-    ],
-    [
-      {
-        "en": "Material expression widened",
-        "ko": "재질 표현의 폭 확장"
+      "body": {
+        "en": "A compact disc under directional studio light. The new diffraction-grating material separates light into spectral orders. The upstream baseline uses a silver metal approximation — it has no equivalent diffraction shader.",
+        "ko": "좁은 스튜디오 조명 아래의 CD. 새 회절 격자 재질이 빛을 파장별 회절 차수로 나눕니다. 기준 버전은 은 금속 근사를 사용하며, 동등한 회절 셰이더가 없습니다."
       },
-      {
-        "en": "Integrated transmission, multi-scatter compensation, OpenPBR, thin film, random-walk SSS and Chiang/Huang hair.",
-        "ko": "통합 투과, 다중 산란 보정, OpenPBR, 박막, 랜덤 워크 SSS와 Chiang/Huang 헤어."
+      "before": "assets/studio/music-baseline-detail.jpg",
+      "after": "assets/studio/music-detail.jpg",
+      "left": {
+        "en": "UPSTREAM / SILVER METAL APPROXIMATION",
+        "ko": "업스트림 / 은 금속 근사"
       },
-      "a8785faa2"
-    ],
-    [
-      {
-        "en": "Light paths extended",
-        "ko": "빛의 경로 확장"
+      "right": {
+        "en": "SUPERLUXCORE / DIFFRACTION SHADER",
+        "ko": "SUPERLUXCORE / 회절 셰이더"
       },
-      {
-        "en": "Spectral transport, manifold solvers, GPU light tracing, photon beams and reservoir-guided sampling.",
-        "ko": "스펙트럴 전달, 매니폴드 솔버, GPU 라이트 트레이싱, 광자 빔과 Reservoir 기반 샘플링."
+      "scope": {
+        "en": "Official upstream binary with metal2 silver. Same geometry, lights, seed, samples, exposure and display transform. This is a new-shader comparison, not spectral on/off.",
+        "ko": "공식 업스트림 바이너리의 metal2 은 재질. 형상·조명·시드·샘플·노출·색 변환을 맞췄습니다. 스펙트럴 켜기/끄기 비교가 아닌, 추가된 셰이더 비교입니다."
       },
-      "bf3c3531a"
-    ],
-    [
-      {
-        "en": "Editing made more coherent",
-        "ko": "편집 결과를 일관되게"
+      "fullBefore": "assets/studio/music-baseline.jpg",
+      "fullAfter": "assets/studio/music.jpg"
+    },
+    {
+      "id": "energy",
+      "tab": {
+        "en": "Metal / energy",
+        "ko": "금속 · 에너지"
       },
-      {
-        "en": "Scene-edit film resets, nested-material refresh, persistent exports and production passes address the work between renders.",
-        "ko": "씬 편집 시 필름 초기화, 중첩 재질 갱신, 지속 내보내기와 제작 패스로 렌더 사이의 작업까지 개선."
+      "title": {
+        "en": "Roughness deserves radiance.",
+        "ko": "거칠어도, 빛을 잃지 않게."
       },
-      "131c84733"
-    ]
-  ]
+      "body": {
+        "en": "Engraved brass vessels under a broad window. At high roughness, the added multiple-scattering correction preserves reflected energy without changing the light or exposure.",
+        "ko": "큰 창 아래의 새겨진 황동 기물. 거칠기가 높을 때 추가된 다중 산란 보정이 조명이나 노출을 바꾸지 않고 반사 에너지를 보존합니다."
+      },
+      "before": "assets/studio/audio-baseline-detail.jpg",
+      "after": "assets/studio/audio-detail.jpg",
+      "left": {
+        "en": "UPSTREAM / SINGLE SCATTERING",
+        "ko": "업스트림 / 단일 산란"
+      },
+      "right": {
+        "en": "SUPERLUXCORE / MULTIPLE SCATTERING",
+        "ko": "SUPERLUXCORE / 다중 산란 보정"
+      },
+      "scope": {
+        "en": "Official LuxCoreRender 2.11.2 vs SuperLuxCore 2.11.27. The same textured Disney brass uses roughness 0.98; multibounce is enabled only in the fork. Camera, light, target samples and display match.",
+        "ko": "공식 LuxCoreRender 2.11.2와 SuperLuxCore 2.11.27. 동일한 텍스처를 쓰는 Disney 황동의 거칠기는 0.98, 포크에서만 multibounce를 켰습니다. 카메라·조명·목표 샘플·색 변환은 같습니다."
+      },
+      "fullBefore": "assets/studio/audio-baseline.jpg",
+      "fullAfter": "assets/studio/audio.jpg"
+    },
+    {
+      "id": "hair",
+      "tab": {
+        "en": "Hair / fibre scattering",
+        "ko": "헤어 · 섬유 산란"
+      },
+      "title": {
+        "en": "The softness is in the scattering.",
+        "ko": "부드러움은 빛의 산란에서."
+      },
+      "body": {
+        "en": "The same curled sheepskin groom on a leather lounge chair. SuperLuxCore uses the Huang fibre model; the upstream reference uses a labelled Glossy2 surface approximation.",
+        "ko": "가죽 라운지 체어 위의 동일한 곱슬 양모입니다. SuperLuxCore는 Huang 섬유 모델을, 업스트림 기준 렌더는 명시된 Glossy2 표면 근사를 사용합니다."
+      },
+      "before": "assets/studio/textile-baseline-detail.jpg",
+      "after": "assets/studio/textile-detail.jpg",
+      "left": {
+        "en": "UPSTREAM / GLOSSY STRAND APPROXIMATION",
+        "ko": "업스트림 / 일반 광택 스트랜드 근사"
+      },
+      "right": {
+        "en": "SUPERLUXCORE / HUANG FIBRE SHADER",
+        "ko": "SUPERLUXCORE / Huang 섬유 셰이더"
+      },
+      "scope": {
+        "en": "Official upstream uses a glossy2 surface approximation on the identical strand geometry. The fork uses the added Huang hair BSDF. Shared lights, sampling, exposure and display; this is a shader comparison, not the best possible upstream artistic setup.",
+        "ko": "공식 업스트림에서는 같은 스트랜드 형상에 glossy2 표면 근사를, 포크에서는 추가된 Huang 헤어 BSDF를 사용합니다. 조명·샘플·노출·색 변환을 공유하는 셰이더 비교입니다. 업스트림에서 가능한 모든 아트 디렉션의 한계를 뜻하지 않습니다."
+      },
+      "fullBefore": "assets/studio/textile-baseline.jpg",
+      "fullAfter": "assets/studio/textile.jpg"
+    }
+  ],
+  "hero": "heritage"
 };
