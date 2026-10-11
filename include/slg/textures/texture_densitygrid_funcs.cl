@@ -46,6 +46,11 @@ OPENCL_FORCE_INLINE float4 DensityGridTexture_CubicWeights(const float t) {
 			(1.f / 6.f) * t * t * t);
 }
 
+OPENCL_FORCE_INLINE float DensityGridTexture_CubicWeight(const float4 weights, const int index) {
+	// CUDA float4 is a struct and has no OpenCL-style subscript operator.
+	return index == 0 ? weights.x : index == 1 ? weights.y : index == 2 ? weights.z : weights.w;
+}
+
 OPENCL_FORCE_NOT_INLINE float3 DensityGridTexture_ConstEvaluateSpectrum(__global const HitPoint *hitPoint,
 		const int nx, const int ny, const int nz,
 		const uint imageMapIndex, const uint interpolationType,
@@ -144,13 +149,13 @@ OPENCL_FORCE_NOT_INLINE float3 DensityGridTexture_ConstEvaluateSpectrum(__global
 					const int sx = imageMap->wrapType == WRAP_REPEAT ? Mod(vx + i - 1, nx) : vx + i - 1;
 					const int sy = imageMap->wrapType == WRAP_REPEAT ? Mod(vy + j - 1, ny) : vy + j - 1;
 					const int sz = imageMap->wrapType == WRAP_REPEAT ? Mod(vz + k - 1, nz) : vz + k - 1;
-					column += wx[i] * DensityGridTexture_D(imageMap,
+						column += DensityGridTexture_CubicWeight(wx, i) * DensityGridTexture_D(imageMap,
 							sx, sy, sz,
 							nx, ny, nz IMAGEMAPS_PARAM);
 				}
-				row += wy[j] * column;
+					row += DensityGridTexture_CubicWeight(wy, j) * column;
 			}
-			result += wz[k] * row;
+				result += DensityGridTexture_CubicWeight(wz, k) * row;
 		}
 		return result;
 	}

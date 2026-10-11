@@ -57,7 +57,7 @@ bool ReadIndexGrid(const openvdb::GridBase::Ptr &base,
 		// This extraction owns an immutable tree; each worker owns its cache.
         // Skip mutation-invalidation registration in the tree's TBB map.
         // Blender can already have loaded a different TBB allocator via
-        // Cycles, so allocating/freeing that registered map crosses runtimes.
+        // Cycles, so the registered map may allocate/free across runtimes.
         auto accessor = grid->getConstUnsafeAccessor();
 		for (u_int y = 0; y < ny; ++y)
 			for (u_int x = 0; x < nx; ++x) {

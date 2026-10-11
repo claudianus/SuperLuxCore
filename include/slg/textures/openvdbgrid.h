@@ -11,8 +11,8 @@
 
 namespace slg {
 
-// Blender registers this additional four-channel tree alongside OpenVDB's
-// standard numeric types. Register it before reading metadata or voxel data.
+// Cycles uses this additional tree for internally authored RGBA voxels.
+// Register it here before reading external metadata or voxel data.
 using OpenVDBVec4fGrid = openvdb::Grid<openvdb::tree::Tree4<openvdb::Vec4f, 5, 4, 3>::Type>;
 
 inline void EnsureOpenVDBGridTypes() {
