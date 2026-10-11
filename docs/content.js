@@ -1465,12 +1465,12 @@ window.SLC_DATA = {
   ],
   "copy": {
     "title": {
-      "en": "SuperLuxCore — Make it feel real.",
-      "ko": "SuperLuxCore — 시선을 사로잡다."
+      "en": "SuperLuxCore — Physically based rendering for Blender.",
+      "ko": "SuperLuxCore — Blender를 위한 물리 기반 렌더러."
     },
     "description": {
-      "en": "An open-source renderer for images worth looking at. Native Apple Metal, richer materials and wave optics, inside Blender. Explore original product, interior, textile and architectural renders.",
-      "ko": "시선을 사로잡는 이미지를 위한 오픈 소스 렌더러. Blender 안에서 Apple Metal, 풍부한 재질과 파동 광학을 만나보세요. 제품·인테리어·텍스타일·건축 작품으로 확인하세요."
+      "en": "An open-source renderer for Blender with native Apple Metal, physically based materials, optical transport and production passes.",
+      "ko": "네이티브 Apple Metal, 물리 기반 재질, 광학 전달과 제작 패스를 제공하는 Blender용 오픈 소스 렌더러입니다."
     },
     "skip": {
       "en": "Skip to content",
@@ -1501,60 +1501,84 @@ window.SLC_DATA = {
       "ko": "다운로드"
     },
     "heroTag": {
-      "en": "THE OPEN-SOURCE RENDERER FOR BLENDER",
-      "ko": "BLENDER를 위한 오픈 소스 렌더러"
+      "en": "PRODUCTION RENDERER LAB / BLENDER",
+      "ko": "프로덕션 렌더러 랩 / BLENDER"
     },
     "heroFirst": {
-      "en": "Make it",
-      "ko": "시선을"
+      "en": "Physically based",
+      "ko": "물리 기반"
     },
     "heroSecond": {
-      "en": "feel real.",
-      "ko": "사로잡다."
+      "en": "rendering.",
+      "ko": "렌더링."
     },
     "heroBody": {
-      "en": "Light. Texture. Emotion.\nYour next image starts here.",
-      "ko": "빛, 질감, 감각.\n다음 작품은 여기서 시작됩니다."
+      "en": "Trace light. Keep the material.\nNative CPU and Metal paths, inside Blender.",
+      "ko": "빛을 추적하고, 재질을 보존합니다.\nBlender 안에서 CPU와 Metal 경로를 사용하세요."
     },
     "heroButton": {
-      "en": "Explore the work",
-      "ko": "작품 둘러보기"
+      "en": "Explore the renderer",
+      "ko": "렌더러 살펴보기"
     },
     "heroDownload": {
-      "en": "Free download",
-      "ko": "무료 다운로드"
+      "en": "Download extension",
+      "ko": "확장 설치"
     },
     "renderCredit": {
       "en": "Rendered with SuperLuxCore · ACES 2.0",
       "ko": "SuperLuxCore 실제 렌더 · ACES 2.0"
     },
     "manifesto": {
-      "en": "The smallest detail.\nThe biggest feeling.",
-      "ko": "작은 디테일이,\n큰 감각을 만듭니다."
+      "en": "One renderer.\nMeasured in light.",
+      "ko": "하나의 렌더러.\n빛으로 증명합니다."
     },
     "manifestoBody": {
-      "en": "A spectrum cast by glass. Light gathering on a surface. A reflection that reveals the material. Build images around the way light really behaves.",
-      "ko": "유리가 펼치는 스펙트럼. 표면에 모이는 빛. 재질을 드러내는 반사. 빛이 실제로 움직이는 방식으로 작품을 만드세요."
+      "en": "From diffraction and rough conductors to fibre, volumes and production passes. The image is the first proof; the data stays attached.",
+      "ko": "회절과 거친 도체부터 섬유, 볼륨, 제작 패스까지. 이미지를 먼저 보여주고 실제 데이터는 함께 보존합니다."
     },
     "workEyebrow": {
-      "en": "01 / SELECTED WORK",
-      "ko": "01 / 작품으로 먼저"
+      "en": "01 / RENDER DISCIPLINES",
+      "ko": "01 / 렌더링 분야"
     },
     "workHeading": {
-      "en": "Made to be seen.",
-      "ko": "눈이 먼저 알아봅니다."
+      "en": "Six scenes.\nSix light problems.",
+      "ko": "여섯 장면.\n여섯 가지 빛의 문제."
     },
     "workIntro": {
-      "en": "13 newly art-directed scenes. Products, places and materials you can actually put to work.",
-      "ko": "제품, 공간, 소재. 실제 제작을 위한 주제 13종을 새로 구성하고 렌더했습니다."
+      "en": "A focused set of native renders. Each discipline isolates a different material, transport or production question.",
+      "ko": "각기 다른 재질, 빛의 전달, 제작 문제를 하나씩 보여주는 네이티브 렌더 모음입니다."
+    },
+    "capabilityEyebrow": {
+      "en": "CAPABILITY MAP / CURRENT BUILD",
+      "ko": "기능 맵 / 현재 빌드"
+    },
+    "capabilityHeading": {
+      "en": "Built for the hard parts of light.",
+      "ko": "빛의 어려운 문제를 위해 만들었습니다."
+    },
+    "capabilityIntro": {
+      "en": "Read the renderer by the work it can do. Every label links to a documented control surface.",
+      "ko": "렌더러가 실제로 해결하는 문제로 기능을 살펴보세요. 각 항목은 문서화된 제어로 연결됩니다."
+    },
+    "archiveIntro": {
+      "en": "Open the complete scene set, passes and render notes.",
+      "ko": "전체 씬과 패스, 렌더 노트를 엽니다."
+    },
+    "archiveOpen": {
+      "en": "Open scene archive",
+      "ko": "씬 아카이브 열기"
+    },
+    "archiveClose": {
+      "en": "Close scene archive",
+      "ko": "씬 아카이브 닫기"
     },
     "viewProject": {
       "en": "Open project",
       "ko": "작품 열기"
     },
     "allWork": {
-      "en": "All work",
-      "ko": "전체"
+      "en": "Scene archive",
+      "ko": "씬 아카이브"
     },
     "product": {
       "en": "Product",
@@ -1601,12 +1625,12 @@ window.SLC_DATA = {
       "ko": "03 / 모든 기능을 이미지로"
     },
     "toolkitHeading": {
-      "en": "Find your next detail.",
-      "ko": "다음 작품의 디테일을 찾으세요."
+      "en": "Material atlas / renderer index.",
+      "ko": "재질 아틀라스 · 렌더러 인덱스."
     },
     "toolkitIntro": {
-      "en": "Every feature has a visual entry. Open the image to explore its scene, actual render passes, coverage and controls.",
-      "ko": "모든 기능에 시각 자료를 연결했습니다. 이미지를 열어 작품, 실제 렌더 패스, 지원 범위와 제어 방법을 살펴보세요."
+      "en": "Read the native output first. Then inspect the material, pass, backend and documented scope.",
+      "ko": "먼저 네이티브 출력을 확인하세요. 이어서 재질, 패스, 백엔드와 문서화된 범위를 살펴보세요."
     },
     "search": {
       "en": "Find a feature or a material…",
@@ -2150,5 +2174,5 @@ window.SLC_DATA = {
       "fullAfter": "assets/studio/textile.jpg"
     }
   ],
-  "hero": "heritage"
+  "hero": "prism"
 };

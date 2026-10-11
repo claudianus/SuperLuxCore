@@ -8,7 +8,10 @@
   function resolveLanguage(url,pref,languages){return valid(url)?url:valid(pref)?pref:/^ko(?:-|$)/i.test((languages||[])[0]||'')?'ko':'en'}
   const initial=new URL(location.href).searchParams.get('lang');
   let preference=valid(initial)?initial:valid(saved())?saved():'auto',lang=resolveLanguage(initial,preference,navigator.languages||[navigator.language]);
-  let category='all',query='',workGroup='all',comparison='diffraction',split=50,lastFocus=null,currentProject=null;
+  let category='all',query='',workGroup='featured',comparison='diffraction',split=50,lastFocus=null,currentProject=null,showAll=false;
+  const featured=['prism','pearl','textile','architecture','atmosphere','music'];
+  const backend={prism:'METAL',pearl:'METAL',textile:'CPU',architecture:'CPU',atmosphere:'METAL',music:'CPU',interior:'METAL',jewelry:'METAL',audio:'CPU',beauty:'CPU',heritage:'CPU',perfume:'METAL',fan:'CPU'};
+  const atlas=['metal','spectral','openpbr','sellmeier','diffraction','thinfilm','sss','hair','volume','cryptomatte','lpe','cycles'];
   const tr=v=>typeof v==='string'?v:v[lang], t=v=>escape(tr(v)), c=k=>t(D.copy[k]);
   const img=p=>p+'?v=photographic-20261011-2', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
   const number=i=>String(i+1).padStart(2,'0');
@@ -25,12 +28,14 @@
       <section class="hero" aria-label="${c('heroTag')}">
         ${picture(hero.image,hero.description,'hero-image',true)}<div class="hero-shade"></div>
         <div class="hero-top"><span class="eyebrow">${c('heroTag')}</span><span class="hero-release">V ${escape(D.version)} / 2026</span></div>
-        <div class="hero-copy"><h1>${c('heroFirst')}<br><em>${c('heroSecond')}</em></h1><p>${c('heroBody').replace(/\n/g,'<br>')}</p><a class="round-link" href="#gallery"><span class="round-arrow">↘</span>${c('heroButton')}</a></div>
+        <div class="hero-copy"><p class="hero-kicker">NATIVE LIGHT TRANSPORT / BLENDER</p><h1>${c('heroFirst')}<br><em>${c('heroSecond')}</em></h1><p>${c('heroBody').replace(/\n/g,'<br>')}</p><div class="hero-actions"><a class="primary-link" href="#download">${c('download')} <span>↗</span></a><a class="secondary-link" href="#comparisons">${c('differences')} <span>→</span></a></div></div>
+        <div class="renderer-status" aria-label="${lang==='ko'?'렌더러 상태':'Renderer status'}"><div><b>2.11.27</b><span>CORE</span></div><div><b>CPU / METAL</b><span>BACKENDS</span></div><div><b>OPENPBR</b><span>MATERIALS</span></div><div><b>ACES 2.0</b><span>DISPLAY</span></div></div>
         <div class="hero-bottom"><button class="hero-project" data-project="${hero.id}"><span>${hero.name} / ${number(D.projects.indexOf(hero))}</span><small>${t(hero.area)} ↗</small></button><span>${c('renderCredit')}</span><a href="#download">${c('heroDownload')} ↓</a></div>
       </section>
       <section class="manifesto wrap"><p class="eyebrow">SUPERLUXCORE / BLENDER 5.2</p><div class="manifesto-grid"><h2>${c('manifesto').replace(/\n/g,'<br>')}</h2><div><p>${c('manifestoBody')}</p><div class="capability-line"><span>APPLE METAL</span><span>WAVE OPTICS</span><span>OPENPBR</span><span>CPU / GPU</span></div></div></div></section>
+      <section class="capability-rail wrap" aria-label="${lang==='ko'?'렌더러 기능 영역':'Renderer capabilities'}"><div class="capability-rail-head"><p class="eyebrow">01 / CAPABILITY MAP</p><span>${lang==='ko'?'이미지가 보여주는 렌더링 영역':'What the image proves'}</span></div><div class="capability-rail-grid">${[['hardware','Hardware','하드웨어','heritage'],['transport','Light transport','빛의 전달','architecture'],['caustics','Caustics','커스틱스','pearl'],['materials','Materials & fibre','재질과 섬유','textile'],['volumes','Volumes','볼륨','atmosphere'],['passes','Production passes','제작 패스','interior']].map(([en,et,ko,id],i)=>`<button data-project="${id}"><span>${number(i)}</span><strong>${lang==='ko'?ko:et}</strong><small>${lang==='ko'?'실제 장면 보기':'Open native scene'} ↗</small></button>`).join('')}</div></section>
       <section class="work-section wrap" id="gallery">${heading('workEyebrow','workHeading','workIntro')}
-        <div class="work-filter" role="group" aria-label="${c('work')}">${[['all','allWork'],['product','product'],['space','space'],['material','material']].map(([id,label])=>`<button data-work="${id}" aria-pressed="${id===workGroup}">${c(label)}</button>`).join('')}</div><div class="work-grid" id="work-grid"></div>
+        <div class="work-filter" role="group" aria-label="${c('work')}">${[['featured',lang==='ko'?'대표 장면':'Featured'],['archive',lang==='ko'?'전체 아카이브':'Scene archive'],['product','product'],['space','space'],['material','material']].map(([id,label])=>`<button data-work="${id}" aria-pressed="${id===workGroup}">${escape(label)}</button>`).join('')}</div><div class="work-grid" id="work-grid"></div>
       </section>
       <section class="detail-strip" aria-label="${c('detail')}">${[['textile',lang==='ko'?'섬유 한 올까지':'EVERY STRAND'],['prism',lang==='ko'?'빛이 색이 되는 순간':'LIGHT IN COLOUR'],['pearl',lang==='ko'?'표면에 담긴 빛':'SURFACE & LIGHT']].map(([id,label])=>`<button data-project="${id}">${picture(`assets/studio/${id}.jpg`,D.projects.find(p=>p.id===id).description)}<span>${label}<b>↗</b></span></button>`).join('')}</section>
       <section class="comparison-section" id="comparisons"><div class="wrap">${heading('compareEyebrow','compareHeading','compareIntro')}
@@ -39,7 +44,7 @@
       </div></section>
       <section class="workflow-section wrap"><div class="workflow-copy"><p class="eyebrow">THE IMAGE / UNDER THE SURFACE</p><h2>${lang==='ko'?'작품 뒤에도,<br>완성도를.':'Behind the image.<br>More control.'}</h2><p>${lang==='ko'?'아름다운 결과에서 끝나지 않습니다. 표면 정보, 디노이즈와 커버리지까지 실제 출력으로 살펴보세요.':'Go beyond the beauty. Explore actual surface data, denoising and coverage from the same render.'}</p><button class="text-button" data-project="interior">${c('detail')} ↗</button><small>${c('passNote')}</small></div><button class="workflow-image" data-project="interior">${picture('assets/studio/interior.jpg',D.projects.find(p=>p.id==='interior').description)}<span class="pass-strip">${['interior-albedo','interior-normal','interior-crypto-objects'].map(p=>picture('assets/studio/'+p+'.jpg',D.copy.technical)).join('')}</span><b>${lang==='ko'?'작품 + 실제 패스 보기':'BEAUTY + ACTUAL PASSES'} ↗</b></button></section>
       <section class="toolkit-section wrap" id="features">${heading('toolkitEyebrow','toolkitHeading','toolkitIntro')}
-        <div class="toolkit-tools"><label class="search"><span class="sr-only">${c('searchLabel')}</span><span aria-hidden="true">⌕</span><input id="feature-search" type="search" value="${escape(query)}" placeholder="${c('search')}" autocomplete="off"></label><span id="feature-count" aria-live="polite"></span></div>
+        <div class="toolkit-tools"><label class="search"><span class="sr-only">${c('searchLabel')}</span><span aria-hidden="true">⌕</span><input id="feature-search" type="search" value="${escape(query)}" placeholder="${c('search')}" autocomplete="off"></label><div class="toolkit-count"><span id="feature-count" aria-live="polite"></span><button id="feature-scope" class="scope-toggle" type="button" aria-pressed="false"></button></div></div>
         <div class="filters" role="group" aria-label="${c('toolkit')}">${Object.entries(D.categories).map(([id,label])=>`<button data-category="${id}" aria-pressed="${category===id}">${t(label)}</button>`).join('')}</div><div class="visual-grid" id="feature-grid"></div>
       </section>
       <section class="download-section" id="download"><div class="wrap"><p class="eyebrow">${c('downloadEyebrow')}</p><div class="download-heading"><h2>${c('downloadFirst')}<br><em>${c('downloadSecond')}</em></h2><p>${c('downloadBody').replace(/\n/g,'<br>')}</p></div>
@@ -56,6 +61,7 @@
     document.querySelectorAll('[data-project]').forEach(b=>b.addEventListener('click',()=>openProject(b.dataset.project,b)));
     document.querySelectorAll('[data-category]').forEach(b=>b.addEventListener('click',()=>{category=b.dataset.category;renderFeatures()}));
     $('feature-search').addEventListener('input',e=>{query=e.target.value;renderFeatures()});
+    $('feature-scope').addEventListener('click',()=>{showAll=!showAll;renderFeatures()});
     document.querySelectorAll('[data-comparison]').forEach(b=>{
       b.addEventListener('click',()=>{comparison=b.dataset.comparison;split=50;renderComparison()});
       b.addEventListener('keydown',e=>{if(!['ArrowRight','ArrowLeft','Home','End'].includes(e.key))return;e.preventDefault();let i=D.comparisons.findIndex(p=>p.id===comparison);i=e.key==='Home'?0:e.key==='End'?D.comparisons.length-1:(i+(e.key==='ArrowRight'?1:-1)+D.comparisons.length)%D.comparisons.length;comparison=D.comparisons[i].id;renderComparison();$('tab-'+comparison).focus()});
@@ -64,8 +70,8 @@
     $('visual-dialog').addEventListener('close',()=>{document.body.classList.remove('dialog-open');lastFocus?.focus()});
   }
   function renderWork(){
-    const projects=D.projects.filter(p=>workGroup==='all'||p.group===workGroup);
-    $('work-grid').innerHTML=projects.map((p,i)=>`<article class="project-card ${i===0?'project-wide':''}"><button data-project-card="${p.id}" aria-label="${p.name} / ${c('viewProject')}"><div class="project-image">${picture(p.image,p.description)}<span class="project-open">↗</span><span class="project-number">${number(D.projects.indexOf(p))} / ${D.projects.length}</span></div><div class="project-caption"><h3>${p.name}</h3><span>${t(p.area)}</span></div></button><p>${t(p.description)}</p><div class="tags">${p.tags.map(tag=>`<span>${escape(tag)}</span>`).join('')}</div></article>`).join('');
+    const projects=D.projects.filter(p=>workGroup==='featured'?featured.includes(p.id):workGroup==='archive'?!featured.includes(p.id):p.group===workGroup);
+    $('work-grid').innerHTML=projects.map((p,i)=>`<article class="project-card ${i===0?'project-wide':''}"><button data-project-card="${p.id}" aria-label="${p.name} / ${c('viewProject')}"><div class="project-image">${picture(p.image,p.description)}<span class="project-open">↗</span><span class="project-number">${number(D.projects.indexOf(p))} / ${D.projects.length}</span><span class="project-meta">NATIVE / ${backend[p.id]||'CPU'} / ACES 2.0</span></div><div class="project-caption"><h3>${p.name}</h3><span>${t(p.area)}</span></div></button><p>${t(p.description)}</p><div class="tags">${p.tags.map(tag=>`<span>${escape(tag)}</span>`).join('')}</div></article>`).join('');
     document.querySelectorAll('[data-project-card]').forEach(b=>b.addEventListener('click',()=>openProject(b.dataset.projectCard,b)));
   }
   function renderComparison(){
@@ -83,8 +89,11 @@
   }
   function setSplit(v){split=Math.max(0,Math.min(100,Number(v)));$('compare-view').style.setProperty('--split',split+'%');$('comparison-range').value=split}
   function renderFeatures(){
-    const q=query.trim().toLowerCase(), features=D.features.filter(f=>(category==='all'||f.category===category)&&(!q||[f.id,f.title.en,f.title.ko,f.description.en,f.description.ko].join(' ').toLowerCase().includes(q)));
-    $('feature-count').textContent=features.length+' '+tr(D.copy.featureCount);
+    const q=query.trim().toLowerCase(), atlasMode=category==='all'&&!showAll&&!q;
+    const features=D.features.filter(f=>(category==='all'||f.category===category)&&(!q||[f.id,f.title.en,f.title.ko,f.description.en,f.description.ko].join(' ').toLowerCase().includes(q))&&(!atlasMode||atlas.includes(f.id)));
+    $('feature-count').textContent=(atlasMode?features.length+' / '+D.features.length:features.length)+' '+tr(D.copy.featureCount);
+    $('feature-scope').setAttribute('aria-pressed',String(showAll));
+    $('feature-scope').textContent=showAll?(lang==='ko'?'아틀라스 12개만 보기':'Show atlas only'):(lang==='ko'?'전체 기능 보기':'Show all documented features');
     $('feature-grid').innerHTML=features.map(f=>`<article class="visual-card"><button data-feature="${f.id}" aria-label="${t(f.title)} / ${c('detail')}"><div class="visual-card-image">${picture(f.image,f.title)}<span class="visual-card-type">${c(f.technical?'technical':'context')}</span><span class="visual-card-open">↗</span></div><div class="visual-card-caption"><span>${t(D.categories[f.category])}</span><h3>${t(f.title)}</h3><small>${t(f.badge)}</small></div></button></article>`).join('')||`<p class="empty">${c('noResults')}</p>`;
     document.querySelectorAll('[data-feature]').forEach(b=>b.addEventListener('click',()=>openFeature(b.dataset.feature,b)));
     document.querySelectorAll('[data-category]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.category===category)));
