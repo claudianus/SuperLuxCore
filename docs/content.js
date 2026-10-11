@@ -1645,8 +1645,8 @@ window.SLC_DATA = {
       "ko": "렌더러 인덱스 · 지원 범위."
     },
     "toolkitIntro": {
-      "en": "Read the native output first. Then inspect the material, pass, backend and documented scope.",
-      "ko": "먼저 네이티브 출력을 확인하세요. 이어서 재질, 패스, 백엔드와 문서화된 범위를 살펴보세요."
+      "en": "Start with one distinct native scene per discipline. Then inspect the material, pass, backend and documented scope.",
+      "ko": "분야마다 다른 네이티브 장면을 먼저 확인하세요. 이어서 재질, 패스, 백엔드와 문서화된 범위를 살펴보세요."
     },
     "search": {
       "en": "Find a feature or a material…",

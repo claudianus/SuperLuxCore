@@ -11,10 +11,13 @@
   let category='all',query='',workGroup='featured',comparison='diffraction',split=50,lastFocus=null,currentProject=null,showAll=false;
   const featured=['prism','pearl','textile','architecture','atmosphere','music'];
   const backend={prism:'METAL',pearl:'METAL',textile:'CPU',architecture:'CPU',atmosphere:'METAL',music:'CPU',interior:'METAL',jewelry:'METAL',audio:'CPU',beauty:'CPU',heritage:'CPU',perfume:'METAL',fan:'CPU'};
-  const atlas=['metal','spectral','openpbr','sellmeier','diffraction','thinfilm','sss','hair','volume','cryptomatte','lpe','cycles'];
+  // Keep the first visual index deliberately scene-diverse. The full feature
+  // catalogue remains available through the scope toggle, but the default
+  // grid should not spend two cards on the same beauty render.
+  const atlas=['metal','spectral','openpbr','diffraction','thinfilm','hair','volume','cryptomatte','lpe','gpult','motion','displacement'];
   const atlasPlates=[['sellmeier','DISPERSION'],['thinfilm','THIN FILM'],['openpbr','TRANSMISSION'],['hair','FIBRE SCATTERING']];
   const tr=v=>typeof v==='string'?v:v[lang], t=v=>escape(tr(v)), c=k=>t(D.copy[k]);
-  const img=p=>p+'?v=production-lab-20261012-3', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
+  const img=p=>p+'?v=production-lab-20261012-4', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
   const number=i=>String(i+1).padStart(2,'0');
   function picture(path,alt,classes='',priority=false){return `<img class="${classes}" src="${img(path)}" width="1920" height="1200" alt="${t(alt)}" ${priority?'fetchpriority="high"':'loading="lazy" decoding="async"'}>`}
   function heading(eyebrow,title,body){return `<div class="section-head"><p class="eyebrow">${c(eyebrow)}</p><div class="head-row"><h2>${c(title).replace(/\n/g,'<br>')}</h2><p>${c(body)}</p></div></div>`}
