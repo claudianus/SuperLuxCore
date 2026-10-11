@@ -12,6 +12,7 @@
   const featured=['prism','pearl','textile','architecture','atmosphere','music'];
   const backend={prism:'METAL',pearl:'METAL',textile:'CPU',architecture:'CPU',atmosphere:'METAL',music:'CPU',interior:'METAL',jewelry:'METAL',audio:'CPU',beauty:'CPU',heritage:'CPU',perfume:'METAL',fan:'CPU'};
   const atlas=['metal','spectral','openpbr','sellmeier','diffraction','thinfilm','sss','hair','volume','cryptomatte','lpe','cycles'];
+  const atlasPlates=[['sellmeier','DISPERSION'],['thinfilm','THIN FILM'],['openpbr','TRANSMISSION'],['hair','FIBRE SCATTERING']];
   const tr=v=>typeof v==='string'?v:v[lang], t=v=>escape(tr(v)), c=k=>t(D.copy[k]);
   const img=p=>p+'?v=photographic-20261011-2', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
   const number=i=>String(i+1).padStart(2,'0');
@@ -34,6 +35,7 @@
       </section>
       <section class="manifesto wrap"><p class="eyebrow">SUPERLUXCORE / BLENDER 5.2</p><div class="manifesto-grid"><h2>${c('manifesto').replace(/\n/g,'<br>')}</h2><div><p>${c('manifestoBody')}</p><div class="capability-line"><span>APPLE METAL</span><span>WAVE OPTICS</span><span>OPENPBR</span><span>CPU / GPU</span></div></div></div></section>
       <section class="capability-rail wrap" aria-label="${lang==='ko'?'렌더러 기능 영역':'Renderer capabilities'}"><div class="capability-rail-head"><p class="eyebrow">01 / CAPABILITY MAP</p><span>${lang==='ko'?'이미지가 보여주는 렌더링 영역':'What the image proves'}</span></div><div class="capability-rail-grid">${[['hardware','Hardware','하드웨어','heritage'],['transport','Light transport','빛의 전달','architecture'],['caustics','Caustics','커스틱스','pearl'],['materials','Materials & fibre','재질과 섬유','textile'],['volumes','Volumes','볼륨','atmosphere'],['passes','Production passes','제작 패스','interior']].map(([en,et,ko,id],i)=>`<button data-project="${id}"><span>${number(i)}</span><strong>${lang==='ko'?ko:et}</strong><small>${lang==='ko'?'실제 장면 보기':'Open native scene'} ↗</small></button>`).join('')}</div></section>
+      <section class="material-atlas wrap" id="atlas">${heading('atlasEyebrow','atlasHeading','atlasIntro')}<div class="atlas-grid">${atlasPlates.map(([id,label],i)=>{const f=D.features.find(x=>x.id===id);return f?`<button class="atlas-plate ${i===0?'atlas-plate-wide':''}" data-feature="${id}" aria-label="${t(f.title)} / ${c('detail')}"><div class="atlas-plate-image">${picture(f.image,f.title)}<span>${number(i)} / ${label}</span><b>↗</b></div><div class="atlas-plate-caption"><h3>${t(f.title)}</h3><small>${t(f.badge)}</small></div></button>`:''}).join('')}</div><p class="atlas-note">${c('atlasNote')}</p></section>
       <section class="work-section wrap" id="gallery">${heading('workEyebrow','workHeading','workIntro')}
         <div class="work-filter" role="group" aria-label="${c('work')}">${[['featured',lang==='ko'?'대표 장면':'Featured'],['archive',lang==='ko'?'전체 아카이브':'Scene archive'],['product','product'],['space','space'],['material','material']].map(([id,label])=>`<button data-work="${id}" aria-pressed="${id===workGroup}">${escape(label)}</button>`).join('')}</div><div class="work-grid" id="work-grid"></div>
       </section>

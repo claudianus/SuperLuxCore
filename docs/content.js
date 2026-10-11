@@ -1572,6 +1572,22 @@ window.SLC_DATA = {
       "en": "Close scene archive",
       "ko": "씬 아카이브 닫기"
     },
+    "atlasEyebrow": {
+      "en": "02 / MATERIAL ATLAS",
+      "ko": "02 / 재질 아틀라스"
+    },
+    "atlasHeading": {
+      "en": "Four surfaces.\nFour ways light changes.",
+      "ko": "네 가지 표면.\n빛이 달라지는 네 가지 방식."
+    },
+    "atlasIntro": {
+      "en": "Start with the visible mechanism: dispersion, film interference, transmission or fibre scattering. Open any plate for the documented control surface.",
+      "ko": "보이는 현상부터 시작하세요. 분산, 박막 간섭, 투과, 섬유 산란을 한 장씩 보여줍니다. 각 패널에서 문서화된 제어를 확인할 수 있습니다."
+    },
+    "atlasNote": {
+      "en": "Feature plates are visual evidence and scope references, not isolated performance benchmarks.",
+      "ko": "기능 플레이트는 시각적 증거와 지원 범위를 보여주며, 독립 성능 벤치마크가 아닙니다."
+    },
     "viewProject": {
       "en": "Open project",
       "ko": "작품 열기"
