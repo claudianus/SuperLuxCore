@@ -1,8 +1,9 @@
 """Exercise VDB extraction/destruction after Blender and Cycles load first.
 
 This is a process compatibility regression, not an image quality test. A fresh
-factory Blender imports Cycles and loads both VDB fixtures with Blender before
-importing the selected native module. It repeatedly parses RGB/alpha density
+factory Blender imports Cycles, requires a supported host fixture to load, and
+records candidate-fixture load attempts before importing the selected native
+module. It repeatedly parses RGB/alpha density
 grids and destroys their scenes. A SIGSEGV or timeout leaves durable, flushed
 stage evidence, and the owner always terminates and reaps its process group.
 No render, native build, installation, or persistent Blender settings change.
@@ -73,6 +74,22 @@ def worker(args):
         try:
             import bpy
 
+            resources = Path(os.environ["BLENDER_USER_RESOURCES"]).resolve()
+            expected_paths = {kind: Path(os.environ["BLENDER_USER_" + kind]).resolve()
+                              for kind in ("CONFIG", "EXTENSIONS")}
+            actual_paths = {kind: Path(bpy.utils.user_resource(kind)).resolve()
+                            for kind in expected_paths}
+            evidence["blender_user_paths"] = {
+                "resources": str(resources),
+                "expected": {kind: str(path) for kind, path in expected_paths.items()},
+                "actual": {kind: str(path) for kind, path in actual_paths.items()},
+            }
+            for kind, expected in expected_paths.items():
+                if (expected != resources / kind.lower() or not expected.is_dir()
+                        or actual_paths[kind] != expected):
+                    raise RuntimeError("Blender user path is not isolated: "
+                                       + json.dumps(evidence["blender_user_paths"]))
+            stage("isolated-blender-user-paths-verified")
             evidence["blender"] = {"version": bpy.app.version_string,
                                    "binary_path": bpy.app.binary_path,
                                    "binary_sha256": sha(bpy.app.binary_path)}
@@ -217,8 +234,14 @@ def owner(args):
     process = None
     failure = None
     with tempfile.TemporaryDirectory(prefix="slc-blender-vdb-load-order-") as temporary:
+        config = Path(temporary) / "config"
+        extensions = Path(temporary) / "extensions"
+        config.mkdir()
+        extensions.mkdir()
         env = os.environ.copy()
-        env.update(OMP_NUM_THREADS="4", BLENDER_USER_RESOURCES=temporary, TMPDIR=temporary)
+        env.update(OMP_NUM_THREADS="4", BLENDER_USER_RESOURCES=temporary,
+                   BLENDER_USER_CONFIG=str(config), BLENDER_USER_EXTENSIONS=str(extensions),
+                   TMPDIR=temporary)
         arguments = [str(args.blender), "--background", "--factory-startup", "--python-exit-code", "1",
                      "--python", str(Path(__file__).resolve()), "--", "--worker",
                      "--module-dir", str(args.module_dir.resolve()),
