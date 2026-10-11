@@ -10,8 +10,11 @@ native eye sampler is reset before the workers restart as well.
 
 The actual Blender exporter/recorded replay regression covers initial render,
 move/nonuniform scale, named density material edit, and disconnected Volume
-output at 1280 by 720 and 64 SPP. The local whole wheel passes all four Metal
-hybrid cases against fresh exports and independent fresh-repeat noise.
+output at 1280 by 720 with a requested 64 eye SPP halt. This historical driver
+waited on total SPP, including light samples, and its fresh repeats used the
+same seed. Its four passing cases have that narrower scope. The updated
+adapter driver waits for actual eye SPP and explicitly uses independent
+repeat seeds; see the subsequent film scene edit moments note.
 Object counts are 1/1/1/0; removing the volume leaves a uniform white world.
 The largest live/fresh mean difference is 0.005363%. The moved case changed
 from an old-position ghost with 1.4109% mean difference to the correct bounds

@@ -539,7 +539,8 @@ public:
 	// Per-pixel luminance first and second moments (2 floats per pixel,
 	// full film indexing) used by the samplers' second-moment adaptive
 	// convergence estimate. Accumulated on every sample splat; like the
-	// NOISE channel it is not cleared by Clear().
+	// NOISE channel it is preserved by Clear() during film merging, but
+	// Reset() clears it when discarding samples after a scene edit.
 	mutable std::vector<float> pixelLumaMoments;
 
 	// (Optional) LuxRays HardwareDevice context

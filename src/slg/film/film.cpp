@@ -689,9 +689,8 @@ void Film::Resize(const u_int w, const u_int h) {
 	}
 
 	// Per-pixel luminance moments for the samplers' second-moment
-	// adaptive convergence estimate (2 floats per pixel; not cleared by
-	// Clear(), same as the NOISE channel, so the estimate survives film
-	// restarts)
+	// adaptive convergence estimate. Clear() preserves these during film
+	// merging; Reset() discards them with the samples of an edited scene.
 	pixelLumaMoments.assign(2 * pixelCount, 0.f);
 
 	// The adaptive error map is pixel-sized too
@@ -818,8 +817,10 @@ void Film::Clear() {
 }
 
 void Film::Reset(const bool onlyCounters) {
-	if (!onlyCounters)
+	if (!onlyCounters) {
 		Clear();
+		std::fill(pixelLumaMoments.begin(), pixelLumaMoments.end(), 0.f);
+	}
 
 	// denoiser has to be reset explicitly
 
