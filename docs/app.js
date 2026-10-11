@@ -14,7 +14,7 @@
   const atlas=['metal','spectral','openpbr','sellmeier','diffraction','thinfilm','sss','hair','volume','cryptomatte','lpe','cycles'];
   const atlasPlates=[['sellmeier','DISPERSION'],['thinfilm','THIN FILM'],['openpbr','TRANSMISSION'],['hair','FIBRE SCATTERING']];
   const tr=v=>typeof v==='string'?v:v[lang], t=v=>escape(tr(v)), c=k=>t(D.copy[k]);
-  const img=p=>p+'?v=photographic-20261011-2', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
+  const img=p=>p+'?v=production-lab-20261012-3', manual=()=>`https://claudianus.github.io/SuperBlendLuxCore/${lang==='ko'?'ko/':''}manual/`;
   const number=i=>String(i+1).padStart(2,'0');
   function picture(path,alt,classes='',priority=false){return `<img class="${classes}" src="${img(path)}" width="1920" height="1200" alt="${t(alt)}" ${priority?'fetchpriority="high"':'loading="lazy" decoding="async"'}>`}
   function heading(eyebrow,title,body){return `<div class="section-head"><p class="eyebrow">${c(eyebrow)}</p><div class="head-row"><h2>${c(title).replace(/\n/g,'<br>')}</h2><p>${c(body)}</p></div></div>`}
