@@ -1,7 +1,7 @@
 /* Hand-written bilingual copy. Render receipts live in showcase.js (generated);
    the feature catalogue, FAQ and coverage notes live in data.js. */
 window.SLC_COPY = {
-  version: '2.11.28',
+  version: '2.11.29',
   renderVersion: '2.11.27', // build the hero and comparison images were rendered with
   date: '2026-10-13',
   core: 'https://github.com/claudianus/SuperLuxCore',

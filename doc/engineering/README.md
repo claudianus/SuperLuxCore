@@ -87,6 +87,8 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Verified 2.11.28 release](2026-10-13-deployment-2.11.28.md): faster PATHOCL convergence, VDB/BSSRDF work since 2.11.27; signed wheels/ZIPs, fresh-profile CPU/Metal smoke; full goal active and incomplete.
 
+- [Verified 2.11.29 release](2026-10-13-deployment-2.11.29.md): add-on render defaults back to engine/Cycles rules, every compiled GPU API in prefs; signed wheels/ZIPs, fresh-profile CPU/Metal smoke; engine code unchanged since 2.11.28.
+
 - [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.
 
 - [Cycles BSSRDF material partition boundaries](2026-10-10-cycles-bssrdf-object-groups.md): CPU33 contracts, exporter3 contracts and7 reviewed720p pairs; instance and hair boundaries stay separate, full goal remains active.
