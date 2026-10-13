@@ -475,6 +475,21 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 	*absCosSampledDir = fabsf(CosTheta(localSampledDir));
 	*sampledDir = frame.ToWorld(localSampledDir);
 
+	// Volume tracking follows the geometric side (hitPoint.intoObject +
+	// TRANSMIT), the lobes the shading frame: near smooth-shaded
+	// silhouettes they disagree. A reflection that geometrically leaves
+	// the object (or a refraction that stays) desyncs the interior
+	// volume stack - an SSS walk leaks out still carrying its medium,
+	// re-enters through the priority pass-through and pushes the volume
+	// twice, so every later exit takes an unpaired eta^2 (x1.96 at IOR
+	// 1.4) and fireflies compound. Only matters with an interior volume.
+	if (!IsVolume() && GetMaterialInteriorVolume()) {
+		const bool crosses = (Dot(hitPoint.fixedDir, hitPoint.geometryN) *
+				Dot(*sampledDir, hitPoint.geometryN)) < 0.f;
+		if (crosses != bool(*event & TRANSMIT))
+			return Spectrum();
+	}
+
 	// Shadow terminator artefact avoidance
 	if (!material->OwnsLobeNormals() && (*event & REFLECT) && (hitPoint.shadeN != hitPoint.interpolatedN)) {
 		const Vector &lightDir = hitPoint.fromLight ? hitPoint.fixedDir : (*sampledDir);
@@ -496,6 +511,16 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 	}
 
 	return result;
+}
+
+bool BSDF::IsVolumeDepthVertex() const {
+	if (IsVolume())
+		return true;
+	// From inside, hitPoint.interiorVolume is the medium the path is in
+	if (hitPoint.intoObject || !hitPoint.interiorVolume ||
+			(hitPoint.interiorVolume->GetType() != HOMOGENEOUS_VOL))
+		return false;
+	return static_cast<const HomogeneousVolume *>(hitPoint.interiorVolume.get())->IsSSSParametrized();
 }
 
 bool BSDF::IsChainTransparentMedium() const {

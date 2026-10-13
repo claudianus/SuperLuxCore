@@ -427,6 +427,18 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 
 	const bool fromLight = (bsdf->hitPoint.rayFlags & LIGHT_RAY) != 0;
 
+	// Geometric-side consistency with an interior volume (CPU
+	// BSDF::Sample): a reflection that geometrically leaves the object or
+	// a refraction that stays desyncs the volume stack (SSS walk leak,
+	// unpaired eta^2 fireflies)
+	if (!bsdf->isVolume && (BSDF_GetMaterialInteriorVolume(bsdf MATERIALS_PARAM) != NULL_INDEX)) {
+		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+		const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
+		const bool crosses = (dot(fixedDir, geometryN) * dot(*sampledDir, geometryN)) < 0.f;
+		if (crosses != ((*event & TRANSMIT) != 0))
+			return BLACK;
+	}
+
 	if (!bsdf->isVolume) {
 		// Shadow terminator artefact avoidance
 		const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);

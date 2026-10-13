@@ -499,14 +499,19 @@ float LightStrategyLightBVH::NodeImportance(const slg::ocl::LightBVHNode &node,
 
 		const Vector diag = bmax - bmin;
 		const float r2 = 0.25f * diag.LengthSquared();
-		// Distance clamped to the cluster radius (PBRT-v4/Cycles light
-		// trees): a receiver inside or next to a large cluster box is not
-		// 1/minDist2 (~1e6) closer to its lights than to a compact
-		// cluster outside it. With the bare box distance every receiver
-		// inside a top-level box picked that subtree ~always, starving a
-		// small spot cluster outside it to a 1e-7 pick pdf.
-		const float geo = 1.f / Max(Max(d2, r2), minDist2);
+		// Distance to the cluster centre, clamped to the cluster radius
+		// (PBRT-v4/Cycles light trees). The clamp: a receiver inside or
+		// next to a large cluster box is not 1/minDist2 (~1e6) closer to
+		// its lights than to a compact cluster outside it - with the bare
+		// box distance every receiver inside a top-level box picked that
+		// subtree ~always, starving a small spot cluster outside it to a
+		// 1e-7 pick pdf. The centre (not the closest box point): with the
+		// box distance two sibling boxes touching at the receiver both
+		// clamp to their radius and tie, so every level above the leaves
+		// split ~50/50 and 300 scattered lights sampled barely better
+		// than UNIFORM (dev-tools/e111_lightbvh_spread_test.py)
 		const float dc2 = c2x.LengthSquared();
+		const float geo = 1.f / Max(Max(dc2, r2), minDist2);
 		float cosSurf = 1.f, cosOrient = 1.f;
 		if ((d2 > 0.f) && (dc2 > r2)) {
 			// Work in dot space: no asin/acos/cos calls. With

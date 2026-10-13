@@ -52,6 +52,20 @@ OPENCL_FORCE_INLINE bool BSDF_IsChainTransparentMedium(__global const BSDF *bsdf
 			(m->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX));
 }
 
+// CPU BSDF::IsVolumeDepthVertex(): a medium scatter, or a surface reached
+// from inside an SSS-parametrized medium (a step of the random walk)
+OPENCL_FORCE_INLINE bool BSDF_IsVolumeDepthVertex(__global const BSDF *bsdf
+		MATERIALS_PARAM_DECL) {
+	if (bsdf->isVolume)
+		return true;
+	const uint vi = bsdf->hitPoint.interiorVolumeIndex;
+	if (bsdf->hitPoint.intoObject || (vi == NULL_INDEX))
+		return false;
+	__global const Material *m = &mats[vi];
+	return (m->type == HOMOGENEOUS_VOL) &&
+			(m->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX);
+}
+
 OPENCL_FORCE_INLINE uint BSDF_GetObjectID(__global const BSDF *bsdf, __global const SceneObject* restrict sceneObjs) {
 	const uint sceneObjectIndex = bsdf->sceneObjectIndex;
 

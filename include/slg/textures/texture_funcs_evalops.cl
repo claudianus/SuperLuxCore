@@ -61,6 +61,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		// CONST_FLOAT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CONST_FLOAT)
 		case CONST_FLOAT: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -84,9 +85,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// CONST_FLOAT3
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CONST_FLOAT3)
 		case CONST_FLOAT3: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -110,17 +113,21 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// IMAGEMAP
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_IMAGEMAP)
 		case IMAGEMAP: {
 			ImageMapTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// SCALE_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_SCALE_TEX)
 		case SCALE_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -162,9 +169,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FRESNEL_APPROX_N
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FRESNEL_APPROX_N)
 		case FRESNEL_APPROX_N: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -201,9 +210,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FRESNEL_APPROX_K
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FRESNEL_APPROX_K)
 		case FRESNEL_APPROX_K: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -240,9 +251,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// MIX_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_MIX_TEX)
 		case MIX_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -294,9 +307,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// ADD_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_ADD_TEX)
 		case ADD_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -333,9 +348,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// SUBTRACT_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_SUBTRACT_TEX)
 		case SUBTRACT_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -372,44 +389,56 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINTCOLOR
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINTCOLOR)
 		case HITPOINTCOLOR:
 			HitPointColorTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINTALPHA
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINTALPHA)
 		case HITPOINTALPHA:
 			HitPointAlphaTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINTGREY
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINTGREY)
 		case HITPOINTGREY:
 			HitPointGreyTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINTVERTEXAOV
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINTVERTEXAOV)
 		case HITPOINTVERTEXAOV:
 			HitPointVertexAOVTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINTTRIANGLEAOV
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINTTRIANGLEAOV)
 		case HITPOINTTRIANGLEAOV:
 			HitPointTriangleAOVTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// NORMALMAP_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_NORMALMAP_TEX)
 		case NORMALMAP_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -436,9 +465,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BLACKBODY_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLACKBODY_TEX)
 		case BLACKBODY_TEX: {
 			// A textured temperature is pushed as a float by the sub-texture's
 			// eval; NULL_INDEX marks the compile-time-constant path.
@@ -485,9 +516,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// IRREGULARDATA_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_IRREGULARDATA_TEX)
 		case IRREGULARDATA_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -511,9 +544,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// DENSITYGRID_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_DENSITYGRID_TEX)
 		case DENSITYGRID_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -552,23 +587,29 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// ABS_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_ABS_TEX)
 		case ABS_TEX:
 			AbsTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// CLAMP_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CLAMP_TEX)
 		case CLAMP_TEX:
 			ClampTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BILERP_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BILERP_TEX)
 		case BILERP_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -614,9 +655,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// COLORDEPTH_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_COLORDEPTH_TEX)
 		case COLORDEPTH_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -653,9 +696,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// HSV_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HSV_TEX)
 		case HSV_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -701,9 +746,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// DIVIDE_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_DIVIDE_TEX)
 		case DIVIDE_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -742,9 +789,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// REMAP_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_REMAP_TEX)
 		case REMAP_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -792,9 +841,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// OBJECTID_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_OBJECTID_TEX)
 		case OBJECTID_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -818,9 +869,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// OBJECTID_COLOR_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_OBJECTID_COLOR_TEX)
 		case OBJECTID_COLOR_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -844,9 +897,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// OBJECTID_NORMALIZED_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_OBJECTID_NORMALIZED_TEX)
 		case OBJECTID_NORMALIZED_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -870,9 +925,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// DOT_PRODUCT_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_DOT_PRODUCT_TEX)
 		case DOT_PRODUCT_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -911,9 +968,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// POWER_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_POWER_TEX)
 		case POWER_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -952,9 +1011,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// LESS_THAN_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_LESS_THAN_TEX)
 		case LESS_THAN_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -993,9 +1054,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// GREATER_THAN_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_GREATER_THAN_TEX)
 		case GREATER_THAN_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1034,9 +1097,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// ROUNDING_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_ROUNDING_TEX)
 		case ROUNDING_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1075,9 +1140,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// MODULO_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_MODULO_TEX)
 		case MODULO_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1116,23 +1183,29 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// MATHFUNC_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_MATHFUNC_TEX)
 		case MATHFUNC_TEX:
 			MathFuncTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// SHADING_NORMAL_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_SHADING_NORMAL_TEX)
 		case SHADING_NORMAL_TEX:
 			ShadingNormalTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// POSITION_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_POSITION_TEX)
 		case POSITION_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1163,16 +1236,20 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// RAYINFO_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_RAYINFO_TEX)
 		case RAYINFO_TEX:
 			RayInfoTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// SPLIT_FLOAT3
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_SPLIT_FLOAT3)
 		case SPLIT_FLOAT3: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1211,9 +1288,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// MAKE_FLOAT3
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_MAKE_FLOAT3)
 		case MAKE_FLOAT3: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1262,9 +1341,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BRIGHT_CONTRAST_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BRIGHT_CONTRAST_TEX)
 		case BRIGHT_CONTRAST_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1308,79 +1389,101 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_BLEND
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_BLEND)
 		case BLENDER_BLEND:
 			BlenderBlendTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_CLOUDS
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_CLOUDS)
 		case BLENDER_CLOUDS:
 			BlenderCloudsTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_DISTORTED_NOISE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_DISTORTED_NOISE)
 		case BLENDER_DISTORTED_NOISE:
 			BlenderDistortedNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_MAGIC
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_MAGIC)
 		case BLENDER_MAGIC:
 			BlenderMagicTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_MARBLE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_MARBLE)
 		case BLENDER_MARBLE:
 			BlenderMarbleTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_MUSGRAVE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_MUSGRAVE)
 		case BLENDER_MUSGRAVE:
 			BlenderMusgraveTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_NOISE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_NOISE)
 		case BLENDER_NOISE:
 			BlenderNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_STUCCI
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_STUCCI)
 		case BLENDER_STUCCI:
 			BlenderStucciTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_WOOD
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_WOOD)
 		case BLENDER_WOOD:
 			BlenderWoodTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BLENDER_VORONOI
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BLENDER_VORONOI)
 		case BLENDER_VORONOI:
 			BlenderVoronoiTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// CHECKERBOARD2D
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CHECKERBOARD2D)
 		case CHECKERBOARD2D: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1423,9 +1526,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// CHECKERBOARD3D
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CHECKERBOARD3D)
 		case CHECKERBOARD3D: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1468,9 +1573,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// CLOUD_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CLOUD_TEX)
 		case CLOUD_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1517,9 +1624,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FBM_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FBM_TEX)
 		case FBM_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1556,9 +1665,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// MARBLE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_MARBLE)
 		case MARBLE: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1597,9 +1708,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// DOTS
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_DOTS)
 		case DOTS: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1642,16 +1755,20 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BRICK
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BRICK)
 		case BRICK:
 			BrickTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// WINDY
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_WINDY)
 		case WINDY: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1686,9 +1803,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// WRINKLED
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_WRINKLED)
 		case WRINKLED: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1725,9 +1844,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// UV_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_UV_TEX)
 		case UV_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1762,9 +1883,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BAND_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BAND_TEX)
 		case BAND_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1809,9 +1932,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// WIREFRAME_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_WIREFRAME_TEX)
 		case WIREFRAME_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1856,9 +1981,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// BEVEL_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BEVEL_TEX)
 		case BEVEL_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT:
@@ -1880,30 +2007,38 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// TRIPLANAR_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_TRIPLANAR_TEX)
 		case TRIPLANAR_TEX:
 			TriplanarTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// DISTORT_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_DISTORT_TEX)
 		case DISTORT_TEX:
 			DistortTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// BOMBING_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_BOMBING_TEX)
 		case BOMBING_TEX:
 			BombingTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// FRESNELCOLOR_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FRESNELCOLOR_TEX)
 		case FRESNELCOLOR_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1927,9 +2062,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FRESNELCONST_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FRESNELCONST_TEX)
 		case FRESNELCONST_TEX: {
 			switch (evalType) {
 				case EVAL_FLOAT: {
@@ -1953,9 +2090,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FRESNELIOR_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FRESNELIOR_TEX)
 		case FRESNELIOR_TEX: {
 			// cosi = dot(-fixedDir, shadeN); shadeN is incident-side oriented.
 			// Dielectric Cauchy Fresnel with TIR handling - the scalar path is
@@ -1994,9 +2133,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// FACING_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_FACING_TEX)
 		case FACING_TEX: {
 			// LayerWeight "Facing": pow(1 - |cosi|, blend). |cosi| folds the
 			// backface case, matching the CPU path.
@@ -2020,9 +2161,11 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// HITPOINT_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_HITPOINT_TEX)
 		case HITPOINT_TEX: {
 			float fval = 0.f;
 			float3 f3val = MAKE_FLOAT3(0.f, 0.f, 0.f);
@@ -2139,30 +2282,38 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
 		//----------------------------------------------------------------------
 		// RANDOM_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_RANDOM_TEX)
 		case RANDOM_TEX:
 			RandomTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// WHITENOISE_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_WHITENOISE_TEX)
 		case WHITENOISE_TEX:
 			WhiteNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// GABORNOISE_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_GABORNOISE_TEX)
 		case GABORNOISE_TEX:
 			GaborNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// CYCLESNOISE_TEX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CYCLES_BUMP_TEX)
         case CYCLES_BUMP_TEX: {
             const float precision = 4.76837158203125e-7f * fmax(1.f,
                     fmax(fabs(hitPoint->p.x), fmax(fabs(hitPoint->p.y), fabs(hitPoint->p.z))));
@@ -2215,6 +2366,8 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
             }
             break;
         }
+#endif
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CYCLES_NORMAL_MAP_TEX)
         case CYCLES_NORMAL_MAP_TEX: {
             float strength;
             float3 color;
@@ -2265,6 +2418,8 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
             else { EvalStack_PushFloat3(value); }
             break;
         }
+#endif
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_NORMAL_VECTOR_TEX)
 		case NORMAL_VECTOR_TEX: {
 			float3 value;
 			EvalStack_PopFloat3(value);
@@ -2281,6 +2436,8 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 			}
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_VECTOR_MAPPING_TEX)
 		case VECTOR_MAPPING_TEX: {
 			if (evalType == EVAL_FLOAT || evalType == EVAL_SPECTRUM) {
 				float3 scale, rotation, location, value;
@@ -2322,10 +2479,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				Texture_EvalOpGenericBump(evalStack, evalStackOffset, hitPoint, sampleDistance);
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_TEX) || defined(PARAM_TEX_CYCLESNOISE_TEX)
 		case CYCLESNOISE_TEX:
 			CyclesNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		default:
 			// Something wrong here

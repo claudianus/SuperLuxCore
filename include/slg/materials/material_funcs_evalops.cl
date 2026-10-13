@@ -113,154 +113,204 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 		//----------------------------------------------------------------------
 		// MATTE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_MATTE) || defined(PARAM_MAT_CYCLES_BSSRDF)
 		case MATTE:
 		case CYCLES_BSSRDF:
 			MatteMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// MATTETRANSLUCENT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_MATTETRANSLUCENT)
 		case MATTETRANSLUCENT:
 			MatteTranslucentMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// GLOSSY2
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_GLOSSY2)
 		case GLOSSY2:
 			Glossy2Material_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;			
+#endif
 		//----------------------------------------------------------------------
 		// METAL2
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_METAL2)
 		case METAL2:
 			Metal2Material_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;			
+#endif
 		//----------------------------------------------------------------------
 		// VELVET
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_VELVET)
 		case VELVET:
 			VelvetMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;	
+#endif
 		//----------------------------------------------------------------------
 		// CLOTH
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_CLOTH)
 		case CLOTH:
 			ClothMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// CARPAINT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_CARPAINT)
 		case CARPAINT:
 			CarPaintMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// ROUGHMATTE
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_ROUGHMATTE)
 		case ROUGHMATTE:
 			RoughMatteMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// ROUGHMATTETRANSLUCENT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_ROUGHMATTETRANSLUCENT)
 		case ROUGHMATTETRANSLUCENT:
 			RoughMatteTranslucentMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// GLOSSYTRANSLUCENT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_GLOSSYTRANSLUCENT)
 		case GLOSSYTRANSLUCENT:
 			GlossyTranslucentMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// DISNEY
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_DISNEY)
 		case DISNEY:
 			DisneyMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// NULLMAT
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_NULLMAT)
 		case NULLMAT:
 			NullMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// MIX
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_MIX)
 		case MIX:
 			MixMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// GLOSSYCOATING
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_GLOSSYCOATING)
 		case GLOSSYCOATING:
 			GlossyCoatingMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// MIRROR
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_MIRROR)
 		case MIRROR:
 			MirrorMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// GLASS
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_GLASS)
 		case GLASS:
 			GlassMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// ARCHGLASS
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_ARCHGLASS)
 		case ARCHGLASS:
 			ArchGlassMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// ROUGHGLASS
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_ROUGHGLASS)
 		case ROUGHGLASS:
 			RoughGlassMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// TWOSIDED
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_TWOSIDED)
 		case TWOSIDED:
 			TwoSidedMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HAIR
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_HAIR)
 		case HAIR:
 			HairMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// OPENPBR
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_OPENPBR)
 		case OPENPBR:
 			OpenPBRMat_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// DIFFRACTION
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_DIFFRACTION)
 		case DIFFRACTION:
 			DiffractionMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// CLEAR_VOL
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_CLEAR_VOL)
 		case CLEAR_VOL:
 			ClearVolMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HOMOGENEOUS_VOL
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_HOMOGENEOUS_VOL)
 		case HOMOGENEOUS_VOL:
 			HomogeneousVolMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		//----------------------------------------------------------------------
 		// HETEROGENEOUS_VOL
 		//----------------------------------------------------------------------
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_HETEROGENEOUS_VOL)
 		case HETEROGENEOUS_VOL:
 			HeterogeneousVolMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
+#endif
 		default:
 			// Something wrong here
 			break;

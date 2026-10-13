@@ -48,6 +48,21 @@ Spectrum CarPaintMaterial::Albedo(const HitPoint &hitPoint) const {
 Spectrum CarPaintMaterial::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,
 	float *directPdfW, float *reversePdfW) const {
+	// Two-sided: mirror a back-face hit into the front-face frame. Upstream
+	// flipped only H, so Dot(eye, H) went negative and the Schlick Fresnel
+	// (1 - cos)^5 blew up to 32x on back faces.
+	if (localEyeDir.z < 0.f)
+		return Evaluate(hitPoint, Vector(localLightDir.x, localLightDir.y, -localLightDir.z),
+				Vector(localEyeDir.x, localEyeDir.y, -localEyeDir.z), event, directPdfW, reversePdfW);
+	// Opaque reflector: no light from the other side (upstream leaked it)
+	if (localLightDir.z <= 0.f) {
+		if (directPdfW)
+			*directPdfW = 0.f;
+		if (reversePdfW)
+			*reversePdfW = 0.f;
+		return Spectrum();
+	}
+
 	Vector H = Normalize(localLightDir + localEyeDir);
 	if (H == Vector(0.f))
 	{
@@ -173,6 +188,14 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 	if (fabsf(localFixedDir.z) < DEFAULT_COS_EPSILON_STATIC)
 		return Spectrum();
 
+	// Two-sided, see Evaluate()
+	if (localFixedDir.z < 0.f) {
+		const Spectrum result = Sample(hitPoint, Vector(localFixedDir.x, localFixedDir.y, -localFixedDir.z),
+				localSampledDir, u0, u1, passThroughEvent, pdfW, event);
+		localSampledDir->z = -localSampledDir->z;
+		return result;
+	}
+
 	// Test presence of components
 	int n = 1; // already count the diffuse layer
 	int sampled = 0; // sampled layer
@@ -279,8 +302,10 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 				result += ks1 * FresnelTexture::SchlickEvaluate(r1, cosWH) *
 						otherCos * Clamp((1.f - G) / (denom * otherCos), 0.f, 1.f);
 		}
-	} else if ((passThroughEvent < 2.f / n  ||
-		(!l1 && passThroughEvent < 3.f / n)) && l2) {
+	} else if ((passThroughEvent < (l1 ? 3.f : 2.f) / n) && l2) {
+		// Upstream tested (pte < 2/n || (!l1 && pte < 3/n)): with layer 1
+		// present that range is already taken, so layer 2 was never sampled
+		// and layer 3 got 2/n while every pdf assumed 1/n per lobe
 		// Sample 2nd glossy layer
 		sampled = 2;
 		const float rough2 = m2 * m2;
@@ -483,6 +508,20 @@ Spectrum CarPaintMaterial::Sample(const HitPoint &hitPoint,
 void CarPaintMaterial::Pdf(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir,
 	float *directPdfW, float *reversePdfW) const {
+	// Two-sided, see Evaluate()
+	if (localEyeDir.z < 0.f) {
+		Pdf(hitPoint, Vector(localLightDir.x, localLightDir.y, -localLightDir.z),
+				Vector(localEyeDir.x, localEyeDir.y, -localEyeDir.z), directPdfW, reversePdfW);
+		return;
+	}
+	if (localLightDir.z <= 0.f) {
+		if (directPdfW)
+			*directPdfW = 0.f;
+		if (reversePdfW)
+			*reversePdfW = 0.f;
+		return;
+	}
+
 	Vector H = Normalize(localLightDir + localEyeDir);
 	if (H == Vector(0.f))
 	{

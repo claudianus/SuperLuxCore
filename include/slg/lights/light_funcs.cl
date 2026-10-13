@@ -1364,25 +1364,33 @@ OPENCL_FORCE_NOT_INLINE float3 EnvLight_GetRadiance(__global const LightSource *
 		float *emissionPdfW
 		LIGHTS_PARAM_DECL) {
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT)
 		case TYPE_IL_CONSTANT:
 			return ConstantInfiniteLight_GetRadiance(light, sceneRadius,
 					bsdf,
 					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL)
 		case TYPE_IL:
 			return InfiniteLight_GetRadiance(light, sceneRadius,
 					bsdf,
 					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_SKY2)
 		case TYPE_IL_SKY2:
 			return Sky2Light_GetRadiance(light, sceneRadius,
 					bsdf,
 					dir, directPdfA, emissionPdfW
 					LIGHTS_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SUN)
 		case TYPE_SUN:
 			return SunLight_GetRadiance(light, sceneRadius,
 					bsdf,
 					dir, directPdfA, emissionPdfW);
+#endif
 		case TYPE_SHARPDISTANT:
 			// Just return Black
 		case TYPE_DISTANT:
@@ -1417,6 +1425,7 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 		LIGHTS_PARAM_DECL) {
 	float3 radiance;
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT)
 		case TYPE_IL_CONSTANT:
 			radiance = ConstantInfiniteLight_Illuminate(
 					light,
@@ -1426,6 +1435,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL)
 		case TYPE_IL:
 			radiance = InfiniteLight_Illuminate(
 					light,
@@ -1435,6 +1446,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_SKY2)
 		case TYPE_IL_SKY2:
 			radiance = Sky2Light_Illuminate(
 					light,
@@ -1444,6 +1457,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SUN)
 		case TYPE_SUN:
 			radiance = SunLight_Illuminate(
 					light,
@@ -1452,6 +1467,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_TRIANGLE)
 		case TYPE_TRIANGLE:
 			radiance = TriangleLight_Illuminate(
 					light,
@@ -1462,6 +1479,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_POINT)
 		case TYPE_POINT:
 			radiance = PointLight_Illuminate(
 					light,
@@ -1469,6 +1488,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_MAPPOINT)
 		case TYPE_MAPPOINT:
 			radiance = MapPointLight_Illuminate(
 					light,
@@ -1477,6 +1498,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SPOT)
 		case TYPE_SPOT:
 			radiance = SpotLight_Illuminate(
 					light,
@@ -1484,6 +1507,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_PROJECTION)
 		case TYPE_PROJECTION:
 			radiance = ProjectionLight_Illuminate(
 					light,
@@ -1492,6 +1517,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SHARPDISTANT)
 		case TYPE_SHARPDISTANT:
 			radiance = SharpDistantLight_Illuminate(
 					light,
@@ -1500,6 +1527,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_DISTANT)
 		case TYPE_DISTANT:
 			radiance = DistantLight_Illuminate(
 					light,
@@ -1508,6 +1537,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_LASER)
 		case TYPE_LASER:
 			radiance = LaserLight_Illuminate(
 					light,
@@ -1515,6 +1546,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SPHERE)
 		case TYPE_SPHERE:
 			radiance = SphereLight_Illuminate(
 					light,
@@ -1522,6 +1555,8 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					shadowRay, directPdfW,
 					emissionPdfW, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_MAPSPHERE)
 		case TYPE_MAPSPHERE:
 			radiance = MapSphereLight_Illuminate(
 					light,
@@ -1530,6 +1565,7 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 					emissionPdfW, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
+#endif
 		default:
 			radiance = BLACK;
 	}
@@ -1540,7 +1576,7 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 	if (light->type != TYPE_TRIANGLE)
 		radiance = Spectral_Upsample(radiance, bsdf->hitPoint.spectralW,
 				bsdf->hitPoint.spectralHeroAlive, true,
-				spectralUpsamplingTable);
+				SLG_SPECTRAL_UPSAMPLING_TABLE);
 #endif
 	return radiance;
 }
@@ -1988,6 +2024,7 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 	const float envRadius = EnvLightSource_GetEnvRadius(sceneRadius);
 	float3 flux;
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT)
 		case TYPE_IL_CONSTANT:
 			flux = ConstantInfiniteLight_Emit(
 					light,
@@ -1995,6 +2032,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1, u2, u3,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL)
 		case TYPE_IL:
 			flux = InfiniteLight_Emit(
 					light,
@@ -2003,6 +2042,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_SKY2)
 		case TYPE_IL_SKY2:
 			flux = Sky2Light_Emit(
 					light,
@@ -2011,6 +2052,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SUN)
 		case TYPE_SUN:
 			flux = SunLight_Emit(
 					light,
@@ -2018,6 +2061,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1, u2, u3,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_DISTANT)
 		case TYPE_DISTANT:
 			flux = DistantLight_Emit(
 					light,
@@ -2025,6 +2070,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1, u2, u3,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SHARPDISTANT)
 		case TYPE_SHARPDISTANT:
 			flux = SharpDistantLight_Emit(
 					light,
@@ -2032,6 +2079,8 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_TRIANGLE)
 		case TYPE_TRIANGLE:
 			flux = TriangleLight_Emit(
 					light,
@@ -2040,44 +2089,59 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_POINT)
 		case TYPE_POINT:
 			flux = PointLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SPOT)
 		case TYPE_SPOT:
 			flux = SpotLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_LASER)
 		case TYPE_LASER:
 			flux = LaserLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SPHERE)
 		case TYPE_SPHERE:
 			flux = SphereLight_Emit(
 					light, time, u0, u1, u2, u3,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_MAPSPHERE)
 		case TYPE_MAPSPHERE:
 			flux = MapSphereLight_Emit(
 					light, time, u0, u1, u2, u3,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_MAPPOINT)
 		case TYPE_MAPPOINT:
 			flux = MapPointLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					LIGHTS_PARAM);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_PROJECTION)
 		case TYPE_PROJECTION:
 			flux = ProjectionLight_Emit(
 					light, time, u0, u1,
 					ray, emissionPdfW, directPdfA, cosThetaAtLight
 					IMAGEMAPS_PARAM);
 			break;
+#endif
 		default:
 			// Unsupported types are never picked: the host zeroes their
 			// emit distribution weight
@@ -2090,11 +2154,13 @@ OPENCL_FORCE_INLINE float3 Light_Emit(
 // subclasses - constant-infinite, infinite, sky2 and sun
 OPENCL_FORCE_INLINE bool Light_IsEnvironmental(__global const LightSource *light) {
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT) || defined(PARAM_LIGHT_TYPE_IL) || defined(PARAM_LIGHT_TYPE_IL_SKY2) || defined(PARAM_LIGHT_TYPE_SUN)
 		case TYPE_IL_CONSTANT:
 		case TYPE_IL:
 		case TYPE_IL_SKY2:
 		case TYPE_SUN:
 			return true;
+#endif
 		default:
 			return false;
 	}
@@ -2102,12 +2168,14 @@ OPENCL_FORCE_INLINE bool Light_IsEnvironmental(__global const LightSource *light
 
 OPENCL_FORCE_INLINE bool Light_IsEnvOrIntersectable(__global const LightSource *light) {
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT) || defined(PARAM_LIGHT_TYPE_IL) || defined(PARAM_LIGHT_TYPE_IL_SKY2) || defined(PARAM_LIGHT_TYPE_SUN) || defined(PARAM_LIGHT_TYPE_TRIANGLE)
 		case TYPE_IL_CONSTANT:
 		case TYPE_IL:
 		case TYPE_IL_SKY2:
 		case TYPE_SUN:
 		case TYPE_TRIANGLE:
 			return true;
+#endif
 		case TYPE_SPHERE:
 		case TYPE_MAPSPHERE:
 		case TYPE_POINT:
@@ -2144,6 +2212,7 @@ OPENCL_FORCE_INLINE float Light_GetAvgPassThroughTransparency(
 OPENCL_FORCE_INLINE float Light_ConnectionSolidAngle(
 		__global const LightSource* restrict light, const float3 P) {
 	switch (light->type) {
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_TRIANGLE)
 		case TYPE_TRIANGLE: {
 			const float3 toV = P - VLOAD3F(&light->triangle.centroid.x);
 			const float dist2 = dot(toV, toV);
@@ -2153,10 +2222,16 @@ OPENCL_FORCE_INLINE float Light_ConnectionSolidAngle(
 					sqrt(dist2);
 			return (1.f / light->triangle.invTriangleArea) * cosT / dist2;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SUN)
 		case TYPE_SUN:
 			return 2.f * M_PI_F * (1.f - light->notIntersectable.sun.cosThetaMax);
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_DISTANT)
 		case TYPE_DISTANT:
 			return 2.f * M_PI_F * (1.f - light->notIntersectable.distant.cosThetaMax);
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_SPHERE) || defined(PARAM_LIGHT_TYPE_MAPSPHERE)
 		case TYPE_SPHERE:
 		case TYPE_MAPSPHERE: {
 			const float3 lp = (light->type == TYPE_SPHERE) ?
@@ -2171,10 +2246,13 @@ OPENCL_FORCE_INLINE float Light_ConnectionSolidAngle(
 			const float sinT = r / dist;
 			return 2.f * M_PI_F * (1.f - sqrt(fmax(0.f, 1.f - sinT * sinT)));
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_LIGHT) || defined(PARAM_LIGHT_TYPE_IL) || defined(PARAM_LIGHT_TYPE_IL_SKY2) || defined(PARAM_LIGHT_TYPE_IL_CONSTANT)
 		case TYPE_IL:
 		case TYPE_IL_SKY2:
 		case TYPE_IL_CONSTANT:
 			return INFINITY;
+#endif
 		default:
 			// Point, mappoint, spot, projection, laser, sharpdistant
 			return 0.f;

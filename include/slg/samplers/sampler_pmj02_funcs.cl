@@ -113,8 +113,10 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_SplatSample(
 }
 
 OPENCL_FORCE_INLINE void PMJ02SamplerSharedData_GetNewBucket(__global SobolSamplerSharedData *samplerSharedData,
-		const uint bucketCount, uint *newBucketIndex) {
-	*newBucketIndex = atomic_inc(&samplerSharedData->bucketIndex) % bucketCount;
+		const uint bucketCount, const uint bucketSize,
+		uint *newBucketIndex, uint *newCycleStart) {
+	SamplerSharedData_GetNewBucket(&samplerSharedData->bucketIndex, bucketCount, bucketSize,
+			newBucketIndex, newCycleStart);
 }
 
 OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
@@ -150,7 +152,7 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
-	const uint bucketCycleStart = sample->bucketCycleStart;
+	uint bucketCycleStart = sample->bucketCycleStart;
 
 	// Bound for the adaptive re-pick loop below (see sobol sampler)
 	uint skipAttempts = 0;
@@ -167,9 +169,11 @@ OPENCL_FORCE_INLINE void PMJ02Sampler_InitNewSample(
 				// The task completed a full cyclic sweep of the bucket:
 				// ask for a new bucket (see RandomSample::bucketCycleStart)
 				PMJ02SamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
-						&bucketIndex);
+						bucketSize, &bucketIndex, &bucketCycleStart);
+				pixelOffset = bucketCycleStart;
 
 				sample->bucketIndex = bucketIndex;
+				sample->bucketCycleStart = bucketCycleStart;
 			}
 		}
 
@@ -284,9 +288,10 @@ OPENCL_FORCE_INLINE bool PMJ02Sampler_Init(__constant const GPUTaskConfiguration
 	__global RandomSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->pmj02.bucketSize;
-	// Staggered cyclic sweep (see RandomSample::bucketCycleStart)
-	sample->bucketCycleStart = gid % bucketSize;
-	sample->pixelOffset = sample->bucketCycleStart - 1;
+	// Wrap straight into the first bucket fetch, which picks the sweep
+	// start (see RandomSample::bucketCycleStart)
+	sample->bucketCycleStart = 0;
+	sample->pixelOffset = bucketSize - 1;
 	sample->passOffset = sampler->pmj02.superSampling;
 
 	PMJ02Sampler_NextSample(taskConfig,

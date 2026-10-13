@@ -531,8 +531,8 @@ OPENCL_FORCE_INLINE float HairH_FresnelC(const float cosI, const float eta) {
 			(((gs + c) * c - 1.f) / ((gs - c) * c + 1.f)));
 }
 OPENCL_FORCE_INLINE float HairH_EnergyScale(const float mu, const float sqrtAlpha,
-		const float eta) {
-	return 1.f / fmax(HairHuang_GlassE(mu, sqrtAlpha, eta), 1e-4f);
+		const float eta, __global const float* restrict kernelTables) {
+	return 1.f / fmax(HairHuang_GlassE(mu, sqrtAlpha, eta, kernelTables), 1e-4f);
 }
 OPENCL_FORCE_INLINE float3 HairH_SampleWh(const float alpha, const float3 wi,
 		const float3 wm, const float u0, const float u1) {
@@ -576,7 +576,8 @@ OPENCL_FORCE_INLINE float2 HairH_QuadWh2(const int q) {
 // Huang frame; returns f * |cos(wo . shadingNormal)| (LuxCore Evaluate value).
 OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 		__global const Material* restrict material,
-		__private const HairContext *ctx, const float3 woLight) {
+		__private const HairContext *ctx, const float3 woLight,
+		__global const float* restrict kernelTables) {
 	const float b = ctx->aspect;
 	const float e2 = 1.f - b * b;
 	const float alpha = ctx->rough;
@@ -607,7 +608,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 			const float F = HairH_FresnelC(dot(wi, wh), eta);
 			const float D = HairH_D(alpha2, dot(wmi, wh));
 			const float G = HairH_G(alpha2, cosMi, cosMo);
-			const float scale = HairH_EnergyScale(cosMi, sqrtAlpha, eta);
+			const float scale = HairH_EnergyScale(cosMi, sqrtAlpha, eta, kernelTables);
 			result += material->hair.scaleR * 0.25f * F * D * G * scale / cosMi;
 		}
 	}
@@ -625,7 +626,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 			float cosThetaT1;
 			const float F1 = HairH_FresnelT(cosHi1, eta, &cosThetaT1);
 			const float T1 = 1.f - F1;
-			const float scale1 = HairH_EnergyScale(cosMi, sqrtAlpha, eta);
+			const float scale1 = HairH_EnergyScale(cosMi, sqrtAlpha, eta, kernelTables);
 			const float3 wt = HairH_RefractAngle(wi, wh1, -cosThetaT1, invEta);
 			const float phiT = HairH_DirPhi(wt);
 			const float gammaMt = 2.f * HairH_ToPhi(phiT, b) - gammaMi;
@@ -642,7 +643,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 					2.f * cos(gammaMi - phiT) :
 					-length(HairH_ToPoint(gammaMi, b) - HairH_ToPoint(gammaMt + M_PI_F, b));
 			const float3 At = Spectrum_Exp(muA * (chord / HairH_CosTheta(wt)));
-			const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta);
+			const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta, kernelTables);
 
 			if (material->hair.scaleTT > 0.f && dot(wo, wt) >= invEta - 1e-5f) {
 				float3 wh2 = invEta * wo - wt;
@@ -701,7 +702,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 					const float cosHo3 = dot(wh3, -wo);
 					const float cosMi3 = dot(wmtr, wtr);
 					const float T3 = (1.f - HairH_FresnelC(cosHi3, invEta)) *
-							HairH_EnergyScale(cosMi3, sqrtAlpha, invEta);
+							HairH_EnergyScale(cosMi3, sqrtAlpha, invEta, kernelTables);
 					const float D3 = HairH_D(alpha2, cosMh3);
 					const float3 Atr = Spectrum_Exp(muA *
 							(HairH_IsCircular(b) ?
@@ -742,7 +743,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangEval(
 OPENCL_FORCE_INLINE float3 Hair_HuangSample(
 		__global const Material* restrict material,
 		__private const HairContext *ctx, __private float3 *woLight,
-		__private const float *u) {
+		__private const float *u, __global const float* restrict kernelTables) {
 	const float b = ctx->aspect;
 	const float alpha = ctx->rough;
 	const float alpha2 = alpha * alpha;
@@ -764,7 +765,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangSample(
 		return BLACK;
 	float cosThetaT1;
 	const float R1 = HairH_FresnelT(dot(wi, wh1), eta, &cosThetaT1);
-	const float scale1 = HairH_EnergyScale(cosMi1, sqrtAlpha, eta);
+	const float scale1 = HairH_EnergyScale(cosMi1, sqrtAlpha, eta, kernelTables);
 	const float R = material->hair.scaleR * R1 * scale1 *
 			(HairH_MicrofacetVisible(wr, wmi_, wh1) ? 1.f : 0.f) *
 			HairH_Go(alpha2, cosMi1, dot(wmi, wr));
@@ -793,7 +794,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangSample(
 		const float T1 = (1.f - R1) * scale1 *
 				HairH_Go(alpha2, cosMi1, dot(wmi, -wt));
 		const float T2 = 1.f - R2;
-		const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta);
+		const float scale2 = HairH_EnergyScale(cosMi2, sqrtAlpha, invEta, kernelTables);
 		wtt = HairH_RefractAngle(-wt, wh2, -cosThetaT2, eta);
 		if (dot(wmt, -wtt) > 0.f && T2 > 0.f &&
 				HairH_MicrofacetVisible(-wtt, wmt_, wh2)) {
@@ -816,7 +817,7 @@ OPENCL_FORCE_INLINE float3 Hair_HuangSample(
 					-length(HairH_ToPoint(gammaMt, b) - HairH_ToPoint(gammaMtr, b));
 			const float3 Atr = Spectrum_Exp(muA * chord2 / HairH_CosTheta(wtr));
 			const float3 TR = T1 * R2 * scale2 * At * Atr *
-					HairH_EnergyScale(cosMi3, sqrtAlpha, invEta) *
+					HairH_EnergyScale(cosMi3, sqrtAlpha, invEta, kernelTables) *
 					HairH_Go(alpha2, cosMi2, dot(wmt, -wtr));
 			const float T3 = 1.f - R3;
 			const float3 wmtr_ = HairH_SphgDir(0.f, gammaMtr, b);
@@ -885,7 +886,7 @@ OPENCL_FORCE_INLINE void HairMaterial_Albedo(__global const Material* restrict m
 	}
 	if (material->hair.model == 1) {
 		const float a = clamp(material->hair.scaleR *
-				HairH_EnergyScale(1.f, sqrt(ctx.rough), ctx.eta) +
+				HairH_EnergyScale(1.f, sqrt(ctx.rough), ctx.eta, kernelTables) +
 				material->hair.scaleTT + material->hair.scaleTRT, 0.f, 1.f);
 		EvalStack_PushFloat3(MAKE_FLOAT3(a, a, a));
 		return;
@@ -944,7 +945,7 @@ OPENCL_FORCE_INLINE void HairMaterial_Evaluate(__global const Material* restrict
 	if (material->hair.model == 1) {
 		const float3 woH = MAKE_FLOAT3(dot(lightDir, ctx.frameX),
 				dot(lightDir, ctx.frameY), dot(lightDir, ctx.frameZ));
-		result = Hair_HuangEval(material, &ctx, woH);
+		result = Hair_HuangEval(material, &ctx, woH, kernelTables);
 	} else {
 		result = Hair_f(hitPoint, &ctx, lightDir, eyeDir);
 	}
@@ -987,7 +988,7 @@ OPENCL_FORCE_INLINE void HairMaterial_Sample(__global const Material* restrict m
 				&u[6], &u[7]);
 
 		float3 woH;
-		const float3 eval = Hair_HuangSample(material, &ctx, &woH, u);
+		const float3 eval = Hair_HuangSample(material, &ctx, &woH, u, kernelTables);
 		if (Spectrum_IsBlack(eval)) {
 			MATERIAL_SAMPLE_RETURN_BLACK;
 		}

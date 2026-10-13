@@ -164,7 +164,7 @@ OPENCL_FORCE_INLINE void GenerateEyePath(
 			dofSampleX, dofSampleY);
 #endif
 
-	if (taskConfig->pathTracer.vertexConnect.enabled) {
+	if (PT_VC_ON(taskConfig)) {
 		// Vertex connection (M6) eye-prefix init (CPU BIDIR eye loop):
 		// dVCM = MIS(1/cameraPdfW), dVC = 0. The GPU cameraPdfW is the
 		// importance density only - the DoF lens pdf term of the CPU
@@ -252,7 +252,7 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		return;
 
 	const float3 throughput = VLOAD3F(pathThroughput->c);
-	const bool vcEnabled = taskConfig->pathTracer.vertexConnect.enabled;
+	const bool vcEnabled = PT_VC_ON(taskConfig);
 
 	for (uint i = 0; i < envLightCount; ++i) {
 		__global const LightSource* restrict light = &lights[envLightIndices[i]];
@@ -279,7 +279,7 @@ OPENCL_FORCE_INLINE void DirectHitInfiniteLight(__constant const Film* restrict 
 		// path, so the wavelengths come from the SampleResult).
 		const float3 envRadiance = Spectral_Upsample(envRadianceRGB,
 				sampleResult->spectralW, sampleResult->spectralHeroAlive, true,
-				spectralUpsamplingTable);
+				SLG_SPECTRAL_UPSAMPLING_TABLE);
 #else
 		const float3 envRadiance = envRadianceRGB;
 #endif
@@ -358,7 +358,7 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 
 	float directPdfA;
 	float emissionPdfW = 0.f;
-	const bool vcEnabled = taskConfig->pathTracer.vertexConnect.enabled;
+	const bool vcEnabled = PT_VC_ON(taskConfig);
 	const float3 emittedRadiance = BSDF_GetEmittedRadiance(bsdf, &directPdfA,
 			vcEnabled ? &emissionPdfW : NULL
 			LIGHTS_PARAM);
@@ -3325,7 +3325,7 @@ OPENCL_FORCE_INLINE float Portal_ShareAt(__global const float4 *rects,
 		__global const uint4 *guideNodes,
 		__global const float *guideLeaves,
 		const uint guidingEnable, const float3 p) {
-	__global const float *leaf = (guidingEnable != 0u) ?
+	__global const float *leaf = PT_GUIDING_ON(guidingEnable) ?
 			GuideTree_LeafAt(guideNodes, guideLeaves, p) : NULL;
 	if (!adapt || !leaf || ((uint)leaf[22] == 0u) ||
 			(leaf[20] < GUIDE_WARMUP_RECORDS))
@@ -3411,16 +3411,24 @@ OPENCL_FORCE_INLINE uint GuidingPass(__constant const GPUTaskConfiguration* rest
 	// the pass (observed as garbage ~1e9 values feeding GI reservoir
 	// stamps and guide seeds). Dispatch on the actual sampler type.
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER:
 			return ((__global TilePathSample *)samplesBuff)[gid].pass;
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL:
 			return ((__global SobolSample *)samplesBuff)[gid].pass;
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER:
 			return ((__global RandomSample *)samplesBuff)[gid].pass;
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_RANDOM)
 		case RANDOM:
 			// RANDOM never sets sample->pass; return 0 so GI reservoir
 			// stamps stay ordered (temporal reuse degrades to off).
 			return 0u;
+#endif
 		default:
 			return 0u;
 	}
@@ -3455,7 +3463,7 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 			MATERIALS_PARAM);
 
 	if (Spectrum_IsBlack(bsdfEval) ||
-			(taskConfig->pathTracer.hybridBackForward.enabled &&
+			(PT_HBF_ON(taskConfig) &&
 			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
 				// Adaptive partition: the pending connection vertex is
 				// the light-adjacent terminal; its lobe vs the light's
@@ -3480,7 +3488,7 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 	// Note: I was using a local variable before to save, use and than restore
 	// the depthInfo variable but it was triggering a AMD OpenCL compiler bug.
 	*tmpDepthInfo = pathInfo->depth;
-	PathDepthInfo_IncDepthsVol(tmpDepthInfo, event, bsdf->isVolume);
+	PathDepthInfo_IncDepthsVol(tmpDepthInfo, event, BSDF_IsVolumeDepthVertex(bsdf MATERIALS_PARAM));
 
 	const float directLightSamplingPdfW = info->directPdfW * info->pickPdf;
 	// risScale carries the RIS output weight of the ReSTIR DI reservoir
@@ -3491,7 +3499,7 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 	// Path guiding (P1-3 M4e): same mixture competitor as the CPU side
 	// (see PathTracer::DirectLightSampling)
 	float bouncePdfW = bsdfPdfW;
-	if (risZhat > 0.f) {
+	if (PT_GUIDING_COMPILED && (risZhat > 0.f)) {
 		// RIS product guiding (M4b): the bounce technique's effective
 		// density at w is pHat = t(w)/zHatMis with t = f|cos|*Lhat
 		// (single-cos convention, matching the candidate loop). risZhat
@@ -3507,7 +3515,7 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
 		bouncePdfW = tEval *
 				GuideTree_IncidentEstimate(risLeaf, shadowRayDir) / risZhat;
-	} else if (guidingEnable != 0u) {
+	} else if PT_GUIDING_ON(guidingEnable) {
 		const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
 		__global const float *guideLeaf = GuideTree_LeafAt(guideNodes,
 				guideLeaves, VLOAD3F(&bsdf->hitPoint.p.x));
@@ -3567,7 +3575,7 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 			!bsdf->hitPoint.throughShadowTransparency;
 
 	float weight;
-	if (taskConfig->pathTracer.vertexConnect.enabled) {
+	if (PT_VC_ON(taskConfig)) {
 		// Vertex connection (M6): CPU DirectLightSampling MIS -
 		//   weightLight = MIS(bsdfPdfW / directLightSamplingPdfW)
 		//   weightCamera = MIS(emissionPdfW*cosThetaToLight /
@@ -3968,9 +3976,9 @@ OPENCL_FORCE_INLINE float3 Mnee_SpecFactor(__global const Material *mat,
 				TEXTURES_PARAM);
 	if (mat->glass.sellmeierBTex != NULL_INDEX &&
 			mat->glass.sellmeierCTex != NULL_INDEX) {
-		sellB = Texture_GetSpectrumValue(mat->glass.sellmeierBTex, hitPoint
+		sellB = Texture_GetRawSpectrumValue(mat->glass.sellmeierBTex, hitPoint
 				TEXTURES_PARAM);
-		sellC = Texture_GetSpectrumValue(mat->glass.sellmeierCTex, hitPoint
+		sellC = Texture_GetRawSpectrumValue(mat->glass.sellmeierCTex, hitPoint
 				TEXTURES_PARAM);
 	}
 #endif
@@ -4165,7 +4173,7 @@ OPENCL_FORCE_NOT_INLINE int Mnee_Start(
 		const float worldRadius
 		LIGHTS_PARAM_DECL
 		) {
-	if (!taskConfig->pathTracer.mnee.enabled)
+	if (!PT_MNEE_ON(taskConfig))
 		return 0;
 
 	__global MneeState *mnee = &taskMnee->mnee;
@@ -4790,7 +4798,7 @@ OPENCL_FORCE_NOT_INLINE bool MneeChain_StartFromShadow(
 		__global EyePathInfo *pathInfo
 		LIGHTS_PARAM_DECL
 		) {
-	if (!taskConfig->pathTracer.mnee.enabled)
+	if (!PT_MNEE_ON(taskConfig))
 		return false;
 	if (taskConfig->pathTracer.mnee.maxSpecular <= 1)
 		return false;
@@ -6014,7 +6022,7 @@ OPENCL_FORCE_NOT_INLINE int LMnee_Start(
 		const float worldRadius
 		MATERIALS_PARAM_DECL
 		) {
-	if (!taskConfig->pathTracer.mnee.enabled)
+	if (!PT_MNEE_ON(taskConfig))
 		return 0;
 
 	__global MneeState *mnee = &taskMnee->mnee;
@@ -6995,7 +7003,7 @@ OPENCL_FORCE_NOT_INLINE bool LMneeChain_StartTail(
 		__global const SspTail *tail, const unsigned int blockerObjectID
 		MATERIALS_PARAM_DECL
 		) {
-	if (!taskConfig->pathTracer.mnee.enabled ||
+	if (!PT_MNEE_ON(taskConfig) ||
 			!taskConfig->pathTracer.mnee.sspEnable)
 		return false;
 	// Deterministic gate (CPU ConnectToEye parity): usable record, a
@@ -7046,7 +7054,7 @@ OPENCL_FORCE_NOT_INLINE bool LMneeChain_Start(
 		__global LightPathInfo *lpi
 		MATERIALS_PARAM_DECL
 		) {
-	if (!taskConfig->pathTracer.mnee.enabled)
+	if (!PT_MNEE_ON(taskConfig))
 		return false;
 	if (taskConfig->pathTracer.mnee.maxSpecular <= 1)
 		return false;
@@ -7478,7 +7486,7 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, __global float4* restrict guideRec15 \
 		/* Portal-guided bounce sampling (M5): 4 float4 records per
 		 * aperture rect (layout in Portal_RectPdfW). Null when
-		 * portalCount == 0; gated on taskConfig->pathTracer.portalCount. */ \
+		 * portalCount == 0; gated on PT_PORTAL_COUNT(taskConfig). */ \
 		, __global const float4* restrict portalRects \
 		/* Native curve primitives (Metal HWRT): control points (float4
 		 * xyz+radius), global per-segment start indices, per-cp attrs
@@ -7500,9 +7508,9 @@ OPENCL_FORCE_NOT_INLINE void LMnee_ProcessState(
 		, const uint taskQueueStride \
 		, const uint taskQueueState \
 		, const uint wavefrontEnable \
-		/* JH2019 spectral upsampling table (TEXTURES_PARAM tail): \
-		 * NULL unless path.spectral.upsampling=jh2019 */ \
-		, __global const float* restrict spectralUpsamplingTable \
+		/* Read-only lookup tables (TEXTURES_PARAM tail, \
+		 * KERNEL_TABLES_* layout in texture_types.cl) */ \
+		, __global const float* restrict kernelTables \
 		/* Heterogeneous volume majorant cells (TEXTURES_PARAM tail): \
 		 * NULL when no volume uses delta tracking */ \
 		, __global const float* restrict volMajorants \
@@ -7648,7 +7656,7 @@ __kernel void Init(
 	// the rays[] tail as masked so the first trace pass skips them
 	// (they are written by MK_DL_ILLUMINATE before they are ever
 	// consumed, but the buffer starts uninitialized).
-	const uint visCandCount = taskConfig->pathTracer.restir.visCandCount;
+	const uint visCandCount = PT_RESTIR_VIS_CAND(taskConfig);
 	for (uint i = 0; i < visCandCount; ++i)
 		rays[taskConfig->pathTracer.restir.visCandRayBase +
 				gid * visCandCount + i].flags = RAY_FLAGS_MASKED;

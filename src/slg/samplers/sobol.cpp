@@ -500,7 +500,13 @@ float SobolSampler::EvalAdaptiveThreshold(const u_int pixelX,
 			// moments) collapse to relErr=0 and would starve the
 			// pixel - leave noiseValid false so the film map, or
 			// full sampling, takes over.
-			if (isfinite(mom[0]) && isfinite(mom[1])) {
+			// A pixel that has only seen zero-luma samples has no
+			// relative-error estimate yet (0/0): rare-event pixels (a
+			// small emitter reached only by BSDF sampling, a caustic
+			// speck) start out exactly like that. Calling them converged
+			// would cut their sampling rate on the strength of their own
+			// zeros and bias the image dark - leave noiseValid false.
+			if (isfinite(mom[0]) && isfinite(mom[1]) && (mom[0] > 0.f)) {
 				const float mean = mom[0] / n;
 				const float var = Max(mom[1] / n - mean * mean, 0.f);
 				// std. error of the mean, relative to the mean
@@ -726,7 +732,15 @@ PropertiesUPtr SobolSampler::GetDefaultProps() {
 			Property("sampler.sobol.supersampling")(1) <<
 			Property("sampler.sobol.overlapping")(1) <<
 			Property("sampler.sobol.bluenoise.enable")(true) <<
-			Property("sampler.sobol.owen.enable")(true) <<
+			// Off: at equal time (arbitrary, non power-of-2 spp) the Owen
+			// path's nested-uniform index shuffle loses the sequential
+			// prefix stratification the blue-noise dithered Sobol keeps.
+			// 2026-10-13, 5 showcase scenes x 2 seeds, 30s, noise checked
+			// against an independent pair: Owen off is 1.3-1.4x more
+			// efficient on CPU (thin film 1.10 -> 1.56x upstream) and
+			// 1.04-1.4x on Metal; Owen without the rank-tile shift is
+			// in between (1.28x)
+			Property("sampler.sobol.owen.enable")(false) <<
 			Property("sampler.sobol.owen.tile.enable")(true) <<
 			Property("sampler.sobol.adaptive.moments.enable")(true) <<
 			Property("sampler.sobol.adaptive.relerr")(.02f);

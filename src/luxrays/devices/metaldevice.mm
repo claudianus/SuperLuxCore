@@ -48,6 +48,7 @@
 #include <sys/time.h>
 #include <algorithm>
 #include <map>
+#include <mutex>
 #include <vector>
 
 using namespace std;
@@ -970,6 +971,41 @@ void MetalDevice::SetKernelArgBuffer(HardwareDeviceKernelRPtr kernel,
 	metalDeviceKernel.argsDirty.store(true, std::memory_order_release);
 }
 
+// SUPERLUXCORE_METAL_PROFILE=1: per-kernel GPU time. Every dispatch gets
+// its own command buffer (no batching) and the GPUStart/EndTime span is
+// summed per function name; a table goes to stderr every ~5s. The extra
+// commit boundaries cost throughput, so compare shares, not absolute
+// samples/sec.
+static const bool metalKernelProfile = getenv("SUPERLUXCORE_METAL_PROFILE") != nullptr;
+static std::mutex metalProfileMutex;
+static std::map<std::string, std::pair<double, u_int>> metalProfileTimes;
+static double metalProfileLastPrint = 0.0;
+
+static void MetalProfileAdd(const std::string &name, const double gpuStart, const double gpuEnd) {
+	std::lock_guard<std::mutex> lock(metalProfileMutex);
+	auto &t = metalProfileTimes[name];
+	t.first += gpuEnd - gpuStart;
+	t.second++;
+	if (metalProfileLastPrint == 0.0)
+		metalProfileLastPrint = gpuEnd;
+	if (gpuEnd - metalProfileLastPrint < 5.0)
+		return;
+	metalProfileLastPrint = gpuEnd;
+	double total = 0.0;
+	for (const auto &kv : metalProfileTimes)
+		total += kv.second.first;
+	std::vector<std::pair<double, std::string>> rows;
+	for (const auto &kv : metalProfileTimes)
+		rows.push_back({kv.second.first, kv.first});
+	std::sort(rows.rbegin(), rows.rend());
+	fprintf(stderr, "[MetalProfile] total GPU %.3fs\n", total);
+	for (const auto &r : rows)
+		fprintf(stderr, "[MetalProfile] %6.2f%% %9.3fms/call %7u  %s\n",
+				100.0 * r.first / total,
+				1e3 * r.first / metalProfileTimes[r.second].second,
+				metalProfileTimes[r.second].second, r.second.c_str());
+}
+
 void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 		const HardwareDeviceRange &globalSize,
 		const HardwareDeviceRange &workGroupSize) {
@@ -1198,7 +1234,14 @@ void MetalDevice::EnqueueKernel(HardwareDeviceKernelRPtr kernel,
 	// EnqueueWriteBuffer conflict scan sees uncommitted work too.
 	pendingBuffers.insert(metalDeviceKernel.marshalUsed.begin(),
 			metalDeviceKernel.marshalUsed.end());
-	if (++pendingEncoderCount >= 64)   // bound CB memory / latency
+	if (metalKernelProfile) {
+		NSString *fname = [(__bridge id<MTLFunction>)metalDeviceKernel.function name];
+		const std::string name = fname ? fname.UTF8String : "?";
+		[cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+			MetalProfileAdd(name, done.GPUStartTime, done.GPUEndTime);
+		}];
+		CommitPendingLocked();
+	} else if (++pendingEncoderCount >= 64)   // bound CB memory / latency
 		CommitPendingLocked();
 
 	}   // @autoreleasepool
@@ -1241,7 +1284,12 @@ void MetalDevice::EncodePendingCompute(
 		encode((__bridge void *)e);
 		[e endEncoding];
 		pendingBuffers.insert(usedBuffers.begin(), usedBuffers.end());
-		if (++pendingEncoderCount >= 64)
+		if (metalKernelProfile) {
+			[(__bridge id<MTLCommandBuffer>)pendingCB addCompletedHandler:^(id<MTLCommandBuffer> done) {
+				MetalProfileAdd("<external encode: HWRT intersect>", done.GPUStartTime, done.GPUEndTime);
+			}];
+			CommitPendingLocked();
+		} else if (++pendingEncoderCount >= 64)
 			CommitPendingLocked();
 	}
 }

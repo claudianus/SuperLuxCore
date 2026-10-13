@@ -66,6 +66,7 @@ PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 		oclPixelFilter(nullptr), photonGICache(nullptr), lightSamplerSharedData(nullptr),
 		guideHasTable(false), guideCache(nullptr) {
 	writeKernelsToFile = false;
+	kernelTypeSpecialization = false;
 	// GPU light tracing: no light tasks until UpdateTaskCount splits
 	eyeTaskCount = 0;
 	lightTaskCount = 0;
@@ -385,10 +386,7 @@ string PathOCLBaseRenderEngine::GetCachedKernelsHash(const RenderConfig &renderC
 	const bool useGPUs = cfg.Get(GetDefaultProps()->Get("opencl.gpu.use")).Get<bool>();
 	const string oclDeviceConfig = cfg.Get(GetDefaultProps()->Get("opencl.devices.select")).Get<string>();
 	const bool spectralEnable = cfg.Get(PathTracer::GetDefaultProps()->Get("path.spectral.enable")).Get<bool>();
-	// The JH2019 upsampling model only changes a runtime kernel argument
-	// (the table buffer pointer), not the program source, so a cached
-	// binary would still be correct -- but include it in the hash anyway
-	// so a model switch never reuses a stale cache entry.
+	// The JH2019 upsampling model is a compile option (-D SLG_SPECTRAL_JH2019)
 	const string spectralUpsampling = cfg.IsDefined("spectral.upsampling") ?
 			cfg.Get("spectral.upsampling").Get<string>() :
 			cfg.Get(PathTracer::GetDefaultProps()->Get("path.spectral.upsampling")).Get<string>();
@@ -523,6 +521,9 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 	SLG_LOG("[PathOCLBaseRenderEngine] OpenCL max. page memory size: " << maxMemPageSize / 1024 << "Kbytes");
 
 	writeKernelsToFile = cfg.Get(Property("opencl.kernel.writetofile")(false)).Get<bool>();
+	// Off by default for RTPATHOCL: a viewport edit that introduces a new
+	// type would otherwise stall on a kernel recompile
+	kernelTypeSpecialization = cfg.Get(Property("opencl.kernel.typespecialization")(GetType() != RTPATHOCL)).Get<bool>();
 
 	//--------------------------------------------------------------------------
 	// Allocate PhotonGICache if enabled

@@ -215,7 +215,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffs(__global const Volume *vol,
 // "cb15" SSS parametrization, mirror of SSSRemapCB15 in homogenous.cpp:
 // requested albedo A is the measured external reflectance, inverted via
 // the vdH fit times the CB15 boundary ratio K(a,eta) = Rd(a,eta)/Rd(a,1)
-// (fixed-point iteration, helpers in materialdefs_funcs_generic.cl).
+// (bisection in SSSAlphaCB15(), materialdefs_funcs_generic.cl).
 // Pure vdH at eta<=1; Fresnel trapping compensation at eta>1. d is the
 // transport mfp.
 OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffsCB15(__global const Volume *vol,
@@ -239,12 +239,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolume_SSSCoeffsCB15(__global const Volume *
 		const float gi = (ch == 0) ? g.x : ((ch == 1) ? g.y : g.z);
 		const float di = (ch == 0) ? mfp.x : ((ch == 1) ? mfp.y : mfp.z);
 
-		float al = SSSAlphaVanDeHulst(Ad, gi);
-		for (int i = 0; i < 6; ++i) {
-			const float k = clamp(SSSRdDiffusion(al, eta) /
-					fmax(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
-			al = SSSAlphaVanDeHulst(clamp(Ad / k, 1e-4f, 0.999f), gi);
-		}
+		const float al = SSSAlphaCB15(Ad, gi, eta);
 		const float st = (1.f / fmax(di, 1e-6f)) / fmax(1.f - gi * al, 1e-6f);
 		if (ch == 0) { alpha->x = al; sigmaT->x = st; }
 		else if (ch == 1) { alpha->y = al; sigmaT->y = st; }
@@ -290,11 +285,85 @@ OPENCL_FORCE_INLINE float3 HomogeneousVolume_SigmaS(__global const Volume *vol, 
 	return clamp(sigmaS, 0.f, INFINITY);
 }
 
+// Random-walk SSS flight: chromatic distance sampling, mirror of
+// HomogeneousVolume::ScatterChromatic (homogenous.cpp). The channel is
+// picked proportionally to the path throughput and the distance pdf is the
+// balance-heuristic mixture over the channels.
+OPENCL_FORCE_INLINE float HomogeneousVolume_SegmentScatterChromatic(const float u,
+		const bool scatterAllowed, const float segmentLength,
+		const float3 sigmaA, const float3 sigmaS, const float3 emission,
+		const float3 channelWeights,
+		float3 *segmentTransmittance, float3 *segmentEmission) {
+	bool scatter = false;
+	*segmentTransmittance = WHITE;
+	*segmentEmission = BLACK;
+
+	float scatterDistance = segmentLength;
+	if (scatterAllowed && (fmax(sigmaS.x, fmax(sigmaS.y, sigmaS.z)) > 0.f)) {
+		float3 w = MAKE_FLOAT3(
+				(isfinite(channelWeights.x) && (channelWeights.x > 0.f)) ? channelWeights.x : 0.f,
+				(isfinite(channelWeights.y) && (channelWeights.y > 0.f)) ? channelWeights.y : 0.f,
+				(isfinite(channelWeights.z) && (channelWeights.z > 0.f)) ? channelWeights.z : 0.f);
+		float wSum = w.x + w.y + w.z;
+		if (!(wSum > 0.f)) {
+			w = WHITE;
+			wSum = 3.f;
+		}
+
+		// Pick the channel with u and reuse the remainder for the distance
+		float uc = u * wSum;
+		float wCh, sCh;
+		if ((uc < w.x) && (w.x > 0.f)) {
+			wCh = w.x; sCh = sigmaS.x;
+		} else {
+			uc -= w.x;
+			if (((uc < w.y) && (w.y > 0.f)) || !(w.z > 0.f)) {
+				wCh = w.y; sCh = sigmaS.y;
+			} else {
+				uc -= w.y;
+				wCh = w.z; sCh = sigmaS.z;
+			}
+		}
+		if (!(wCh > 0.f)) {
+			// Only reached when y and z are both zero
+			uc = u * wSum;
+			wCh = w.x; sCh = sigmaS.x;
+		}
+		const float u2 = clamp(uc / wCh, 0.f, 0.99999994f);
+
+		const float proposedScatterDistance = (sCh > 0.f) ? (-log(1.f - u2) / sCh) : INFINITY;
+		scatter = (proposedScatterDistance < segmentLength);
+		scatterDistance = scatter ? proposedScatterDistance : segmentLength;
+
+		const float3 tr = isinf(scatterDistance) ? BLACK : Spectrum_Exp(-scatterDistance * sigmaS);
+		const float3 terms = scatter ? (sigmaS * tr) : tr;
+		const float pdf = (w.x * terms.x + w.y * terms.y + w.z * terms.z) / wSum;
+		if (!(pdf > 0.f)) {
+			*segmentTransmittance = BLACK;
+			return -1.f;
+		}
+		*segmentTransmittance /= pdf;
+	}
+
+	const float3 sigmaT = sigmaA + sigmaS;
+	if (!Spectrum_IsBlack(sigmaT)) {
+		if (isinf(scatterDistance))
+			*segmentTransmittance = BLACK;
+		else
+			*segmentTransmittance *= Spectrum_Exp(-scatterDistance * sigmaT) * (scatter ? sigmaT : WHITE);
+	}
+
+	*segmentEmission += *segmentTransmittance * scatterDistance * emission;
+
+	return scatter ? scatterDistance : -1.f;
+}
+
 OPENCL_FORCE_INLINE float HomogeneousVolume_Scatter(__global const Volume *vol,
 		__global Ray *ray, const float hitT,
 		const float passThroughEvent,
 		const bool scatteredStart, float3 *connectionThroughput,
-		float3 *connectionEmission, __global HitPoint *tmpHitPoint
+		float3 *connectionEmission, __global HitPoint *tmpHitPoint,
+		const float3 channelWeights
 		TEXTURES_PARAM_DECL) {
 	const float3 rayOrig = VLOAD3F(&ray->o.x);
 	const float3 rayDir = VLOAD3F(&ray->d.x);
@@ -313,6 +382,18 @@ OPENCL_FORCE_INLINE float HomogeneousVolume_Scatter(__global const Volume *vol,
 			TEXTURES_PARAM);
 	const float3 emission = Volume_Emission(vol, tmpHitPoint
 			TEXTURES_PARAM);
+
+	if (vol->volume.homogenous.sssAlbedoTexIndex != NULL_INDEX) {
+		float3 segmentTransmittance, segmentEmission;
+		const float scatterDistance = HomogeneousVolume_SegmentScatterChromatic(passThroughEvent,
+				scatterAllowed, segmentLength, sigmaA, sigmaS, emission, channelWeights,
+				&segmentTransmittance, &segmentEmission);
+
+		*connectionEmission += *connectionThroughput * emission;
+		*connectionThroughput *= segmentTransmittance;
+
+		return (scatterDistance == -1.f) ? -1.f : (ray->mint + scatterDistance);
+	}
 
 	const float sigmaSValue = Spectrum_Filter(sigmaS);
 	if (vol->volume.homogenous.distanceSampling && (eqLightCount > 0u) &&
@@ -1011,24 +1092,32 @@ OPENCL_FORCE_NOT_INLINE float Volume_Scatter(__global const Volume *vol,
 		__global Ray *ray, const float hitT,
 		const float passThrough,
 		const bool scatteredStart, float3 *connectionThroughput,
-		float3 *connectionEmission, __global HitPoint *tmpHitPoint
+		float3 *connectionEmission, __global HitPoint *tmpHitPoint,
+		const float3 channelWeights
 		TEXTURES_PARAM_DECL) {
 	switch (vol->type) {
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_CLEAR_VOL)
 		case CLEAR_VOL:
 			return ClearVolume_Scatter(vol, ray, hitT,
 					passThrough, scatteredStart,
 					connectionThroughput, connectionEmission, tmpHitPoint
 					TEXTURES_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_HOMOGENEOUS_VOL)
 		case HOMOGENEOUS_VOL:
 			return HomogeneousVolume_Scatter(vol, ray, hitT,
 					passThrough, scatteredStart,
-					connectionThroughput, connectionEmission, tmpHitPoint
+					connectionThroughput, connectionEmission, tmpHitPoint,
+					channelWeights
 					TEXTURES_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_HETEROGENEOUS_VOL)
 		case HETEROGENEOUS_VOL:
 			return HeterogeneousVolume_Scatter(vol, ray, hitT,
 					passThrough, scatteredStart,
 					connectionThroughput, connectionEmission, tmpHitPoint
 					TEXTURES_PARAM);
+#endif
 		default:
 			return -1.f;
 	}
@@ -1046,6 +1135,7 @@ OPENCL_FORCE_NOT_INLINE float3 Volume_TransmittanceEstimate(__global const Volum
 	const float3 rayDir = VLOAD3F(&ray->d.x);
 
 	switch (vol->type) {
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_CLEAR_VOL)
 		case CLEAR_VOL: {
 			Volume_InitializeTmpHitPoint(tmpHitPoint, rayOrig, rayDir, passThrough);
 			const float3 sigmaT = ClearVolume_SigmaT(vol, tmpHitPoint
@@ -1055,6 +1145,8 @@ OPENCL_FORCE_NOT_INLINE float3 Volume_TransmittanceEstimate(__global const Volum
 			const float3 tau = clamp((hitT - ray->mint) * sigmaT, 0.f, INFINITY);
 			return Spectrum_Exp(-tau);
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_HOMOGENEOUS_VOL)
 		case HOMOGENEOUS_VOL: {
 			Volume_InitializeTmpHitPoint(tmpHitPoint, rayOrig, rayDir, passThrough);
 			const float3 sigmaT = HomogeneousVolume_SigmaA(vol, tmpHitPoint
@@ -1065,6 +1157,8 @@ OPENCL_FORCE_NOT_INLINE float3 Volume_TransmittanceEstimate(__global const Volum
 			const float3 tau = clamp((hitT - ray->mint) * sigmaT, 0.f, INFINITY);
 			return Spectrum_Exp(-tau);
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_VOL) || defined(PARAM_MAT_HETEROGENEOUS_VOL)
 		case HETEROGENEOUS_VOL: {
 			Seed seed;
 			Rnd_InitFloat(passThrough, &seed);
@@ -1078,6 +1172,7 @@ OPENCL_FORCE_NOT_INLINE float3 Volume_TransmittanceEstimate(__global const Volum
 						passThrough, tmpHitPoint, &seed
 						TEXTURES_PARAM);
 		}
+#endif
 		default:
 			return WHITE;
 	}

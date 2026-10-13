@@ -501,18 +501,26 @@ OPENCL_FORCE_NOT_INLINE void Camera_GenerateRay(
 		const float filmX, const float filmY, const float timeSample,
 		const float dofSampleX, const float dofSampleY) {
 	switch (camera->type) {
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_PERSPECTIVE)
 		case PERSPECTIVE:
 			PerspectiveCamera_GenerateRay(camera, cameraBokehDistribution, filmWidth, filmHeight, ray, volInfo, filmX, filmY, timeSample, dofSampleX, dofSampleY);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_ORTHOGRAPHIC)
 		case ORTHOGRAPHIC:
 			OrthographicCamera_GenerateRay(camera, filmWidth, filmHeight, ray, volInfo, filmX, filmY, timeSample, dofSampleX, dofSampleY);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_STEREO)
 		case STEREO:
 			StereoCamera_GenerateRay(camera, cameraBokehDistribution, filmWidth, filmHeight, ray, volInfo, filmX, filmY, timeSample, dofSampleX, dofSampleY);
 			break;
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_ENVIRONMENT)
 		case ENVIRONMENT:
 			EnvironmentCamera_GenerateRay(camera, filmWidth, filmHeight, ray, volInfo, filmX, filmY, timeSample, dofSampleX, dofSampleY);
 			break;
+#endif
 		default:
 			// Something really wrong here
 			break;
@@ -680,6 +688,7 @@ OPENCL_FORCE_NOT_INLINE bool Camera_SampleLens(
 
 	float3 p;
 	switch (camera->type) {
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_PERSPECTIVE)
 		case PERSPECTIVE: {
 			float lensU, lensV;
 			PerspectiveCamera_LocalSampleLens(&camera->persp,
@@ -687,9 +696,12 @@ OPENCL_FORCE_NOT_INLINE bool Camera_SampleLens(
 			p = MAKE_FLOAT3(lensU, lensV, 0.f);
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_ORTHOGRAPHIC)
 		case ORTHOGRAPHIC:
 			p = MAKE_FLOAT3(0.f, 0.f, 0.f);
 			break;
+#endif
 		default:
 			return false;
 	}
@@ -714,14 +726,18 @@ OPENCL_FORCE_NOT_INLINE bool Camera_GetSamplePosition(
 		const uint filmSubRegion0, const uint filmSubRegion1,
 		const uint filmSubRegion2, const uint filmSubRegion3) {
 	switch (camera->type) {
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_PERSPECTIVE)
 		case PERSPECTIVE:
 			return PerspectiveCamera_GetSamplePosition(camera, ray, x, y,
 					filmWidth, filmHeight,
 					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_ORTHOGRAPHIC)
 		case ORTHOGRAPHIC:
 			return OrthographicCamera_GetSamplePosition(camera, ray, x, y,
 					filmWidth, filmHeight,
 					filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3);
+#endif
 		default:
 			return false;
 	}
@@ -889,12 +905,16 @@ OPENCL_FORCE_NOT_INLINE bool Camera_GetPDF(
 		__global const Ray *eyeRay, const float eyeDistance,
 		float *pdfW, float *fluxToRadianceFactor) {
 	switch (camera->type) {
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_PERSPECTIVE)
 		case PERSPECTIVE:
 			PerspectiveCamera_GetPDF(camera, eyeRay, eyeDistance, pdfW, fluxToRadianceFactor);
 			return true;
+#endif
+#if !defined(PARAM_SPECIALIZE_CAMERA) || defined(PARAM_CAMERA_ORTHOGRAPHIC)
 		case ORTHOGRAPHIC:
 			OrthographicCamera_GetPDF(camera, pdfW, fluxToRadianceFactor);
 			return true;
+#endif
 		default:
 			return false;
 	}

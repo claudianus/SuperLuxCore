@@ -256,6 +256,38 @@ OPENCL_FORCE_INLINE __global const float *std_upper_bound(__global const float* 
 //	return it;
 //}
 
+// Must match Distribution1D::BuildGuide()
+OPENCL_FORCE_INLINE uint Distribution1D_GuideSize(const uint count) {
+	return (count < 64) ? 0 : (count / 4);
+}
+
+// Size in floats of a compiled Distribution1D: count, func[count],
+// cdf[count + 1], guideSize, guide[guideSize]
+OPENCL_FORCE_INLINE uint Distribution1D_Size(const uint count) {
+	return 1 + count + count + 1 + 1 + Distribution1D_GuideSize(count);
+}
+
+// The segment std::upper_bound(cdf, cdf + count + 1, u) - cdf - 1 finds,
+// searching only the guide bucket of u (see Distribution1D::FindSegment()).
+// Env-map rows are 4096 wide: 12 dependent global loads -> 2-4. The caller
+// has already handled u <= cdf[0] and u >= cdf[count].
+OPENCL_FORCE_INLINE uint Distribution1D_FindSegment(__global const float* restrict cdf,
+		const uint count, const float u) {
+	const uint guideSize = as_uint(cdf[count + 1]);
+	if (guideSize > 0) {
+		__global const float* restrict guide = &cdf[count + 2];
+		const uint g = min((uint)(u * (float)guideSize), guideSize - 1);
+		const uint lo = as_uint(guide[g]);
+		const uint hi = (g + 1 < guideSize) ? as_uint(guide[g + 1]) : (count - 1);
+		const uint offset = std_upper_bound(cdf + lo + 1, cdf + hi + 1, u) - cdf - 1;
+		// Float rounding at a bucket edge: fall back to the full search
+		if ((u >= cdf[offset]) && (u < cdf[offset + 1]))
+			return offset;
+	}
+
+	return std_upper_bound(cdf, cdf + count + 1, u) - cdf - 1;
+}
+
 OPENCL_FORCE_INLINE float Distribution1D_SampleContinuous(__global const float* restrict distribution1D, const float u,
 		float *pdf, uint *off) {
 	const uint count = as_uint(distribution1D[0]);
@@ -276,8 +308,7 @@ OPENCL_FORCE_INLINE float Distribution1D_SampleContinuous(__global const float* 
 		return 1.f;
 	}
 
-	__global const float* restrict ptr = std_upper_bound(cdf, cdf + count + 1, u);
-	const uint offset = ptr - cdf - 1;
+	const uint offset = Distribution1D_FindSegment(cdf, count, u);
 
 	// Compute offset along CDF segment
 	const float du = (u - cdf[offset]) /
@@ -319,8 +350,7 @@ OPENCL_FORCE_INLINE uint Distribution1D_SampleDiscreteExt(__global const float *
 		return count - 1;
 	}
 
-	__global const float* restrict ptr = std_upper_bound(cdf, cdf + count + 1, u);
-	const uint offset = ptr - cdf - 1;
+	const uint offset = Distribution1D_FindSegment(cdf, count, u);
 
 	// Compute offset along CDF segment
 	if (du)
@@ -374,10 +404,10 @@ OPENCL_FORCE_INLINE void Distribution2D_SampleContinuous(__global const float* r
 	const uint width = as_uint(distribution2D[0]);
 	const uint height = as_uint(distribution2D[1]);
 	__global const float* restrict marginal = &distribution2D[2];
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint marginalSize = 1 + height + height + 1;
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint conditionalSize = 1 + width + width + 1;
+	// size of Distribution1D: count + func + cdf + guide
+	const uint marginalSize = Distribution1D_Size(height);
+	// size of Distribution1D: count + func + cdf + guide
+	const uint conditionalSize = Distribution1D_Size(width);
 
 	float pdf1;
 	uint index;
@@ -397,10 +427,10 @@ OPENCL_FORCE_INLINE float Distribution2D_PdfExt(__global const float* restrict d
 	const uint width = as_uint(distribution2D[0]);
 	const uint height = as_uint(distribution2D[1]);
 	__global const float* restrict marginal = &distribution2D[2];
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint marginalSize = 1 + height + height + 1;
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint conditionalSize = 1 + width + width + 1;
+	// size of Distribution1D: count + func + cdf + guide
+	const uint marginalSize = Distribution1D_Size(height);
+	// size of Distribution1D: count + func + cdf + guide
+	const uint conditionalSize = Distribution1D_Size(width);
 
 	const uint index = Distribution1D_Offset(marginal, v);
 	__global const float *conditional = &distribution2D[2 + marginalSize + index * conditionalSize];
@@ -424,10 +454,10 @@ OPENCL_FORCE_INLINE void Distribution2D_SampleDiscrete(__global const float* res
 	const uint width = as_uint(distribution2D[0]);
 	const uint height = as_uint(distribution2D[1]);
 	__global const float* restrict marginal = &distribution2D[2];
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint marginalSize = 1 + height + height + 1;
-	// size of Distribution1D: size of counts + size of func + size of cdf
-	const uint conditionalSize = 1 + width + width + 1;
+	// size of Distribution1D: count + func + cdf + guide
+	const uint marginalSize = Distribution1D_Size(height);
+	// size of Distribution1D: count + func + cdf + guide
+	const uint conditionalSize = Distribution1D_Size(width);
 
 	float pdfs[2];
 	uv[1] = Distribution1D_SampleDiscreteExt(marginal, u1, &pdfs[1], du1);

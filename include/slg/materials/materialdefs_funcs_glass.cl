@@ -219,6 +219,33 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularTransmission(__global const
 	return lkt * ce;
 }
 
+// Mirror of CPU GlassMicrofacet_TransmitProb (glassmicrofacet.h): the
+// regularized lobe picks transmit/reflect by the Fresnel split
+// kt (1 - F) : kr F at the microfacet.
+OPENCL_FORCE_INLINE float GlassMaterial_GGXTransmitProb(const float3 kr, const float3 kt,
+		const float3 F, const bool isKrBlack, const bool isKtBlack) {
+	if (isKrBlack)
+		return 1.f;
+	if (isKtBlack)
+		return 0.f;
+	const float r = Spectrum_Filter(kr * F);
+	const float t = Spectrum_Filter(kt * (WHITE - F));
+	return (r + t > 0.f) ? (t / (r + t)) : .5f;
+}
+
+// Dielectric Fresnel of the glass at a signed cosine (sign = side)
+OPENCL_FORCE_INLINE float3 GlassMaterial_FresnelR(__global const HitPoint *hitPoint,
+		const float nc, const float nt, const float cauchyB,
+		const float3 sellB, const float3 sellC, const float cosTheta) {
+#if defined(SLG_SPECTRAL)
+	return Spectral_DispersiveFresnelR(nt, nc, cauchyB, sellB, sellC, cosTheta, hitPoint);
+#else
+	const float ntc = Spectral_RefIOR(nt, cauchyB, sellB, sellC) / nc;
+	const float f = FresnelCauchy_Evaluate(ntc, cosTheta);
+	return MAKE_FLOAT3(f, f, f);
+#endif
+}
+
 OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material* restrict material,
 		__global const HitPoint *hitPoint,
 		float3 lightDir, float3 eyeDir,
@@ -243,10 +270,10 @@ OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material
 	const float cauchyB = (material->glass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->glass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
 	const float3 sellB = (material->glass.sellmeierBTex != NULL_INDEX &&
 			material->glass.sellmeierCTex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 #if defined(SLG_SPECTRAL)
 	// Dispersion: the direction-defining wavelength is the hero bin
@@ -258,7 +285,6 @@ OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material
 
 	// CPU GlassMicrofacet_Evaluate: isotropic alpha = regularization.
 	const float alpha = hitPoint->regularization;
-	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
 
 	if (lightDir.z * eyeDir.z < 0.f) {
 		// Transmit
@@ -290,6 +316,7 @@ OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material
 		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
 				FresnelCauchy_Evaluate(ntc, cosThetaOH), FresnelCauchy_Evaluate(ntc, cosThetaOH));
 #endif
+		const float threshold = GlassMaterial_GGXTransmitProb(kr, kt, F, isKrBlack, isKtBlack);
 
 		const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
 		*directPdfW = threshold * specPdfD *
@@ -333,6 +360,7 @@ OPENCL_FORCE_INLINE void GlassMaterial_GGXDielectricEval(__global const Material
 		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaH),
 				FresnelCauchy_Evaluate(ntc, cosThetaH), FresnelCauchy_Evaluate(ntc, cosThetaH));
 #endif
+		const float threshold = GlassMaterial_GGXTransmitProb(kr, kt, F, isKrBlack, isKtBlack);
 
 		*directPdfW = (1.f - threshold) * specPdf;
 		// Regularized delta lobe is single-scatter: no multibounce.
@@ -390,10 +418,10 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	// sellB.x >= 0 selects Sellmeier dispersion (sellmeierb/c textures)
 	const float3 sellB = (material->glass.sellmeierBTex != NULL_INDEX &&
 			material->glass.sellmeierCTex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->glass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->glass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 
 	// PSR parity with CPU GlassMaterial::Sample: a regularized glass
@@ -442,16 +470,11 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 			wh = -wh;
 		const float cosThetaOH = dot(fixedDir, wh);
 
-		float threshold;
-		if (!isKrBlack) {
-			threshold = isKtBlack ? 0.f : .5f;
-		} else {
-			if (!isKtBlack)
-				threshold = 1.f;
-			else {
-				MATERIAL_SAMPLE_RETURN_BLACK;
-			}
-		}
+		// Fresnel split at the sampled microfacet (CPU
+		// GlassMicrofacet_TransmitProb)
+		const float3 Fsel = isKtBlack ? WHITE :
+				GlassMaterial_FresnelR(hitPoint, nc, nt, cauchyB, sellB, sellC, cosThetaOH);
+		const float threshold = GlassMaterial_GGXTransmitProb(kr, kt, Fsel, isKrBlack, isKtBlack);
 
 		float3 sampledDir;
 		BSDFEvent event;
@@ -471,6 +494,12 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 				cosThetaIH = -cosThetaIH;
 			const float length = eta * cosThetaOH + cosThetaIH;
 			sampledDir = length * wh - eta * fixedDir;
+			// Same-hemisphere refraction is no crossing (CPU
+			// GlassMicrofacet_Sample): reject instead of applying an
+			// unpaired eta^2 radiance scaling
+			if (fixedDir.z * sampledDir.z >= 0.f) {
+				MATERIAL_SAMPLE_RETURN_BLACK;
+			}
 
 			const float lengthSquared = length * length;
 			pdfW = specPdf * fabs(cosThetaIH) / lengthSquared;
@@ -564,14 +593,26 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	float threshold;
 	if (!Spectrum_IsBlack(refl)) {
 		if (!Spectrum_IsBlack(trans)) {
-			// Importance sampling
-			const float reflFilter = Spectrum_Filter(refl);
-			const float transFilter = Spectrum_Filter(trans);
-			threshold = transFilter / (reflFilter + transFilter);
+			if (CosTheta(fixedDir) < 0.f) {
+				// Leaving the interior: plain Fresnel split (CPU
+				// GlassMaterial::Sample) - the clamped split compounds
+				// into fireflies over the boundary hits of a random walk
+				const float3 F = GlassMaterial_FresnelR(hitPoint, nc, nt, cauchyB,
+						sellB, sellC, CosTheta(fixedDir));
+				const float reflFilter = Spectrum_Filter(kr * F);
+				const float transFilter = Spectrum_Filter(kt * (WHITE - F));
+				threshold = (reflFilter + transFilter > 0.f) ?
+						(transFilter / (reflFilter + transFilter)) : .5f;
+			} else {
+				// Importance sampling
+				const float reflFilter = Spectrum_Filter(refl);
+				const float transFilter = Spectrum_Filter(trans);
+				threshold = transFilter / (reflFilter + transFilter);
 
-			// A place an upper and lower limit to not under sample
-			// reflection or transmission
-			threshold = clamp(threshold, .25f, .75f);
+				// A place an upper and lower limit to not under sample
+				// reflection or transmission
+				threshold = clamp(threshold, .25f, .75f);
+			}
 		} else
 			threshold = 0.f;
 	} else {

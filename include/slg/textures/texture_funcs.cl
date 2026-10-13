@@ -154,7 +154,7 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		case CONST_FLOAT3: {
 			const float3 v = ConstFloat3Texture_ConstEvaluateSpectrum(tex);
 #if defined(SLG_SPECTRAL)
-			return Spectral_LeafEval(v, hitPoint, spectralUpsamplingTable);
+			return Spectral_LeafEval(v, hitPoint, SLG_SPECTRAL_UPSAMPLING_TABLE);
 #else
 			return v;
 #endif
@@ -162,7 +162,7 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		case IMAGEMAP: {
 			const float3 v = ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
 #if defined(SLG_SPECTRAL)
-			return Spectral_LeafEval(v, hitPoint, spectralUpsamplingTable);
+			return Spectral_LeafEval(v, hitPoint, SLG_SPECTRAL_UPSAMPLING_TABLE);
 #else
 			return v;
 #endif
@@ -172,6 +172,27 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		//----------------------------------------------------------------------
 		default:
 			return Texture_GetSpectrumValueSlowPath(texIndex, hitPoint TEXTURES_PARAM);
+	}
+}
+
+//------------------------------------------------------------------------------
+// Texture_GetRawSpectrumValue()
+//
+// Non-color float3 data (e.g. Sellmeier coefficients): leaf values are never
+// upsampled to the path wavelengths, matching the CPU EvalSpectrumValue().
+//------------------------------------------------------------------------------
+
+OPENCL_FORCE_INLINE float3 Texture_GetRawSpectrumValue(const uint texIndex,
+		__global const HitPoint *hitPoint
+		TEXTURES_PARAM_DECL) {
+	__global const Texture* restrict tex = &texs[texIndex];
+	switch (tex->type) {
+		case CONST_FLOAT3:
+			return ConstFloat3Texture_ConstEvaluateSpectrum(tex);
+		case IMAGEMAP:
+			return ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
+		default:
+			return Texture_GetSpectrumValue(texIndex, hitPoint TEXTURES_PARAM);
 	}
 }
 

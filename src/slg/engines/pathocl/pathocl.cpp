@@ -243,11 +243,14 @@ void PathOCLRenderEngine::UpdateTaskCount() {
 		// In this case, I will tune task count for RTPATHOCL
 		taskCount = GetFilm().GetWidth() * GetFilm().GetHeight() / intersectionDevices.size();
 	} else {
-		// Measured on M5 Pro (cornell + luxball PATHOCL): throughput is
-		// flat from 64K to 512K, so the 512K default only cost GPU memory
-		// (~3-4GB of taskState/tasksMnee/SampleResult). 128K keeps >1
-		// task per pixel at 720p and stays a power of two.
-		const u_int defaultTaskCount = 128ull * 1024ull;
+		// Upstream's 512K. Cornell + luxball are flat from 64K to 512K, but
+		// material-heavy scenes are not (M5 Pro Metal, 30s, 128K -> 512K):
+		// thin-film +6%, velvet +7%, rough metals +1-2% spp - more tasks
+		// per state queue keep the long material kernels occupied; RTX
+		// 5060 Ti 16GB (CUDA/OpenCL) +1-3% over 256K. ~1GB of task state
+		// at 512K (+1GB tasksMnee when MNEE is on); the caps below keep
+		// small cards where they were (same thresholds as upstream).
+		const u_int defaultTaskCount = 512ull * 1024ull;
 
 		// Compute the cap to the number of tasks
 		u_int taskCap = defaultTaskCount;

@@ -27,16 +27,26 @@ OPENCL_FORCE_INLINE float Sampler_GetSample(
 		const uint index
 		SAMPLER_PARAM_DECL) {
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_RANDOM)
 		case RANDOM:
 			return RandomSampler_GetSample(taskConfig, index SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL:
 			return SobolSampler_GetSample(taskConfig, index SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_METROPOLIS)
 		case METROPOLIS:
 			return MetropolisSampler_GetSample(taskConfig, index SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER:
 			return TilePathSampler_GetSample(taskConfig, index SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER:
 			return PMJ02Sampler_GetSample(taskConfig, index SAMPLER_PARAM);
+#endif
 		default:
 			// Something has gone very wrong here
 			return 0.f;
@@ -50,26 +60,36 @@ OPENCL_FORCE_INLINE void Sampler_SplatSample(
 		FILM_PARAM_DECL
 		) {
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_RANDOM)
 		case RANDOM:
 			return RandomSampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL:
 			return SobolSampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_METROPOLIS)
 		case METROPOLIS:
 			return MetropolisSampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER:
 			return TilePathSampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER:
 			return PMJ02Sampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
+#endif
 		default:
 			// Something has gone very wrong here
 			return;
@@ -85,6 +105,7 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_RANDOM)
 		case RANDOM:
 			return RandomSampler_NextSample(taskConfig,
 					filmNoise,
@@ -93,6 +114,8 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL:
 			return SobolSampler_NextSample(taskConfig,
 					filmNoise,
@@ -101,6 +124,8 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_METROPOLIS)
 		case METROPOLIS:
 			return MetropolisSampler_NextSample(taskConfig,
 					filmNoise,
@@ -109,6 +134,8 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER:
 			return TilePathSampler_NextSample(taskConfig,
 					filmNoise,
@@ -117,6 +144,8 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER:
 			return PMJ02Sampler_NextSample(taskConfig,
 					filmNoise,
@@ -125,6 +154,7 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
 		default:
 			// Something has gone very wrong here
 			return;
@@ -141,6 +171,7 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 		const uint filmSubRegion2, const uint filmSubRegion3
 		SAMPLER_PARAM_DECL) {
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_RANDOM)
 		case RANDOM:
 			return RandomSampler_Init(taskConfig,
 					filmNoise,
@@ -149,6 +180,8 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL:
 			return SobolSampler_Init(taskConfig,
 					filmNoise,
@@ -157,6 +190,8 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_METROPOLIS)
 		case METROPOLIS:
 			return MetropolisSampler_Init(taskConfig,
 					filmNoise,
@@ -165,6 +200,8 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER:
 			return TilePathSampler_Init(taskConfig,
 					filmNoise,
@@ -174,6 +211,8 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER:
 			return PMJ02Sampler_Init(taskConfig,
 					filmNoise,
@@ -182,6 +221,7 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+#endif
 		default:
 			// Something has gone very wrong here
 			return true;
@@ -222,6 +262,7 @@ OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
 		const uint filmWidth, const uint filmHeight
 		SAMPLER_PARAM_DECL) {
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL: {
 			__global SobolSample *samples = (__global SobolSample *)samplesBuff;
 			__global SobolSample *sample = &samples[gid];
@@ -235,6 +276,8 @@ OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
 			sample->rng1 = Rnd_FloatValue(seed);
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER: {
 			__global RandomSample *samples = (__global RandomSample *)samplesBuff;
 			samples[gid].pass = lightTaskIndex;
@@ -246,6 +289,8 @@ OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
 			sampleResult->pixelY = (lightTaskIndex / filmWidth) % filmHeight;
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER: {
 			__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
 			__global TilePathSample *sample = &samples[gid];
@@ -255,6 +300,7 @@ OPENCL_FORCE_INLINE void Sampler_LightTaskInit(
 			sample->rng1 = Rnd_FloatValue(seed);
 			break;
 		}
+#endif
 		default:
 			// RANDOM is seed driven; METROPOLIS light tasks are too
 			// (see Sampler_GetLightSample)
@@ -269,22 +315,28 @@ OPENCL_FORCE_INLINE void Sampler_LightNextSample(
 	const uint lightTaskCount = taskConfig->pathTracer.lightTracing.lightTaskCount;
 
 	switch (taskConfig->sampler.type) {
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_SOBOL)
 		case SOBOL: {
 			__global SobolSample *samples = (__global SobolSample *)samplesBuff;
 			__global SobolSample *sample = &samples[gid];
 			sample->pass += lightTaskCount;
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_PMJ02SAMPLER)
 		case PMJ02SAMPLER: {
 			__global RandomSample *samples = (__global RandomSample *)samplesBuff;
 			samples[gid].pass += 1u;
 			break;
 		}
+#endif
+#if !defined(PARAM_SPECIALIZE_SAMPLER) || defined(PARAM_SAMPLER_TILEPATHSAMPLER)
 		case TILEPATHSAMPLER: {
 			__global TilePathSample *samples = (__global TilePathSample *)samplesBuff;
 			samples[gid].pass += 1u;
 			break;
 		}
+#endif
 		default:
 			break;
 	}

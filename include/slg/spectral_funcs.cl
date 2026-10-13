@@ -482,15 +482,23 @@ OPENCL_FORCE_INLINE uint Spectral_SampleWavelengths(const float u1, float *w) {
 
 // ---------------------------------------------------------------------
 // JH2019 (Jakob-Hanika 2019 / rgb2spec) upsampling, opt-in via
-// path.spectral.upsampling=jh2019. The host uploads the coefficient table
-// of include/luxrays/core/color/spds/data/jh2019_32.h packed as
-// [scale[res] | coeffs[9*res^3]] floats; the pointer doubles as the model
-// switch inside Spectral_Upsample (NULL = Smits).
+// path.spectral.upsampling=jh2019 (-D SLG_SPECTRAL_JH2019). The host
+// appends the coefficient table of
+// include/luxrays/core/color/spds/data/jh2019_32.h to kernelTables packed as
+// [scale[res] | coeffs[9*res^3]] floats; SLG_SPECTRAL_UPSAMPLING_TABLE is the
+// pointer the call sites hand to Spectral_Upsample (NULL = Smits).
 // Device port of JH2019Fetch/JH2019Eval in src/luxrays/core/color/
 // spectral.cpp, itself a port of rgb2spec_fetch()/rgb2spec_eval_precise()
 // (https://github.com/mitsuba-renderer/rgb2spec, BSD-3-Clause,
 // (c) 2020 Wenzel Jakob). Must stay in sync bit-for-bit.
 #define SLG_SPECTRAL_JH2019_RES 32u
+
+// Needs kernelTables (TEXTURES_PARAM_DECL / KERNEL_ARGS) in scope
+#if defined(SLG_SPECTRAL_JH2019)
+#define SLG_SPECTRAL_UPSAMPLING_TABLE (kernelTables + KERNEL_TABLES_JH2019)
+#else
+#define SLG_SPECTRAL_UPSAMPLING_TABLE ((__global const float *)0)
+#endif
 
 OPENCL_FORCE_INLINE uint Spectral_JH2019FindInterval(
 		__global const float *scale, const float x) {
@@ -601,7 +609,7 @@ OPENCL_FORCE_INLINE float3 Spectral_UpsampleJH2019(const float3 rgb,
 
 // Same Smits decomposition as spectral.cpp Upsample(): luminance matched over
 // the full drawn wavelength set, writes masked by aliveMask. When the host
-// has uploaded the JH2019 table (spectralUpsamplingTable != NULL) the
+// selected JH2019 (SLG_SPECTRAL_UPSAMPLING_TABLE != NULL) the
 // sigmoid model runs instead and `emission` is unused (the table is
 // optimized for illuminant E and is used for both reflectance and
 // emission colors).
@@ -811,7 +819,7 @@ OPENCL_FORCE_INLINE float3 Spectral_KeepHeroBins(const float3 v,
 // (constfloat3, imagemap, hitpointcolor, ...) inside Texture_GetSpectrumValue
 // and the eval-op machine. The emission bit selects the Smits illuminant
 // basis for emission-context evals (Material_GetEmittedRadiance scope);
-// ignored under JH2019. `spectralUpsamplingTable` comes from
+// ignored under JH2019. `kernelTables` comes from
 // TEXTURES_PARAM_DECL scope at every expansion site.
 OPENCL_FORCE_INLINE float3 Spectral_LeafEval(const float3 rgb,
 		__global const HitPoint *hitPoint,
@@ -829,7 +837,7 @@ OPENCL_FORCE_INLINE float3 Spectral_LeafEval(const float3 rgb,
 // Spectral::ScopePause. `spectralRawDepth` must be in scope (a uint* for
 // Texture_EvalOp, a uint for the per-texture EvalOp delegates).
 #if defined(SLG_SPECTRAL)
-#define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) 		(((d) == 0u) ? Spectral_LeafEval((v), hitPoint, spectralUpsamplingTable) : (v))
+#define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) 		(((d) == 0u) ? Spectral_LeafEval((v), hitPoint, SLG_SPECTRAL_UPSAMPLING_TABLE) : (v))
 #define SLG_SPECTRAL_LEAF_EVAL(v) SLG_SPECTRAL_LEAF_EVAL_DEPTH((v), *spectralRawDepth)
 #else
 #define SLG_SPECTRAL_LEAF_EVAL_DEPTH(v, d) (v)

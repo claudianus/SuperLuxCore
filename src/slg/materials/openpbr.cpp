@@ -337,9 +337,9 @@ Spectrum OpenPBRMaterial::EvalGlossyRefl(const HitPoint &hitPoint, const Params 
 		return Spectrum(0.f); // index-matched interface: no reflection
 
 	const float mu = fabsf(Dot(wor, wh));
-	float F;
+	Spectrum F;
 	if (coat)
-		F = FresnelDielectric(mu, etaTI);
+		F = Spectrum(FresnelDielectric(mu, etaTI));
 	else if (p.filmWeight > 0.f && p.filmThickness > 0.f) {
 		const float etaFe = Lerp(p.coatWeight, p.filmIor / p.extIor,
 				p.filmIor / p.coatIor);
@@ -347,12 +347,14 @@ Spectrum OpenPBRMaterial::EvalGlossyRefl(const HitPoint &hitPoint, const Params 
 				p.filmIor, p.filmThickness, Spectrum(0.f), Spectrum(0.f), false,
 				p.specIor, p.disp);
 		const float Fnofilm = FresnelDielectricModulated(mu, etaTI, p.specWeight);
-		F = Lerp(p.filmWeight, Fnofilm, Ffilm.Filter());
+		// Keep the film's per-wavelength reflectance (the interference colour),
+		// like the GPU kernel; Filter() turned oil on water grey on the CPU
+		F = Lerp(p.filmWeight, Spectrum(Fnofilm), Ffilm);
 	} else
-		F = FresnelDielectricModulated(mu, etaTI, p.specWeight);
+		F = Spectrum(FresnelDielectricModulated(mu, etaTI, p.specWeight));
 
 	const float G2 = GgxG2(wir, wor, alphaT, alphaB);
-	return Spectrum(F) * (D * G2 * fabsf(wir.z) / Max(4.f * fabsf(wir.z * wor.z), 1e-7f));
+	return F * (D * G2 * fabsf(wir.z) / Max(4.f * fabsf(wir.z * wor.z), 1e-7f));
 }
 
 // Conductor reflection lobe (F82 tint + optional thin film).

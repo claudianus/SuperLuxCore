@@ -340,6 +340,72 @@ Distribution1D::Distribution1D(const std::span<float> data) :
 		for (u_int i = 0; i < count; ++i)
 			func[i] *= invFuncInt;
 	}
+
+	BuildGuide();
+}
+
+void Distribution1D::BuildGuide() {
+	guide.clear();
+	// Short tables: the hinted walk in FindSegment() is already a cache
+	// line or two
+	if (count < 64)
+		return;
+	// One bucket per 4 segments: +12.5% memory over func+cdf. The size
+	// rule is duplicated in Distribution1D_GuideSize() (mc_funcs.cl): the
+	// GPU computes Distribution2D row strides from it
+	const u_int guideSize = count / 4;
+	guide.resize(guideSize);
+	guide.shrink_to_fit();
+	const float invGuideSize = 1.f / guideSize;
+	u_int seg = 0;
+	for (u_int g = 0; g < guideSize; ++g) {
+		const float ug = g * invGuideSize;
+		// Last segment with cdf[seg] <= ug (upper_bound - 1 semantic)
+		while ((seg < count - 1) && (cdf[seg + 1] <= ug))
+			++seg;
+		guide[g] = seg;
+	}
+}
+
+// Returns the segment s with cdf[s] <= u < cdf[s + 1] that
+// upper_bound(cdf, u) - 1 finds - the same answer on every path, so
+// results are bit-identical to a plain binary search. The caller has
+// already handled u <= cdf[0] and u >= cdf[count].
+u_int Distribution1D::FindSegment(const float u) const {
+	u_int offset;
+	if (!guide.empty()) {
+		const u_int guideSize = (u_int)guide.size();
+		const u_int g = Min((u_int)(u * (float)guideSize), guideSize - 1);
+		const u_int lo = guide[g];
+		const u_int hi = (g + 1 < guideSize) ? guide[g + 1] : (count - 1);
+		offset = lo;
+		if (hi - lo <= 8) {
+			while ((offset < hi) && (u >= cdf[offset + 1]))
+				++offset;
+		} else {
+			const float *ptr = std::upper_bound(&cdf[lo + 1], &cdf[hi + 1], u);
+			offset = u_int(ptr - &cdf[0] - 1);
+		}
+	} else {
+		// Hinted segment search: for the smooth, roughly-uniform CDFs that
+		// pixel-filter tables produce, u * count lands within a segment or
+		// two of the answer - a short linear walk beats a binary search
+		// (~7 mispredicted iterations). For spiky tables the hint can be
+		// off by many segments, so cap the walk.
+		offset = Min((u_int)(u * (float)count), count - 1);
+		u_int walked = 0;
+		while (u < cdf[offset] && walked++ < 8)
+			--offset;
+		while ((u >= cdf[offset + 1]) && (offset < count - 1) && walked++ < 16)
+			++offset;
+	}
+	// Float rounding at a bucket edge (u * guideSize vs g / guideSize) or a
+	// capped walk: fall back to the full search
+	if ((u < cdf[offset]) || (u >= cdf[offset + 1])) {
+		const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
+		offset = u_int(ptr - &cdf[0] - 1);
+	}
+	return offset;
 }
 
 float Distribution1D::SampleContinuous(float u, float *pdf, u_int *off) const {
@@ -358,24 +424,7 @@ float Distribution1D::SampleContinuous(float u, float *pdf, u_int *off) const {
 			*off = count - 1;
 		return 1.f;
 	}
-	// Hinted segment search: for the smooth, roughly-uniform CDFs that
-	// pixel-filter tables produce, u * count lands within a segment or
-	// two of the answer - a short linear walk beats a binary search
-	// (~7 mispredicted iterations). For spiky tables (env-map light
-	// distributions) the hint can be off by many segments, so cap the
-	// walk and fall back to upper_bound on the remaining span. Finds
-	// the identical segment either way - bit-identical results.
-	u_int offset = (u_int)(u * (float)count);
-	offset = Min(offset, count - 1);
-	u_int walked = 0;
-	while (u < cdf[offset] && walked++ < 8)
-		--offset;
-	while ((u >= cdf[offset + 1]) && (offset < count - 1) && walked++ < 16)
-		++offset;
-	if ((u < cdf[offset]) || (u >= cdf[offset + 1])) {
-		const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
-		offset = u_int(ptr - &cdf[0] - 1);
-	}
+	const u_int offset = FindSegment(u);
 
 	// Compute offset along CDF segment
 	const float du = (u - cdf[offset]) /
@@ -415,20 +464,7 @@ u_int Distribution1D::SampleDiscrete(float u, float *pdf, float *du) const {
 		*pdf = func[count - 1] * invCount;
 		return count - 1;
 	}
-	// Same hinted walk as SampleContinuous: u * count is within a
-	// segment or two on roughly-uniform CDFs (pixel filters, light
-	// tables); fall back to upper_bound past the cap.
-	u_int offset = (u_int)(u * (float)count);
-	offset = Min(offset, count - 1);
-	u_int walked = 0;
-	while (u < cdf[offset] && walked++ < 8)
-		--offset;
-	while ((u >= cdf[offset + 1]) && (offset < count - 1) && walked++ < 16)
-		++offset;
-	if ((u < cdf[offset]) || (u >= cdf[offset + 1])) {
-		const float *ptr = std::upper_bound(&cdf[0], &cdf[0] + count + 1, u);
-		offset = u_int(ptr - &cdf[0] - 1);
-	}
+	const u_int offset = FindSegment(u);
 	assert ((offset >= 0) && (offset < count));
 
 	// Compute offset along CDF segment

@@ -84,6 +84,16 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Evaluate(__global const Material* rest
 	EvalStack_PopFloat3(eyeDir);
 	EvalStack_PopFloat3(lightDir);
 
+	// Two-sided: mirror a back-face hit into the front-face frame (see
+	// carpaint.cpp); an opaque reflector gets no light from the other side
+	if (eyeDir.z < 0.f) {
+		eyeDir.z = -eyeDir.z;
+		lightDir.z = -lightDir.z;
+	}
+	if (lightDir.z <= 0.f) {
+		MATERIAL_EVALUATE_RETURN_BLACK;
+	}
+
 	float3 H = normalize(lightDir + eyeDir);
 	if ((H.x == 0.f) && (H.y == 0.f) && (H.z == 0.f)) {
 		MATERIAL_EVALUATE_RETURN_BLACK;
@@ -190,6 +200,10 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	if (fabs(fixedDir.z) < DEFAULT_COS_EPSILON_STATIC) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
+	// Two-sided, see CarPaintMaterial_Evaluate()
+	const bool backFace = (fixedDir.z < 0.f);
+	if (backFace)
+		fixedDir.z = -fixedDir.z;
 
 	const float3 kaVal = Texture_GetSpectrumValue(material->carpaint.KaTexIndex, hitPoint TEXTURES_PARAM);
 	const float d = Texture_GetFloatValue(material->carpaint.depthTexIndex, hitPoint TEXTURES_PARAM);
@@ -307,8 +321,10 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 			result += ks1 * FresnelSchlick_Evaluate(TO_FLOAT3(r1), cosWH) *
 					CarPaint_SchlickMS(material, fabs(fixedDir.z), fabs(sampledDir.z), G);
 		}
-	} else if ((passThroughEvent < 2.f / n  ||
-		(!l1 && passThroughEvent < 3.f / n)) && l2) {
+	} else if ((passThroughEvent < (l1 ? 3.f : 2.f) / n) && l2) {
+		// Upstream tested (pte < 2/n || (!l1 && pte < 3/n)): with layer 1
+		// present that range is already taken, so layer 2 was never sampled
+		// and layer 3 got 2/n while every pdf assumed 1/n per lobe
 		// Sample 2nd glossy layer
 		sampled = 2;
 		const float rough2 = m2 * m2;
@@ -483,6 +499,8 @@ OPENCL_FORCE_INLINE void CarPaintMaterial_Sample(__global const Material* restri
 	// Adjust pdf and result
 	const float pdfW = pdf / n;
 	result = result / pdfW;
+	if (backFace)
+		sampledDir.z = -sampledDir.z;
 
 	EvalStack_PushFloat3(result);
 	EvalStack_PushFloat3(sampledDir);

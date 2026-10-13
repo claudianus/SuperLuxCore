@@ -307,11 +307,10 @@ protected:
 	luxrays::HardwareDeviceBuffer *lightIndexByTriIndexBuff;
 	luxrays::HardwareDeviceBuffer *imageMapDescsBuff;
 	std::vector<luxrays::HardwareDeviceBuffer *> imageMapsBuff;
-	// JH2019 (rgb2spec) spectral upsampling table, packed
-	// [scale[res] | coeffs[9*res^3]] floats. Allocated only when
-	// path.spectral.enable=1 and path.spectral.upsampling=jh2019; the
-	// kernel pointer doubles as the model switch (NULL = Smits).
-	luxrays::HardwareDeviceBuffer *spectralUpsamplingTableBuff;
+	// Read-only kernel lookup tables: GGX glass and Huang hair albedo
+	// LUTs, plus the JH2019 spectral upsampling table under
+	// path.spectral.upsampling=jh2019 (KERNEL_TABLES_* in texture_types.cl)
+	luxrays::HardwareDeviceBuffer *kernelTablesBuff;
 	// Heterogeneous volume majorant cells (all volumes concatenated);
 	// NULL when no volume uses delta tracking
 	luxrays::HardwareDeviceBuffer *volMajorantsBuff;

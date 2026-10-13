@@ -151,6 +151,9 @@ private:
 	// Scene-signature zero-config defaults (path.lighttracing.auto):
 	// resolves the light-pass enable before any engine/strategy reader.
 	void ApplyAutoLightTracing();
+	// Raises the volume/total path depth on scenes with SSS-parametrized
+	// media (path.pathdepth.volume.auto), see renderconfig.cpp
+	void ApplyAutoSSSDepth();
 
 	static void InitDefaultProperties();
 

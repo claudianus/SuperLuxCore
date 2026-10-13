@@ -54,9 +54,23 @@ OPENCL_FORCE_INLINE void RandomSampler_SplatSample(
 			FILM_PARAM);
 }
 
+// Bucket ticket -> bucket + sweep start: tickets hand buckets out round-robin,
+// so the lap (ticket / bucketCount) counts the tasks already sweeping this
+// bucket. Starting lap k at offset k % bucketSize gives the first bucketSize
+// tasks of a bucket distinct pixels (see RandomSample::bucketCycleStart)
+OPENCL_FORCE_INLINE void SamplerSharedData_GetNewBucket(__global uint *bucketTicket,
+		const uint bucketCount, const uint bucketSize,
+		uint *newBucketIndex, uint *newCycleStart) {
+	const uint ticket = atomic_inc(bucketTicket);
+	*newBucketIndex = ticket % bucketCount;
+	*newCycleStart = (ticket / bucketCount) % bucketSize;
+}
+
 OPENCL_FORCE_INLINE void RandomSamplerSharedData_GetNewBucket(__global RandomSamplerSharedData *samplerSharedData,
-		const uint bucketCount, uint *newBucketIndex) {
-	*newBucketIndex = atomic_inc(&samplerSharedData->bucketIndex) % bucketCount;
+		const uint bucketCount, const uint bucketSize,
+		uint *newBucketIndex, uint *newCycleStart) {
+	SamplerSharedData_GetNewBucket(&samplerSharedData->bucketIndex, bucketCount, bucketSize,
+			newBucketIndex, newCycleStart);
 }
 
 OPENCL_FORCE_INLINE void RandomSampler_InitNewSample(__constant const GPUTaskConfiguration* restrict taskConfig,
@@ -91,7 +105,7 @@ OPENCL_FORCE_INLINE void RandomSampler_InitNewSample(__constant const GPUTaskCon
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
-	const uint bucketCycleStart = sample->bucketCycleStart;
+	uint bucketCycleStart = sample->bucketCycleStart;
 
 	// Bound for the adaptive re-pick loop below (see sobol sampler)
 	uint skipAttempts = 0;
@@ -109,9 +123,11 @@ OPENCL_FORCE_INLINE void RandomSampler_InitNewSample(__constant const GPUTaskCon
 				// ask for a new bucket. The sweep stays staggered so the
 				// first pixel of the new bucket is at bucketCycleStart.
 				RandomSamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
-						&bucketIndex);
+						bucketSize, &bucketIndex, &bucketCycleStart);
+				pixelOffset = bucketCycleStart;
 
 				sample->bucketIndex = bucketIndex;
+				sample->bucketCycleStart = bucketCycleStart;
 			}
 		}
 
@@ -205,11 +221,10 @@ OPENCL_FORCE_INLINE bool RandomSampler_Init(
 	__global RandomSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->random.bucketSize;
-	// Staggered cyclic sweep: start this task's first bucket at a
-	// gid-derived offset so tasks sharing a bucket cover all pixel
-	// offsets on the first wave instead of sweeping in lockstep.
-	sample->bucketCycleStart = gid % bucketSize;
-	sample->pixelOffset = sample->bucketCycleStart - 1;
+	// Wrap straight into the first bucket fetch, which picks the sweep
+	// start (see RandomSample::bucketCycleStart)
+	sample->bucketCycleStart = 0;
+	sample->pixelOffset = bucketSize - 1;
 	sample->passOffset = sampler->sobol.superSampling;
 
 	RandomSampler_NextSample(taskConfig,

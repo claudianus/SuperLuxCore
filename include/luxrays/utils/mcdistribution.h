@@ -138,6 +138,8 @@ public:
 	const u_int GetCount() const { return count; }
 	const float *GetFuncs() const { return &func[0]; }
 	const float *GetCDFs() const { return &cdf[0]; }
+	u_int GetGuideSize() const { return (u_int)guide.size(); }
+	const u_int *GetGuide() const { return guide.data(); }
 
 	friend class boost::serialization::access;
 
@@ -151,7 +153,17 @@ private:
 		ar & funcInt;
 		ar & invCount;
 		ar & count;
+		if constexpr (Archive::is_loading::value)
+			BuildGuide();
 	}
+
+	// Guide table (Chen & Asau 1974 "cutpoint" search): guide[g] is the
+	// segment holding u = g / guide.size(), so a sample only searches the
+	// few segments of its own bucket. Env-map rows are 4096 wide - an
+	// unguided upper_bound walks ~12 cache lines of a 16KB row (DRAM
+	// misses: the 2048 rows are 64MB). Derived data, rebuilt on load.
+	void BuildGuide();
+	u_int FindSegment(const float u) const;
 
 	// Distribution1D Private Data
 	/*
@@ -167,6 +179,7 @@ private:
 	 * The number of function values. The number of cdf values is count+1.
 	 */
 	u_int count;
+	std::vector<u_int> guide;
 };
 
 class Distribution2D {

@@ -50,10 +50,10 @@ OPENCL_FORCE_INLINE float LightBVH_NodeImportance(
 		const float d2 = dot(q, q);
 
 		const float r2 = 0.25f * dot(bmax - bmin, bmax - bmin);
-		// Distance clamped to the cluster radius (CPU parity, see
-		// LightStrategyLightBVH::NodeImportance)
-		const float geo = 1.f / fmax(fmax(d2, r2), minDist2);
+		// Distance to the cluster centre clamped to the cluster radius
+		// (CPU parity, see LightStrategyLightBVH::NodeImportance)
 		const float dc2 = dot(c2x, c2x);
+		const float geo = 1.f / fmax(fmax(dc2, r2), minDist2);
 		float cosSurf = 1.f, cosOrient = 1.f;
 		if ((d2 > 0.f) && (dc2 > r2)) {
 			// Work in dot space: no asin/acos/cos calls. With

@@ -312,4 +312,74 @@ typedef struct {
 		float specularGlossinessThreshold;
 	} albedo;
 } PathTracer;
+
+#if defined(SLG_OPENCL_KERNEL)
+// Feature gates: every micro-kernel read of a feature's on/off flag goes
+// through these macros. A PARAM_NO_<feature> define compiles that
+// feature's branches out; without one the gate reads the runtime config.
+// The host does not pass them (2026-10-13): +1.4% spp on CUDA (RTX 5060,
+// velvet), ~0% on Metal, while each distinct feature combination would
+// become its own NVIDIA kernel program - a ~30 min first compile apiece.
+// Kept as hooks for a build that pins one feature set.
+#if defined(PARAM_NO_RESTIR_DI)
+#define PT_RESTIR_DI_ON(c) (false)
+#define PT_RESTIR_VIS_CAND(c) (0u)
+#else
+#define PT_RESTIR_DI_ON(c) ((c)->pathTracer.restir.enabled)
+#define PT_RESTIR_VIS_CAND(c) ((c)->pathTracer.restir.visCandCount)
+#endif
+#if defined(PARAM_NO_RESTIR_GI)
+#define PT_RESTIR_GI_ON(c) (false)
+#define PT_RESTIR_GI_CAND(c) (0u)
+#else
+#define PT_RESTIR_GI_ON(c) ((c)->pathTracer.restirGI.enabled)
+#define PT_RESTIR_GI_CAND(c) ((c)->pathTracer.restirGI.giCandCount)
+#endif
+#if defined(PARAM_NO_RESTIR_PT)
+#define PT_RESTIR_PT_ON(c) (false)
+#define PT_RESTIR_PT_CAND(c) (0u)
+#else
+#define PT_RESTIR_PT_ON(c) ((c)->pathTracer.restirPT.enabled)
+#define PT_RESTIR_PT_CAND(c) ((c)->pathTracer.restirPT.ptCandCount)
+#endif
+#if defined(PARAM_NO_VERTEX_CONNECT)
+#define PT_VC_ON(c) (false)
+#else
+#define PT_VC_ON(c) ((c)->pathTracer.vertexConnect.enabled)
+#endif
+#if defined(PARAM_NO_MNEE)
+#define PT_MNEE_ON(c) (false)
+#else
+#define PT_MNEE_ON(c) ((c)->pathTracer.mnee.enabled)
+#endif
+#if defined(PARAM_NO_PGIC_CAUSTIC)
+#define PT_PGIC_CAUSTIC_ON(c) (false)
+#else
+#define PT_PGIC_CAUSTIC_ON(c) ((c)->pathTracer.pgic.causticEnabled)
+#endif
+#if defined(PARAM_NO_PGIC_INDIRECT)
+#define PT_PGIC_INDIRECT_ON(c) (false)
+#else
+#define PT_PGIC_INDIRECT_ON(c) ((c)->pathTracer.pgic.indirectEnabled)
+#endif
+#if defined(PARAM_NO_PORTALS)
+#define PT_PORTAL_COUNT(c) (0u)
+#else
+#define PT_PORTAL_COUNT(c) ((c)->pathTracer.portalCount)
+#endif
+#if defined(PARAM_NO_HYBRID_BACKFORWARD)
+#define PT_HBF_ON(c) (false)
+#else
+#define PT_HBF_ON(c) ((c)->pathTracer.hybridBackForward.enabled)
+#endif
+// guidingEnable is a kernel argument (0 while the engine has no table)
+#if defined(PARAM_NO_GUIDING)
+#define PT_GUIDING_COMPILED (false)
+#define PT_GUIDING_ON(g) (false)
+#else
+#define PT_GUIDING_COMPILED (true)
+#define PT_GUIDING_ON(g) ((g) != 0u)
+#endif
+#endif
+
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

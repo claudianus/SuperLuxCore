@@ -36,6 +36,7 @@
 #include "slg/materials/cyclesbssrdf.h"
 #include "slg/materials/mix.h"
 #include "slg/materials/twosided.h"
+#include "slg/volumes/homogenous.h"
 #include "slg/scene/sceneobjectdefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/film/film.h"
@@ -228,6 +229,7 @@ void RenderConfig::Parse(const Properties &props) {
 
 	// Scene-signature defaults before any strategy reader
 	ApplyAutoLightTracing();
+	ApplyAutoSSSDepth();
 
 	UpdateFilmProperties(props);
 
@@ -270,12 +272,90 @@ static bool SceneHasCausticCapablePaths(SceneConstRef scene) {
 	return false;
 }
 
+// Any surface the MNEE solver can walk: delta specular (mirror, smooth
+// glass/dielectric)
+static bool SceneHasDeltaSurface(SceneConstRef scene) {
+	const auto &mats = scene.GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		if ((m.GetType() == NULLMAT) || m.IsVolume())
+			continue;
+		if ((m.GetEventTypes() & SPECULAR) || m.IsDelta())
+			return true;
+	}
+	return false;
+}
+
+// Narrower signature for the light pass: can the eye/light partition
+// (PathInfo::IsAdaptiveCausticPath / IsAdaptiveTerminalHard) hand any
+// path class to it? A surface terminal must be delta or glossy at or
+// under glossyThreshold; a medium terminal only counts once the chain
+// crossed a non-diffuse surface (causticHasSurface), so fog or SSS
+// alone among matte surfaces owns nothing. Without such a class the
+// light pass's task share is pure cost: 300 tiny bulbs over rough brass
+// ~30% more noise at equal time, a matte fog room half its eye passes.
+static bool SceneHasLightPassPaths(SceneConstRef scene, const float glossyThreshold) {
+	const auto &lightDefs = scene.GetLightSources();
+	if (lightDefs.GetSize() == 0)
+		return false;
+	// A glossy (non-delta) terminal only needs the light pass when some
+	// emitter is invisible to eye rays (point, spot, sphere, distant...):
+	// area and environment emitters are reached by the eye's own glossy
+	// bounce under MIS, so there the light pass is pure cost - 1.6-2x
+	// lower equal-time efficiency on area-lit rough-metal / thin-film
+	// scenes, with identical converged images. (Names: the lights vector needs
+	// Preprocess(), which hasn't run yet.)
+	bool eyeHiddenLight = false;
+	for (const auto &name : lightDefs.GetLightSourceNames()) {
+		const auto &l = lightDefs.GetLightSource(name);
+		if (!l.IsIntersectable() && !l.IsEnvironmental()) {
+			eyeHiddenLight = true;
+			break;
+		}
+	}
+	bool scatteringVolume = false;
+	bool nonDiffuseSurface = false;
+	const auto &mats = scene.GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		if (m.GetType() == NULLMAT)
+			continue;
+		if (m.IsVolume()) {
+			scatteringVolume |= (m.GetType() != CLEAR_VOL);
+			continue;
+		}
+		const BSDFEvent events = m.GetEventTypes();
+		if ((events & SPECULAR) || m.IsDelta())
+			return true;
+		if (events & GLOSSY) {
+			if (eyeHiddenLight && (m.GetGlossiness() <= glossyThreshold))
+				return true;
+			nonDiffuseSurface = true;
+		}
+	}
+	return scatteringVolume && nonDiffuseSurface;
+}
+
+// Glossiness above which the eye/light partition never hands a glossy
+// surface terminal to the light pass (PathInfo::IsAdaptiveTerminalHard /
+// IsCausticPath)
+static float LightPassGlossinessThreshold(const Properties &cfg) {
+	const auto defaultProps = PathTracer::GetDefaultProps();
+	if (cfg.Get(defaultProps->Get("path.hybridbackforward.adaptivecaustic")).Get<bool>())
+		return Clamp(cfg.Get(defaultProps->Get("path.hybridbackforward.terminalglossiness")).Get<float>(), 0.f, 1.f);
+	if (cfg.Get(defaultProps->Get("path.hybridbackforward.enable")).Get<bool>())
+		return Clamp(cfg.Get(defaultProps->Get("path.hybridbackforward.glossinessthreshold")).Get<float>(), 0.f, 1.f);
+	return .05f;
+}
+
 // Zero-config caustic stack (path.lighttracing.auto / path.mnee.auto,
 // both default on): when the user hasn't pinned the flags, enable the
 // light pass + the MNEE solver only on engines with a light-task
 // population and only when the scene can form caustic-class paths - on
 // diffuse-only scenes the tail tasks would deposit nothing (wasted
-// budget), so auto keeps the eye side at 100%.
+// budget), so auto keeps the eye side at 100%. The light pass itself
+// uses the narrower SceneHasLightPassPaths(); MNEE/PSR keep the wider
+// signature.
 void RenderConfig::ApplyAutoLightTracing() {
 	const string engineType = GetConfig().Get(
 		Property("renderengine.type")("PATHCPU")).Get<string>();
@@ -321,16 +401,20 @@ void RenderConfig::ApplyAutoLightTracing() {
 		return;
 	if (ltCapable &&
 			GetConfig().Get(Property("path.lighttracing.auto")(true)).Get<bool>() &&
-			!GetConfig().IsDefined("path.lighttracing.enable")) {
+			!GetConfig().IsDefined("path.lighttracing.enable") &&
+			SceneHasLightPassPaths(GetScene(), LightPassGlossinessThreshold(GetConfig()))) {
 		GetConfig().Set(Property("path.lighttracing.enable")(true));
 		SDL_LOG("path.lighttracing.auto: enabled light tracing"
 				" (caustic-capable scene signature)");
 	}
-	// MNEE covers the eye-side half of the same class: delta/glossy
-	// chains blocking a direct-light connect. It is near-free on scenes
-	// that never trigger it, and the solver gates itself per connect.
+	// MNEE covers the eye-side half of the same class: delta chains
+	// blocking a direct-light connect. The solver only ever walks delta
+	// specular vertices (pathtracer_mnee.cpp), so a glossy-only scene can
+	// never trigger it - there it was pure cost: the MNEE kernel stage
+	// plus ~1.9KB/task of GPU solver state (1GB at 512K tasks).
 	if (GetConfig().Get(Property("path.mnee.auto")(true)).Get<bool>() &&
-			!GetConfig().IsDefined("path.mnee.enable")) {
+			!GetConfig().IsDefined("path.mnee.enable") &&
+			SceneHasDeltaSurface(GetScene())) {
 		GetConfig().Set(Property("path.mnee.enable")(true));
 		SDL_LOG("path.mnee.auto: enabled the MNEE solver"
 				" (caustic-capable scene signature)");
@@ -351,6 +435,95 @@ void RenderConfig::ApplyAutoLightTracing() {
 					"halflife=64spp (caustic-capable scene signature)");
 		}
 	}
+}
+
+void RenderConfig::ApplyAutoSSSDepth() {
+	const string engineType = GetConfig().Get(
+		Property("renderengine.type")("PATHCPU")).Get<string>();
+	const bool isOCL = (engineType == "PATHOCL") ||
+			(engineType == "TILEPATHOCL") || (engineType == "RTPATHOCL");
+	if (!isOCL && (engineType != "PATHCPU") && (engineType != "RTPATHCPU") &&
+			(engineType != "TILEPATHCPU"))
+		return;
+	if (!GetConfig().Get(Property("path.pathdepth.volume.auto")(true)).Get<bool>())
+		return;
+
+	bool hasSSS = false;
+	const auto &mats = GetScene().GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		if ((m.GetType() == HOMOGENEOUS_VOL) &&
+				static_cast<const HomogeneousVolume &>(m).IsSSSParametrized()) {
+			hasSSS = true;
+			break;
+		}
+	}
+	if (!hasSSS)
+		return;
+
+	// A subsurface random walk is one path vertex per scatter, and with
+	// the engine defaults (total 6, volume 0 = scatters count as diffuse,
+	// diffuse 4) the walk is cut after ~4 steps: an OpenPBR sphere with
+	// subsurface_color .8 and a radius 1/100 of its size rendered .13 in
+	// a white furnace instead of .78 (together with the boundary
+	// reflections, see BSDF::IsVolumeDepthVertex()). The walk albedo after the CB15
+	// remap is ~.99+, so the step count has a long tail: a volume depth
+	// of 256 still lost 5%, 512 lost 1.4%, 1024 converged (render time
+	// +45% over 256 on that furnace - walks end on their own, the cap
+	// only bounds the tail).
+	const int sssVolumeDepth = 1024;
+	if (GetConfig().IsDefined("path.pathdepth.volume")) {
+		// Explicit volume budget: only fill a missing total around it
+		const int volume = GetConfig().Get("path.pathdepth.volume").Get<int>();
+		if (volume <= 0) {
+			SDL_LOG("WARNING: the scene has subsurface scattering media but"
+					" path.pathdepth.volume = 0 counts their random-walk steps"
+					" as diffuse bounces: the walks are truncated and dark");
+			return;
+		}
+		if (!GetConfig().IsDefined("path.pathdepth.total") &&
+				!GetConfig().IsDefined("path.maxdepth")) {
+			GetConfig().Set(Property("path.pathdepth.total")(6 + volume));
+			SDL_LOG("path.pathdepth.volume.auto: total depth " << (6 + volume) <<
+					" (default surface budget + volume depth " << volume << ")");
+		}
+		return;
+	}
+	// The Metropolis sampler on the GPU stores every sample dimension
+	// per task (2 x 10 floats per path vertex x task count): a 1000+
+	// vertex budget does not fit, leave the choice to the user
+	if (isOCL && (GetConfig().Get(Property("sampler.type")("SOBOL")).Get<string>() ==
+			"METROPOLIS")) {
+		SDL_LOG("WARNING: the scene has subsurface scattering media; their"
+				" random walks are truncated by the path depth, which is not"
+				" raised automatically with the GPU Metropolis sampler - set"
+				" path.pathdepth.volume and path.pathdepth.total");
+		return;
+	}
+
+	// No volume budget given (legacy 0: walk steps count as diffuse
+	// bounces and against the total): give the walk its own budget on
+	// top of the surface one, so an explicit total keeps its meaning
+	// (Blender exports always set it) and surface paths are unchanged
+	int surfaceTotal = 6;
+	if (GetConfig().IsDefined("path.pathdepth.total"))
+		surfaceTotal = GetConfig().Get("path.pathdepth.total").Get<int>();
+	else if (GetConfig().IsDefined("path.maxdepth") &&
+			!GetConfig().IsDefined("path.pathdepth.diffuse") &&
+			!GetConfig().IsDefined("path.pathdepth.glossy") &&
+			!GetConfig().IsDefined("path.pathdepth.specular")) {
+		// Legacy single depth: setting path.pathdepth.total turns off the
+		// path.maxdepth compatibility in PathTracer::ParseOptions(), so
+		// spell out the per-event depths it would have used
+		surfaceTotal = GetConfig().Get("path.maxdepth").Get<int>();
+		for (const string k : {"diffuse", "glossy", "specular"})
+			GetConfig().Set(Property("path.pathdepth." + k)(surfaceTotal));
+	}
+	const int total = surfaceTotal + sssVolumeDepth;
+	GetConfig().Set(Property("path.pathdepth.volume")(sssVolumeDepth));
+	GetConfig().Set(Property("path.pathdepth.total")(total));
+	SDL_LOG("path.pathdepth.volume.auto: volume depth " << sssVolumeDepth <<
+			", total depth " << total << " (subsurface scattering media)");
 }
 
 void RenderConfig::DeleteAllFilmImagePipelinesProperties() {

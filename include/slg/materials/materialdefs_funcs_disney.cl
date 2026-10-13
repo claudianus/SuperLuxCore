@@ -480,10 +480,10 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Evaluate(__global const Material* restri
 						? Texture_GetFloatValue(material->disney.cauchyBTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
 	const float3 sellB = (material->disney.sellmeierBTexIndex != NULL_INDEX &&
 			material->disney.sellmeierCTexIndex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->disney.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->disney.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->disney.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->disney.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 
 	BSDFEvent event;
@@ -506,9 +506,12 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Evaluate(__global const Material* restri
 						0.0f, 1.0f) : -1.f,
 		localFilmAmount, localFilmThickness, localFilmIor,
 		transmissionVal, transmissionRoughnessVal, nc, nt, cauchyB, sellB, sellC,
-		material->disney.multibounce)
-		// Evaluate() follows LuxRender habit to return the result multiplied by cosThetaToLight
-		* fabs(CosTheta(lightDir));
+		material->disney.multibounce);
+	// Evaluate() follows LuxRender habit to return the result multiplied by
+	// cosThetaToLight: DisneyMaterial_DisneyEvaluate() already includes it
+	// (Sample() divides the same value by the pdf). Multiplying again here
+	// darkened every Disney NEE/light-tracing connection by cos(theta_l)
+	// while BSDF-sampled hits stayed correct.
 
 	if (Spectrum_IsBlack(result)) {
 		MATERIAL_EVALUATE_RETURN_BLACK;
@@ -607,10 +610,10 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Sample(__global const Material* restrict
 		? Texture_GetFloatValue(material->disney.cauchyBTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
 	const float3 sellB = (material->disney.sellmeierBTexIndex != NULL_INDEX &&
 			material->disney.sellmeierCTexIndex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->disney.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->disney.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->disney.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->disney.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 
 	const float3 wo = fixedDir;

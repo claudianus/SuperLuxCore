@@ -83,10 +83,10 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
 	const float3 sellB = (material->roughglass.sellmeierBTex != NULL_INDEX &&
 			material->roughglass.sellmeierCTex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 #if defined(SLG_SPECTRAL)
 	// Dispersion: the direction-defining wavelength is the hero bin
@@ -276,10 +276,10 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
 	const float3 sellB = (material->roughglass.sellmeierBTex != NULL_INDEX &&
 			material->roughglass.sellmeierCTex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->roughglass.sellmeierBTex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	const float3 sellC = (sellB.x >= 0.f) ?
-			Texture_GetSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->roughglass.sellmeierCTex, hitPoint TEXTURES_PARAM) :
 			BLACK;
 #if defined(SLG_SPECTRAL)
 	// Dispersion: the direction-defining wavelength is the hero bin

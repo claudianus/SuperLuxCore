@@ -149,8 +149,8 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 	float3 throughput = MAKE_FLOAT3(color.x > 0.f ? 1.f : 0.f, color.y > 0.f ? 1.f : 0.f, color.z > 0.f ? 1.f : 0.f);
 	if (radiusRGB.x < 1e-8f || radiusRGB.y < 1e-8f || radiusRGB.z < 1e-8f) {
 		const float total = color.x + color.y + color.z;
-		const float local = (radiusRGB.x < 1e-8f ? color.x : 0.f) + (radiusRGB.y < 1e-8f ? color.y : 0.f) + (radiusRGB.z < 1e-8f ? color.z : 0.f);
-		const float probability = total > 0.f ? local / total : 1.f;
+		const float localWeight = (radiusRGB.x < 1e-8f ? color.x : 0.f) + (radiusRGB.y < 1e-8f ? color.y : 0.f) + (radiusRGB.z < 1e-8f ? color.z : 0.f);
+		const float probability = total > 0.f ? localWeight / total : 1.f;
 		if (CyclesBSSRDF_Random(s) < probability) {
 			const float3 mask = MAKE_FLOAT3(radiusRGB.x < 1e-8f ? 1.f / probability : 0.f, radiusRGB.y < 1e-8f ? 1.f / probability : 0.f, radiusRGB.z < 1e-8f ? 1.f / probability : 0.f);
 			VSTORE3F(VLOAD3F(state->throughput.c) * mask, state->throughput.c);
@@ -167,9 +167,9 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 		// shared by all backends, with explicit vector component reads.
 		const float rgbRadius = i == 0u ? radiusRGB.x : (i == 1u ? radiusRGB.y : radiusRGB.z);
 		const float transportRadius = i == 0u ? radius.x : (i == 1u ? radius.y : radius.z);
-		const bool local = rgbRadius < 1e-8f;
-		s->sigmaT.c[i] = local ? 1.f : 1.f / fmax(transportRadius, 1e-16f);
-		if (local) s->alpha.c[i] = 0.f;
+		const bool isLocal = rgbRadius < 1e-8f;
+		s->sigmaT.c[i] = isLocal ? 1.f : 1.f / fmax(transportRadius, 1e-16f);
+		if (isLocal) s->alpha.c[i] = 0.f;
 		else if (s->alpha.c[i] < .2f) { s->throughput.c[i] *= s->alpha.c[i] / .2f; s->alpha.c[i] = .2f; }
 	}
 	const float roughness = clamp(Texture_GetFloatValue(p->roughnessTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
@@ -191,8 +191,8 @@ OPENCL_FORCE_INLINE int CyclesBSSRDF_Start(__global GPUTask *task, __global GPUT
 		const float3 landing = geometrySide * geometryN;
 		float3 x, y;
 		CoordinateSystem(landing, &x, &y);
-		const float3 local = CosineSampleHemisphere(boundaryU0, boundaryU1);
-		direction = normalize(local.x * x + local.y * y - local.z * landing);
+		const float3 localDir = CosineSampleHemisphere(boundaryU0, boundaryU1);
+		direction = normalize(localDir.x * x + localDir.y * y - localDir.z * landing);
 		const float geometryCos = fabs(dot(fixedWorld, geometryN));
 		if (!(geometryCos > 0.f)) return -1;
 		VSTORE3F(VLOAD3F(s->throughput.c) *
@@ -347,9 +347,9 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 		// snapshot the pre-contribution ledger (radiance has not yet
 		// received this vertex's emission/DL terms, matching the CPU
 		// capture between Intersect() and the contribution section).
-		if (taskConfig->pathTracer.restirPT.enabled &&
-				(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
-			const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+		if (PT_RESTIR_PT_ON(taskConfig) &&
+				(PT_RESTIR_PT_CAND(taskConfig) > 0u)) {
+			const uint ptK = PT_RESTIR_PT_CAND(taskConfig);
 			__global RestirPTResult *ptResult = (__global RestirPTResult *)
 					(((__global RestirGICandidate *)(restirReservoirs +
 					taskConfig->pathTracer.restirPT.ptCandDataOffset +
@@ -381,7 +381,8 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 					MATERIALS_PARAM);
 
 			sampleResult->lastPathVertex = PathDepthInfo_IsLastPathVertexVol(&pathInfo->depth,
-					&taskConfig->pathTracer.maxPathDepth, eventTypes, taskState->bsdf.isVolume);
+					&taskConfig->pathTracer.maxPathDepth, eventTypes,
+					BSDF_IsVolumeDepthVertex(&taskState->bsdf MATERIALS_PARAM));
 
 			taskState->state = MK_HIT_OBJECT;
 		}
@@ -437,7 +438,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			// Avoid to render caustic path if hybridBackForwardEnable
-			(!taskConfig->pathTracer.hybridBackForward.enabled ||
+			(!PT_HBF_ON(taskConfig) ||
 			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
 				// Env lights have infinite solid angle: only a delta
 				// terminal makes the connection eye-hard
@@ -448,7 +449,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 				!EyePathInfo_IsCausticPath(pathInfo)));
 
 	checkDirectLightHit = checkDirectLightHit &&
-			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
+			((!PT_PGIC_INDIRECT_ON(taskConfig) && !PT_PGIC_CAUSTIC_ON(taskConfig)) ||
 			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed,
 					taskState->photonGICausticChainCached));
 
@@ -576,7 +577,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 					rays[gid].time, filmHeight, sampleResult->motionVector);
 	}
 
-	if (taskConfig->pathTracer.vertexConnect.enabled) {
+	if (PT_VC_ON(taskConfig)) {
 		// Vertex connection (M6) eye-vertex MIS fold (BiDirCPURenderThread
 		// eye loop): dVCM *= MIS(t^2)/MIS(cos), dVC *= 1/MIS(cos). The
 		// first-vertex t gains the clipHither offset (CPU t_MIS: the hit
@@ -626,7 +627,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	checkDirectLightHit = checkDirectLightHit &&
 			// Avoid to render caustic path if hybridBackForwardEnable
-			(!taskConfig->pathTracer.hybridBackForward.enabled ||
+			(!PT_HBF_ON(taskConfig) ||
 			(taskConfig->pathTracer.hybridBackForward.adaptiveCaustic ?
 				// Only triangle lights are hittable; the hit BSDF carries
 				// the light index. The terminal vertex is the ray origin.
@@ -639,7 +640,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 				!EyePathInfo_IsCausticPath(pathInfo)));
 
 	checkDirectLightHit = checkDirectLightHit &&
-			((!taskConfig->pathTracer.pgic.indirectEnabled && !taskConfig->pathTracer.pgic.causticEnabled) ||
+			((!PT_PGIC_INDIRECT_ON(taskConfig) && !PT_PGIC_CAUSTIC_ON(taskConfig)) ||
 			PhotonGICache_IsDirectLightHitVisible(taskConfig, pathInfo, taskState->photonGICausticCacheUsed,
 					taskState->photonGICausticChainCached));
 
@@ -669,13 +670,14 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 
 	// Closure selection (or the nonlocal exit) determines the event budget.
 	sampleResult->lastPathVertex = PathDepthInfo_IsLastPathVertexVol(&pathInfo->depth,
-			&taskConfig->pathTracer.maxPathDepth, BSDF_GetEventTypes(bsdf MATERIALS_PARAM), bsdf->isVolume);
+			&taskConfig->pathTracer.maxPathDepth, BSDF_GetEventTypes(bsdf MATERIALS_PARAM),
+			BSDF_IsVolumeDepthVertex(bsdf MATERIALS_PARAM));
 
 	//----------------------------------------------------------------------
 	// Check if I can use the photon cache
 	//----------------------------------------------------------------------
 
-	if (taskConfig->pathTracer.pgic.indirectEnabled || taskConfig->pathTracer.pgic.causticEnabled) {
+	if (PT_PGIC_INDIRECT_ON(taskConfig) || PT_PGIC_CAUSTIC_ON(taskConfig)) {
 		const bool isPhotonGIEnabled = PhotonGICache_IsPhotonGIEnabled(bsdf,
 				taskConfig->pathTracer.pgic.glossinessUsageThreshold,
 				taskConfig->pathTracer.pgic.causticVolumeBeams
@@ -744,8 +746,8 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 			case PGIC_DEBUG_NONE:
 			default: {
 				if (isPhotonGIEnabled) {
-					if (taskConfig->pathTracer.pgic.causticEnabled &&
-							(!taskConfig->pathTracer.hybridBackForward.enabled || (pathInfo->depth.depth != 0))) {
+					if (PT_PGIC_CAUSTIC_ON(taskConfig) &&
+							(!PT_HBF_ON(taskConfig) || (pathInfo->depth.depth != 0))) {
 						const bool isEmpty = PhotonGICache_ConnectWithCausticPaths(bsdf,
 								pgicCausticPhotons, pgicCausticPhotonsBVHNodes,
 								pgicCausticBeams, pgicCausticBeamsBVHNodes,
@@ -762,7 +764,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 							taskState->photonGICausticCacheUsed = true;
 					}
 
-					if (taskConfig->pathTracer.pgic.indirectEnabled) {
+					if (PT_PGIC_INDIRECT_ON(taskConfig)) {
 						Seed seedPassThroughEvent = taskState->seedPassThroughEvent;
 						const float passThroughEvent = Rnd_FloatValue(&seedPassThroughEvent);
 
@@ -810,7 +812,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	// marks an active winner applied by MK_GENERATE_NEXT_VERTEX_RAY.
 	taskState->risZhat = 0.f;
 	taskState->risZhatMis = 0.f;
-	if ((taskConfig->pathTracer.guidingRisK > 0u) && (guidingEnable != 0u) &&
+	if ((taskConfig->pathTracer.guidingRisK > 0u) && PT_GUIDING_ON(guidingEnable) &&
 			!sampleResult->lastPathVertex && !sampleResult->firstPathVertex &&
 			!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
 			(pathInfo->depth.depth >=
@@ -923,10 +925,10 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	taskState->vcCursor = 0u;
 	taskState->vcPending = 0u;
 	{
-		const uint portalCount = taskConfig->pathTracer.portalCount;
+		const uint portalCount = PT_PORTAL_COUNT(taskConfig);
 		if ((portalCount > 0u) && !BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
 				!bsdf->isVolume && (taskState->risZhat <= 0.f) &&
-				!(taskConfig->pathTracer.restirGI.enabled &&
+				!(PT_RESTIR_GI_ON(taskConfig) &&
 					sampleResult->firstPathVertex)) {
 			const float3 portalP = VLOAD3F(&bsdf->hitPoint.p.x);
 			const float3 portalN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
@@ -967,7 +969,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	// Vertex connection (M6): the last vertex still connects to the light
 	// sub-path vertices before splatting (CPU BIDIR parity)
 	taskState->state = (sampleResult->lastPathVertex && !sampleResult->firstPathVertex) ?
-		(taskConfig->pathTracer.vertexConnect.enabled ?
+		(PT_VC_ON(taskConfig) ?
 			MK_VC_CONNECT : MK_SPLAT_SAMPLE) : MK_DL_ILLUMINATE;
 }
 
@@ -1050,7 +1052,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 	// undo must be applied ONCE on the terminating segment - doing it
 	// per iteration compounds 1/vcMisWeight for every transparent hit.
 	if (!continueToTrace &&
-			taskConfig->pathTracer.vertexConnect.enabled &&
+			PT_VC_ON(taskConfig) &&
 			throughShadowTransparency &&
 			(taskDirectLight->illumInfo.vcMisWeight > 0.f) &&
 			(taskDirectLight->illumInfo.vcMisWeight < 1.f))
@@ -1130,7 +1132,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 		// 0 (neither).
 		const int mneeStartResult =
 				((taskDirectLight->directLightResult == SHADOWED) &&
-				!taskConfig->pathTracer.hybridBackForward.enabled ?
+				!PT_HBF_ON(taskConfig) ?
 				Mnee_Start(taskConfig, task, taskDirectLight, taskMnee, taskState,
 					&rayHits[gid], &rays[gid], mneeSeeds, worldRadius
 					LIGHTS_PARAM) : 0);
@@ -1145,7 +1147,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 			// Check if this is the last path vertex
 			// Vertex connection (M6): the connect stage sits between the
 			// DL resolve and the bounce (CPU BIDIR parity)
-			if (taskConfig->pathTracer.vertexConnect.enabled)
+			if (PT_VC_ON(taskConfig))
 				pathState = MK_VC_CONNECT;
 			else if (sampleResult->lastPathVertex)
 				pathState = MK_SPLAT_SAMPLE;
@@ -1210,7 +1212,7 @@ __kernel void AdvancePaths_MK_RT_RESTIR(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
-	const uint restirVisCandCount = taskConfig->pathTracer.restir.visCandCount;
+	const uint restirVisCandCount = PT_RESTIR_VIS_CAND(taskConfig);
 	// Per-task tail stride: K fresh + RESTIR_PIXEL_MERGES_MAX merge
 	// candidates (E2d)
 	const uint tailStride = restirVisCandCount + RESTIR_PIXEL_MERGES_MAX;
@@ -1276,7 +1278,7 @@ __kernel void AdvancePaths_MK_RT_RESTIR(
 		// No visible candidate: move to the next vertex ray, or splat
 		// if this was the last path vertex
 		// Vertex connection (M6): the connect stage precedes the bounce
-		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+		taskState->state = PT_VC_ON(taskConfig) ?
 				MK_VC_CONNECT :
 				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
@@ -1336,7 +1338,7 @@ __kernel void AdvancePaths_MK_RT_GI_BOUNCE(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
-	const uint giK = taskConfig->pathTracer.restirGI.giCandCount;
+	const uint giK = PT_RESTIR_GI_CAND(taskConfig);
 	const uint giRayBase = taskConfig->pathTracer.restirGI.giCandRayBase +
 			gid * (2u * giK + 1u);
 	__global Ray *candRays = &rays[giRayBase];
@@ -1432,7 +1434,7 @@ __kernel void AdvancePaths_MK_RT_GI_RESOLVE(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
-	const uint giK = taskConfig->pathTracer.restirGI.giCandCount;
+	const uint giK = PT_RESTIR_GI_CAND(taskConfig);
 	const uint giRayBase = taskConfig->pathTracer.restirGI.giCandRayBase +
 			gid * (2u * giK + 1u);
 	__global Ray *candRays = &rays[giRayBase];
@@ -1490,7 +1492,7 @@ __kernel void AdvancePaths_MK_RT_GI_RESOLVE(
 	// ReSTIR PG feed: an accepted winner is a target-proportional
 	// direction sample - train the guide field on it. pending == 2 is
 	// the no-winner fallback (nothing accepted - no record).
-	if ((guidingEnable != 0u) && (giResult->pending == 1u)) {
+	if (PT_GUIDING_ON(guidingEnable) && (giResult->pending == 1u)) {
 		const float flux = Spectrum_Y(MAKE_FLOAT3(giResult->lHatR,
 				giResult->lHatG, giResult->lHatB));
 		if (flux > 0.f)
@@ -1562,7 +1564,7 @@ __kernel void AdvancePaths_MK_PT_BOUNCE(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
-	const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+	const uint ptK = PT_RESTIR_PT_CAND(taskConfig);
 	const uint ptRayBase = taskConfig->pathTracer.restirPT.ptCandRayBase +
 			gid * (2u * ptK + 3u);
 	__global Ray *candRays = &rays[ptRayBase];
@@ -1662,7 +1664,7 @@ __kernel void AdvancePaths_MK_PT_RESOLVE(
 	// End of variables setup
 	//--------------------------------------------------------------------------
 
-	const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+	const uint ptK = PT_RESTIR_PT_CAND(taskConfig);
 	const uint ptRayBase = taskConfig->pathTracer.restirPT.ptCandRayBase +
 			gid * (2u * ptK + 3u);
 	__global Ray *candRays = &rays[ptRayBase];
@@ -1732,7 +1734,7 @@ __kernel void AdvancePaths_MK_PT_RESOLVE(
 		ptResult->pending = 0u;
 		// ReSTIR PG feed: the consumed winner is an accepted
 		// (measured-suffix) direction - train the guide field on it.
-		if (guidingEnable != 0u) {
+		if PT_GUIDING_ON(guidingEnable) {
 			const float flux = Spectrum_Y(MAKE_FLOAT3(ptResult->lsufR,
 					ptResult->lsufG, ptResult->lsufB));
 			if (flux > 0.f)
@@ -1813,8 +1815,8 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 	// reservoir merge to the MK_RT_RESTIR state (next iteration, after
 	// the trace pass).
 	//----------------------------------------------------------------------
-	const uint restirVisCandCount = taskConfig->pathTracer.restir.visCandCount;
-	if (taskConfig->pathTracer.restir.enabled &&
+	const uint restirVisCandCount = PT_RESTIR_VIS_CAND(taskConfig);
+	if (PT_RESTIR_DI_ON(taskConfig) &&
 			taskConfig->pathTracer.restir.visibilityEnable &&
 			(restirVisCandCount > 0u) &&
 			!BSDF_IsDelta(bsdf MATERIALS_PARAM)) {
@@ -1849,7 +1851,7 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 
 		// Vertex connection (M6): the connect stage precedes the bounce
 		taskState->state = anyCandidate ? MK_RT_RESTIR :
-				(taskConfig->pathTracer.vertexConnect.enabled ? MK_VC_CONNECT :
+				(PT_VC_ON(taskConfig) ? MK_VC_CONNECT :
 				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY));
 
 		// Save the seed
@@ -1869,7 +1871,7 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Y SAMPLER_PARAM),
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Z SAMPLER_PARAM),
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_W SAMPLER_PARAM),
-				taskConfig->pathTracer.restir.enabled,
+				PT_RESTIR_DI_ON(taskConfig),
 				taskConfig->pathTracer.restir.candidateCount,
 				// Reuse is primary-hit only: the per-pixel reservoir's
 				// stored target is measured at the previous pass's
@@ -1899,7 +1901,7 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 		// No shadow ray to trace, move to the next vertex ray
 		// however, I have to Check if this is the last path vertex
 		// Vertex connection (M6): the connect stage precedes the bounce
-		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+		taskState->state = PT_VC_ON(taskConfig) ?
 				MK_VC_CONNECT :
 				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
@@ -1962,7 +1964,7 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 			LIGHTS_PARAM,
 			guideNodes, guideLeaves, guidingEnable,
 			taskState->risZhatMis,
-			portalRects, taskConfig->pathTracer.portalCount,
+			portalRects, PT_PORTAL_COUNT(taskConfig),
 			taskState->portalW)) {
 		__global GPUTask *task = &tasks[gid];
 		Seed seedValue = task->seed;
@@ -1991,7 +1993,7 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 		// No shadow ray to trace, move to the next vertex ray
 		// however, I have to check if this is the last path vertex
 		// Vertex connection (M6): the connect stage precedes the bounce
-		taskState->state = taskConfig->pathTracer.vertexConnect.enabled ?
+		taskState->state = PT_VC_ON(taskConfig) ?
 				MK_VC_CONNECT :
 				((sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY);
 	}
@@ -2139,7 +2141,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			// position; NULL when guiding is off or the field is empty.
 			// Hoisted above the ReSTIR enqueue blocks: reservoir
 			// candidates draw from the leaf mixture (ReSTIR PG).
-			__global const float *guideLeaf = (guidingEnable != 0u) ?
+			__global const float *guideLeaf = PT_GUIDING_ON(guidingEnable) ?
 					GuideTree_LeafAt(guideNodes, guideLeaves,
 						VLOAD3F(&bsdf->hitPoint.p.x)) : NULL;
 			// PG candidate mix weight: the leaf gates itself (warmup +
@@ -2165,9 +2167,9 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			//   pending >= 3: already armed this bounce - plain sample.
 			uint ptPending = 0u;
 			__global RestirPTResult *ptResult = NULL;
-			if (taskConfig->pathTracer.restirPT.enabled &&
-					(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
-				const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+			if (PT_RESTIR_PT_ON(taskConfig) &&
+					(PT_RESTIR_PT_CAND(taskConfig) > 0u)) {
+				const uint ptK = PT_RESTIR_PT_CAND(taskConfig);
 				__global RestirGICandidate *ptCand =
 						(__global RestirGICandidate *)(restirReservoirs +
 						taskConfig->pathTracer.restirPT.ptCandDataOffset +
@@ -2224,9 +2226,9 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			//   pending == 0: enqueue the K candidate bounce rays into
 			//       the GI tail and re-enter through MK_RT_GI_BOUNCE.
 			uint giPending = 0u;
-			if (taskConfig->pathTracer.restirGI.enabled &&
-					(taskConfig->pathTracer.restirGI.giCandCount > 0u)) {
-				const uint giK = taskConfig->pathTracer.restirGI.giCandCount;
+			if (PT_RESTIR_GI_ON(taskConfig) &&
+					(PT_RESTIR_GI_CAND(taskConfig) > 0u)) {
+				const uint giK = PT_RESTIR_GI_CAND(taskConfig);
 				__global RestirGICandidate *giCand =
 						(__global RestirGICandidate *)(restirReservoirs +
 						taskConfig->pathTracer.restirGI.giCandDataOffset +
@@ -2287,7 +2289,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 					(taskConfig->pathTracer.guidingDiffuse != 0u));
 			// Same gate as CPU CanGuide(): fitted leaf past warmup
 			// (min depth from path.guiding.mindepth).
-			const bool tryGuide = (guidingEnable != 0u) &&
+			const bool tryGuide = PT_GUIDING_ON(guidingEnable) &&
 					!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
 					guidableBsdf &&
 					(pathInfo->depth.depth >=
@@ -2313,9 +2315,9 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			// MK_HIT_OBJECT; portalW wraps every technique's density in
 			// wP*pPortal + (1-wP)*rest (mirrored CPU predicates).
 			const float wPortal = taskState->portalW;
-			const uint portalCount = taskConfig->pathTracer.portalCount;
+			const uint portalCount = PT_PORTAL_COUNT(taskConfig);
 			bool guided = false;
-			if (taskState->risZhat > 0.f) {
+			if (PT_GUIDING_COMPILED && (taskState->risZhat > 0.f)) {
 				// RIS product-guiding winner (drawn pre-DL in
 				// MK_HIT_OBJECT): the continuation weight is
 				// f|cos|*zHat/t(w*) and pHat is the density the DL MIS
@@ -2543,7 +2545,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			// baseline).
 			// NOTE: guideRec*/guideDbgBuff are null buffers when
 			// path.guiding.enable is off - the writes must be gated.
-			if (guidingEnable != 0u) {
+			if PT_GUIDING_ON(guidingEnable) {
 				// NOTE: MAKE_FLOAT3 (raw (float3)(...) splats on Metal,
 				// bare float3(...) rejected by Apple OpenCL).
 				const float3 radNow = MAKE_FLOAT3(
@@ -2589,12 +2591,12 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 	// one: record whether the caustic cache was queried here (same gate
 	// as the MK_HIT_OBJECT ConnectWithCausticPaths call - hybrid leaves
 	// depth 0 to the light pass). CPU twin in pathtracer.cpp.
-	if ((taskConfig->pathTracer.pgic.indirectEnabled || taskConfig->pathTracer.pgic.causticEnabled) &&
+	if ((PT_PGIC_INDIRECT_ON(taskConfig) || PT_PGIC_CAUSTIC_ON(taskConfig)) &&
 			PhotonGICache_IsCausticChainReceiver(bsdfEvent, BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
 				taskConfig->pathTracer.pgic.glossinessUsageThreshold))
-		taskState->photonGICausticChainCached = taskConfig->pathTracer.pgic.causticEnabled &&
+		taskState->photonGICausticChainCached = PT_PGIC_CAUSTIC_ON(taskConfig) &&
 				(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE) &&
-				(!taskConfig->pathTracer.hybridBackForward.enabled || (pathInfo->depth.depth != 0)) &&
+				(!PT_HBF_ON(taskConfig) || (pathInfo->depth.depth != 0)) &&
 				PhotonGICache_IsPhotonGIEnabled(bsdf,
 						taskConfig->pathTracer.pgic.glossinessUsageThreshold,
 						taskConfig->pathTracer.pgic.causticVolumeBeams
@@ -2643,7 +2645,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 		VSTORE3F(throughputFactor * VLOAD3F(taskState->throughput.c), taskState->throughput.c);
 
-		if (taskConfig->pathTracer.vertexConnect.enabled) {
+		if (PT_VC_ON(taskConfig)) {
 			if (cosSampledDir < 0.f) {
 				// Pass-through vertex (shadowTransparency): not a real
 				// vertex on the CPU side - undo the hit fold
@@ -2803,7 +2805,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 		VSTORE3F(BLACK, sampleResult->albedo.c);
 	}
 
-	if (taskConfig->pathTracer.pgic.indirectEnabled &&
+	if (PT_PGIC_INDIRECT_ON(taskConfig) &&
 			(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_SHOWINDIRECTPATHMIX) &&
 			!taskState->photonGIShowIndirectPathMixUsed)
 		VSTORE3F(MAKE_FLOAT3(1.f, 0.f, 0.f), sampleResult->radiancePerPixelNormalized[0].c);
@@ -2837,9 +2839,9 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 	// pending == 4 = armed pick landed; pending == 3 = the armed winner
 	// was killed before landing (RR/depth) - dropped uncommitted,
 	// matching the CPU's ptArmed && ptCaptured gate.
-	if (taskConfig->pathTracer.restirPT.enabled &&
-			(taskConfig->pathTracer.restirPT.ptCandCount > 0u)) {
-		const uint ptK = taskConfig->pathTracer.restirPT.ptCandCount;
+	if (PT_RESTIR_PT_ON(taskConfig) &&
+			(PT_RESTIR_PT_CAND(taskConfig) > 0u)) {
+		const uint ptK = PT_RESTIR_PT_CAND(taskConfig);
 		__global RestirPTResult *ptResult = (__global RestirPTResult *)
 				(((__global RestirGICandidate *)(restirReservoirs +
 				taskConfig->pathTracer.restirPT.ptCandDataOffset +
@@ -2857,7 +2859,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 					GuidingPass(taskConfig, gid, samplesBuff));
 			// ReSTIR PG feed: landed pick, measured suffix - emit the
 			// accepted direction as a guiding training record.
-			if (guidingEnable != 0u) {
+			if PT_GUIDING_ON(guidingEnable) {
 				const float flux = Spectrum_Y(lsuf);
 				if (flux > 0.f)
 					Guide_EmitRec(gid,
@@ -3065,7 +3067,7 @@ OPENCL_FORCE_INLINE void LightPathInfo_AddVertex(__global LightPathInfo *lpi,
 		__global const BSDF *bsdf, const BSDFEvent event,
 		const float glossinessThreshold
 		MATERIALS_PARAM_DECL) {
-	PathDepthInfo_IncDepthsVol(&lpi->depth, event, bsdf->isVolume);
+	PathDepthInfo_IncDepthsVol(&lpi->depth, event, BSDF_IsVolumeDepthVertex(bsdf MATERIALS_PARAM));
 	PathVolumeInfo_Update(&lpi->volume, event, bsdf MATERIALS_PARAM);
 
 	const float glossiness = BSDF_GetGlossiness(bsdf MATERIALS_PARAM);
@@ -3489,7 +3491,7 @@ __kernel void AdvancePaths_MK_LIGHT_INIT(
 		if ((light->type != TYPE_TRIANGLE) && !Spectrum_IsBlack(flux))
 			flux = Spectral_Upsample(flux, sampleResult->spectralW,
 					sampleResult->spectralHeroAlive, true,
-					spectralUpsamplingTable);
+					SLG_SPECTRAL_UPSAMPLING_TABLE);
 #endif
 
 		if (!Spectrum_IsBlack(flux) && (emissionPdfW > 0.f)) {
@@ -4185,7 +4187,7 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						// Caustic light paths only (L S+ D): otherwise the
 						// eye path's NEE at the receiver covers it
 						const bool mneeProbe = evalBlack &&
-								taskConfig->pathTracer.mnee.enabled &&
+								PT_MNEE_ON(taskConfig) &&
 								((pathTracer->lightTracing.eyeTaskCount == 0) ||
 								LightPathInfo_IsCausticPath(lpi, event,
 										BSDF_GetGlossiness(bsdf MATERIALS_PARAM),

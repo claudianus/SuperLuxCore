@@ -277,12 +277,14 @@ OPENCL_FORCE_INLINE void SchlickDistribution_SampleH(const float roughness, cons
 
 	*wh = MAKE_FLOAT3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 	*d = SchlickDistribution_SchlickZ(roughness, cosTheta) * SchlickDistribution_SchlickA(*wh, anisotropy) * M_1_PI_F;
-	*pdf = *d;
+	// Density is D(wh) * cos(theta_h), see material.cpp
+	*pdf = *d * cosTheta;
 }
 
 OPENCL_FORCE_INLINE float SchlickDistribution_Pdf(const float roughness, const float3 wh,
 		const float anisotropy) {
-	return SchlickDistribution_D(roughness, wh, anisotropy);
+	// Density of SchlickDistribution_SampleH: D(wh) * cos(theta_h)
+	return SchlickDistribution_D(roughness, wh, anisotropy) * fabs(wh.z);
 }
 
 OPENCL_FORCE_INLINE float3 FresnelSchlick_Evaluate(const float3 normalIncidence, const float cosi) {
@@ -349,7 +351,8 @@ OPENCL_FORCE_INLINE float3 SchlickBSDF_CoatingSampleF(const float3 ks,
 	const float coso = fabs(fixedDir.z);
 	const float cosi = fabs((*sampledDir).z);
 
-	*pdf = specPdf / (4.f * cosWH);
+	// abs: back faces give cosWH < 0, see material.cpp
+	*pdf = specPdf / (4.f * fabs(cosWH));
 	if (*pdf <= 0.f)
 		return BLACK;
 
@@ -440,6 +443,31 @@ OPENCL_FORCE_INLINE float SSSRdDiffusion(const float a, const float eta) {
 	const float rhoE = -1.4399f / (e * e) + .7099f / e + .6681f + .0636f * e;
 	const float Ab = (1.f + rhoE) / fmax(1.f - rhoE, 1e-4f);
 	return .5f * a * (1.f + exp(-4.f / 3.f * Ab * sqrt(3.f * (1.f - a))));
+}
+
+// CB15 albedo inversion (mirror of SSSRemapCB15 in homogenous.cpp): find
+// the matched-boundary albedo A' with A' * K(vdH(A'), eta) = A and return
+// its vdH single-scatter albedo. A'*K is monotonic in A', so bisection is
+// robust; the old fixed-point a <- vdH(A/K(a)) oscillated at high albedo
+// (K -> 1 as a -> 1) and stopped on the under-compensated branch.
+// Not inlined: force-inlining the 16-step loop at every call site (3
+// channels x 2 SSS coefficient paths) made Apple's OpenCL GPU compiler emit
+// a broken AdvancePaths_MK_MNEE_NEXT_VERTEX pipeline - a segfault inside
+// clEnqueueNDRangeKernel (AGX prepareForEnqueue), depending on unrelated
+// source changes elsewhere in the program.
+OPENCL_FORCE_NOT_INLINE float SSSAlphaCB15(const float A, const float g, const float eta) {
+	float lo = 1e-4f, hi = .999f;
+	for (int i = 0; i < 16; ++i) {
+		const float m = .5f * (lo + hi);
+		const float al = SSSAlphaVanDeHulst(m, g);
+		const float k = clamp(SSSRdDiffusion(al, eta) /
+				fmax(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
+		if (m * k < A)
+			lo = m;
+		else
+			hi = m;
+	}
+	return SSSAlphaVanDeHulst(.5f * (lo + hi), g);
 }
 
 // Sellmeier 3-term: n^2(lambda_um) = 1 + sum_i B_i l^2/(l^2 - C_i).

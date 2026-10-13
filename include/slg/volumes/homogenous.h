@@ -54,6 +54,16 @@ public:
 		const std::vector<luxrays::Point> &eqLightPoints,
 		const std::vector<float> &eqLightLuminances,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
+	// Random-walk SSS flight: chromatic distance sampling (pick a channel
+	// proportionally to channelWeights, the current path throughput, then
+	// balance-heuristic MIS over all channels; Cycles' SSS walk scheme).
+	// Scatter() samples the averaged sigma_s, whose per-channel weights
+	// grow heavy-tailed over the hundreds of steps of a high-albedo walk
+	// when the channel mean free paths differ: the channels far from the
+	// average lost up to half their energy at practical sample counts.
+	float ScatterSSS(const luxrays::Ray &ray, const float u, const bool scatteredStart,
+		const luxrays::Spectrum &channelWeights,
+		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
 	virtual luxrays::Spectrum TransmittanceEstimate(const luxrays::Ray &ray,
 		const float u) const;
 
@@ -98,6 +108,10 @@ public:
 	static float Scatter(const float u, const bool scatterAllowed, const float segmentLength,
 			const luxrays::Spectrum &sigmaA, const luxrays::Spectrum &sigmaS,
 			const luxrays::Spectrum &emission,
+			luxrays::Spectrum &segmentTransmittance, luxrays::Spectrum &segmentEmission);
+	static float ScatterChromatic(const float u, const bool scatterAllowed, const float segmentLength,
+			const luxrays::Spectrum &sigmaA, const luxrays::Spectrum &sigmaS,
+			const luxrays::Spectrum &emission, const luxrays::Spectrum &channelWeights,
 			luxrays::Spectrum &segmentTransmittance, luxrays::Spectrum &segmentEmission);
 
 protected:

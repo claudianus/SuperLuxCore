@@ -110,7 +110,7 @@ static float SSSRdDiffusion(const float a, const float eta) {
 // "cb15" SSS parametrization: requested sssalbedo A is the *measured*
 // diffuse reflectance including the interior dielectric boundary, i.e.
 //   A = R_match(a) * K(a, eta)
-// solved by fixed-point iteration a <- vdHinv(A / K(a,eta)). For
+// solved for A' = R_match(a) by bisection, a = vdHinv(A'). For
 // eta <= 1 it collapses exactly to the van de Hulst remap. For eta > 1
 // TIR trapping lowers external reflectance (K < 1) and the solve raises
 // the physical single-scatter albedo to compensate, so the same
@@ -121,12 +121,23 @@ static void SSSRemapCB15(const float A, const float d, const float g,
 		const float eta, float &sigmaT, float &alpha) {
 	const float Ad = Clamp(A, 1e-4f, 0.999f);
 	const float e = Max(eta, 1.0001f);
-	float al = SSSAlphaVanDeHulst(Ad, g);
-	for (int i = 0; i < 6; ++i) {
+	// Bisection on the matched-boundary albedo A': A'*K(vdH(A'),eta) is
+	// monotonic in A'. The former fixed-point a <- vdH(A/K(a)) oscillated
+	// at high albedo (K -> 1 as a -> 1: A=.8, eta=1.5 flips between
+	// a=.9909 and a=.99995) and stopped on the under-compensated branch,
+	// losing ~20% of the requested reflectance.
+	float lo = 1e-4f, hi = .999f;
+	for (int i = 0; i < 16; ++i) {
+		const float m = .5f * (lo + hi);
+		const float al = SSSAlphaVanDeHulst(m, g);
 		const float k = Clamp(SSSRdDiffusion(al, e) /
 				Max(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
-		al = SSSAlphaVanDeHulst(Clamp(A / k, 1e-4f, 0.999f), g);
+		if (m * k < Ad)
+			lo = m;
+		else
+			hi = m;
 	}
+	const float al = SSSAlphaVanDeHulst(.5f * (lo + hi), g);
 	alpha = al;
 	sigmaT = (1.f / Max(d, 1e-6f)) / Max(1.f - g * alpha, 1e-6f);
 }
@@ -199,6 +210,111 @@ float HomogeneousVolume::Scatter(const float u,
 	segmentEmission += segmentTransmittance * scatterDistance * emission;
 
 	return scatter ? scatterDistance : -1.f;
+}
+
+float HomogeneousVolume::ScatterChromatic(const float u,
+		const bool scatterAllowed, const float segmentLength,
+		const Spectrum &sigmaA, const Spectrum &sigmaS, const Spectrum &emission,
+		const Spectrum &channelWeights,
+		Spectrum &segmentTransmittance, Spectrum &segmentEmission) {
+	// This code must work also with segmentLength = INFINITY
+
+	bool scatter = false;
+	segmentTransmittance = Spectrum(1.f);
+	segmentEmission = Spectrum(0.f);
+
+	float scatterDistance = segmentLength;
+	if (scatterAllowed && (sigmaS.Max() > 0.f)) {
+		// Channel selection probabilities ~ path throughput
+		float w[COLOR_SAMPLES];
+		float wSum = 0.f;
+		for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
+			const float c = channelWeights.c[i];
+			w[i] = (isfinite(c) && (c > 0.f)) ? c : 0.f;
+			wSum += w[i];
+		}
+		if (!(wSum > 0.f)) {
+			for (u_int i = 0; i < COLOR_SAMPLES; ++i)
+				w[i] = 1.f;
+			wSum = COLOR_SAMPLES;
+		}
+
+		// Pick the channel with u and reuse the remainder for the distance
+		float uc = u * wSum;
+		u_int ch = COLOR_SAMPLES - 1;
+		for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
+			if ((uc < w[i]) && (w[i] > 0.f)) {
+				ch = i;
+				break;
+			}
+			uc -= w[i];
+		}
+		while ((w[ch] <= 0.f) && (ch > 0))
+			--ch;
+		const float u2 = Clamp(uc / w[ch], 0.f, 0.99999994f);
+
+		const float sCh = sigmaS.c[ch];
+		const float proposedScatterDistance = (sCh > 0.f) ? (-logf(1.f - u2) / sCh) : INFINITY;
+		scatter = (proposedScatterDistance < segmentLength);
+		scatterDistance = scatter ? proposedScatterDistance : segmentLength;
+
+		// One-sample MIS, balance heuristic: the mixture pdf of the
+		// scatter distance (or of flying past the segment end)
+		float pdf = 0.f;
+		for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
+			if (w[i] <= 0.f)
+				continue;
+			const float tr = isinf(scatterDistance) ? 0.f : expf(-sigmaS.c[i] * scatterDistance);
+			pdf += (w[i] / wSum) * (scatter ? sigmaS.c[i] * tr : tr);
+		}
+		if (!(pdf > 0.f)) {
+			segmentTransmittance = Spectrum(0.f);
+			return -1.f;
+		}
+		segmentTransmittance /= pdf;
+	}
+
+	const Spectrum sigmaT = sigmaA + sigmaS;
+	if (!sigmaT.Black()) {
+		if (isinf(scatterDistance))
+			segmentTransmittance = Spectrum(0.f);
+		else {
+			const Spectrum tau = scatterDistance * sigmaT;
+			segmentTransmittance *= Exp(-tau) * (scatter ? sigmaT : Spectrum(1.f));
+		}
+	}
+
+	segmentEmission += segmentTransmittance * scatterDistance * emission;
+
+	return scatter ? scatterDistance : -1.f;
+}
+
+float HomogeneousVolume::ScatterSSS(const Ray &ray, const float u,
+		const bool scatteredStart, const Spectrum &channelWeights,
+		Spectrum *connectionThroughput, Spectrum *connectionEmission) const {
+	const float segmentLength = ray.maxt - ray.mint;
+	const bool scatterAllowed = (!scatteredStart || multiScattering);
+
+	HitPoint hitPoint;
+	hitPoint.Init();
+	hitPoint.fixedDir = ray.d;
+	hitPoint.p = ray.o;
+	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
+	hitPoint.passThroughEvent = u;
+
+	const Spectrum sigmaA = SigmaA(hitPoint);
+	const Spectrum sigmaS = SigmaS(hitPoint);
+	const Spectrum emission = Emission(hitPoint);
+
+	Spectrum segmentTransmittance, segmentEmission;
+	const float scatterDistance = ScatterChromatic(u, scatterAllowed,
+			segmentLength, sigmaA, sigmaS, emission, channelWeights,
+			segmentTransmittance, segmentEmission);
+
+	*connectionEmission += *connectionThroughput * emission;
+	*connectionThroughput *= segmentTransmittance;
+
+	return (scatterDistance == -1.f) ? -1.f : (ray.mint + scatterDistance);
 }
 
 Spectrum HomogeneousVolume::SigmaA(const HitPoint &hitPoint) const {

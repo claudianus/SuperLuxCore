@@ -549,7 +549,7 @@ OPENCL_FORCE_INLINE void GlossyCoatingMaterial_SampleMatBaseSample(__global cons
 	const float3 baseF = resultMatBase * pdfWMatBase;
 	const float basePdf = pdfWMatBase;
 	const float3 sampledDir = sampledDirMatBase;
-	const BSDFEvent event = pdfWMatBase;
+	const BSDFEvent event = eventMatBase;
 
 	// Don't add the coating scattering if the base sampled
 	// component is specular

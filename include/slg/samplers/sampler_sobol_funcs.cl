@@ -242,8 +242,10 @@ OPENCL_FORCE_INLINE void SobolSampler_SplatSample(
 }
 
 OPENCL_FORCE_INLINE void SobolSamplerSharedData_GetNewBucket(__global SobolSamplerSharedData *samplerSharedData,
-		const uint bucketCount, uint *newBucketIndex, uint *seed) {
-	*newBucketIndex = atomic_inc(&samplerSharedData->bucketIndex) % bucketCount;
+		const uint bucketCount, const uint bucketSize,
+		uint *newBucketIndex, uint *newCycleStart, uint *seed) {
+	SamplerSharedData_GetNewBucket(&samplerSharedData->bucketIndex, bucketCount, bucketSize,
+			newBucketIndex, newCycleStart);
 
     *seed = (samplerSharedData->seedBase + *newBucketIndex) % (0xFFFFFFFFu - 1u) + 1u;
 }
@@ -281,7 +283,7 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 	uint bucketIndex = sample->bucketIndex;
 	uint pixelOffset = sample->pixelOffset;
 	uint passOffset = sample->passOffset;
-	const uint bucketCycleStart = sample->bucketCycleStart;
+	uint bucketCycleStart = sample->bucketCycleStart;
 
 	Seed rngGeneratorSeed = sample->rngGeneratorSeed;
 
@@ -304,9 +306,11 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 				// ask for a new bucket (see RandomSample::bucketCycleStart)
 				uint bucketSeed;
 				SobolSamplerSharedData_GetNewBucket(samplerSharedData, bucketCount,
-						&bucketIndex, &bucketSeed);
+						bucketSize, &bucketIndex, &bucketCycleStart, &bucketSeed);
+				pixelOffset = bucketCycleStart;
 
 				sample->bucketIndex = bucketIndex;
+				sample->bucketCycleStart = bucketCycleStart;
 
 				Rnd_Init(bucketSeed, &rngGeneratorSeed);
 			}
@@ -346,8 +350,13 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 					__global uint *pixelPasses = SobolSampler_GetPassesPtr(samplerSharedData);
 					const uint curPass = pixelPasses[subIdx];
 					__global const float *lumaMoments = SobolSampler_GetLumaMomentsPtr(samplerSharedData) + subIdx * 2;
+					// An all-zero pixel has no relative-error estimate yet
+					// (0/0): treating it as converged starves rare-event
+					// pixels on the strength of their own zeros and biases
+					// them dark (CPU SobolSampler::EvalAdaptiveThreshold)
 					if ((curPass >= SOBOL_STARTOFFSET + SOBOL_ADAPTIVE_MOMENTS_MIN_SAMPLES) &&
-							isfinite(lumaMoments[0]) && isfinite(lumaMoments[1])) {
+							isfinite(lumaMoments[0]) && isfinite(lumaMoments[1]) &&
+							(lumaMoments[0] > 0.f)) {
 						const float n = (float)(curPass - SOBOL_STARTOFFSET);
 						const float mean = lumaMoments[0] / n;
 						const float var = fmax(lumaMoments[1] / n - mean * mean, 0.f);
@@ -513,9 +522,10 @@ OPENCL_FORCE_INLINE bool SobolSampler_Init(__constant const GPUTaskConfiguration
 	__global SobolSample *sample = &samples[gid];
 
 	const uint bucketSize = sampler->sobol.bucketSize;
-	// Staggered cyclic sweep (see RandomSample::bucketCycleStart)
-	sample->bucketCycleStart = gid % bucketSize;
-	sample->pixelOffset = sample->bucketCycleStart - 1;
+	// Wrap straight into the first bucket fetch, which picks the sweep
+	// start (see RandomSample::bucketCycleStart)
+	sample->bucketCycleStart = 0;
+	sample->pixelOffset = bucketSize - 1;
 	sample->passOffset = sampler->sobol.superSampling;
 
 	SobolSampler_NextSample(taskConfig,

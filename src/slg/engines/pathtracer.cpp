@@ -348,7 +348,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					
 					// Create a new PathDepthInfo for the path to the light source
 					PathDepthInfo directLightDepthInfo = pathInfo.depth;
-					directLightDepthInfo.IncDepths(event, bsdf.IsVolume());
+					directLightDepthInfo.IncDepths(event, bsdf.IsVolumeDepthVertex());
 					
 					RayHit shadowRayHit;
 					BSDF shadowBsdf;
@@ -1121,7 +1121,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				ComputeFirstHitMotionVector(scene, eyeRay.time,
 						&bsdf.hitPoint, eyeRay, sampleResult.motionVector);
 		}
-		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolume());
+		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolumeDepthVertex());
 
 		//----------------------------------------------------------------------
 		// Check if it is a baked material
@@ -1165,7 +1165,7 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			if (!SampleCyclesBSSRDF(scene, device, eyeRay, eyeRayHit,
 					pathInfo.volume, bsdf, subsurfaceRng, pathThroughput))
 				break;
-			sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolume());
+			sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolumeDepthVertex());
 		}
 
 		// Path guiding: the pending record's target is radiance arriving

@@ -277,7 +277,12 @@ CompiledScene::CompileDistribution1D(
 	// Here, I assume sizeof(u_int) == sizeof(float)
 	static_assert(sizeof(u_int) == sizeof(float));
 
-	auto size = sizeof(u_int) + count * sizeof(float) + (count + 1) * sizeof(float);
+	// Layout: count, func[count], cdf[count + 1], guideSize, guide[guideSize]
+	// (see Distribution1D::BuildGuide(); the guide trailer leaves the
+	// func/cdf offsets unchanged)
+	const auto guideSize = dist.GetGuideSize();
+	auto size = sizeof(u_int) + count * sizeof(float) + (count + 1) * sizeof(float) +
+			sizeof(u_int) + guideSize * sizeof(u_int);
 	// Size is expressed in bytes while I'm working with float
 	std::vector<float> compDist(size / sizeof(float));
 
@@ -287,6 +292,9 @@ CompiledScene::CompileDistribution1D(
 			compDist.data() + 1);
 	std::copy(dist.GetCDFs(), dist.GetCDFs() + count + 1,
 			compDist.data() + 1 + count);
+	compDist[2 + 2 * count] = std::bit_cast<float>(guideSize);
+	for (u_int i = 0; i < guideSize; ++i)
+		compDist[3 + 2 * count + i] = std::bit_cast<float>(dist.GetGuide()[i]);
 
 	return std::make_tuple(compDist, size);  // Return value optimisation - no copy
 }

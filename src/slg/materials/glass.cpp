@@ -236,14 +236,28 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 	float threshold;
 	if (!refl.Black()) {
 		if (!trans.Black()) {
-			// Importance sampling
-			const float reflFilter = refl.Filter();
-			const float transFilter = trans.Filter();
-			threshold = transFilter / (reflFilter + transFilter);
+			if (CosTheta(localFixedDir) < 0.f) {
+				// Leaving the interior: plain Fresnel split, so a sample
+				// carries kr or kt (times the eta^2 radiance scaling). The
+				// clamped split below weights a draw up to ~4x per hit,
+				// which compounds into a heavy firefly tail over the many
+				// boundary hits of a random walk inside the object (SSS
+				// containers).
+				const Spectrum F = DispersiveFresnelR(nt, nc, disp, CosTheta(localFixedDir));
+				const float reflFilter = Spectrum(kr * F).Filter();
+				const float transFilter = Spectrum(kt * (Spectrum(1.f) - F)).Filter();
+				threshold = (reflFilter + transFilter > 0.f) ?
+						(transFilter / (reflFilter + transFilter)) : .5f;
+			} else {
+				// Importance sampling
+				const float reflFilter = refl.Filter();
+				const float transFilter = trans.Filter();
+				threshold = transFilter / (reflFilter + transFilter);
 
-			// A place an upper and lower limit to not under sample
-			// reflection or transmission
-			threshold = Clamp(threshold, .25f, .75f);
+				// A place an upper and lower limit to not under sample
+				// reflection or transmission
+				threshold = Clamp(threshold, .25f, .75f);
+			}
 		} else
 			threshold = 0.f;
 	} else {

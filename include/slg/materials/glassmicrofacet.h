@@ -17,6 +17,25 @@
 
 namespace slg {
 
+// Transmit-lobe selection probability of the regularized dielectric:
+// proportional to the Fresnel split kt (1 - F) : kr F at the microfacet,
+// so each sample carries ~G2/G1 (times the eta^2 radiance scaling)
+// instead of up to (1 - F) eta^2 / .5. A fixed .5 split compounded over
+// the hundreds of boundary hits of a random-walk SSS container (a glass
+// shell around the walk) into a heavy firefly tail. Under total internal
+// reflection F = 1 and the transmit lobe is never drawn.
+inline float GlassMicrofacet_TransmitProb(const luxrays::Spectrum &kr,
+		const luxrays::Spectrum &kt, const luxrays::Spectrum &F,
+		const bool isKrBlack, const bool isKtBlack) {
+	if (isKrBlack)
+		return 1.f;
+	if (isKtBlack)
+		return 0.f;
+	const float r = luxrays::Spectrum(kr * F).Filter();
+	const float t = luxrays::Spectrum(kt * (luxrays::Spectrum(1.f) - F)).Filter();
+	return (r + t > 0.f) ? (t / (r + t)) : .5f;
+}
+
 
 // Evaluate: full microfacet-GGX dielectric/reflector lobe - the
 // regularized vertex must answer light connects (NEE / MIS). Math is
@@ -44,7 +63,6 @@ inline luxrays::Spectrum GlassMicrofacet_Evaluate(
 	const float ntEff = DispersiveIOR(nt, disp);
 	const float ntc = ntEff / nc;
 
-	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
 	if (localLightDir.z * localEyeDir.z < 0.f) {
 		// Transmit
 		const bool entering = (luxrays::CosTheta(localLightDir) > 0.f);
@@ -67,6 +85,9 @@ inline luxrays::Spectrum GlassMicrofacet_Evaluate(
 		const float specPdfD = GgxVNDFHalfPdf(localEyeDir, wh, alpha, alpha);
 		const float specPdfR = GgxVNDFHalfPdf(localLightDir, wh, alpha, alpha);
 		const luxrays::Spectrum F = DispersiveFresnelR(nt, nc, disp, cosThetaOH);
+		// Fresnel is reciprocal across the interface: the same split
+		// whichever side Sample() started from
+		const float threshold = GlassMicrofacet_TransmitProb(kr, kt, F, isKrBlack, isKtBlack);
 
 		if (directPdfW)
 			*directPdfW = threshold * specPdfD *
@@ -115,6 +136,7 @@ inline luxrays::Spectrum GlassMicrofacet_Evaluate(
 		const luxrays::Spectrum F = allowTransmit ?
 				DispersiveFresnelR(nt, nc, disp, cosThetaH) :
 				luxrays::Spectrum(1.f);
+		const float threshold = GlassMicrofacet_TransmitProb(kr, kt, F, isKrBlack, isKtBlack);
 
 		if (directPdfW)
 			*directPdfW = (1.f - threshold) * specPdfD;
@@ -185,19 +207,11 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 
 	const float coso = fabsf(localFixedDir.z);
 
-	// Decide to transmit or reflect (same .5 threshold as roughglass)
-	float threshold;
-	if (!isKrBlack) {
-		if (!isKtBlack)
-			threshold = .5f;
-		else
-			threshold = 0.f;
-	} else {
-		if (!isKtBlack)
-			threshold = 1.f;
-		else
-			return luxrays::Spectrum();
-	}
+	// Decide to transmit or reflect: Fresnel split at the sampled
+	// microfacet (GlassMicrofacet_TransmitProb)
+	const luxrays::Spectrum Fsel = isKtBlack ? luxrays::Spectrum(1.f) :
+			DispersiveFresnelR(nt, nc, disp, cosThetaOH);
+	const float threshold = GlassMicrofacet_TransmitProb(kr, kt, Fsel, isKrBlack, isKtBlack);
 
 	luxrays::Spectrum result;
 	if (passThroughEvent < threshold) {
@@ -213,6 +227,14 @@ inline luxrays::Spectrum GlassMicrofacet_Sample(
 			cosThetaIH = -cosThetaIH;
 		const float length = eta * cosThetaOH + cosThetaIH;
 		*localSampledDir = length * wh - eta * localFixedDir;
+		// A refraction through a steep microfacet can still point into the
+		// fixed side's hemisphere: no real crossing, but the path would
+		// take the eta^2 radiance scaling of one (x1.96 per exit at IOR
+		// 1.4) while staying in the medium - unpaired, compounding over a
+		// random walk into fireflies. Evaluate() never pairs such
+		// directions as transmission either.
+		if (localFixedDir.z * localSampledDir->z >= 0.f)
+			return luxrays::Spectrum();
 
 		const float lengthSquared = length * length;
 		*pdfW = specPdf * fabsf(cosThetaIH) / lengthSquared;
@@ -299,7 +321,6 @@ inline void GlassMicrofacet_Pdf(
 	const float ntEff = DispersiveIOR(nt, disp);
 	const float ntc = ntEff / nc;
 
-	const float threshold = isKrBlack ? 1.f : (isKtBlack ? 0.f : .5f);
 	if (localLightDir.z * localEyeDir.z < 0.f) {
 		// Transmit
 		const bool entering = (luxrays::CosTheta(localLightDir) > 0.f);
@@ -316,6 +337,9 @@ inline void GlassMicrofacet_Pdf(
 		wh /= sqrtf(lengthSquared);
 		const float cosThetaIH = luxrays::AbsDot(localEyeDir, wh);
 		const float cosThetaOH = luxrays::AbsDot(localLightDir, wh);
+		const float threshold = GlassMicrofacet_TransmitProb(kr, kt,
+				DispersiveFresnelR(nt, nc, disp, luxrays::Dot(localLightDir, wh)),
+				isKrBlack, isKtBlack);
 
 		const float specPdfD = GgxVNDFHalfPdf(localEyeDir, wh, alpha, alpha);
 		const float specPdfR = GgxVNDFHalfPdf(localLightDir, wh, alpha, alpha);
@@ -341,6 +365,10 @@ inline void GlassMicrofacet_Pdf(
 
 		const float specPdfD = GgxVNDFReflectionPdf(localEyeDir, wh, alpha, alpha);
 		const float specPdfR = GgxVNDFReflectionPdf(localLightDir, wh, alpha, alpha);
+		const float threshold = GlassMicrofacet_TransmitProb(kr, kt,
+				allowTransmit ? DispersiveFresnelR(nt, nc, disp, luxrays::Dot(localEyeDir, wh)) :
+						luxrays::Spectrum(1.f),
+				isKrBlack, isKtBlack);
 
 		if (directPdfW)
 			*directPdfW = (1.f - threshold) * specPdfD;

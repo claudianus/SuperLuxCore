@@ -23,6 +23,7 @@
 
 #include <future>
 #include <mutex>
+#include <set>
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/replace.hpp>
 
@@ -289,6 +290,241 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 	return ssKernel.str();
 }
 
+//------------------------------------------------------------------------------
+// Scene-driven kernel type specialization
+//
+// Every AdvancePaths_MK_* kernel is a single, mostly inlined function on GPU
+// compilers, so each type case compiled into the type switches raises the
+// register pressure of every kernel that can reach it, whether the scene
+// uses that type or not. Each switch family has its own gate
+// (PARAM_SPECIALIZE_TEX/MAT/VOL/LIGHT/CAMERA/SAMPLER): when it is defined
+// only the cases whose PARAM_<family>_<TYPE> is defined are compiled in.
+// Volumes are materials, so the VOL switches use the PARAM_MAT_* names.
+//
+// Apple M5 Pro, velvet showcase scene, PATHOCL OpenCL: 28.6 -> 23.3 ms per
+// path iteration (+21% passes/s), and fewer cases to compile.
+//
+// The kernel hash includes these options, so a scene edit that introduces a
+// new type recompiles the kernels; RTPATHOCL turns this off by default to
+// keep interactive edits free of compile stalls.
+//
+// Apple's OpenCL and Metal. Metal keeps the generic material switch: with a
+// MATTE-only one the Metal compiler did not finish in 25 minutes. The
+// specialized Metal kernels also needed the generic Material_Evaluate()
+// inlined by cl2msl (see the inline-graph cut there): as a call target it
+// returned black for ~1% of the samples.
+//
+// Other platforms keep the generic kernels. RTX 5060 Ti, driver 595: on
+// CUDA the specialized kernels rendered correctly but gained 0-2.4% on the
+// five showcase bench scenes, against a 10-14 minute recompile for every new
+// scene type set. On NVIDIA OpenCL the specialized PathOCL program used to
+// fail ptxas ("too much global constant data", 0x17248 of 0x10000 bytes);
+// since the large LUTs moved to the kernelTables buffer it builds (~29 KB of
+// constant data) but its speed is not measured. Vulkan is not measured.
+//
+// The name tables are switches without a default so -Wswitch flags a new
+// enum value that is missing here.
+//------------------------------------------------------------------------------
+
+#define TYPE_NAME(t) case slg::ocl::t: return #t;
+
+static const char *TextureTypeName(const slg::ocl::TextureType type) {
+	switch (type) {
+		TYPE_NAME(CONST_FLOAT)
+		TYPE_NAME(CONST_FLOAT3)
+		TYPE_NAME(IMAGEMAP)
+		TYPE_NAME(SCALE_TEX)
+		TYPE_NAME(FRESNEL_APPROX_N)
+		TYPE_NAME(FRESNEL_APPROX_K)
+		TYPE_NAME(MIX_TEX)
+		TYPE_NAME(ADD_TEX)
+		TYPE_NAME(SUBTRACT_TEX)
+		TYPE_NAME(HITPOINTCOLOR)
+		TYPE_NAME(HITPOINTALPHA)
+		TYPE_NAME(HITPOINTGREY)
+		TYPE_NAME(NORMALMAP_TEX)
+		TYPE_NAME(BLACKBODY_TEX)
+		TYPE_NAME(IRREGULARDATA_TEX)
+		TYPE_NAME(DENSITYGRID_TEX)
+		TYPE_NAME(ABS_TEX)
+		TYPE_NAME(CLAMP_TEX)
+		TYPE_NAME(BILERP_TEX)
+		TYPE_NAME(COLORDEPTH_TEX)
+		TYPE_NAME(HSV_TEX)
+		TYPE_NAME(DIVIDE_TEX)
+		TYPE_NAME(REMAP_TEX)
+		TYPE_NAME(OBJECTID_TEX)
+		TYPE_NAME(OBJECTID_COLOR_TEX)
+		TYPE_NAME(OBJECTID_NORMALIZED_TEX)
+		TYPE_NAME(DOT_PRODUCT_TEX)
+		TYPE_NAME(POWER_TEX)
+		TYPE_NAME(LESS_THAN_TEX)
+		TYPE_NAME(GREATER_THAN_TEX)
+		TYPE_NAME(ROUNDING_TEX)
+		TYPE_NAME(MODULO_TEX)
+		TYPE_NAME(SHADING_NORMAL_TEX)
+		TYPE_NAME(POSITION_TEX)
+		TYPE_NAME(SPLIT_FLOAT3)
+		TYPE_NAME(MAKE_FLOAT3)
+		TYPE_NAME(BRIGHT_CONTRAST_TEX)
+		TYPE_NAME(HITPOINTVERTEXAOV)
+		TYPE_NAME(HITPOINTTRIANGLEAOV)
+		TYPE_NAME(TRIPLANAR_TEX)
+		TYPE_NAME(RANDOM_TEX)
+		TYPE_NAME(BEVEL_TEX)
+		TYPE_NAME(DISTORT_TEX)
+		TYPE_NAME(BOMBING_TEX)
+		TYPE_NAME(WHITENOISE_TEX)
+		TYPE_NAME(BLENDER_BLEND)
+		TYPE_NAME(BLENDER_CLOUDS)
+		TYPE_NAME(BLENDER_DISTORTED_NOISE)
+		TYPE_NAME(BLENDER_MAGIC)
+		TYPE_NAME(BLENDER_MARBLE)
+		TYPE_NAME(BLENDER_MUSGRAVE)
+		TYPE_NAME(BLENDER_NOISE)
+		TYPE_NAME(BLENDER_STUCCI)
+		TYPE_NAME(BLENDER_WOOD)
+		TYPE_NAME(BLENDER_VORONOI)
+		TYPE_NAME(CHECKERBOARD2D)
+		TYPE_NAME(CHECKERBOARD3D)
+		TYPE_NAME(CLOUD_TEX)
+		TYPE_NAME(FBM_TEX)
+		TYPE_NAME(MARBLE)
+		TYPE_NAME(DOTS)
+		TYPE_NAME(BRICK)
+		TYPE_NAME(WINDY)
+		TYPE_NAME(WRINKLED)
+		TYPE_NAME(UV_TEX)
+		TYPE_NAME(BAND_TEX)
+		TYPE_NAME(WIREFRAME_TEX)
+		TYPE_NAME(FRESNELCOLOR_TEX)
+		TYPE_NAME(FRESNELCONST_TEX)
+		TYPE_NAME(FRESNELIOR_TEX)
+		TYPE_NAME(FACING_TEX)
+		TYPE_NAME(MATHFUNC_TEX)
+		TYPE_NAME(GABORNOISE_TEX)
+		TYPE_NAME(RAYINFO_TEX)
+		TYPE_NAME(HITPOINT_TEX)
+		TYPE_NAME(CYCLESNOISE_TEX)
+		TYPE_NAME(VECTOR_MAPPING_TEX)
+		TYPE_NAME(NORMAL_VECTOR_TEX)
+		TYPE_NAME(CYCLES_NORMAL_MAP_TEX)
+		TYPE_NAME(CYCLES_BUMP_TEX)
+	}
+	return nullptr;
+}
+
+static const char *MaterialTypeName(const slg::ocl::MaterialType type) {
+	switch (type) {
+		TYPE_NAME(MATTE)
+		TYPE_NAME(MIRROR)
+		TYPE_NAME(GLASS)
+		TYPE_NAME(ARCHGLASS)
+		TYPE_NAME(MIX)
+		TYPE_NAME(NULLMAT)
+		TYPE_NAME(MATTETRANSLUCENT)
+		TYPE_NAME(GLOSSY2)
+		TYPE_NAME(METAL2)
+		TYPE_NAME(ROUGHGLASS)
+		TYPE_NAME(VELVET)
+		TYPE_NAME(CLOTH)
+		TYPE_NAME(CARPAINT)
+		TYPE_NAME(ROUGHMATTE)
+		TYPE_NAME(ROUGHMATTETRANSLUCENT)
+		TYPE_NAME(GLOSSYTRANSLUCENT)
+		TYPE_NAME(GLOSSYCOATING)
+		TYPE_NAME(DISNEY)
+		TYPE_NAME(TWOSIDED)
+		TYPE_NAME(HAIR)
+		TYPE_NAME(OPENPBR)
+		TYPE_NAME(DIFFRACTION)
+		TYPE_NAME(HOMOGENEOUS_VOL)
+		TYPE_NAME(CLEAR_VOL)
+		TYPE_NAME(HETEROGENEOUS_VOL)
+		TYPE_NAME(CYCLES_BSSRDF)
+	}
+	return nullptr;
+}
+
+static const char *LightSourceTypeName(const slg::ocl::LightSourceType type) {
+	switch (type) {
+		TYPE_NAME(TYPE_IL)
+		TYPE_NAME(TYPE_SUN)
+		TYPE_NAME(TYPE_TRIANGLE)
+		TYPE_NAME(TYPE_POINT)
+		TYPE_NAME(TYPE_MAPPOINT)
+		TYPE_NAME(TYPE_SPOT)
+		TYPE_NAME(TYPE_PROJECTION)
+		TYPE_NAME(TYPE_IL_CONSTANT)
+		TYPE_NAME(TYPE_SHARPDISTANT)
+		TYPE_NAME(TYPE_DISTANT)
+		TYPE_NAME(TYPE_IL_SKY2)
+		TYPE_NAME(TYPE_LASER)
+		TYPE_NAME(TYPE_SPHERE)
+		TYPE_NAME(TYPE_MAPSPHERE)
+		case slg::ocl::LIGHT_SOURCE_TYPE_COUNT: break;
+	}
+	return nullptr;
+}
+
+static const char *CameraTypeName(const slg::ocl::CameraType type) {
+	switch (type) {
+		TYPE_NAME(PERSPECTIVE)
+		TYPE_NAME(ORTHOGRAPHIC)
+		TYPE_NAME(STEREO)
+		TYPE_NAME(ENVIRONMENT)
+	}
+	return nullptr;
+}
+
+static const char *SamplerTypeName(const slg::ocl::SamplerType type) {
+	switch (type) {
+		TYPE_NAME(RANDOM)
+		TYPE_NAME(METROPOLIS)
+		TYPE_NAME(SOBOL)
+		TYPE_NAME(TILEPATHSAMPLER)
+		TYPE_NAME(PMJ02SAMPLER)
+	}
+	return nullptr;
+}
+
+#undef TYPE_NAME
+
+static void AddTypeSpecializationParams(vector<string> &params,
+		const CompiledScene &cscene, const slg::ocl::SamplerType samplerType,
+		const bool specializeMaterials) {
+	// An unnamed (out of range) type leaves the kernels generic
+	set<string> defs;
+	auto add = [&defs](const char *prefix, const char *name) {
+		if (!name)
+			return false;
+		defs.insert(string(prefix) + name);
+		return true;
+	};
+	for (size_t i = 0; i < cscene.texs.size(); ++i)
+		if (!add("-D PARAM_TEX_", TextureTypeName(cscene.texs[i].type)))
+			return;
+	for (size_t i = 0; i < cscene.mats.size(); ++i)
+		if (!add("-D PARAM_MAT_", MaterialTypeName(cscene.mats[i].type)))
+			return;
+	for (size_t i = 0; i < cscene.lightDefs.size(); ++i)
+		if (!add("-D PARAM_LIGHT_", LightSourceTypeName(cscene.lightDefs[i].type)))
+			return;
+	if (!add("-D PARAM_CAMERA_", CameraTypeName(cscene.camera.type)))
+		return;
+	if (!add("-D PARAM_SAMPLER_", SamplerTypeName(samplerType)))
+		return;
+
+	params.push_back("-D PARAM_SPECIALIZE_TEX");
+	if (specializeMaterials)
+		params.push_back("-D PARAM_SPECIALIZE_MAT");
+	params.push_back("-D PARAM_SPECIALIZE_VOL");
+	params.push_back("-D PARAM_SPECIALIZE_LIGHT");
+	params.push_back("-D PARAM_SPECIALIZE_CAMERA");
+	params.push_back("-D PARAM_SPECIALIZE_SAMPLER");
+	params.insert(params.end(), defs.begin(), defs.end());
+}
+
 void PathOCLBaseOCLRenderThread::InitKernels() {
 	//--------------------------------------------------------------------------
 	// Compile kernels
@@ -315,6 +551,10 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 			RenderEngine::RenderEngineType2String(renderEngine->GetType()),
 			MachineEpsilon::GetMin(), MachineEpsilon::GetMax(),
 			renderEngine->pathTracer.spectralEnable);
+	// JH2019 upsampling reads its table from kernelTables (texture_types.cl)
+	if (renderEngine->pathTracer.spectralEnable &&
+			renderEngine->pathTracer.spectralUpsamplingJH2019)
+		kernelsParameters.push_back("-D SLG_SPECTRAL_JH2019");
 
 	// Wavefront queue mode is compiled in: with the queues disabled the
 	// taskQueueBuf/taskQueueCount args stay null, and leaving the queue
@@ -324,6 +564,17 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// AGX::ComputeContext::prepareForEnqueue).
 	if (wavefrontQueues)
 		kernelsParameters.push_back("-D PATHOCL_WAVEFRONT_QUEUES");
+
+	const DeviceType deviceType = intersectionDevice.GetDeviceDesc().GetType();
+#if defined(__APPLE__)
+	const bool specializeDevice = deviceType & (DEVICE_TYPE_OPENCL_ALL | DEVICE_TYPE_METAL_ALL);
+#else
+	const bool specializeDevice = false;
+#endif
+	if (renderEngine->kernelTypeSpecialization && specializeDevice)
+		AddTypeSpecializationParams(kernelsParameters, *renderEngine->compiledScene,
+				renderEngine->taskConfig.sampler.type,
+				deviceType & DEVICE_TYPE_OPENCL_ALL);
 
 	const string kernelSource = GetKernelSources();
 
@@ -686,10 +937,9 @@ u_int PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, queueState);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, wavefrontQueues ? 1u : 0u);
 
-	// JH2019 spectral upsampling table (NULL unless
-	// path.spectral.upsampling=jh2019; TEXTURES_PARAM tail)
+	// Kernel lookup tables (TEXTURES_PARAM tail)
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
-			spectralUpsamplingTableBuff);
+			kernelTablesBuff);
 	// Volume majorant cells (TEXTURES_PARAM tail; NULL when unused)
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++,
 			volMajorantsBuff);

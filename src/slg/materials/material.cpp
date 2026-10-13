@@ -468,8 +468,11 @@ Dispersion slg::EvaluateDispersion(TextureConstPtr cauchyB,
 		const HitPoint &hitPoint) {
 	Dispersion d;
 	if (sellmeierB && sellmeierC) {
-		const Spectrum b = sellmeierB->GetSpectrumValue(hitPoint);
-		const Spectrum c = sellmeierC->GetSpectrumValue(hitPoint);
+		// Sellmeier coefficients are non-color data: read them raw. The
+		// spectral GetSpectrumValue() would upsample them as an RGB color
+		// to the path wavelengths and corrupt the dispersion curve.
+		const Spectrum b = sellmeierB->EvalSpectrumValue(hitPoint);
+		const Spectrum c = sellmeierC->EvalSpectrumValue(hitPoint);
 		for (u_int i = 0; i < 3; ++i) {
 			d.sellB[i] = b.c[i];
 			d.sellC[i] = c.c[i];
@@ -642,12 +645,16 @@ void slg::SchlickDistribution_SampleH(const float roughness, const float anisotr
 
 	*wh = Vector(sinTheta * cosf(phi), sinTheta * sinf(phi), cosTheta);
 	*d = SchlickDistribution_SchlickZ(roughness, cosTheta) * SchlickDistribution_SchlickA(*wh, anisotropy) * INV_PI;
-	*pdf = *d;
+	// The cos2Theta CDF above draws wh with density D(wh) * cos(theta_h)
+	// (D is normalised as Int D cos dw = 1), not D alone: upstream returned
+	// D, which made every Schlick lobe's BSDF-sampled path disagree with NEE.
+	*pdf = *d * cosTheta;
 }
 
 float slg::SchlickDistribution_Pdf(const float roughness, const Vector &wh,
 		const float anisotropy) {
-	return SchlickDistribution_D(roughness, wh, anisotropy);
+	// Density of SchlickDistribution_SampleH: D(wh) * cos(theta_h)
+	return SchlickDistribution_D(roughness, wh, anisotropy) * fabsf(wh.z);
 }
 
 //------------------------------------------------------------------------------
@@ -703,7 +710,9 @@ Spectrum slg::SchlickBSDF_CoatingSampleF(const bool fromLight, const Spectrum ks
 	const float coso = fabsf(localFixedDir.z);
 	const float cosi = fabsf(localSampledDir->z);
 
-	*pdf = specPdf / (4.f * cosWH);
+	// abs: on back faces (fixedDir.z < 0) cosWH is negative and the signed
+	// pdf dropped every coating sample while CoatingPdf() still counted it
+	*pdf = specPdf / (4.f * fabsf(cosWH));
 	if (*pdf <= 0.f)
 		return Spectrum();
 

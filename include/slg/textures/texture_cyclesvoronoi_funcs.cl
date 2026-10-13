@@ -93,9 +93,9 @@ OPENCL_FORCE_INLINE CyclesVoronoiResult CyclesVoronoi_Octave(const float *coordi
         const uint dims, const uint feature, const uint metric, const float exponent,
         const float randomness, const float smoothness, const uint colorNeeded) {
     CyclesVoronoiResult result = CyclesVoronoi_Empty();
-    float cell[4] = {0.f, 0.f, 0.f, 0.f}, local[4] = {0.f, 0.f, 0.f, 0.f};
+    float cell[4] = {0.f, 0.f, 0.f, 0.f}, localPos[4] = {0.f, 0.f, 0.f, 0.f};
     for (uint d = 0u; d < dims; ++d) {
-        cell[d] = floor(coordinate[d]); local[d] = coordinate[d] - cell[d];
+        cell[d] = floor(coordinate[d]); localPos[d] = coordinate[d] - cell[d];
     }
     const uint smooth = feature == 2u && smoothness > 0.f;
     const int radius = smooth ? 2 : 1;
@@ -112,7 +112,7 @@ OPENCL_FORCE_INLINE CyclesVoronoiResult CyclesVoronoi_Octave(const float *coordi
         for (uint d = 0u; d < dims; ++d) { offset[d] = (int)(index % (uint)base) - radius; index /= (uint)base; }
         float point[4], color[3];
         CyclesVoronoi_Point(cell, offset, dims, randomness, colorNeeded, point, color);
-        const float distance = CyclesVoronoi_Distance(point, local, dims, feature >= 3u ? 0u : metric, exponent);
+        const float distance = CyclesVoronoi_Distance(point, localPos, dims, feature >= 3u ? 0u : metric, exponent);
         if (smooth) {
             float h = n == 0u ? 1.f : clamp(.5f + .5f * (result.distance - distance) / smoothness, 0.f, 1.f);
             h = h * h * (3.f - 2.f * h);
@@ -157,7 +157,7 @@ OPENCL_FORCE_INLINE CyclesVoronoiResult CyclesVoronoi_Octave(const float *coordi
                 for (uint d = 0u; d < dims; ++d) {
                     const float edge = point[d] - nearest[d];
                     square += edge * edge;
-                    numerator += ((nearest[d] + point[d]) * .5f - local[d]) * edge;
+                    numerator += ((nearest[d] + point[d]) * .5f - localPos[d]) * edge;
                 }
                 if (square > 1.e-4f) result.distance = fmin(result.distance, numerator / sqrt(square));
             }

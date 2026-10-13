@@ -38,6 +38,8 @@
 #include "slg/film/filters/filter.h"
 #include "slg/film/filters/filterdistribution.h"
 #include "slg/utils/pathinfo.h"
+#include "slg/materials/ggxglass_energy_table.h"
+#include "slg/materials/hair_huang_lut.h"
 
 using namespace std;
 using namespace luxrays;
@@ -233,25 +235,30 @@ void PathOCLBaseOCLRenderThread::InitTextures() {
 			nullptr, sizeof(float) * renderEngine->compiledScene->maxTextureEvalStackSize *
 			taskCount, "Texture evaluation stacks");
 
-	// JH2019 spectral upsampling table (path.spectral.upsampling=jh2019):
-	// upload the embedded coefficient table as a packed
-	// [scale[res] | coeffs[9*res^3]] float buffer. The kernel pointer
-	// doubles as the model switch (NULL = Smits basis). ~1.15 MB at
-	// res=32 -- too large for __constant program scope, hence a
-	// read-only __global buffer.
-	if (renderEngine->pathTracer.spectralEnable &&
-			renderEngine->pathTracer.spectralUpsamplingJH2019) {
-		const u_int res = Spectral::JH2019TableRes();
-		const u_int tableFloats = res + 9 * res * res * res;
-		std::vector<float> table(tableFloats);
-		std::copy_n(Spectral::JH2019TableScale(), res, table.begin());
-		std::copy_n(Spectral::JH2019TableCoeffs(), 9 * res * res * res,
-				table.begin() + res);
-		intersectionDevice.AllocBufferRO(&spectralUpsamplingTableBuff,
-				table.data(), tableFloats * sizeof(float),
-				"JH2019 spectral upsampling table");
-	} else
-		intersectionDevice.FreeBuffer(&spectralUpsamplingTableBuff);
+	// Read-only kernel lookup tables (KERNEL_TABLES_* layout in
+	// texture_types.cl): the GGX glass and Huang hair albedo LUTs, then
+	// the JH2019 spectral upsampling table [scale[res] | coeffs[9*res^3]]
+	// when path.spectral.upsampling=jh2019 (~1.15 MB at res=32). A __global
+	// buffer, not program-scope __constant arrays: NVIDIA OpenCL caps a
+	// program's constant data at 64 KB.
+	{
+		const size_t ggxFloats = 2 * 16 * 16 * 16, hairFloats = 16 * 16 * 16;
+		std::vector<float> table;
+		table.reserve(ggxFloats + 2 * hairFloats);
+		table.insert(table.end(), GgxGlassETable, GgxGlassETable + ggxFloats);
+		table.insert(table.end(), kHairHuangGlassE, kHairHuangGlassE + hairFloats);
+		table.insert(table.end(), kHairHuangGlassEInv, kHairHuangGlassEInv + hairFloats);
+		if (renderEngine->pathTracer.spectralEnable &&
+				renderEngine->pathTracer.spectralUpsamplingJH2019) {
+			const u_int res = Spectral::JH2019TableRes();
+			table.insert(table.end(), Spectral::JH2019TableScale(),
+					Spectral::JH2019TableScale() + res);
+			table.insert(table.end(), Spectral::JH2019TableCoeffs(),
+					Spectral::JH2019TableCoeffs() + 9 * res * res * res);
+		}
+		intersectionDevice.AllocBufferRO(&kernelTablesBuff,
+				table.data(), table.size() * sizeof(float), "Kernel lookup tables");
+	}
 
 	// Heterogeneous volume majorant cells (all volumes concatenated).
 	// NULL when no volume uses delta tracking; the kernel checks

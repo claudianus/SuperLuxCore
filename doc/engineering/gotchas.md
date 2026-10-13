@@ -65,6 +65,16 @@
   `-module-constants-in-storage-buffer` constant tables) was the last
   MSL codegen hole: emitted as program-scope `constant` + `ulong`-hop
   cast (fork `f7e6f6da`,`69472361`).
+- clspv crashes (`Trace/BPT trap`, every PathOCL kernel that inlines the
+  material) on a pointer picked at run time among same-typed struct
+  fields of a `__private` struct. `OpenPBRMat_LobeFrame` returned
+  `&p->coatFrame` / `&p->specFrame` / ... by lobe, and reading
+  `frame->Z.z` through it made SimplifyPointerBitcast fail with
+  `Err: SrcTy = %struct.Vector ... DstTy = float ... CstVal = 32 ... in
+  function: OpenPBRMat_EvalOp` (32 = byte offset of `Frame.Z.z`). Return
+  the struct by value instead (fixed 2026-10-13). To reproduce one kernel
+  in ~1 min, rerun the clspv command from the render log on its
+  `~/.luxcore/vkcache/*-vk2-<kernel>.pruned.bc`.
 - Bool scene props must be typed: `scene.spill.enable = true` inside
   `SetFromString` parses to false (lexical_cast accepts only 0/1) —
   spill silently no-ops. Use `= 1` or a typed `Property(name, True)`.
@@ -386,6 +396,26 @@
   `CUDADevice::CompileProgram` — feed the dump to
   `dev-tools/nvrtc_probe.exe` (`sass` mode) to experiment with NVRTC
   options (e.g. split-compile counts) without a 20min render loop.
+- **Kernel type specialization is macOS-only; keep big LUTs out of
+  `__constant`.** (2026-10-13, RTX 5060 Ti, driver 595, rented Linux box.)
+  `opencl.kernel.typespecialization` (`-D PARAM_SPECIALIZE_*`) pays off on
+  Apple OpenCL/Metal (register pressure), but on CUDA it rendered
+  identically for 0-2.4% more samples while every new scene type set cost
+  a 10-14 min recompile. On NVIDIA OpenCL the specialized PathOCL program
+  failed ptxas with "File uses too much global constant data (0x17248
+  bytes, 0x10000 max)": NVIDIA OpenCL caps a program's `__constant` data at
+  64 KB, and the program-scope LUTs added up to ~92 KB (GGX glass E 32 KB,
+  Huang hair 2x16 KB, Blender noise, CIE...). Fix: the GGX glass and hair
+  LUTs (and the JH2019 table) live in one read-only `__global` buffer,
+  `kernelTables` (`KERNEL_TABLES_*` offsets in `texture_types.cl`, filled
+  in `InitTextures()`, passed in the old spectral-table argument slot so
+  the Apple buffer-argument count does not grow). The specialized NVIDIA
+  OpenCL program now builds with ~29 KB of `.const` (the old generic one
+  had 95 KB), but specialization stays off there because its speed is not
+  measured. A new table larger than a few KB goes into `kernelTables`, not
+  `__constant`. CUDA is unaffected (`__constant` is defined away). First
+  CUDA compile of the generic PathOCL kernel on that box: 28 min (bundled
+  NVRTC 12.8, so no `--Ofast-compile`).
 - **Spectral Metal first render timed out MTLCompilerService** (fixed
   2026-10-04). The add-on defaults to spectral, and under `SLG_SPECTRAL`
   every texture leaf producer expands the force-inlined
@@ -420,3 +450,35 @@
   fixed bias. Spectral vs RGB agrees within ~2% on non-saturated colors;
   CPU and GPU projections are identical. Unit round-trip checks must
   compare the mean of many draws, not single draws.
+- **Per-kernel GPU time on Metal: `SUPERLUXCORE_METAL_PROFILE=1`**
+  (2026-10-13). Every dispatch then commits its own command buffer and
+  the completed handler sums GPUEndTime - GPUStartTime per MTLFunction;
+  a `[MetalProfile]` table goes to stderr every 5 s (HWRT intersects
+  show up as `<external encode: HWRT intersect>`). Serializing the
+  dispatches costs a few % throughput, so use it for shares, not spp.
+  Xcode's GPU trace attributes time to the translated pipeline names
+  and is harder to map back to `AdvancePaths_MK_*`.
+- **Equal-time benchmarks: check sampler changes against an independent
+  pair** (2026-10-13). A sampler change can correlate the two seeds of
+  the two-seed noise metric and fake a gain, so cross-check with
+  `publish.noise_cross` against another leg's pair (the CPU pair for a
+  GPU leg). That check is how Owen-scrambled Sobol turned out to be a
+  loss at equal time - its nested-uniform index shuffle breaks the
+  prefix stratification at non power-of-2 spp - and it is now off by
+  default (`sampler.sobol.owen.enable`). CPU spp on the M5 Pro drifts
+  ~10% run to run (thermals): compare noise-normalized efficiency over
+  two seeds, never single-run spp.
+- **PATHOCL draws fewer samples per second than upstream on the same
+  GPU** (2026-10-13, open). Same task count, same scene: upstream
+  OpenCL draws ~20% more spp on the M5 Pro and upstream OpenCL/CUDA
+  ~40-50% more on an RTX 5060 Ti 16 GB. Not the task count (512K vs
+  256K is +1-3%), not the compile-time `PT_*` feature gates (+1.4% on
+  CUDA), not MNEE/PSR/moments. Per task, the wavefront state is much
+  larger than upstream's: GPUTask 912 vs 664 bytes, GPUTaskState 616 vs
+  392, SampleResult 584 vs 428, EyePathInfo 208 vs 108 (HitPoint gained
+  the light-path/spectral/crypto fields). The kernels read these as AoS
+  from global memory, so a hot/cold split of HitPoint and GPUTaskState
+  is the first thing to try. Per-kernel time is only available on our
+  own backends (`SUPERLUXCORE_METAL_PROFILE=1`): Apple's OpenCL leaves
+  kernel names out of a Metal System Trace, and `ncu` fails with
+  LibraryNotLoaded inside vast.ai containers.

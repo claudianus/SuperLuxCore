@@ -152,6 +152,13 @@ public:
 	// counting it as transparent made rough SSS paths "caustic", the eye
 	// side suppressed them and the light/photon side mis-estimated them.
 	bool IsChainTransparentMedium() const;
+	// Path depth class of this vertex: true for a medium scatter and for
+	// a surface reached from inside an SSS-parametrized medium (the
+	// random walk meeting its boundary - TIR or exit). The latter is a
+	// walk step: counting it as a glossy/specular surface event cut the
+	// walk after ~4 internal reflections (a furnace OpenPBR SSS sphere at
+	// .56 instead of .78 with the default glossy depth).
+	bool IsVolumeDepthVertex() const;
 	bool IsPhotonGIEnabled() const { return material->IsPhotonGIEnabled(); }
 	bool IsHoldout() const { return material->IsHoldout(); }
 	bool IsAlbedoEndPoint(const AlbedoSpecularSetting albedoSpecularSetting,

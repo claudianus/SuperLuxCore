@@ -985,6 +985,15 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 						volInfo->IsScatteredStart(),
 						equiangularLightPoints, equiangularLightLuminances,
 						connectionThroughput, &emis);
+			} else if ((rayVolume->GetType() == HOMOGENEOUS_VOL) &&
+					static_cast<const HomogeneousVolume *>(&*rayVolume)->IsSSSParametrized()) {
+				// Random-walk SSS: chromatic distance sampling driven by
+				// the path throughput up to this flight
+				const Spectrum channelWeights = pathThroughput ?
+						(*pathThroughput * *connectionThroughput) : *connectionThroughput;
+				t = static_cast<const HomogeneousVolume *>(&*rayVolume)->ScatterSSS(
+						*ray, scatterU, volInfo->IsScatteredStart(), channelWeights,
+						connectionThroughput, &emis);
 			} else
 				t = rayVolume->Scatter(*ray, scatterU, volInfo->IsScatteredStart(),
 						connectionThroughput, &emis);
@@ -993,6 +1002,20 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			if (!emis.Black()) {
 				if (sampleResult)
 					sampleResult->AddEmission(rayVolume->GetVolumeLightID(), *pathThroughput, emis);
+			}
+
+			if ((t > 0.f) && hit) {
+				// A scatter vertex closer to the boundary than the next
+				// ray's mint (MachineEpsilon::E) lets that ray skip the
+				// surface: the walk leaks out still carrying the interior
+				// volume and, coming back, the priority pass-through
+				// (same volume) pushes it twice - every later exit then
+				// stays "inside" with an unpaired eta^2. Keep the vertex
+				// a few epsilons off the surface along its normal.
+				const float cosHit = AbsDot(ray->d, bsdf->hitPoint.geometryN);
+				const float guard = 8.f * MachineEpsilon::E(bsdf->hitPoint.p);
+				if ((rayHit->t - t) * cosHit < guard)
+					t = Max(ray->mint, rayHit->t - guard / Max(cosHit, 1e-3f));
 			}
 
 			if (t > 0.f) {

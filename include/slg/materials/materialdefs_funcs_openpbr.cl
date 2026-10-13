@@ -63,11 +63,13 @@ typedef struct {
 	int sssAlbedoMedium;
 } OpenPBRParams;
 
-OPENCL_FORCE_INLINE __private const Frame *OpenPBRMat_LobeFrame(__private const OpenPBRParams *p, const uint lobe) {
-	if (lobe == OPENPBR_LOBE_COAT) return &p->coatFrame;
-	if (lobe == OPENPBR_LOBE_FUZZ) return &p->fuzzFrame;
-	if (lobe == OPENPBR_LOBE_DIFF) return &p->diffuseFrame;
-	return &p->specFrame;
+// Returns a copy: a pointer picked at run time among the Frame fields of the
+// private params struct crashes clspv's SimplifyPointerBitcast (Vulkan).
+OPENCL_FORCE_INLINE Frame OpenPBRMat_LobeFrame(__private const OpenPBRParams *p, const uint lobe) {
+	if (lobe == OPENPBR_LOBE_COAT) return p->coatFrame;
+	if (lobe == OPENPBR_LOBE_FUZZ) return p->fuzzFrame;
+	if (lobe == OPENPBR_LOBE_DIFF) return p->diffuseFrame;
+	return p->specFrame;
 }
 
 OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* restrict material,
@@ -92,10 +94,10 @@ OPENCL_FORCE_INLINE void OpenPBRMat_EvaluateParams(__global const Material* rest
 	p->transScatterAniso = clamp(Texture_GetFloatValue(material->openpbr.transScatterAnisoTexIndex, hitPoint TEXTURES_PARAM), -1.f, 1.f);
 	p->dispersion = fmax(Texture_GetFloatValue(material->openpbr.dispersionTexIndex, hitPoint TEXTURES_PARAM), 0.f);
 	p->sellB = (material->openpbr.sellmeierBTexIndex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->openpbr.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->openpbr.sellmeierBTexIndex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(-1.f, 0.f, 0.f);
 	p->sellC = (material->openpbr.sellmeierCTexIndex != NULL_INDEX) ?
-			Texture_GetSpectrumValue(material->openpbr.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
+			Texture_GetRawSpectrumValue(material->openpbr.sellmeierCTexIndex, hitPoint TEXTURES_PARAM) :
 			MAKE_FLOAT3(0.f, 0.f, 0.f);
 
 	p->sssWeight = clamp(Texture_GetFloatValue(material->openpbr.sssWeightTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f);
@@ -555,7 +557,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_ComputeWeights(__global const HitPoint *hitP
 		Microfacet_OpenPBRAnisoAlphas(p->specRoughnessMS, p->specAniso, &alphaT, &alphaB);
 		const float nInt = OpenPBRMat_InteriorIor(hitPoint, p MATERIALS_PARAM);
 		msScale = Microfacet_GgxGlassEnergyScale(alphaT, alphaB, muF,
-				(specFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt);
+				(specFixed.z > 0.f) ? nInt / p->extIor : p->extIor / nInt, kernelTables);
 	}
 
 	weights[OPENPBR_LOBE_SPEC] = (wDiel * (1.f + refrFrac * (msScale - 1.f))) *
@@ -599,9 +601,9 @@ OPENCL_FORCE_INLINE float OpenPBRMat_LobePdf(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const uint lobe,
 		const float3 fixed, const float3 sampled
 		MATERIALS_PARAM_DECL) {
-	__private const Frame *frame = OpenPBRMat_LobeFrame(p, lobe);
-	const float3 wo = p->independentNormals ? Frame_ToLocal_Private(frame, fixed) : fixed;
-	const float3 wi = p->independentNormals ? Frame_ToLocal_Private(frame, sampled) : sampled;
+	const Frame frame = OpenPBRMat_LobeFrame(p, lobe);
+	const float3 wo = p->independentNormals ? Frame_ToLocal_Private(&frame, fixed) : fixed;
+	const float3 wi = p->independentNormals ? Frame_ToLocal_Private(&frame, sampled) : sampled;
 	if (p->independentNormals) {
 		const bool physicalReflection = dot(fixed, p->geometryN) * dot(sampled, p->geometryN) > 0.f;
 		if (lobe == OPENPBR_LOBE_BTDF) {
@@ -656,8 +658,8 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *h
 	for (uint lobe = 0; lobe < OPENPBR_LOBE_COUNT; ++lobe) {
 		if (Spectrum_IsBlack(weights[lobe]) && probs[lobe] <= 0.f) continue;
 		if (!reflected && lobe != OPENPBR_LOBE_BTDF) continue;
-		__private const Frame *frame = OpenPBRMat_LobeFrame(p, lobe);
-		const float3 wi = Frame_ToLocal_Private(frame, light), wo = Frame_ToLocal_Private(frame, eye);
+		const Frame frame = OpenPBRMat_LobeFrame(p, lobe);
+		const float3 wi = Frame_ToLocal_Private(&frame, light), wo = Frame_ToLocal_Private(&frame, eye);
 		if (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) {
 			const float side = p->specFrameSide;
 			if (side * wi.z <= 0.f || side * wo.z <= 0.f) continue;
@@ -692,12 +694,12 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *h
 		pdfF += probs[lobe] * OpenPBRMat_LobePdf(hp, p, lobe, fixed, sampled MATERIALS_PARAM);
 		if (p->cyclesNormalSemantics && reflected && !Spectrum_IsBlack(value)) {
 			const float side = (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) ? p->specFrameSide : 1.f;
-			const float3 Ns = side * MAKE_FLOAT3(frame->Z.x, frame->Z.y, frame->Z.z), Ni = p->interpolatedN;
+			const float3 Ns = side * MAKE_FLOAT3(frame.Z.x, frame.Z.y, frame.Z.z), Ni = p->interpolatedN;
 			if (dot(Ni, light) * dot(Ni, Ns) * dot(Ns, light) < 0.f) value = BLACK;
 		}
 		if (p->applyLobeTerminator && reflected && !Spectrum_IsBlack(value)) {
 			const float side = (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) ? p->specFrameSide : 1.f;
-			const float3 Ns = side * MAKE_FLOAT3(frame->Z.x, frame->Z.y, frame->Z.z), Ni = p->interpolatedN;
+			const float3 Ns = side * MAKE_FLOAT3(frame.Z.x, frame.Z.y, frame.Z.z), Ni = p->interpolatedN;
 			if (Ns.x != Ni.x || Ns.y != Ni.y || Ns.z != Ni.z) {
 				// Preserve imported per-diffuse-closure correction without
 				// changing native OpenPBR's selected terminator policy.
@@ -943,8 +945,8 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
 
-	__private const Frame *sampleFrame = OpenPBRMat_LobeFrame(&p, lobe);
-	const float3 wo = p.independentNormals ? Frame_ToLocal_Private(sampleFrame, fixedDir) : fixedDir;
+	const Frame sampleFrame = OpenPBRMat_LobeFrame(&p, lobe);
+	const float3 wo = p.independentNormals ? Frame_ToLocal_Private(&sampleFrame, fixedDir) : fixedDir;
 	if (p.independentNormals && (lobe == OPENPBR_LOBE_SPEC || lobe == OPENPBR_LOBE_METAL) &&
 			p.specFrameSide * wo.z <= 0.f) { MATERIAL_SAMPLE_RETURN_BLACK; }
 	if (p.independentNormals && (lobe == OPENPBR_LOBE_COAT || lobe == OPENPBR_LOBE_FUZZ) && wo.z <= 0.f) { MATERIAL_SAMPLE_RETURN_BLACK; }
@@ -1054,7 +1056,7 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 	}
 
 	if (p.independentNormals) {
-		sampledDir = Frame_ToWorld_Private(sampleFrame, sampledDir);
+		sampledDir = Frame_ToWorld_Private(&sampleFrame, sampledDir);
 		const bool reflected = dot(fixedDir, p.geometryN) * dot(sampledDir, p.geometryN) > 0.f;
 		if (reflected == sampledTransmit) { MATERIAL_SAMPLE_RETURN_BLACK; }
 	}

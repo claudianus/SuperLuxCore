@@ -100,6 +100,9 @@ protected:
 	
 	std::vector<std::string> additionalOpenCLKernelOptions, additionalCUDAKernelOptions;
 	bool writeKernelsToFile;
+	// macOS OpenCL/Metal: compile only the texture/material/volume/light/camera/sampler types the scene uses
+	// (opencl.kernel.typespecialization, see AddTypeSpecializationParams())
+	bool kernelTypeSpecialization;
 
 	// Pixel filter related variables
 	std::vector<float> pixelFilterDistribution;

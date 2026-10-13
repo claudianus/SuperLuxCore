@@ -75,12 +75,7 @@ OPENCL_FORCE_INLINE void HomogeneousVolMaterial_SSSCoeffsCB15(
 		const float gi = (ch == 0) ? g.x : ((ch == 1) ? g.y : g.z);
 		const float di = (ch == 0) ? mfp.x : ((ch == 1) ? mfp.y : mfp.z);
 
-		float al = SSSAlphaVanDeHulst(Ad, gi);
-		for (int i = 0; i < 6; ++i) {
-			const float k = clamp(SSSRdDiffusion(al, eta) /
-					fmax(SSSRdDiffusion(al, 1.f), 1e-4f), 1e-2f, 1.f);
-			al = SSSAlphaVanDeHulst(clamp(Ad / k, 1e-4f, 0.999f), gi);
-		}
+		const float al = SSSAlphaCB15(Ad, gi, eta);
 		const float st = (1.f / fmax(di, 1e-6f)) / fmax(1.f - gi * al, 1e-6f);
 		if (ch == 0) { alpha->x = al; sigmaT->x = st; }
 		else if (ch == 1) { alpha->y = al; sigmaT->y = st; }

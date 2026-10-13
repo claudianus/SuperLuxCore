@@ -168,7 +168,9 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 					hit ? rayHit->t : ray->maxt,
 					scatterU, volInfo->scatteredStart,
 					connectionThroughput, &connectionEmission,
-					tmpHitPoint
+					tmpHitPoint,
+					// SSS walk channel selection weights
+					pathThroughput * *connectionThroughput
 					TEXTURES_PARAM);
 		}
 
@@ -177,6 +179,16 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			SampleResult_AddEmission(&taskConfig->film, sampleResult, BSDF_GetLightID(bsdf
 				MATERIALS_PARAM),
 					pathThroughput, connectionEmission);
+
+		// Keep the scatter vertex a few epsilons off the surface (CPU
+		// Scene::Intersect): the next ray's mint would skip the boundary
+		// and leak the walk out carrying the interior volume
+		if ((t > 0.f) && hit) {
+			const float cosHit = fabs(dot(VLOAD3F(&ray->d.x), VLOAD3F(&bsdf->hitPoint.geometryN.x)));
+			const float guard = 8.f * MachineEpsilon_E_Float3(VLOAD3F(&bsdf->hitPoint.p.x));
+			if ((rayHit->t - t) * cosHit < guard)
+				t = fmax(ray->mint, rayHit->t - guard / fmax(cosHit, 1e-3f));
+		}
 
 		if (t > 0.f) {
 			// There was a volume scatter event

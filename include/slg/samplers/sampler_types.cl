@@ -67,8 +67,11 @@ typedef struct {
 	// bucket walk pixelOffset 0..bucketSize-1 in lockstep: the first
 	// sample wave then covers only bucketCount distinct morton offsets
 	// (a periodic pixel mask when taskCount >> filmPixels and rendering
-	// halts early). A gid-derived stagger spreads wave-1 coverage over
-	// the whole film while preserving per-bucket sweep completeness.
+	// halts early). The stagger is the bucket ticket's lap
+	// (SamplerSharedData_GetNewBucket), not gid % bucketSize: tickets
+	// follow gid order closely and bucketCount is a multiple of
+	// bucketSize, so a gid stagger gave every task of a bucket the same
+	// start - 25% of a 64x64 Metal film was never sampled at 16 spp.
 	unsigned int bucketCycleStart;
 } RandomSample;
 

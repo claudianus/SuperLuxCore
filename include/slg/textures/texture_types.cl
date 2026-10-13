@@ -722,17 +722,28 @@ typedef struct {
 
 #if defined(SLG_OPENCL_KERNEL)
 
+// kernelTables layout, in floats (filled in PathOCLBaseOCLRenderThread::
+// InitTextures()). The LUTs live in a __global buffer, not in
+// program-scope __constant arrays: NVIDIA OpenCL caps a program's constant
+// data at 64 KB and the LUTs alone are 64 KB.
+//  - GGX glass directional albedo (ggxglass_energy_table.h), [2][16][16][16]
+//  - Huang hair glass albedo E and E-inverse (hair_huang_lut.h), [16][16][16] each
+//  - JH2019 spectral upsampling table [scale[res] | coeffs], only under
+//    SLG_SPECTRAL_JH2019 (path.spectral.upsampling=jh2019)
+#define KERNEL_TABLES_GGXGLASS_E 0u
+#define KERNEL_TABLES_HAIR_E (2u * 16u * 16u * 16u)
+#define KERNEL_TABLES_HAIR_EINV (KERNEL_TABLES_HAIR_E + 16u * 16u * 16u)
+#define KERNEL_TABLES_JH2019 (KERNEL_TABLES_HAIR_EINV + 16u * 16u * 16u)
+
 #define TEXTURES_PARAM_DECL \
 	, __global const Texture* restrict texs \
 	, __global const TextureEvalOp* restrict texEvalOps \
 	, __global float *texEvalStacks \
 	, const uint maxTextureEvalStackSize \
 	IMAGEMAPS_PARAM_DECL SCENE_PARAM_DECL \
-	/* JH2019 (rgb2spec) spectral upsampling table: [scale[res]|coeffs] \
-	 * packed floats uploaded by the host when \
-	 * path.spectral.upsampling=jh2019; NULL keeps the default Smits \
-	 * basis. Only dereferenced under SLG_SPECTRAL. */ \
-	, __global const float* restrict spectralUpsamplingTable \
+	/* Read-only lookup tables (KERNEL_TABLES_* offsets below), \
+	 * always uploaded by the host. */ \
+	, __global const float* restrict kernelTables \
 	/* Heterogeneous volume majorant cells (all volumes concatenated, \
 	 * indexed by HeterogenousVolumeParam::majorantOffset). NULL when \
 	 * no volume uses delta tracking. */ \
@@ -747,7 +758,7 @@ typedef struct {
 	, texEvalStacks \
 	, maxTextureEvalStackSize \
 	IMAGEMAPS_PARAM SCENE_PARAM \
-	, spectralUpsamplingTable \
+	, kernelTables \
 	, volMajorants \
 	, eqLightPoints \
 	, eqLightCount

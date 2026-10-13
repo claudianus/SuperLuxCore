@@ -139,9 +139,12 @@ Spectrum DisneyMaterial::Evaluate(
 			clearcoat, clearcoatGloss, anisotropicGloss, sheen, sheenTint, sheenRoughness,
 			localFilmAmount, localFilmThickness,
 			localFilmIor, transmission, transmissionRoughness, nc, nt, disp,
-			localLightDir, localEyeDir, event, directPdfW, reversePdfW)
-			// Evaluate() follows LuxRender habit to return the result multiplied by cosThetaToLight
-			* fabsf(CosTheta(localLightDir));
+			localLightDir, localEyeDir, event, directPdfW, reversePdfW);
+	// Evaluate() follows LuxRender habit to return the result multiplied by
+	// cosThetaToLight: DisneyEvaluate() already includes it (Sample() divides
+	// the same value by the pdf). Multiplying again here darkened every
+	// Disney NEE/light-tracing connection by cos(theta_l) while BSDF-sampled
+	// hits stayed correct.
 }
 
 Spectrum DisneyMaterial::DisneyEvaluate(
@@ -491,8 +494,11 @@ Vector DisneyMaterial::DisneyMetallicSample(const float anisotropic, const float
 	const float sinTheta = sqrtf(Max(0.0f, 1.0f - cosTheta * cosTheta));
 	Vector wh = Vector(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
 
+	// Back face (wo.z < 0): mirror wh into wo's hemisphere like the GPU and
+	// DisneyClearcoatSample do. Returning no sample here while MetallicPdf
+	// still counts the lobe lost ~30% of BSDF-sampled light on back faces.
 	if (CosTheta(wo) * CosTheta(wh) <= 0.0f)
-		return Vector();
+		wh = -wh;
 
 	return Normalize(2.0f * Dot(wh, wo) * wh - wo);
 }

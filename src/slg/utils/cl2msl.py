@@ -1382,13 +1382,22 @@ def translate(cl_source: str, params: list) -> str:
     # call boundary produced rare black VM results on Apple M5 Pro;
     # the large dispatchers above still bound compiler graph expansion.
     # Only annotate DEFINITIONS: they start a line with 'inline'; call
-    # sites are indented. Suffix match catches both the generic entry
-    # ('Material_Evaluate(') and the per-type variants
-    # ('ArchGlassMaterial_Evaluate(').
+    # sites are indented. Suffix match catches the per-type variants
+    # ('ArchGlassMaterial_Evaluate(') and the generic entries
+    # ('Material_GetInteriorVolume(').
+    # The generic 'Material_Evaluate(' entry stays inline: as a call
+    # target (float3 return plus thread event/pdf out-params, around the
+    # noinline Material_EvalOp loop) the Apple M5 Pro compiler returned
+    # garbage for ~1% of BSDF_Evaluate calls in kernels built with
+    # type specialization (-D PARAM_SPECIALIZE_*): black event/pdf/result
+    # while the eval stack held the right values. Inlined, it is a small
+    # loop around the still-noinline dispatcher.
+    _keep_inline = {"Material_Evaluate"}
     for fn in _noinline_suffixes:
         assembled = re.sub(
             r"^inline ([A-Za-z_][A-Za-z0-9_:<> \*&]*?)([A-Za-z0-9_]*" + re.escape(fn) + r")\(",
-            r"__attribute__((noinline)) inline \1\2(",
+            lambda m: m.group(0) if m.group(2) in _keep_inline else
+                "__attribute__((noinline)) inline " + m.group(1) + m.group(2) + "(",
             assembled,
             flags=re.M,
         )
