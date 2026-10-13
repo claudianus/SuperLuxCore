@@ -82,7 +82,11 @@ renderengine.seed = 17
 
 
 def rel_stats(a, b):
-    denom = np.maximum(np.abs(b), 1e-4)
+    # Floor at 10% of the reference mean, not 1e-4: dark noisy pixels that
+    # are exactly 0 in one 64spp image (media fog) weighed ~1000x each and
+    # turned the gate into a sampler-noise detector (relmean 0.77 media,
+    # 0.20 luxball-vol on a matching render; 0.13 / 0.06 with this floor)
+    denom = np.maximum(np.abs(b), 0.1 * np.abs(b).mean())
     rel = np.abs(a - b) / denom
     return rel.mean(), np.percentile(rel, 95)
 
