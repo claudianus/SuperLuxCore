@@ -40,7 +40,7 @@
           <p>${t('heroBody')}</p>
           <div class="actions"><a class="btn" href="#download">${t('heroCta')} ↓</a><a class="btn ghost" href="#compare">${t('heroCompare')} →</a></div>
         </div>
-        <p class="hero-caption">${t('heroCaption')} ${esc(C.version)} · ${esc(H.backend)} spectral · ${fmt(H.spp)} spp · ${Math.round(H.seconds / 60)} min · ACES 2.0</p>
+        <p class="hero-caption">${t('heroCaption')} ${esc(C.version)} · ${esc(H.backend)} ${t('heroSpectral')} · ${fmt(H.spp)} spp · ${t('minutes', { n: Math.round(H.seconds / 60) })} · ACES 2.0</p>
       </section>
       <div class="hero-rule" aria-hidden="true"></div>
 
@@ -120,11 +120,11 @@
       const m = Math.max(...rgb), c = rgb.map(v => Math.round(Math.min(1, v / m * .82) ** (1 / 2.2) * 255));
       return `<div class="swatch"><i style="background:rgb(${c.join(',')})"></i><span>${esc(label)}<br>${rgb.map(v => v.toFixed(3)).join(' ')}</span></div>`;
     };
-    return `<div class="card"><h3>${t('sellTitle')}</h3><p class="note" style="margin-top:12px;color:var(--ink2)">${t('sellBody')}</p><div class="swatches">${sw(C.sellmeier.before, T('before'))}${sw(C.sellmeier.after, T('after'))}</div><p class="note">N-SF6 · white furnace · RGB</p></div>`;
+    return `<div class="card"><h3>${t('sellTitle')}</h3><p class="note" style="margin-top:12px;color:var(--ink2)">${t('sellBody')}</p><div class="swatches">${sw(C.sellmeier.before, T('before'))}${sw(C.sellmeier.after, T('after'))}</div><p class="note">${t('sellNote')}</p></div>`;
   }
   function areas() {
     const max = Math.max(...D.areas.map(a => a.count));
-    return D.areas.slice().sort((a, b) => b.count - a.count).map(a => `<div class="area"><div class="n">${a.count}<small>${t('commits')}</small></div><div class="meter"><i style="width:${a.count / max * 100}%"></i></div><h3>${esc(tr(a.title))}</h3><p>${esc(tr(a.outcome))}</p><span class="id">${esc(a.id)}</span></div>`).join('');
+    return D.areas.slice().sort((a, b) => b.count - a.count).map(a => `<div class="area"><div class="n">${a.count}<small>${t('commits')}</small></div><div class="meter"><i style="width:${a.count / max * 100}%"></i></div><h3>${esc(tr(a.title))}</h3><p>${esc(tr(a.outcome))}</p><span class="id">${esc(tr(C.areaNames[a.id]) || a.id)}</span></div>`).join('');
   }
 
   const devName = d => T({ gpu: 'devGpu', hybrid: 'devHybrid', oclgpu: 'devOcl' }[d] || 'devCpu');
@@ -164,10 +164,11 @@
     const Y = SYS[sys], B = Y.bench();
     const rows = B.map(b => {
       const v = b.speed, max = Math.max(...Object.values(v));
-      const x = (a, c) => (v[a] / v[c]).toFixed(2);
+      // SuperLuxCore vs LuxCoreRender on the same device; below 1 = upstream is faster
+      const x = (a, c) => { const r = v[a] / v[c]; return `<b${r < 1 ? ' class="lt"' : ''}>${r.toFixed(2)}×</b>`; };
       const est = k => (b.est || []).includes(k) ? '≈' : '';
       const row = (name, k, cls) => `<div class="bar-row ${cls}"><em>${esc(name)}</em><div class="track"><i style="width:${v[k] / max * 100}%"></i></div><b>${est(k)}${v[k].toFixed(2)}×<small>${fmt(b.spp[k])} spp</small></b></div>`;
-      return `<div class="sp"><img src="${b.thumb}" width="240" height="150" alt="" loading="lazy"><div><h3>${esc(b.id === 'bronze' ? T('benchBronze') : tr(C.stories[b.id].tab))}<span class="x">CPU <b>${x('cpuSlc', 'cpuUp')}×</b> · GPU <b>${x(...Y.x)}×</b></span></h3>
+      return `<div class="sp"><img src="${b.thumb}" width="240" height="150" alt="" loading="lazy"><div><h3>${esc(b.id === 'bronze' ? T('benchBronze') : tr(C.stories[b.id].tab))}<span class="x"><small>${t('speedX')}</small>CPU ${x('cpuSlc', 'cpuUp')} · GPU ${x(...Y.x)}</span></h3>
         <div class="bars"><p class="grp-l">CPU</p>${row('LuxCoreRender', 'cpuUp', '')}${row('SuperLuxCore', 'cpuSlc', 'slc')}
         <p class="grp-l">GPU</p>${Y.gpu.map(g => row(...g)).join('')}</div></div></div>`;
     }).join('');

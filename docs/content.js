@@ -2,7 +2,7 @@
    the feature catalogue, FAQ and coverage notes live in data.js. */
 window.SLC_COPY = {
   version: '2.11.27',
-  date: '2026-10-12',
+  date: '2026-10-13',
   core: 'https://github.com/claudianus/SuperLuxCore',
   addon: 'https://github.com/claudianus/SuperBlendLuxCore',
   // git: fork point e9ced7e7a (LuxCoreRender 2.11.2), compared against upstream main 4209d6537
@@ -34,6 +34,9 @@ window.SLC_COPY = {
     heroCta: { en: 'Get it for Blender', ko: 'Blender용 받기' },
     heroCompare: { en: 'See the difference', ko: '차이 보기' },
     heroCaption: { en: 'Rendered in SuperLuxCore', ko: 'SuperLuxCore 렌더' },
+    heroSpectral: { en: 'spectral', ko: '스펙트럴' },
+    minutes: { en: '{n} min', ko: '{n}분' },
+    sellNote: { en: 'N-SF6 · white furnace · RGB', ko: 'N-SF6 · 화이트 퍼니스 · RGB' },
 
     statsTitle: { en: 'Not a theme. A different engine.', ko: '테마가 아닙니다. 다른 엔진입니다.' },
     featMore: { en: 'Under the hood', ko: '엔진 속' },
@@ -76,6 +79,7 @@ window.SLC_COPY = {
     },
     benchBronze: { en: 'Bronze still life', ko: '청동 정물' },
     speedUnit: { en: '×N = noise of LuxCoreRender CPU ÷ noise of this setup, squared (noise falls with the square root of render time). Small print: samples per pixel. Samples alone are not a fair score: the engines leave different amounts of noise per sample (sampler, light sampling), and on caustic scenes SuperLuxCore also spends time on light-traced paths that a sample count does not show.', ko: '×N = (LuxCoreRender CPU 노이즈 ÷ 이 설정의 노이즈)². 노이즈는 렌더 시간의 제곱근에 비례해 줄기 때문입니다. 작은 글씨는 픽셀당 샘플 수입니다. 샘플 수만으로는 공정하지 않습니다. 엔진마다 샘플 하나가 남기는 노이즈가 다르고(샘플러, 광원 샘플링), 커스틱 장면에서는 SuperLuxCore가 샘플 수에 잡히지 않는 라이트 트레이싱 경로에도 시간을 쓰기 때문입니다.' },
+    speedX: { en: 'SuperLuxCore vs LuxCoreRender, same device', ko: '같은 장치의 LuxCoreRender 대비' },
     speedMetal: {
       en: 'same GPU: both backends compile only the texture, light and camera types a scene uses (OpenCL also its material types), and Metal gets to the same noise 6–37% faster than OpenCL on every scene. GPU only, CPU threads off.',
       ko: '같은 GPU: 두 백엔드 모두 장면이 쓰는 텍스처·조명·카메라 타입만 컴파일하고(OpenCL은 재질 타입도), 모든 장면에서 Metal이 OpenCL보다 같은 노이즈에 6–37% 빨리 도달합니다. GPU만 사용, CPU 스레드 끔.'
@@ -111,7 +115,7 @@ window.SLC_COPY = {
     left: { en: 'LuxCoreRender 2.11.2', ko: 'LuxCoreRender 2.11.2' },
     right: { en: 'SuperLuxCore 2.11.27', ko: 'SuperLuxCore 2.11.27' },
     drag: { en: 'Drag or use ← →', ko: '드래그 또는 ← →' },
-    receipt: { en: 'Render receipt', ko: '렌더 영수증' },
+    receipt: { en: 'Render receipt', ko: '렌더 기록' },
     differs: { en: 'Only these lines differ', ko: '다른 줄은 이것뿐' },
     samples: { en: 'samples / pixel', ko: '픽셀당 샘플' },
     seconds: { en: 'seconds', ko: '초' },
@@ -175,12 +179,19 @@ window.SLC_COPY = {
     honestyTitle: { en: 'How these images were made', ko: '이 이미지들을 만든 방법' },
     honesty: {
       en: 'Scenes are built from CC0 Poly Haven assets plus procedural optics by a script in the repository, then rendered by the published Python modules of each engine (LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.27) on one Apple M5 Pro, displayed through OpenColorIO ACES 2.0. Each image has a JSON receipt with its sample count, seconds, settings and hashes. The renderer source is Apache-2.0; the Blender extension is GPL-3.0.',
-      ko: '장면은 저장소의 스크립트가 CC0 Poly Haven 에셋과 절차적 광학 오브젝트로 만들고, 각 엔진의 공개 파이썬 모듈(LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.27)이 Apple M5 Pro 한 대에서 렌더했으며, OpenColorIO ACES 2.0으로 표시했습니다. 이미지마다 샘플 수, 시간, 설정, 해시가 담긴 JSON 영수증이 있습니다. 렌더러 소스는 Apache-2.0, Blender 확장은 GPL-3.0입니다.'
+      ko: '장면은 저장소의 스크립트가 CC0 Poly Haven 에셋과 절차적 광학 오브젝트로 만들고, 각 엔진의 공개 파이썬 모듈(LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.27)이 Apple M5 Pro 한 대에서 렌더했으며, OpenColorIO ACES 2.0으로 표시했습니다. 이미지마다 샘플 수, 시간, 설정, 해시가 담긴 JSON 기록이 있습니다. 렌더러 소스는 Apache-2.0, Blender 확장은 GPL-3.0입니다.'
     },
-    receipts: { en: 'All render receipts', ko: '전체 렌더 영수증' },
+    receipts: { en: 'All render receipts', ko: '전체 렌더 기록' },
     credits: { en: 'Built on LuxCoreRender. Assets: Poly Haven (CC0).', ko: 'LuxCoreRender 기반. 에셋: Poly Haven (CC0).' }
   },
   // One short line per comparison (receipts come from showcase.js); 'fair' sits behind a disclosure
+  // commit-area chips (data.js areas[].id)
+  areaNames: {
+    transport: { en: 'Transport', ko: '빛 전달' }, maintenance: { en: 'Maintenance', ko: '유지보수' },
+    volumes: { en: 'Volumes', ko: '볼륨' }, infrastructure: { en: 'Infrastructure', ko: '인프라' },
+    hardware: { en: 'Hardware', ko: '하드웨어' }, workflow: { en: 'Workflow', ko: '작업 흐름' },
+    materials: { en: 'Materials', ko: '재질' }, release: { en: 'Release', ko: '배포' }
+  },
   stories: {
     spectrum: {
       tab: { en: 'Dispersion & caustics', ko: '분산 · 커스틱' },

@@ -28,6 +28,7 @@ PY=/Applications/Blender.app/Contents/Resources/5.2/python/bin/python3.13
 python3 -I assets.py                                   # CC0 Poly Haven assets, md5-verified, lock.json
 Blender -b --factory-startup --python build.py         # scenes/<name>/scene.scn + variants.json + PLY meshes
 ./finals.sh                                            # every render in out/ with a JSON receipt
+OUT=bench SEED=42 ./bench5.sh; OUT=bench-s7 SEED=7 ./bench5.sh   # Mac speed legs
 $PY publish.py                                         # -> docs/assets/showcase, showcase.js, evidence JSON
 ```
 
@@ -41,8 +42,11 @@ Rules for claims on the page:
 
 - State the sample count, seconds, backend and denoiser for every image. The
   receipt card shows them, plus the exact lines that differ.
-- Speed is scene- and machine-dependent; the Metal comparison is one scene on
-  one Apple M5 Pro.
+- Speed is scene- and machine-dependent. The speed section is five scenes at
+  800×500, 30 s, two seeds (42 and 7), on one Apple M5 Pro (`bench5.sh`) and
+  one rented RTX 5060 Ti Linux box (`bench_pc.sh`); `publish.py` turns the
+  two-seed noise into speed relative to LuxCoreRender on that machine's CPU.
+  Scenes where upstream is faster are stated in the text, not left out.
 - The furnace numbers in `content.js` come from a white-metal sphere in a
   constant white environment (256 spp, depth 64). Rerun them before changing them.
 - Features that have open correctness issues stay out of the hero comparisons
