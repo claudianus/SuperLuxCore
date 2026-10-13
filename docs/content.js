@@ -172,7 +172,6 @@ window.SLC_COPY = {
     dlTitle: { en: 'Install it in Blender 5.2.', ko: 'Blender 5.2에 설치하세요.' },
     dlBody: { en: 'One ZIP per platform. Drag it into Blender, pick SuperLuxCore as the render engine, render.', ko: '플랫폼마다 ZIP 하나. Blender에 끌어다 놓고 렌더 엔진을 SuperLuxCore로 고른 뒤 렌더하세요.' },
     dlZip: { en: 'Extension ZIP', ko: '확장 ZIP' },
-    manual: { en: 'User manual', ko: '사용 설명서' },
     release: { en: 'Release notes', ko: '릴리스 노트' },
     faq: { en: 'Questions', ko: '자주 묻는 질문' },
     coverage: { en: 'What is and isn\'t covered', ko: '지원 범위와 한계' },

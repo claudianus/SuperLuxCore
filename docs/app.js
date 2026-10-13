@@ -97,7 +97,7 @@
         ${head('dlKicker', 'dlTitle', t('dlBody'), 'dl-title')}
         <div class="dl-grid">${[['macos_arm64', 'macOS', 'Apple silicon · Metal'], ['macos_x64', 'macOS', 'Intel'], ['windows_x64', 'Windows', 'x64 · CUDA / OpenCL'], ['linux_x64', 'Linux', 'x64 · CUDA / OpenCL']]
           .map(([id, name, arch]) => `<a href="${C.addon}/releases/download/v${C.version}/SuperLuxCore-${C.version}-${id}.zip"><strong>${name}</strong><small>${arch}</small><em>${t('dlZip')} ↓</em></a>`).join('')}</div>
-        <div class="dl-links"><span>${esc(C.version)} · Blender 5.2</span><a href="https://claudianus.github.io/SuperBlendLuxCore/${lang === 'ko' ? 'ko/' : ''}manual/">${t('manual')} ↗</a><a href="${C.addon}/releases/tag/v${C.version}">${t('release')} ↗</a><a href="${C.core}/tree/main/doc/features">${t('docs')} ↗</a></div>
+        <div class="dl-links"><span>${esc(C.version)} · Blender 5.2</span><a href="${C.addon}/releases/tag/v${C.version}">${t('release')} ↗</a><a href="${C.core}/tree/main/doc/features">${t('docs')} ↗</a></div>
         <div class="faq"><h3>${t('faq')}</h3>${D.faq.map(([q, a]) => `<details><summary>${esc(tr(q))}</summary><p>${esc(tr(a))}</p></details>`).join('')}
           <details><summary>${t('coverage')}</summary>${D.status.map(([a, b]) => `<p><b>${esc(tr(a))}.</b> ${esc(tr(b))}</p>`).join('')}</details></div>
       </div></section>`;
