@@ -250,8 +250,8 @@ void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 
 	// GPU photon generation (B1'): light tasks deposit caustic
 	// photons/beams while tracing; the host drains the records into
-	// the cache update path. Deposit mode requires frustum culling
-	// (no device visibility map) and a periodic update channel
+	// the cache update path. Deposit mode requires a caustic-only
+	// cache (no device visibility map) and a periodic update channel
 	// (updateSpp > 0) to ingest the drained records. The cache object
 	// only exists from here on (PathOCLBaseRenderEngine::StartLockLess),
 	// so the deposit-task allocation lives here rather than in
@@ -265,12 +265,11 @@ void PathOCLBaseRenderEngine::InitGPUTaskConfiguration() {
 	// starving the cache (CPU re-trace is disabled by ingest-only).
 	pgicDepositWanted = (GetType() == PATHOCL) &&
 			photonGICache && photonGICache->IsCausticEnabled() &&
-			photonGICache->UseFrustumCulling() &&
+			photonGICache->SkipsVisibilityPass() &&
 			(photonGICache->GetParams().caustic.updateSpp > 0);
 	if (pgicDepositWanted && (lightTaskCount == 0)) {
-		// UseFrustumCulling() already guarantees a projective camera,
-		// so the deposit frustum test is well-defined. Deposit tasks
-		// are cheap (no connect work): a dedicated tail fraction.
+		// Deposit tasks are cheap (no connect work): a dedicated tail
+		// fraction.
 		const float f = Clamp(renderConfig.GetConfig().Get(
 				PhotonGICache::GetDefaultProps()->
 				Get("path.photongi.deposit.taskfraction")).Get<double>(),

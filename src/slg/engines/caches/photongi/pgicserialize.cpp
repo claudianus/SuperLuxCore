@@ -117,6 +117,7 @@ void PhotonGICache::serialize(Archive &ar, const u_int version) {
 	ar & causticPhotonPass;
 
 	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
+	finishDroppedParties = 0;
 }
 
 namespace slg {

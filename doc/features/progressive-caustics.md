@@ -74,16 +74,21 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   Kernel-side unchanged: merge hash cell size tracks the current
   radius, so queries stay self-consistent.
 - **C3 kill the visibility pre-pass** (partially landed as C3a):
-  - `UseFrustumCulling()` — caustic-only caches on projective
-    cameras skip `TraceVisibilityParticles()` entirely; deposits
-    are culled by `Camera::ProjectPointToFilm` + a 10% border
-    (RTPM photon culling) instead of near-entry gating. The
-    Metropolis bootstrap then self-targets: `usefulPath` =
-    "deposited inside the film frame", and local mutations cluster
-    around successful caustic paths — the same job the visibility
-    map did, without the pass. Indirect caches still build the
-    visibility map (their deposits target near-entries), and
-    environment/stereo cameras fall back to it.
+  - `SkipsVisibilityPass()` — caustic-only caches (any camera) skip
+    `TraceVisibilityParticles()` entirely. Caustic deposits are
+    **not coverage-gated at all** (2026-10 pool SDS fix): the
+    original C3a culled them by `Camera::ProjectPointToFilm` + a
+    10% border, and the visibility-map path gated them by
+    near-entries. Both gates disagreed with the eye side, which
+    queries the cache - and cuts the light hit it replaces - at
+    every receiver it reaches. Receivers seen only through
+    refraction (a pool floor under the water surface lies well
+    outside the straight frustum; camera visibility particles stop
+    at the first diffuse hit) got neither photons nor the light hit:
+    the pool floor rendered at 0.37x (frustum) / 0.24x (visibility
+    map). Cost of accepting every deposit: cache capacity spent on
+    off-screen caustics (~1/3 on the pool test). Indirect caches
+    still build the visibility map for their own deposits.
   - Remaining C3b (deferred): focus-cache emission steering for
     the RANDOM sampler path; Metropolis already self-steers.
 - **C4 GPU beam index** (landed): `PGICBeamIndex` is a flat
@@ -104,7 +109,13 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   GPU recompilation still fires. `updatespp=0` keeps the
   synchronous build (final-render/fixed-cache mode). This is the
   "no pre-cache" half of the Corona-UX goal: first pixels are on
-  screen before the cache exists.
+  screen before the cache exists. Until generation 1 lands the eye side
+  must not cut the light hits the cache replaces
+  (`PhotonGICache::IsCausticReady()` / device
+  `causticPhotonTracedCount > 0` gate the chain-cached flag): the
+  cut ran from the first sample, so every pre-generation sample
+  rendered SDS receivers black (e115 CPU floor 0.94x at 30 s on a
+  small film, where those samples are a large share).
 - **C7 stall-free periodic updates** (landed): `Update()` used to
   park every render thread at a barrier while thread 0 re-traced
   photons and rebuilt BVH + beam index (seconds of viewport freeze
@@ -129,7 +140,7 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   `FinishQueue`, no DMA limit) — turning the light pass into the
   photon generator for free. Design + semantics:
   - Deposit mode activates when `caustic.enabled` + projective
-    frustum culling + `updatespp > 0`. With `lighttracing.enable = 0`
+    caustic-only cache + `updatespp > 0`. With `lighttracing.enable = 0`
     a tail fraction (`path.photongi.deposit.taskfraction`, default
     0.2) of the task population runs **deposit-only**: the whole
     camera-connect block (visibility ray, film splats, LMNEE) is
@@ -140,17 +151,49 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
     evaluated before the vertex folds in; homogeneous-volume flights
     chunk into beams at `max(8·r, len/16)` with length-share flux
     pre-attenuated to the chunk start; point photons take
-    post-segment flux, flipped landing normal, film-frustum + 10%
-    border receiver test.
+    post-segment flux, flipped landing normal, no receiver coverage
+    test (see C3a).
   - Host `DrainPGIC()` (per thread, inside the queue-synchronized
     film-readback window) reads the 4 counters + records, resets
     cursors, and calls `PhotonGICache::IngestTracedPhotons()` —
-    a staging area the update worker absorbs into the shadow
-    buffers under one combined `maxSize` room (CPU semantics:
-    photons+beams share the cap). `ingestOnly` mode skips the CPU
-    re-trace entirely; `IsCausticFull()` or 4M deposit-free paths
-    retires the tail tasks by clearing `depositEnabled` in
-    `taskConfig` (they park in `MK_DONE`, zero GPU waste).
+    a staging area the update worker turns into the newest batch of
+    a **sliding generation window**: each generation is the newest
+    batches fitting one combined `maxSize` room (CPU semantics:
+    photons+beams share the cap); the batch straddling the budget is
+    stride-thinned and its traced count scaled by the kept fraction,
+    older batches retire. `ingestOnly` mode skips the CPU re-trace
+    entirely. Only 4M deposit-free paths retire the tail tasks
+    (clearing `depositEnabled` in `taskConfig`, they park in
+    `MK_DONE`). Earlier the population accumulated to `maxSize` and
+    then froze (deposit tasks retired on "cache full"): the radius
+    kept shrinking over a fixed photon set, and the last partial
+    batch counted all its traced paths for the few records that fit
+    (density underestimated).
+  - Adjoint refraction fix (2026-10): the GPU
+    `GlassMaterial_EvalSpecularTransmission` applied the radiance
+    `eta^2` factor to light paths too (the CPU `fromLight` branch was
+    commented out). Closed glass objects cancel it (entering and
+    leaving multiply to 1), but a light path that ends inside water
+    lost `1/1.33^2 = 0.565`: every GPU B1' pool-floor photon and LT
+    splat through a water surface came out 0.56x.
+  - Overflow normalization (2026-10): a drain whose deposits exceed
+    `deposit.capacity` used to count every traced path for the
+    records that fit (e115 zero-config GPU floor at 0.955x, worse with
+    LT on: more light tasks per drain). The drain now keeps a common
+    leading fraction of photons and beams and scales its traced count
+    by it - overflow costs light-task work, never brightness.
+  - Swap barrier exit (2026-10): finished render threads leave the
+    generation-swap barrier with `arrive_and_drop` (FinishUpdate), and
+    the PATHOCL native lt.only loop now calls FinishUpdate - a kept
+    seat hung the GPU thread at its next swap (e102 lt.only).
+  - Disney receivers (2026-10): the Blender add-on exports every
+    Principled BSDF as `disney`, whose `GetEventTypes` reported TRANSMIT
+    unconditionally - PhotonGI never deposited on it (a Disney pool
+    floor stored 0 caustic photons). TRANSMIT is now reported only when
+    the transmission texture is not a constant <= 0. Disney events are
+    GLOSSY-only, so `IsDirectLightHitVisible` (CPU + `pgic_funcs.cl`)
+    counts glossy depth too: otherwise the floor took the cache AND its
+    own light hit (1.8x). e115 cases 4/5 cover it.
   - Deferred gen-1 (`initialUpdatePending`): the first cache is
     launched by the first `Update()` call, after ingest mode is
     resolved — GPU sessions build generation 1 purely from device
@@ -184,8 +227,11 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
 - Knaus-Zwicker 2011 global radius schedule — keeps consistency
   without per-point statistics (already the shape of `updatespp`
   radius reduction; formalize it).
-- Photon culling: reject deposits outside the camera frustum /
-  film footprint before they consume cache budget.
+- Photon culling: ~~reject deposits outside the camera frustum /
+  film footprint~~ - retracted for caustics (2026-10): a culling
+  test must use the eye side's own coverage (refraction included)
+  or it deletes energy. A coverage set built from actual eye-side
+  cache queries would bring the capacity saving back safely.
 - Stochastic evaluation in dense regions (RTPM) once density is high.
 - `SpillableArray` already backs photon vectors — keep memory bound
   under the auto-budget rule.
@@ -222,3 +268,32 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   V-Ray screen-scale 0.02 (= Film2SceneRadius imagePlaneRadius),
   Mitsuba `initialRadius=0` auto, RenderMan `photonEstimationNumber`,
   Octane progressive gathering radius.
+
+## Pool SDS verification (2026-10)
+
+`scenes/pool` (sun + sky2, water `glass`, matte pool), zero config
+(only `path.photongi.caustic.auto` resolving the cache on), 256x150,
+bands = mean RGB of image rows. Unbiased references need deep path
+limits (`pathdepth.* = 40`): the default diffuse depth truncates the
+pool's 0.7-albedo inter-reflection, and the cache (which skips the
+water -> light hop) then reads +7% above a truncated reference while
+matching a deep one.
+
+| sky only, deep, CPU | ceiling | wall | floor-far | floor-mid | floor-near |
+|---|---|---|---|---|---|
+| PT, no cache (150 s) | 3367 | 2376 | 2412 | 1872 | 1813 |
+| cache (150 s) | 3367 | 2374 | 2406 | 1880 | 1828 |
+
+| sun + sky, deep | ceiling | wall | floor-far | floor-mid | floor-near |
+|---|---|---|---|---|---|
+| GPU no cache (600 s, reference) | 8737 | 6888 | 8357 | 8002 | 7716 |
+| GPU zero-config (120 s) | 8743 | 6937 | 8369 | 8090 | 7816 |
+| CPU zero-config (120 s) | 8767 | 6921 | 8415 | 8312 | 7981 |
+| before the fixes, GPU cache, 512x300 (900 s) | 7283 | 5217 | 5675 | 4413 | 2262 |
+
+The last row is the default-depth run at 512x300 (bands are
+resolution-normalized means; the default depth also truncates, so the
+pre-fix deficit vs the deep reference is slightly overstated, but the
+0.29x near floor is the frustum + eta^2 loss). Regression:
+`dev-tools/e115_pool_sds_caustic_test.py` (zero-config CPU/GPU pool
+floor vs a deep no-cache reference, CPU/GPU parity).

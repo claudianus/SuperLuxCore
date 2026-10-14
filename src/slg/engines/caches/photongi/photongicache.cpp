@@ -169,14 +169,10 @@ bool PhotonGICache::IsVisibilityEnabled(const BSDF &bsdf) const {
 		return bsdf.IsPhotonGIEnabled();
 }
 
-bool PhotonGICache::UseFrustumCulling() const {
-	// RTPM-style photon culling replaces the visibility pre-pass: deposits
-	// outside the camera frustum are rejected at trace time. Only valid for
-	// caustic-only caches on projective cameras - indirect deposits need the
-	// visibility map, and environment cameras have no film frame to test.
-	const Camera::CameraType camType = scene->GetCamera().GetType();
-	return params.caustic.enabled && !params.indirect.enabled &&
-			((camType == Camera::PERSPECTIVE) || (camType == Camera::ORTHOGRAPHIC));
+bool PhotonGICache::SkipsVisibilityPass() const {
+	// Caustic deposits are not coverage-gated, so a caustic-only cache has
+	// no use for the visibility map; indirect deposits still need it
+	return params.caustic.enabled && !params.indirect.enabled;
 }
 
 float PhotonGICache::GetIndirectUsageThreshold(const BSDFEvent lastBSDFEvent,
@@ -209,9 +205,15 @@ bool PhotonGICache::IsDirectLightHitVisible(const EyePathInfo &pathInfo,
 	// off, or depth 0 under hybrid where the light pass/eye partition owns
 	// the caustic) has no stand-in and the cut only deleted energy (003
 	// Cornell mirror caustic on the ceiling at 0.6x).
+	// The receiver may be a rough glossy vertex (glossiness at or above
+	// the usage threshold: the photon tracer deposits there too) - an
+	// opaque Disney floor scatters GLOSSY only, so a diffuse-depth test
+	// never cut its light hit and the floor took the cache AND the hit
+	// (showcase pool 1.8x).
 	if (params.caustic.enabled && photonGICausticChainCached &&
 			!(pathInfo.lastBSDFEvent & DIFFUSE) &&
-			(pathInfo.depth.diffuseDepth + pathInfo.depth.volumeDepth > 0) &&
+			(pathInfo.depth.diffuseDepth + pathInfo.depth.glossyDepth +
+				pathInfo.depth.volumeDepth > 0) &&
 			((pathInfo.lastBSDFEvent & SPECULAR) ||
 				(pathInfo.lastGlossiness < params.glossinessUsageThreshold)))
 		return false;
@@ -389,34 +391,73 @@ void PhotonGICache::UpdateWorker() {
 		}
 
 		// Absorb device-side deposits (B1'): the drain thread fills the
-		// staging vectors; here they move into the update buffers. In
-		// ingestOnly mode the shadow buffers hold the accumulated
-		// population (swap-restored each generation), so the cache
-		// grows up to maxSize like a progressive photon map.
-		{
-			std::lock_guard<std::mutex> lock(ingestMutex);
-			// CPU semantics: maxSize caps the combined photon+beam
-			// population (tracephotonsthread.cpp globalCausticSize),
-			// so both inserts share one room budget.
-			const size_t total = updateCausticPhotons.size() + updateCausticBeams.size();
-			const size_t room = (params.caustic.maxSize > total) ?
-					(params.caustic.maxSize - total) : 0;
-			const size_t nPhotons = Min<size_t>(ingestPhotons.size(), room);
-			updateCausticPhotons.insert(updateCausticPhotons.end(),
-					ingestPhotons.begin(), ingestPhotons.begin() + nPhotons);
-			const size_t nBeams = Min<size_t>(ingestBeams.size(), room - nPhotons);
-			updateCausticBeams.insert(updateCausticBeams.end(),
-					ingestBeams.begin(), ingestBeams.begin() + nBeams);
-			// Traced-count semantics match CPU: paths counted while
-			// deposits were collected, until the cache fills.
-			if (room > 0)
-				updateCausticPhotonTracedCount += ingestTracedCount;
-			SLG_LOG("PhotonGI ingested GPU deposits: +" << nPhotons << " photons, +" <<
-					nBeams << " beams (total " << updateCausticPhotons.size() <<
-					" photons, " << updateCausticBeams.size() << " beams)");
-			ingestPhotons.clear();
-			ingestBeams.clear();
-			ingestTracedCount = 0;
+		// staging vectors; here they become the newest window batch. In
+		// ingestOnly mode the generation is rebuilt from the window: the
+		// newest batches up to maxSize records (CPU semantics: maxSize
+		// caps the combined photon+beam population). Older batches
+		// retire, so the cache keeps refreshing - and the shrinking
+		// radius keeps converging - for the whole render.
+		if (ingestOnly) {
+			{
+				std::lock_guard<std::mutex> lock(ingestMutex);
+				if ((ingestPhotons.size() + ingestBeams.size() > 0) ||
+						(ingestTracedCount > 0)) {
+					IngestBatch batch;
+					batch.photons.swap(ingestPhotons);
+					batch.beams.swap(ingestBeams);
+					batch.tracedCount = ingestTracedCount;
+					ingestWindow.push_back(std::move(batch));
+				}
+				ingestPhotons.clear();
+				ingestBeams.clear();
+				ingestTracedCount = 0;
+			}
+
+			// Newest first: whole batches while they fit, thin the one
+			// that straddles the budget, drop everything older
+			size_t room = params.caustic.maxSize;
+			size_t keep = 0;
+			for (auto it = ingestWindow.rbegin(); it != ingestWindow.rend(); ++it, ++keep) {
+				if (room == 0)
+					break;
+				const size_t n = it->photons.size() + it->beams.size();
+				if (n > room) {
+					// Uniform stride subsample: deposits arrive in
+					// device slot order, which is spatially coherent,
+					// so a prefix cut would bias the kept region
+					const double f = double(room) / double(n);
+					auto thin = [f](auto &v) {
+						const size_t k = (size_t)(v.size() * f);
+						for (size_t i = 0; i < k; ++i)
+							v[i] = v[(size_t)(i / f)];
+						v.erase(v.begin() + k, v.end());
+					};
+					thin(it->photons);
+					thin(it->beams);
+					it->tracedCount *= f;
+					room = 0;
+				} else
+					room -= n;
+			}
+			while (ingestWindow.size() > keep)
+				ingestWindow.pop_front();
+
+			updateCausticPhotons.clear();
+			updateCausticBeams.clear();
+			double traced = 0.0;
+			for (const auto &batch : ingestWindow) {
+				updateCausticPhotons.insert(updateCausticPhotons.end(),
+						batch.photons.begin(), batch.photons.end());
+				updateCausticBeams.insert(updateCausticBeams.end(),
+						batch.beams.begin(), batch.beams.end());
+				traced += batch.tracedCount;
+			}
+			updateCausticPhotonTracedCount = (u_int)Min(traced + .5, 4294967295.0);
+			SLG_LOG("PhotonGI caustic generation from GPU deposits: " <<
+					updateCausticPhotons.size() << " photons, " <<
+					updateCausticBeams.size() << " beams over " <<
+					ingestWindow.size() << " batches (" <<
+					updateCausticPhotonTracedCount << " traced paths)");
 		}
 
 		// Engine stop requested the join: discard this generation
@@ -753,6 +794,7 @@ void PhotonGICache::CreateRadiancePhotons() {
 void PhotonGICache::Preprocess(const u_int threadCnt) {
 	threadCount = threadCnt;
 	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
+	finishDroppedParties = 0;
 	lastUpdateSpp = 0;
 	updateSeedBase = 1;
 	finishUpdateFlag = false;
@@ -840,12 +882,12 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 	// Trace visibility particles
 	//--------------------------------------------------------------------------
 
-	if (UseFrustumCulling()) {
-		// Caustic-only caches on projective cameras do not need the
-		// visibility pass at all: photon deposits are frustum-culled instead
-		// (RTPM-style photon culling). This removes the dominant pre-pass
-		// cost for the common "just caustics" configuration.
-		SLG_LOG("PhotonGI visibility pass skipped: frustum-culled caustic deposits");
+	if (SkipsVisibilityPass()) {
+		// Caustic-only caches do not need the visibility pass at all:
+		// caustic deposits are not coverage-gated. This removes the
+		// dominant pre-pass cost for the common "just caustics"
+		// configuration.
+		SLG_LOG("PhotonGI visibility pass skipped: caustic-only cache");
 	} else {
 		TraceVisibilityParticles();
 		if (visibilityParticles.size() == 0) {

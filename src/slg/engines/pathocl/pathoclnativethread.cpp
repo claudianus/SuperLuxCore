@@ -164,6 +164,11 @@ void PathOCLNativeRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 				break;
 		}
 		threadDone = true;
+		// Leave the PhotonGI swap barrier like the eye loop does: a seat
+		// kept here strands every GPU thread at its next generation swap
+		// (explicit caustic cache + lt.only hung engine stop)
+		if (engine->photonGICache)
+			engine->photonGICache->FinishUpdate(threadIndex);
 		return;
 	}
 

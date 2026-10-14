@@ -208,13 +208,17 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularTransmission(__global const
 	const float cost = sqrt(fmax(0.f, 1.f - sint2)) * (entering ? -1.f : 1.f);
 	*sampledDir = MAKE_FLOAT3(-eta * localFixedDir.x, -eta * localFixedDir.y, cost);
 
+	// CPU GlassMaterial::EvalSpecularTransmission parity: radiance is
+	// compressed by eta^2 across the interface, flux (light paths) is
+	// not. The |fixed.z / sampled.z| adjoint factor of the CPU fromLight
+	// branch is applied by BSDF_Sample's shading-frame cosine ratio.
+	// Without this light paths (LT splats, PhotonGI B1' deposits) lost
+	// a 1/eta^2 factor at every refraction into water/glass.
 	float ce;
-//	if (!hitPoint.fromLight)
+	if ((hitPoint->rayFlags & LIGHT_RAY) == 0)
 		ce = (1.f - FresnelCauchy_Evaluate(ntc, cost)) * eta2;
-//	else {
-//		const float absCosSampledDir = fabsf(CosTheta(*sampledDir));
-//		ce = (1.f - FresnelTexture::CauchyEvaluate(ntc, costheta)) * fabsf(localFixedDir.z / absCosSampledDir);
-//	}
+	else
+		ce = 1.f - FresnelCauchy_Evaluate(ntc, costheta);
 
 	return lkt * ce;
 }

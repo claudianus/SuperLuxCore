@@ -1201,6 +1201,22 @@ screen-normalized channel (`tilepathcputhread.cpp`,
 warned and ignored rather than silently suppressing the caustic class.
 MNEE auto stays enabled on TILEPATHCPU — it is a pure eye-side solver.
 
+`path.photongi.caustic.auto` (default on):
+`RenderConfig::ApplyAutoCausticCache()` resolves an unset
+`path.photongi.caustic.enabled` to on when the scene has a refracting
+caster (a non-`NULLMAT`, non-`ARCHGLASS` surface material with TRANSMIT
+and a delta/specular or sub-`glossinessusagethreshold` glossy lobe) and
+at least one light. Caustics seen *through* their caster (pool floor
+through the water, a table top through a glass) are L→S→D→S→E: LT can
+not splat them (specular eye end), NEE can not connect them (specular
+light end) and MNEE does not solve the sun cone, so the photon caustic
+cache is the only estimator for the class. Engines: PATHCPU,
+TILEPATHCPU, PATHOCL, TILEPATHOCL (the RT engines would rebuild the
+cache on every edit); skipped under `path.filterglossy > 0` (photons are
+traced unblurred). The Blender add-on always writes the flag explicitly
+(its own `caustic_mode`), so the core rule only fills the gap for raw
+SDL / API users.
+
 The CPU film-channel contract: auto-LT injects `lighttracing.enable`
 but never `hybridbackforward.enable`, and `InitFilm` runs before
 `ParseOptions` promotes lt→hbf. `PathCPURenderEngine::InitFilm`

@@ -260,23 +260,18 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 									pgic.params.visibility.lookUpNormalCosAngle);
 						}
 
-						bool causticReceiver = allNearEntryIndices.size() > 0;
-						if (!causticReceiver && pgic.UseFrustumCulling()) {
-							// No visibility pass: keep photons that project
-							// into the film frame (RTPM photon culling). A
-							// 10% border absorbs lookup-radius spill at the
-							// frame edges.
-							float filmX, filmY;
-							if (camera.ProjectPointToFilm(bsdf.hitPoint.p, time,
-									&filmX, &filmY)) {
-								const float padX = .1f * camera.filmWidth;
-								const float padY = .1f * camera.filmHeight;
-								causticReceiver =
-										(filmX >= -padX) && (filmX < camera.filmWidth + padX) &&
-										(filmY >= -padY) && (filmY < camera.filmHeight + padY);
-							}
-						}
-
+						// Caustic photons are not gated by camera coverage
+						// (neither the visibility kd-tree nor the film
+						// frustum): the eye side queries the cache - and
+						// cuts the light hit it replaces - at every
+						// receiver it reaches, including receivers seen
+						// only through refraction (a pool floor under the
+						// water surface lies well outside the straight
+						// frustum, and camera paths stop at the first
+						// diffuse hit so visibility particles miss it).
+						// Any receiver a gate dropped would render dark,
+						// not noisy. The cost is cache capacity spent on
+						// off-screen caustics (~1/3 on the pool test).
 						{
 							// Media-transparent chains: isNearlyS survives
 							// medium scatter vertices, so multi-scatter
@@ -284,7 +279,7 @@ bool TracePhotonsThread::TracePhotonPath(RandomGenerator &rndGen,
 							// keeps pure-medium prefixes (ambient
 							// in-scattering, no focusing surface) out.
 							if ((pathInfo.depth.depth > 0) && pathInfo.IsSpecularPath() &&
-									pathInfo.firstVertexSeen && causticReceiver && !causticDone) {
+									pathInfo.firstVertexSeen && !causticDone) {
 								// It is a caustic photon
 								newCausticPhotons.push_back(Photon(bsdf.hitPoint.p, nextEventRay.d,
 										light->GetID(), lightPathFlux, landingSurfaceNormal, bsdf.IsVolume()));

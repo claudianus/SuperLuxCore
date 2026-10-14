@@ -61,7 +61,7 @@ OPENCL_FORCE_INLINE bool PhotonGICache_IsDirectLightHitVisible(
 	// Only bounces the caustic photons model, and only chains whose
 	// receiver queried the cache (CPU IsDirectLightHitVisible)
 	if (PT_PGIC_CAUSTIC_ON(taskConfig) && photonGICausticChainCached &&
-			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth + pathInfo->depth.volumeDepth > 0) &&
+			!(pathInfo->lastBSDFEvent & DIFFUSE) && (pathInfo->depth.diffuseDepth + pathInfo->depth.glossyDepth + pathInfo->depth.volumeDepth > 0) &&
 			((pathInfo->lastBSDFEvent & SPECULAR) ||
 				(pathInfo->lastGlossiness < taskConfig->pathTracer.pgic.glossinessUsageThreshold)))
 		return false;

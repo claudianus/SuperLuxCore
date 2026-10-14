@@ -229,6 +229,7 @@ void RenderConfig::Parse(const Properties &props) {
 
 	// Scene-signature defaults before any strategy reader
 	ApplyAutoLightTracing();
+	ApplyAutoCausticCache();
 	ApplyAutoSSSDepth();
 
 	UpdateFilmProperties(props);
@@ -435,6 +436,65 @@ void RenderConfig::ApplyAutoLightTracing() {
 					"halflife=64spp (caustic-capable scene signature)");
 		}
 	}
+}
+
+// A refracting caster that focuses light: delta or near-delta TRANSMIT.
+// Architectural glass passes rays straight (no focusing) and NULLMAT only
+// passes them through, so neither can cast a caustic.
+static bool SceneHasRefractiveCaster(SceneConstRef scene, const float glossyThreshold) {
+	const auto &mats = scene.GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		if ((m.GetType() == NULLMAT) || (m.GetType() == ARCHGLASS) || m.IsVolume())
+			continue;
+		const BSDFEvent events = m.GetEventTypes();
+		if (!(events & TRANSMIT))
+			continue;
+		if ((events & SPECULAR) || m.IsDelta() ||
+				((events & GLOSSY) && (m.GetGlossiness() < glossyThreshold)))
+			return true;
+	}
+	return false;
+}
+
+// Zero-config SDS caustics (path.photongi.caustic.auto, default on). A
+// caustic seen through the caster itself - a pool floor through the water
+// surface, a table top through a glass - is a light -> S -> D -> S -> eye
+// path: the light pass can not splat it (the eye end is specular) and the
+// eye's NEE can not connect it (the light end is specular; MNEE only solves
+// delta emitters, not the sun's cone). The photon caustic cache is the one
+// estimator that covers the class, so enable it when the scene has a
+// refracting caster and caustic.enabled was not given explicitly - the same
+// rule as the Blender add-on's caustic_mode = auto.
+void RenderConfig::ApplyAutoCausticCache() {
+	if (!GetConfig().Get(Property("path.photongi.caustic.auto")(true)).Get<bool>() ||
+			GetConfig().IsDefined("path.photongi.caustic.enabled"))
+		return;
+	// Final-render path engines only: the RT engines restart on every edit
+	// (a cache preprocess per restart)
+	const string engineType = GetConfig().Get(
+		Property("renderengine.type")("PATHCPU")).Get<string>();
+	if ((engineType != "PATHCPU") && (engineType != "TILEPATHCPU") &&
+			(engineType != "PATHOCL") && (engineType != "TILEPATHOCL"))
+		return;
+	// Filter Glossy blurs the eye path's glass lobes; the photons are traced
+	// unblurred and the cache replaces those eye paths, so the sharp caustic
+	// would come back several times brighter than the blurred reference
+	if (GetConfig().Get(Property("path.filterglossy")(0.f)).Get<float>() > 0.f)
+		return;
+	// Light-only debug renders have no eye path to query the cache
+	if (GetConfig().Get(Property("path.lighttracing.only")(false)).Get<bool>())
+		return;
+	if (GetScene().GetLightSources().GetSize() == 0)
+		return;
+	const float glossyThreshold = GetConfig().Get(
+			Property("path.photongi.glossinessusagethreshold")(.05f)).Get<float>();
+	if (!SceneHasRefractiveCaster(GetScene(), glossyThreshold))
+		return;
+
+	GetConfig().Set(Property("path.photongi.caustic.enabled")(true));
+	SDL_LOG("path.photongi.caustic.auto: enabled the caustic cache"
+			" (refracting caster: caustics seen through it need it)");
 }
 
 void RenderConfig::ApplyAutoSSSDepth() {

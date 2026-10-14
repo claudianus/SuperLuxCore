@@ -50,6 +50,7 @@ PropertiesUPtr PhotonGICache::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.photongi.indirect.usagethresholdscale")) <<
 			cfg.Get(GetDefaultProps()->Get("path.photongi.indirect.filter.radiusscale")) <<
 			cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.enabled")) <<
+			cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.auto")) <<
 			cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.maxsize")) <<
 			cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp")) <<
 			cfg.Get(GetDefaultProps()->Get("path.photongi.caustic.updatespp.radiusreduction")) <<
@@ -85,6 +86,10 @@ PropertiesUPtr PhotonGICache::GetDefaultProps() {
 			Property("path.photongi.indirect.usagethresholdscale")(8.f) <<
 			Property("path.photongi.indirect.filter.radiusscale")(3.f) <<
 			Property("path.photongi.caustic.enabled")(false) <<
+			// Zero-config SDS caustics: enable the caustic cache when the
+			// scene has a refracting caster and caustic.enabled is not set
+			// (RenderConfig::ApplyAutoCausticCache)
+			Property("path.photongi.caustic.auto")(true) <<
 			// 0 = automatic: the cache capacity scales with the film
 			// resolution (resolved in Preprocess, Corona-style
 			// photons-per-pixel) instead of a scene-independent constant.

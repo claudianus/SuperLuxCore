@@ -2590,11 +2590,14 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 	// A vertex that does not extend a nearly-specular chain starts a new
 	// one: record whether the caustic cache was queried here (same gate
 	// as the MK_HIT_OBJECT ConnectWithCausticPaths call - hybrid leaves
-	// depth 0 to the light pass). CPU twin in pathtracer.cpp.
+	// depth 0 to the light pass). No live generation yet (deferred
+	// initial cache, traced count 0): nothing stands in for the light
+	// hit, keep it. CPU twin in pathtracer.cpp.
 	if ((PT_PGIC_INDIRECT_ON(taskConfig) || PT_PGIC_CAUSTIC_ON(taskConfig)) &&
 			PhotonGICache_IsCausticChainReceiver(bsdfEvent, BSDF_GetGlossiness(bsdf MATERIALS_PARAM),
 				taskConfig->pathTracer.pgic.glossinessUsageThreshold))
 		taskState->photonGICausticChainCached = PT_PGIC_CAUSTIC_ON(taskConfig) &&
+				(taskConfig->pathTracer.pgic.causticPhotonTracedCount > 0) &&
 				(taskConfig->pathTracer.pgic.debugType == PGIC_DEBUG_NONE) &&
 				(!PT_HBF_ON(taskConfig) || (pathInfo->depth.depth != 0)) &&
 				PhotonGICache_IsPhotonGIEnabled(bsdf,
@@ -3977,9 +3980,12 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 						rays[gid] = rayBackup;
 					}
 
-					// Point deposit: receiver material + film frustum
-					// (deposit mode only runs with frustum culling - no
-					// device visibility map exists)
+					// Point deposit: receiver material only. Like the CPU
+					// tracer, caustic deposits are not coverage-gated: a
+					// receiver seen through refraction (pool floor) lies
+					// outside the straight film frustum, and an uncovered
+					// receiver would render dark (the eye side queries the
+					// cache and cuts the light hit everywhere)
 					// Medium vertices only receive the direct flight (CPU
 					// TracePhotonsThread): eye paths query every medium vertex
 					if ((lpi->depth.depth > 0) && pgicDepositPhotons &&
@@ -3988,38 +3994,29 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 								pathTracer->pgic.glossinessUsageThreshold,
 								pathTracer->pgic.causticVolumeBeams
 								MATERIALS_PARAM)) {
-						float filmX, filmY;
-						if (Camera_ProjectWorldPointToFilm(camera, segP1,
-								rays[gid].time, filmHeight, &filmX, &filmY)) {
-							const float padX = .1f * filmWidth;
-							const float padY = .1f * filmHeight;
-							if ((filmX >= -padX) && (filmX < filmWidth + padX) &&
-									(filmY >= -padY) && (filmY < filmHeight + padY)) {
-								const uint slot = atomic_inc(&pgicDepositCounters[0]);
-								if (slot < pathTracer->pgic.depositPhotonCapacity) {
-									__global Photon *ph = &pgicDepositPhotons[slot];
-									const float3 photonFlux = lightPathFlux *
-											connectionThroughput;
-									ph->p.x = segP1.x; ph->p.y = segP1.y; ph->p.z = segP1.z;
-									ph->d.x = rays[gid].d.x; ph->d.y = rays[gid].d.y;
-									ph->d.z = rays[gid].d.z;
-									ph->lightID = lpi->lightGroupID;
-									ph->alpha.c[0] = photonFlux.x;
-									ph->alpha.c[1] = photonFlux.y;
-									ph->alpha.c[2] = photonFlux.z;
-									// Landing normal flipped against the
-									// incoming ray (CPU: landingSurfaceNormal)
-									const float3 gn = VLOAD3F(&bsdf->hitPoint.geometryN.x);
-									const float flip = (dot(gn, -VLOAD3F(&rays[gid].d.x)) > 0.f) ?
-											1.f : -1.f;
-									ph->landingSurfaceNormal.x = flip * gn.x;
-									ph->landingSurfaceNormal.y = flip * gn.y;
-									ph->landingSurfaceNormal.z = flip * gn.z;
-									ph->isVolume = bsdf->isVolume;
-								} else
-									atomic_inc(&pgicDepositCounters[2]);
-							}
-						}
+						const uint slot = atomic_inc(&pgicDepositCounters[0]);
+						if (slot < pathTracer->pgic.depositPhotonCapacity) {
+							__global Photon *ph = &pgicDepositPhotons[slot];
+							const float3 photonFlux = lightPathFlux *
+									connectionThroughput;
+							ph->p.x = segP1.x; ph->p.y = segP1.y; ph->p.z = segP1.z;
+							ph->d.x = rays[gid].d.x; ph->d.y = rays[gid].d.y;
+							ph->d.z = rays[gid].d.z;
+							ph->lightID = lpi->lightGroupID;
+							ph->alpha.c[0] = photonFlux.x;
+							ph->alpha.c[1] = photonFlux.y;
+							ph->alpha.c[2] = photonFlux.z;
+							// Landing normal flipped against the
+							// incoming ray (CPU: landingSurfaceNormal)
+							const float3 gn = VLOAD3F(&bsdf->hitPoint.geometryN.x);
+							const float flip = (dot(gn, -VLOAD3F(&rays[gid].d.x)) > 0.f) ?
+									1.f : -1.f;
+							ph->landingSurfaceNormal.x = flip * gn.x;
+							ph->landingSurfaceNormal.y = flip * gn.y;
+							ph->landingSurfaceNormal.z = flip * gn.z;
+							ph->isVolume = bsdf->isVolume;
+						} else
+							atomic_inc(&pgicDepositCounters[2]);
 					}
 				}
 			}

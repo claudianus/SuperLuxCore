@@ -60,7 +60,19 @@ public:
 	);
 
 	virtual MaterialType GetType() const { return DISNEY; }
-	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT | TRANSMIT; };
+	// TRANSMIT only when the (fork-added) transmission lobe can fire: the
+	// flag excludes a surface from PhotonGI receivers/visibility and the
+	// caustic classification, so an opaque Disney floor reporting it got
+	// no caustic photons at all (showcase pool: 0 stored vs 280k matte)
+	virtual BSDFEvent GetEventTypes() const {
+		return GLOSSY | REFLECT | (HasTransmission() ? TRANSMIT : NONE);
+	};
+	bool HasTransmission() const {
+		// The parser's default is a CONST_FLOAT3 zero
+		return Transmission && !(((Transmission->GetType() == CONST_FLOAT) ||
+				(Transmission->GetType() == CONST_FLOAT3)) &&
+				(Transmission->Filter() <= 0.f));
+	}
 
 	virtual luxrays::Spectrum Albedo(
 		const HitPoint &hitPoint

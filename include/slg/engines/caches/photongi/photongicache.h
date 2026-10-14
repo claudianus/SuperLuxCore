@@ -19,6 +19,7 @@
 #ifndef _SLG_PHOTONGICACHE_H
 #define	_SLG_PHOTONGICACHE_H
 
+#include <deque>
 #include <functional>
 #include <vector>
 #include <barrier>
@@ -309,9 +310,10 @@ public:
 
 	bool IsIndirectEnabled() const { return params.indirect.enabled; }
 	bool IsCausticEnabled() const { return params.caustic.enabled; }
-	// Caustic-only caches on projective cameras skip the visibility
-	// pre-pass: deposits are frustum-culled instead of entry-gated.
-	bool UseFrustumCulling() const;
+	// Caustic-only caches skip the visibility pre-pass: caustic deposits
+	// are never coverage-gated (see TracePhotonsThread), so only the
+	// indirect cache needs the visibility map.
+	bool SkipsVisibilityPass() const;
 	bool IsPhotonGIEnabled(const BSDF &bsdf) const;
 	// Stricter gate for visibility-particle generation (upstream semantics)
 	bool IsVisibilityEnabled(const BSDF &bsdf) const;
@@ -352,14 +354,14 @@ public:
 	const luxrays::SpillableArray<Photon> &GetCausticPhotons() const { return causticPhotons; }
 	const PGICPhotonBvh *GetCausticPhotonsBVH() const { return causticPhotonsBVH; }
 	const u_int GetCausticPhotonTracedCount() const { return causticPhotonTracedCount; }
+	// A caustic generation is live (the deferred first one may still be
+	// in flight): only then can the cache stand in for the light hits
+	// IsDirectLightHitVisible() cuts
+	bool IsCausticReady() const { return causticPhotonTracedCount > 0; }
 	// Bumps once per swap (ApplyPendingUpdate): lets every render
 	// thread detect a new generation after Update() returned.
 	const u_int GetCausticPhotonPass() const { return causticPhotonPass; }
 	const std::vector<PhotonBeam> &GetCausticBeams() const { return causticBeams; }
-	// CPU semantics: maxSize caps the combined photon+beam population
-	bool IsCausticFull() const {
-		return causticPhotons.size() + causticBeams.size() >= params.caustic.maxSize;
-	}
 	const luxrays::ocl::IndexBVHArrayNode *GetCausticBeamsBVHArrayNodes(u_int *count = nullptr) const;
 
 	static PhotonGISamplerType String2SamplerType(const std::string &type);
@@ -374,8 +376,10 @@ public:
 	// GPU photon generation (B1'): device-side light tasks deposit
 	// caustic photon/beam records; the engine drains them into this
 	// staging and the update worker absorbs it instead of running a
-	// CPU re-trace (ingestOnly). The population accumulates across
-	// generations (progressive photon mapping) under maxSize.
+	// CPU re-trace (ingestOnly). Each generation is the most recent
+	// maxSize records (a sliding window over drained batches), so the
+	// cache keeps refreshing like the CPU re-trace instead of freezing
+	// once full.
 	void IngestTracedPhotons(const ocl::Photon *photons, const u_int nPhotons,
 			const ocl::PhotonBeam *beams, const u_int nBeams, const u_int tracedCount);
 	void SetIngestOnly(const bool v) { ingestOnly = v; }
@@ -450,10 +454,12 @@ private:
 	};
 	std::unique_ptr< std::barrier<completion_t> > threadsSyncBarrier;
 	u_int lastUpdateSpp, updateSeedBase;
-	// Written by FinishUpdate() between its two barrier phases and read
-	// by peers outside any phase: atomic (and default-initialized, the
+	// Set by FinishUpdate() and read by peers outside any phase: atomic (and default-initialized, the
 	// serialization path does not restore it)
 	std::atomic<bool> finishUpdateFlag{false};
+	// Parties that left threadsSyncBarrier through FinishUpdate()
+	// (arrive_and_drop), reset with the barrier
+	std::atomic<u_int> finishDroppedParties{0};
 
 	// Visibility map
 	luxrays::SpillableArray<PGICVisibilityParticle> visibilityParticles;
@@ -513,6 +519,17 @@ private:
 	std::vector<Photon> ingestPhotons;
 	std::vector<PhotonBeam> ingestBeams;
 	u_int ingestTracedCount = 0;
+	// Ingest-mode generation window (worker-only state): drained batches,
+	// newest last, each with the traced paths that produced it. The
+	// generation is the newest batches that fit maxSize; the batch
+	// straddling the budget is thinned and its traced count scaled by
+	// the kept fraction, so density normalization stays exact.
+	struct IngestBatch {
+		std::vector<Photon> photons;
+		std::vector<PhotonBeam> beams;
+		double tracedCount = 0.0;
+	};
+	std::deque<IngestBatch> ingestWindow;
 	// true when photons arrive via device deposits and no CPU trace
 	// runs at all (GPU engines): the worker becomes ingest + build
 	bool ingestOnly = false;

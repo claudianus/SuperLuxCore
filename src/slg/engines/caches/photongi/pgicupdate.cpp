@@ -69,30 +69,21 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			}
 		}
 		// A safety check to avoid the update if visibility map has been
-		// deallocated (caustic beams and frustum-culled deposits do not
+		// deallocated (caustic beams and caustic-only caches do not
 		// need it)
 		if ((visibilityParticles.size() == 0) &&
-				!params.caustic.volumeBeams && !UseFrustumCulling()) {
+				!params.caustic.volumeBeams && !SkipsVisibilityPass()) {
 			SLG_LOG("ERROR: Updating PhotonGI caustic cache is not possible without visibility information");
 			lastUpdateSpp = filmSPP;
 			initialUpdatePending = false;
 		} else {
-			// Drop leftovers of a previously failed update round. In
-			// ingest mode (GPU photon deposits) the shadow buffers hold
-			// the accumulated population - refresh them from the live
-			// cache so the worker's BVH sees the full set (old + new
-			// staging absorb).
+			// Drop leftovers of a previously failed update round. The
+			// worker refills the shadow buffers: a CPU re-trace, or (in
+			// ingest mode) the GPU deposit window
 			delete updateCausticPhotonsBVH;
 			updateCausticPhotonsBVH = nullptr;
-			if (ingestOnly) {
-				updateCausticPhotons.clear();
-				updateCausticPhotons.insert(updateCausticPhotons.end(),
-						causticPhotons.begin(), causticPhotons.end());
-				updateCausticBeams = causticBeams;
-			} else {
-				updateCausticPhotons.clear();
-				updateCausticBeams.clear();
-			}
+			updateCausticPhotons.clear();
+			updateCausticBeams.clear();
 
 			updateInFlight = true;
 			updateFailed = false;
@@ -100,10 +91,7 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			initialUpdatePending = false;
 			updateFilmSPP = filmSPP;
 			updateCallback = threadZeroCallback;
-			// Seed the shadow traced count from the live one: ingest
-			// generations accumulate (trace generations reset it
-			// inside TracePhotons anyway)
-			updateCausticPhotonTracedCount = causticPhotonTracedCount;
+			updateCausticPhotonTracedCount = 0;
 
 			{
 				std::lock_guard<std::mutex> lock(updateThreadMutex);
@@ -137,10 +125,9 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 	// phases: a barrier phase only completes when every party has
 	// arrived, so all barrier entries must come in same-call pairs
 	// (Update's pending-swap path and FinishUpdate's drain path
-	// contribute 2 each). A single arrival here would consume a
-	// FinishUpdate thread's first phase and strand its second one -
-	// finishUpdateFlag is set between its phases and blocks every new
-	// arrival, hanging engine stop.
+	// contribute 2 each, FinishUpdate drops its seat with its single
+	// arrival). A single arrival here would leave the parties out of
+	// step and strand the second phase.
 	threadsSyncBarrier->arrive_and_wait();
 	threadsSyncBarrier->arrive_and_wait();
 
@@ -161,13 +148,19 @@ void PhotonGICache::FinishUpdate(const u_int threadIndex) {
 			updateThread.reset();
 	}
 
-	for (;;) {
-		if (finishUpdateFlag)
-			return;
-
-		threadsSyncBarrier->arrive_and_wait();
-		finishUpdateFlag = true;
-		threadsSyncBarrier->arrive_and_wait();
-	}
+	// Stop new update rounds, then leave the barrier for good. A
+	// finished thread must not keep a seat: the old "arrive twice,
+	// return once the flag is up" exit let a peer that was still
+	// rendering (a GPU thread mid-batch, a generation swap landing
+	// after the CPU threads halted) arrive at a later swap alone and
+	// hang engine stop forever (e102 zero-config PATHOCL). The drop
+	// counts as this phase's arrival, so peers parked in Update()'s
+	// pair still complete it, and every later phase needs only the
+	// threads still rendering. Every party drops at most once per
+	// barrier (threads restarted without Preprocess() find updates
+	// disabled by the flag and the seats gone).
+	finishUpdateFlag = true;
+	if (finishDroppedParties.fetch_add(1) < threadCount)
+		threadsSyncBarrier->arrive_and_drop();
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

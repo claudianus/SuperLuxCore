@@ -517,8 +517,26 @@ void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
 			4 * sizeof(u_int), counters);
 
 	const auto &pgicCfg = threadTaskConfig.pathTracer.pgic;
-	const u_int nPhotons = Min(counters[0], pgicCfg.depositPhotonCapacity);
-	const u_int nBeams = Min(counters[1], pgicCfg.depositBeamCapacity);
+	u_int nPhotons = Min(counters[0], pgicCfg.depositPhotonCapacity);
+	u_int nBeams = Min(counters[1], pgicCfg.depositBeamCapacity);
+
+	// Overflow: the device dropped the records past capacity, but every
+	// path of the drain still counts in tracedCountDelta - the density
+	// came out low by the dropped share. Keep the same leading fraction
+	// of both kinds (slots are handed out in path order, so a common
+	// prefix stands for the first f of the drain's paths) and count only
+	// that fraction of the paths.
+	double keepFraction = 1.0;
+	if (counters[0] > nPhotons)
+		keepFraction = Min(keepFraction, nPhotons / (double)counters[0]);
+	if (counters[1] > nBeams)
+		keepFraction = Min(keepFraction, nBeams / (double)counters[1]);
+	u_int tracedCount = tracedCountDelta;
+	if (keepFraction < 1.0) {
+		nPhotons = Min(nPhotons, (u_int)(counters[0] * keepFraction));
+		nBeams = Min(nBeams, (u_int)(counters[1] * keepFraction));
+		tracedCount = (u_int)(tracedCountDelta * keepFraction + .5);
+	}
 
 	std::vector<slg::ocl::Photon> photons(nPhotons);
 	std::vector<slg::ocl::PhotonBeam> beams(nBeams);
@@ -540,33 +558,33 @@ void PathOCLBaseOCLRenderThread::DrainPGIC(const u_int tracedCountDelta) {
 	// (flux normalization) even on rounds with zero deposits, matching
 	// the CPU semantic of counting every traced photon path.
 	renderEngine->photonGICache->IngestTracedPhotons(
-			photons.data(), nPhotons, beams.data(), nBeams, tracedCountDelta);
+			photons.data(), nPhotons, beams.data(), nBeams, tracedCount);
 	pgicDrainTraced += tracedCountDelta;
 	pgicDrainProduced += nPhotons + nBeams;
 	if (((counters[2] > 0) || (counters[3] > 0)) && !pgicOverflowWarned) {
 		pgicOverflowWarned = true;
 		SLG_LOG("WARNING: PhotonGI GPU deposits overflowed capacity (photons +"
 				<< counters[2] << ", beams +" << counters[3] <<
-				") - increase path.photongi.deposit.capacity");
+				"): the overflowing paths are discarded (no bias, wasted "
+				"light-task work) - increase path.photongi.deposit.capacity");
 	}
 
-	// Retire the deposit tasks once they can no longer contribute:
-	// the cache is full (CPU maxSize semantic), or the scene has no
-	// caustic transport at all (mirrors the CPU tracer's empty
-	// early-out at 4M paths). Toggling depositEnabled in taskConfig
-	// parks the tail tasks in MK_DONE - they stop tracing entirely,
-	// unlike a plain counter drain that would keep burning rays.
-	if (renderEngine->photonGICache->IsCausticFull() ||
-			((pgicDrainProduced == 0.0) && (pgicDrainTraced >= 4194304.0))) {
+	// Retire the deposit tasks once they can no longer contribute: the
+	// scene has no caustic transport at all (mirrors the CPU tracer's
+	// empty early-out at 4M paths). A full cache is no reason - every
+	// generation is the newest deposit window, so the tasks keep the
+	// cache refreshing like the CPU re-trace does. Toggling
+	// depositEnabled in taskConfig parks the tail tasks in MK_DONE -
+	// they stop tracing entirely, unlike a plain counter drain that
+	// would keep burning rays.
+	if ((pgicDrainProduced == 0.0) && (pgicDrainTraced >= 4194304.0)) {
 		threadTaskConfig.pathTracer.pgic.depositEnabled = false;
 		intersectionDevice.EnqueueWriteBuffer(taskConfigBuff, CL_TRUE,
 				sizeof(slg::ocl::pathoclbase::GPUTaskConfiguration),
 				&threadTaskConfig);
 		pgicDepositsStopped = true;
-		SLG_LOG("PhotonGI GPU deposit tasks retired: " <<
-				(renderEngine->photonGICache->IsCausticFull() ?
-				"caustic cache full" : "no caustic transport in scene") <<
-				" (traced " << (u_int)pgicDrainTraced << " paths)");
+		SLG_LOG("PhotonGI GPU deposit tasks retired: no caustic transport "
+				"in scene (traced " << (u_int)pgicDrainTraced << " paths)");
 	}
 }
 

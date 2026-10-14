@@ -1949,9 +1949,13 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		// A vertex that does not extend a nearly-specular chain starts a
 		// new one: record whether the caustic cache was queried here
 		// (same gate as the ConnectWithCausticPaths() call above - hybrid
-		// leaves depth 0 to the light pass)
+		// leaves depth 0 to the light pass). Before the first generation
+		// lands (deferred initial cache) the query returns nothing, so
+		// the chain is not cached and the light hit must stay: cutting
+		// it rendered every pre-generation sample black under SDS
 		if (photonGICache && photonGICache->IsCausticChainReceiver(bsdfEvent, bsdf.GetGlossiness()))
 			photonGICausticChainCached = photonGICache->IsCausticEnabled() &&
+					photonGICache->IsCausticReady() &&
 					(photonGICache->GetDebugType() == PhotonGIDebugType::PGIC_DEBUG_NONE) &&
 					(!hybridBackForwardEnable || (pathInfo.depth.depth != 0)) &&
 					photonGICache->IsPhotonGIEnabled(bsdf);
