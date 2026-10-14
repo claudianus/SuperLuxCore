@@ -89,6 +89,7 @@ docs live in `doc/features/` (see its README for the index).
 
 - [Verified 2.11.29 release](2026-10-13-deployment-2.11.29.md): add-on render defaults back to engine/Cycles rules, every compiled GPU API in prefs; signed wheels/ZIPs, fresh-profile CPU/Metal smoke; engine code unchanged since 2.11.28.
 - [Verified 2.11.32 release](2026-10-14-deployment-2.11.32.md): zero-config pool/Disney SDS caustics, scattering-media scenes excluded from caustic.auto, caustic lookup radius 1/5 of the footprint probe (~6x eye throughput); signed wheels/ZIPs, fresh-profile CPU/Metal smoke, homepage re-rendered.
+- [Verified 2.11.33 release](2026-10-15-deployment-2.11.33.md): caustics through several glass interfaces (auto photon depth 16), background caustic cache on the CPU viewport kept across camera edits, log-handler exit crash fix; signed wheels/ZIPs, fresh-profile CPU/Metal smoke.
 
 - [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.
 
