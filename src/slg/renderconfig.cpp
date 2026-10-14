@@ -491,12 +491,14 @@ void RenderConfig::ApplyAutoCausticCache() {
 	if (!GetConfig().Get(Property("path.photongi.caustic.auto")(true)).Get<bool>() ||
 			GetConfig().IsDefined("path.photongi.caustic.enabled"))
 		return;
-	// Final-render path engines only: the RT engines restart on every edit
-	// (a cache preprocess per restart)
+	// Path engines. RTPATHCPU (CPU viewport) builds the cache in the
+	// background and keeps it across camera edits; RTPATHOCL has no
+	// swap protocol yet
 	const string engineType = GetConfig().Get(
 		Property("renderengine.type")("PATHCPU")).Get<string>();
 	if ((engineType != "PATHCPU") && (engineType != "TILEPATHCPU") &&
-			(engineType != "PATHOCL") && (engineType != "TILEPATHOCL"))
+			(engineType != "PATHOCL") && (engineType != "TILEPATHOCL") &&
+			(engineType != "RTPATHCPU"))
 		return;
 	// Filter Glossy blurs the eye path's glass lobes; the photons are traced
 	// unblurred and the cache replaces those eye paths, so the sharp caustic
@@ -522,6 +524,13 @@ void RenderConfig::ApplyAutoCausticCache() {
 	}
 
 	GetConfig().Set(Property("path.photongi.caustic.enabled")(true));
+	// The legacy photon depth (4) is sized for the indirect cache: it
+	// leaves three delta interfaces before the landing vertex, and the
+	// eye side cuts the light hit the cache replaces, so every longer
+	// chain renders dark (three glass slabs, 6 interfaces: floor 0.875x
+	// of the reference, e116). Same depth the Blender add-on exports.
+	if (!GetConfig().IsDefined("path.photongi.photon.maxdepth"))
+		GetConfig().Set(Property("path.photongi.photon.maxdepth")(16));
 	SDL_LOG("path.photongi.caustic.auto: enabled the caustic cache"
 			" (refracting caster: caustics seen through it need it)");
 }

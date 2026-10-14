@@ -2473,6 +2473,16 @@ PYBIND11_MODULE(pysuperluxcore, m) {
   m.def("Init", &LuxCore_Init);
   m.def("Init", &LuxCore_InitDefaultHandler);
   m.def("SetLogHandler", &LuxCore_SetLogHandler);
+
+  // A handler still registered at interpreter exit crashed every
+  // standalone script that called Init(handler) (SIGSEGV after the
+  // last line, 2.11.32 wheel too): the static py::object was released
+  // after finalization, and a late log line could call into the dead
+  // interpreter. Drop it while Python is still alive.
+  py::module_::import("atexit").attr("register")(py::cpp_function([]() {
+    SetLogHandler(NULL);
+    luxCoreLogHandler = py::object();
+  }));
   m.def("ParseLXS", &ParseLXS);
   m.def("MakeTx", &MakeTx);
 

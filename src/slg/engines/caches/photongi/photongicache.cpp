@@ -374,6 +374,17 @@ void PhotonGICache::UpdateWorker() {
 	SLG_LOG("Updating PhotonGI caustic cache (Pass " << causticPhotonPass << ")");
 
 	try {
+		if (radiusProbePending) {
+			// Deferred auto radius (see Preprocess): render threads
+			// read the caustic radius only once a generation is live
+			const float autoRadius = EvaluateBestRadius();
+			SetAutoCausticRadius(autoRadius);
+			if (params.caustic.minLookUpRadius == 0.f)
+				params.caustic.minLookUpRadius = params.caustic.lookUpRadius * .02f;
+			params.caustic.lookUpRadius2 = Sqr(params.caustic.lookUpRadius);
+			radiusProbePending = false;
+		}
+
 		// Reduce the look up radius, capped by the minimum
 		updateLookUpRadius = params.caustic.lookUpRadius /
 				powf(float(causticPhotonPass + 1), .5f * (1.f - params.caustic.radiusReduction));
@@ -791,6 +802,19 @@ void PhotonGICache::CreateRadiancePhotons() {
 	SLG_LOG("PhotonGI total radiance photon stored: " << radiancePhotons.size());
 }
 
+void PhotonGICache::SetAutoCausticRadius(const float autoRadius) {
+	// The probe targets 2% of the image plane (~16px at 800px), sized
+	// for the smooth indirect cache. Caustic photons are budgeted at ~2
+	// per film pixel, so that kernel gathered hundreds of entries per
+	// eye vertex (one BSDF evaluation each): pool floor 24 spp vs 218
+	// cache-off in 20s, and visibly blurred caustic lines. 1/5 of it
+	// (~3px) keeps ~tens of photons per lookup at any resolution: 153
+	// spp, sharper lines, no low-frequency blotches (those start to
+	// show at 1/10).
+	params.caustic.lookUpRadius = autoRadius * .2f;
+	SLG_LOG("PhotonGI best caustic cache radius: " << autoRadius);
+}
+
 void PhotonGICache::Preprocess(const u_int threadCnt) {
 	threadCount = threadCnt;
 	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
@@ -817,29 +841,30 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 
 	// The eye-pass footprint probe is deterministic: run it once and share
 	// the result across every radius that asked for auto (0).
+	// Deferred probe (RTPATHCPU): a caustic-only cache whose first
+	// generation is built in the background resolves the auto radius
+	// there too - nothing queries the radius before that generation
+	// lands, and the probe (~1M eye paths) would block every viewport
+	// start and rebuild
+	radiusProbePending = deferRadiusProbe && params.caustic.enabled &&
+			(params.caustic.lookUpRadius == 0.f) &&
+			(params.caustic.updateSpp > 0) && SkipsVisibilityPass() &&
+			(params.persistent.fileName == "");
+
 	float autoRadius = 0.f;
 	if ((params.indirect.enabled && (params.indirect.lookUpRadius == 0.f)) ||
-			(params.caustic.enabled && (params.caustic.lookUpRadius == 0.f))) {
+			(params.caustic.enabled && (params.caustic.lookUpRadius == 0.f) &&
+			!radiusProbePending)) {
 		autoRadius = EvaluateBestRadius();
 		if (params.indirect.enabled && (params.indirect.lookUpRadius == 0.f)) {
 			params.indirect.lookUpRadius = autoRadius;
 			SLG_LOG("PhotonGI best indirect cache radius: " << autoRadius);
 		}
-		if (params.caustic.enabled && (params.caustic.lookUpRadius == 0.f)) {
-			// The probe targets 2% of the image plane (~16px at 800px),
-			// sized for the smooth indirect cache. Caustic photons are
-			// budgeted at ~2 per film pixel, so that kernel gathered
-			// hundreds of entries per eye vertex (one BSDF evaluation
-			// each): pool floor 24 spp vs 218 cache-off in 20s, and
-			// visibly blurred caustic lines. 1/5 of it (~3px) keeps
-			// ~tens of photons per lookup at any resolution: 153 spp,
-			// sharper lines, no low-frequency blotches (those start
-			// to show at 1/10).
-			params.caustic.lookUpRadius = autoRadius * .2f;
-			SLG_LOG("PhotonGI best caustic cache radius: " << autoRadius);
-		}
+		if (params.caustic.enabled && (params.caustic.lookUpRadius == 0.f))
+			SetAutoCausticRadius(autoRadius);
 	}
-	if (params.caustic.enabled && (params.caustic.minLookUpRadius == 0.f))
+	if (params.caustic.enabled && (params.caustic.minLookUpRadius == 0.f) &&
+			!radiusProbePending)
 		// The radius-reduction floor scales with the resolved radius
 		// (explicit radius or auto-derived), not an absolute value.
 		params.caustic.minLookUpRadius = params.caustic.lookUpRadius * .02f;
@@ -871,7 +896,7 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 		params.visibility.lookUpRadius = params.indirect.lookUpRadius;
 		params.visibility.lookUpNormalAngle = params.indirect.lookUpNormalAngle;
 	} else {
-		if (params.visibility.lookUpRadius == 0.f) {
+		if ((params.visibility.lookUpRadius == 0.f) && !radiusProbePending) {
 			if (params.caustic.enabled) {
 				// Caustic radius is too small for visibility check
 				params.visibility.lookUpRadius = (autoRadius > 0.f) ? autoRadius : EvaluateBestRadius();

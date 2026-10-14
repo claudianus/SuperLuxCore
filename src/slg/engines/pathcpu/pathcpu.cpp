@@ -70,6 +70,33 @@ RenderStateSPtr PathCPURenderEngine::GetRenderState() {
 	return std::make_shared<PathCPURenderState>(bootStrapSeed, photonGICache);
 }
 
+PhotonGICache *PathCPURenderEngine::NewPhotonGICache() {
+	auto& cfg = renderConfig.GetConfig();
+	PhotonGICache *cache = PhotonGICache::FromProperties(renderConfig.GetScene(), cfg);
+
+	// photonGICache will be nullptr if the cache is disabled
+	if (!cache)
+		return nullptr;
+
+	// RTPATHCPU (viewport): only a background-updated caustic cache. Its
+	// first generation is traced by the update worker while the
+	// viewport already renders (the radius probe runs there too, see
+	// SetDeferRadiusProbe), so the start costs nothing; an indirect
+	// cache or a one-shot caustic trace would stall
+	// every restart for the whole photon pass.
+	if ((GetType() == RTPATHCPU) && (cache->IsIndirectEnabled() ||
+			!cache->IsCausticEnabled() || (cache->GetParams().caustic.updateSpp == 0))) {
+		delete cache;
+		return nullptr;
+	}
+
+	// The viewport start must not wait for the radius probe either
+	cache->SetDeferRadiusProbe(GetType() == RTPATHCPU);
+	cache->Preprocess(renderThreads.size());
+
+	return cache;
+}
+
 void PathCPURenderEngine::StartLockLess() {
 	auto& cfg = renderConfig.GetConfig();
 
@@ -129,13 +156,8 @@ void PathCPURenderEngine::StartLockLess() {
 	//--------------------------------------------------------------------------
 
 	// note: photonGICache could have been restored from the render state
-	if ((GetType() != RTPATHCPU) && !photonGICache) {
-		photonGICache = PhotonGICache::FromProperties(renderConfig.GetScene(), cfg);
-
-		// photonGICache will be nullptr if the cache is disabled
-		if (photonGICache)
-			photonGICache->Preprocess(renderThreads.size());
-	}
+	if (!photonGICache)
+		photonGICache = NewPhotonGICache();
 
 	//--------------------------------------------------------------------------
 	// Initialize the PathTracer class with rendering parameters

@@ -113,6 +113,8 @@ protected:
 
 	void PauseThreads();
 	void ResumeThreads();
+	// Resume without the film/sampler restart (caustic cache swap)
+	void ResumeThreadsKeepFrame();
 
 	std::atomic<u_int> zoomFactor;
 	float zoomWeight;
@@ -124,6 +126,12 @@ protected:
 
 	std::barrier<completion_t> *threadsSyncBarrier;
 	std::atomic<bool> threadsPauseMode;
+	// Set for the threads by the resume that ends a pause: true = skip
+	// the sampler restart (only written while they are parked)
+	bool threadsKeepFrame;
+	// Viewport caustic cache: UpdateFilmLockLess() may launch and swap
+	// background generations
+	bool photonGICachePoll = false;
 };
 
 }

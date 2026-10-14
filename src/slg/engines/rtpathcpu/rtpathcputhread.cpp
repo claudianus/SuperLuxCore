@@ -133,9 +133,12 @@ void RTPathCPURenderThread::RTRenderFunc(std::stop_token stop_token) {
 			if (stop_token.stop_requested())
 				break;
 
-			(static_cast<RTPathCPUSampler *>(sampler.get()))->Reset(FilmPtr(&engine->GetFilm()));
-			if (lightSampler)
-				lightSampler = allocLightSampler();
+			// A caustic cache swap keeps the frame: the samplers carry on
+			if (!engine->threadsKeepFrame) {
+				(static_cast<RTPathCPUSampler *>(sampler.get()))->Reset(FilmPtr(&engine->GetFilm()));
+				if (lightSampler)
+					lightSampler = allocLightSampler();
+			}
 		}
 
 		// Same eye/light partition rule as PathTracer::HasToRenderEyeSample:

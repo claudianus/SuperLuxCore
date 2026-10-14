@@ -55,9 +55,13 @@ float PhotonGICache::EvaluateBestRadius() {
 
 	PGICFilm2SceneRadiusValidator validator(*this);
 
+	// The footprint is read from the first few eye vertices: capped at
+	// the legacy photon depth so a deep caustic photon depth (16 under
+	// caustic.auto) does not multiply the probe cost (same radius as
+	// before the raise)
 	return Film2SceneRadius(
 			*scene, imagePlaneRadius, defaultRadius,
-			params.photon.maxPathDepth,
+			Min(params.photon.maxPathDepth, 4u),
 			params.photon.timeStart, params.photon.timeEnd,
 			&validator);
 }

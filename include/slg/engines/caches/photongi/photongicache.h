@@ -344,6 +344,21 @@ public:
 	}
 	void FinishUpdate(const u_int threadIndex);
 
+	// Barrier-free protocol for engines whose threads never call
+	// Update() (RTPATHCPU). PollUpdate() launches a due background
+	// generation and returns true once one waits for its swap;
+	// ApplyPendingUpdate() must then run while no render thread can
+	// query the cache. AbortUpdate() joins the worker before a scene
+	// mutation (the photon trace reads the scene, camera included).
+	bool PollUpdate(const u_int filmSPP);
+	void ApplyPendingUpdate() noexcept;
+	void AbortUpdate();
+	void RestartUpdateClock();
+	// Before Preprocess(): resolve an auto caustic radius in the first
+	// background generation instead of in Preprocess() (caustic-only,
+	// periodically updated caches)
+	void SetDeferRadiusProbe(const bool v) { deferRadiusProbe = v; }
+
 	const luxrays::SpectrumGroup *GetIndirectRadiance(const BSDF &bsdf) const;
 	luxrays::SpectrumGroup ConnectWithCausticPaths(const BSDF &bsdf) const;
 
@@ -428,7 +443,8 @@ private:
 	void BuildCausticBeamsIndex(const std::vector<PhotonBeam> &src,
 			std::unique_ptr<PGICBeamIndex> &dst, const float radius);
 	void UpdateWorker();
-	void ApplyPendingUpdate() noexcept;
+	void LaunchUpdate(const u_int filmSPP);
+	void SetAutoCausticRadius(const float autoRadius);
 	void ConnectCausticBeams(const BSDF &bsdf, luxrays::SpectrumGroup &result) const;
 	void FilterVisibilityParticlesRadiance(const std::vector<luxrays::SpectrumGroup> &radianceValues,
 			std::vector<luxrays::SpectrumGroup> &filteredRadianceValues) const;
@@ -509,6 +525,9 @@ private:
 	// (ingest mode is resolved by then, so GPU deposit sessions build
 	// gen-1 from device records instead of a CPU trace)
 	std::atomic<bool> initialUpdatePending{false};
+	bool deferRadiusProbe = false;
+	// Written by the update worker before its first generation lands
+	std::atomic<bool> radiusProbePending{false};
 	// Saturation backoff: logs the first skipped update pass only
 	bool saturationBackoffLogged = false;
 

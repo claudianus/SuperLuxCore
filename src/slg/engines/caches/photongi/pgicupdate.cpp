@@ -22,16 +22,12 @@ using namespace std;
 using namespace luxrays;
 using namespace slg;
 
-bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
-		const std::function<void()> &threadZeroCallback) {
-	if (!params.caustic.enabled || (params.caustic.updateSpp == 0) || finishUpdateFlag)
-		return false;
-
+void PhotonGICache::LaunchUpdate(const u_int filmSPP) {
 	// Launch a background re-trace once the update period expires. The
 	// worker fills a shadow copy of the caustic cache while render
 	// threads keep querying the live one: the update no longer stalls
 	// rendering for the whole photon tracing + index rebuild time.
-	if ((threadIndex == 0) && !updateInFlight &&
+	if (!updateInFlight &&
 			(initialUpdatePending ||
 			// filmSPP is u_int: a film reset mid-session can drop it
 			// below lastUpdateSpp and the subtraction would wrap into
@@ -65,7 +61,7 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 							"(LUX_PGIC_SATBACKOFF=0 restores)");
 				}
 				lastUpdateSpp = filmSPP;
-				return false;
+				return;
 			}
 		}
 		// A safety check to avoid the update if visibility map has been
@@ -90,7 +86,7 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			updateAbortRequested = false;
 			initialUpdatePending = false;
 			updateFilmSPP = filmSPP;
-			updateCallback = threadZeroCallback;
+			updateCallback = nullptr;
 			updateCausticPhotonTracedCount = 0;
 
 			{
@@ -109,10 +105,20 @@ bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
 			}
 		}
 	}
+}
 
-	// The deferred initial generation (armed in Preprocess, launched by
-	// the first Update) carries no callback: adopt thread 0's callback
-	// so the swap still notifies GPU-side recompilation exactly once.
+bool PhotonGICache::Update(const u_int threadIndex, const u_int filmSPP,
+		const std::function<void()> &threadZeroCallback) {
+	if (!params.caustic.enabled || (params.caustic.updateSpp == 0) || finishUpdateFlag)
+		return false;
+
+	if (threadIndex == 0)
+		LaunchUpdate(filmSPP);
+
+	// LaunchUpdate() leaves the callback empty (the deferred initial
+	// generation is launched with none either): adopt thread 0's
+	// callback so the swap still notifies GPU-side recompilation
+	// exactly once.
 	if ((threadIndex == 0) && updateInFlight && !updateCallback)
 		updateCallback = threadZeroCallback;
 
@@ -162,5 +168,45 @@ void PhotonGICache::FinishUpdate(const u_int threadIndex) {
 	finishUpdateFlag = true;
 	if (finishDroppedParties.fetch_add(1) < threadCount)
 		threadsSyncBarrier->arrive_and_drop();
+}
+
+//------------------------------------------------------------------------------
+// Barrier-free update protocol (RTPATHCPU viewport)
+//------------------------------------------------------------------------------
+
+// The RT engine renders through its own pause barrier and restarts its
+// film on every edit: its threads never enter threadsSyncBarrier. The
+// main thread polls instead (RTPathCPURenderEngine::UpdateFilmLockLess)
+// and swaps with the render threads parked on the engine's barrier.
+bool PhotonGICache::PollUpdate(const u_int filmSPP) {
+	if (!params.caustic.enabled || (params.caustic.updateSpp == 0) || finishUpdateFlag)
+		return false;
+
+	LaunchUpdate(filmSPP);
+
+	return updatePendingSwap;
+}
+
+void PhotonGICache::AbortUpdate() {
+	{
+		// Stop + join: the trace loops poll updateAbortRequested and
+		// the worker discards the generation (UpdateWorker clears
+		// updateInFlight). A worker that had already finished leaves
+		// its swap pending (and updateInFlight up until the swap: a
+		// relaunch would clear the shadow buffers under it).
+		std::lock_guard<std::mutex> lock(updateThreadMutex);
+		updateThread.reset();
+	}
+
+	// An aborted first generation must be relaunched: nothing else
+	// would ever arm it again
+	if (!IsCausticReady() && !updatePendingSwap)
+		initialUpdatePending = true;
+}
+
+void PhotonGICache::RestartUpdateClock() {
+	// The film restarts from 0 spp (an edit, or the viewport reset on
+	// the first generation): the period counts from there
+	lastUpdateSpp = 0;
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

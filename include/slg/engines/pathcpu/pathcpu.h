@@ -89,6 +89,8 @@ protected:
 	}
 
 	virtual void InitFilm();
+	// FromProperties + Preprocess; nullptr when no cache applies
+	PhotonGICache *NewPhotonGICache();
 	virtual void StartLockLess();
 	virtual void StopLockLess();
 	virtual void EndSceneEditLockLess(const EditActionList &editActions);

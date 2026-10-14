@@ -44,13 +44,20 @@ void RTPathCPURenderEngine::StartLockLess() {
 	zoomWeight = Max(0.0001, cfg.Get(GetDefaultProps()->Get("rtpathcpu.zoomphase.weight")).Get<double>());
 
 	threadsPauseMode = false;
+	threadsKeepFrame = false;
 	firstFrameDone = false;
 	firstFrameThreadDoneCount = 0;
 
 	PathCPURenderEngine::StartLockLess();
+
+	photonGICachePoll = (photonGICache != nullptr);
 }
 
 void RTPathCPURenderEngine::StopLockLess() {
+	// RenderEngine::Stop() still calls UpdateFilmLockLess() once the
+	// threads are joined: a swap there would pause threads that are gone
+	photonGICachePoll = false;
+
 	// We need to resume paused sessions first,
 	// otherwise it will hang on a thread barrier. Threads parked by a
 	// scene/film edit (threadsPauseMode set while pauseMode stays false)
@@ -108,10 +115,24 @@ void RTPathCPURenderEngine::ResumeThreads() {
 		return;
 
 	threadsPauseMode = false;
+	threadsKeepFrame = false;
 	firstFrameDone = false;
 	firstFrameThreadDoneCount = 0;
 
 	// Let's the threads to resume the rendering
+	threadsSyncBarrier->arrive_and_wait();
+}
+
+void RTPathCPURenderEngine::ResumeThreadsKeepFrame() {
+	std::lock_guard<std::recursive_mutex> lock(engineMutex);
+	if (!started)
+		return;
+
+	// Written while every thread is parked between the two barrier
+	// phases; they read it after the second one
+	threadsPauseMode = false;
+	threadsKeepFrame = true;
+
 	threadsSyncBarrier->arrive_and_wait();
 }
 
@@ -131,6 +152,11 @@ void RTPathCPURenderEngine::BeginSceneEditLockLess() {
 	// Check if the threads are already suspended for pause
 	if (!pauseMode)
 		PauseThreads();
+
+	// The background photon trace reads the scene (the camera too,
+	// for frustum culling): join it before the edit mutates anything
+	if (photonGICache)
+		photonGICache->AbortUpdate();
 }
 
 void RTPathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
@@ -143,13 +169,72 @@ void RTPathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActio
 	if (lightSamplerSharedData)
 		lightSamplerSharedData->Reset();
 
+	if (photonGICache) {
+		if (editActions.HasOnly(CAMERA_EDIT)) {
+			// Photons do not depend on the camera: keep the live
+			// generation (orbiting the viewport keeps its caustics)
+			photonGICache->RestartUpdateClock();
+		} else {
+			// Geometry, material or light edits invalidate the photons.
+			// The new cache renders like no cache (path-traced SDS)
+			// until its first background generation lands.
+			delete photonGICache;
+			photonGICache = NewPhotonGICache();
+			if (photonGICache) {
+				photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
+				photonGICache->MergeMneeSeeds();
+			}
+			pathTracer.SetPhotonGICache(photonGICache);
+			photonGICachePoll = (photonGICache != nullptr);
+		}
+	}
+
 	// Check if the threads were already suspended for pause
 	if (!pauseMode)
 		ResumeThreads();
 }
 
 void RTPathCPURenderEngine::UpdateFilmLockLess() {
-	// Nothing to do because render threads uses directly the engine Film
+	// Render threads use directly the engine Film: the only work here is
+	// the viewport caustic cache, polled from the thread that draws the
+	// viewport (RenderSession::UpdateStats -> UpdateFilm, engineMutex
+	// held). The render threads never enter the cache's own barrier.
+	if (!photonGICachePoll || pauseMode || editMode || threadsPauseMode)
+		return;
+	// Threads leave the loop on a halt condition (convergence is only
+	// raised by film->RunTests(), after this call): pausing with a
+	// party gone would block forever
+	if (GetFilm().GetConvergence() >= 1.f)
+		return;
+	for (auto &t : renderThreads)
+		if (!t || t->HasDone())
+			return;
+
+	const u_int pixelCount = Max(1u, GetFilm().GetPixelCount());
+	const u_int spp = (u_int)(GetFilm().GetTotalEyeSampleCount() / pixelCount);
+	if (!photonGICache->PollUpdate(spp))
+		return;
+
+	const bool firstGeneration = !photonGICache->IsCausticReady();
+
+	PauseThreads();
+	photonGICache->ApplyPendingUpdate();
+
+	if (firstGeneration && photonGICache->IsCausticReady()) {
+		// Everything rendered so far path-traced the SDS paths the cache
+		// now replaces (fireflies that would linger in the average):
+		// restart the frame on the cache, coarse first frame included
+		GetFilm().Reset();
+		samplerSharedData->Reset();
+		if (lightSamplerSharedData)
+			lightSamplerSharedData->Reset();
+		photonGICache->RestartUpdateClock();
+		ResumeThreads();
+	} else {
+		// Later generations refine the same estimate (progressive
+		// photon mapping): keep accumulating
+		ResumeThreadsKeepFrame();
+	}
 }
 
 // A fast path for film resize

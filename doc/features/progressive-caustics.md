@@ -282,6 +282,45 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
   Mitsuba `initialRadius=0` auto, RenderMan `photonEstimationNumber`,
   Octane progressive gathering radius.
 
+## Multi-interface chains and the CPU viewport (2026-10, 2.11.33)
+
+- **Photon depth follows caustic.auto.** The core default
+  `path.photongi.photon.maxdepth = 4` leaves three delta interfaces
+  before the landing vertex. The eye side cuts the light hit the cache
+  replaces, so every longer chain rendered dark: a floor under three
+  glass slabs (six interfaces) came out 0.875x the reference on
+  PATHCPU. When `caustic.auto` turns the cache on, an unset depth is
+  raised to 16, the value the Blender add-on already exported.
+  PATHOCL deposits through its light tasks and was not affected.
+  The radius probe (`Film2SceneRadius`) caps its eye depth at 4, so
+  the auto radius and the probe cost stay as before.
+  Regression: `dev-tools/e116_multi_interface_caustic_test.py`.
+- **RTPATHCPU builds the cache in the background.** `caustic.auto`
+  (and the add-on's CPU viewport) now enables the cache on RTPATHCPU:
+  - Its render threads never enter the cache barrier. The draw
+    thread polls in `UpdateFilmLockLess()` (`PhotonGICache::PollUpdate`),
+    and the swap runs with the threads parked on the engine's own
+    pause barrier. Later generations resume without a film or
+    sampler restart. The first one restarts the frame, because the
+    samples before it path-traced the SDS paths.
+  - The auto radius probe moves into the first background
+    generation, so viewport starts and rebuilds do not wait for it.
+  - `BeginSceneEdit` joins the worker, since the trace reads the
+    scene (the camera too). Camera-only edits keep the live
+    generation; any other edit creates a fresh cache.
+  - Indirect caches and `updatespp = 0` stay off in RTPATHCPU.
+    RTPATHOCL has no swap protocol yet.
+  - Measured with `dev-tools/e117_viewport_caustic_cache_test.py`
+    (96x96, three slabs, M5 Pro):
+    - First frame: 14-35 ms.
+    - First generation: ~0.8 s.
+    - Steady floor: 1.002x the reference. With photon depth 4 it is
+      0.874x, so the cache carries the floor.
+    - Camera-edit latency: 10.2 ms with the cache, 10.7 ms without.
+    - Material edit: 11 ms (it was 1.0 s with a synchronous probe).
+  - At 960x720 the pool's first generation lands in 3-4 s on an idle
+    machine.
+
 ## Pool SDS verification (2026-10)
 
 `scenes/pool` (sun + sky2, water `glass`, matte pool), zero config
