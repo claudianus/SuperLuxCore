@@ -480,7 +480,7 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 		indirectDone = indirectDone || (!pgic.params.indirect.enabled) ||
 				((pgic.params.indirect.maxSize > 0) && (globalIndirectSize >= pgic.params.indirect.maxSize));
 		causticDone = causticDone || (!pgic.params.caustic.enabled) ||
-				(globalCausticSize >= pgic.params.caustic.maxSize);
+				(globalCausticSize >= pgic.GetCausticTraceBudget());
 
 		// Check if it is time to stop
 		if (indirectDone && causticDone)
@@ -510,7 +510,7 @@ void TracePhotonsThread::RenderFunc(std::stop_token stop_token) {
 						((100.0 * globalIndirectSize) / pgic.params.indirect.maxSize) : 0.f) :
 					100.f;
 				const float causticProgress = !causticDone ?
-					((globalCausticSize > 0) ? ((100.0 * globalCausticSize) / pgic.params.caustic.maxSize) : 0.f) :
+					((globalCausticSize > 0) ? ((100.0 * globalCausticSize) / pgic.GetCausticTraceBudget()) : 0.f) :
 					100.f;
 
 				SLG_LOG(boost::format("PhotonGI Cache photon traced: %d/%d [%.1f%%, %.1fM photons/sec, Map sizes (%.1f%%, %.1f%%)]") %

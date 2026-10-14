@@ -373,6 +373,11 @@ public:
 	// in flight): only then can the cache stand in for the light hits
 	// IsDirectLightHitVisible() cuts
 	bool IsCausticReady() const { return causticPhotonTracedCount > 0; }
+	// Stored-photon cap of the trace in progress (maxSize unless a
+	// quick first generation lowered it)
+	u_int GetCausticTraceBudget() const {
+		return (causticTraceBudget > 0) ? causticTraceBudget : params.caustic.maxSize;
+	}
 	// Bumps once per swap (ApplyPendingUpdate): lets every render
 	// thread detect a new generation after Update() returned.
 	const u_int GetCausticPhotonPass() const { return causticPhotonPass; }
@@ -526,6 +531,15 @@ private:
 	// gen-1 from device records instead of a CPU trace)
 	std::atomic<bool> initialUpdatePending{false};
 	bool deferRadiusProbe = false;
+	// Quick first generation: the empty cache's first background
+	// generation traces a capped photon budget (causticTraceBudget,
+	// read by the trace threads instead of maxSize) so caustics land in
+	// a fraction of the full-budget time; the full-budget generation is
+	// launched right after its swap (fullGenerationPending), without
+	// waiting for the update period
+	u_int causticTraceBudget = 0;
+	bool updateIsQuick = false;
+	std::atomic<bool> fullGenerationPending{false};
 	// Written by the update worker before its first generation lands
 	std::atomic<bool> radiusProbePending{false};
 	// Saturation backoff: logs the first skipped update pass only

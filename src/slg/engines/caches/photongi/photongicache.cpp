@@ -391,6 +391,22 @@ void PhotonGICache::UpdateWorker() {
 		updateLookUpRadius = Max(updateLookUpRadius, params.caustic.minLookUpRadius);
 
 		if (!ingestOnly) {
+			// Quick first generation (LUX_PGIC_QUICK_FIRST=0 disables):
+			// the auto budget scales with the film (~2 photons/pixel, a
+			// retina viewport asks for ~4M photons = seconds of tracing
+			// before any caustic shows). The empty cache's first
+			// generation stops at kQuickBudget stored photons at the same
+			// radius: a noisier but unbiased estimate in a fraction of the
+			// time. The full-budget generation follows right after the
+			// swap; the frame keeps the quick generation's samples
+			// (noise only, no extra blur, averages out).
+			static const bool quickFirstOn = !getenv("LUX_PGIC_QUICK_FIRST") ||
+					(getenv("LUX_PGIC_QUICK_FIRST")[0] != '0');
+			const u_int kQuickBudget = 131072;
+			updateIsQuick = quickFirstOn && !IsCausticReady() &&
+					(params.caustic.maxSize > kQuickBudget);
+			causticTraceBudget = updateIsQuick ? kQuickBudget : 0;
+
 			// Trace photons into the shadow copy (never touches the
 			// live cache, including the traced count). The pool is
 			// capped so the render threads keep a share of the machine
@@ -399,7 +415,9 @@ void PhotonGICache::UpdateWorker() {
 					&updateCausticPhotons, &updateCausticBeams,
 					&updateCausticPhotonTracedCount,
 					GetUpdateTraceThreadCount());
-		}
+			causticTraceBudget = 0;
+		} else
+			updateIsQuick = false;
 
 		// Absorb device-side deposits (B1'): the drain thread fills the
 		// staging vectors; here they become the newest window batch. In
@@ -533,6 +551,11 @@ void PhotonGICache::ApplyPendingUpdate() noexcept {
 
 			lastUpdateSpp = updateFilmSPP;
 			++causticPhotonPass;
+			// A quick first generation is a stand-in: the full-budget
+			// one launches at the next poll
+			fullGenerationPending = updateIsQuick;
+			if (updateIsQuick)
+				SLG_LOG("PhotonGI quick first caustic generation live: full budget follows");
 
 			if (updateCallback) {
 				updateCallback();

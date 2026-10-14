@@ -14,6 +14,8 @@
 #   5  a material edit rebuilds the cache and still converges
 #   6  edit latency with the cache stays within 2x of cache-off
 #   7  stop with a background generation in flight returns
+#   8  the first generation is a quick capped batch, the full-budget
+#      generation follows it without waiting for the update period
 #
 # Run from the repo root:
 #   python3.13 dev-tools/e117_viewport_caustic_cache_test.py
@@ -203,6 +205,17 @@ def main():
     ok &= check(count("New PhotonGI caustic cache lookup radius") > 0,
                 "2 first generation lands while rendering",
                 f"first frame {first_frame * 1000:.0f} ms, generation at {landed:.2f} s")
+
+    quick_live = count("PhotonGI quick first caustic generation live")
+    t_full = time.monotonic()
+    while count("New PhotonGI caustic cache lookup radius") < 2 and \
+            time.monotonic() < t_full + 30:
+        pump(ses, 0.1)
+    ok &= check(quick_live == 1 and
+                count("New PhotonGI caustic cache lookup radius") >= 2,
+                "8 quick first generation, full budget follows",
+                f"quick={quick_live}, full generation "
+                f"{time.monotonic() - t_full:.2f} s after the quick one")
 
     pump(ses, 30)
     got = floor(ses)

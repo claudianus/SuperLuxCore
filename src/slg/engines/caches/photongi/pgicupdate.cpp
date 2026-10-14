@@ -28,7 +28,7 @@ void PhotonGICache::LaunchUpdate(const u_int filmSPP) {
 	// threads keep querying the live one: the update no longer stalls
 	// rendering for the whole photon tracing + index rebuild time.
 	if (!updateInFlight &&
-			(initialUpdatePending ||
+			(initialUpdatePending || fullGenerationPending ||
 			// filmSPP is u_int: a film reset mid-session can drop it
 			// below lastUpdateSpp and the subtraction would wrap into
 			// a huge delta, relaunching a worker every poll
@@ -48,7 +48,8 @@ void PhotonGICache::LaunchUpdate(const u_int filmSPP) {
 		// (its per-pass cost is an index rebuild only).
 		static const bool saturationBackoffOn = !getenv("LUX_PGIC_SATBACKOFF") ||
 				(getenv("LUX_PGIC_SATBACKOFF")[0] != '0');
-		if (saturationBackoffOn && !initialUpdatePending && !ingestOnly) {
+		if (saturationBackoffOn && !initialUpdatePending &&
+				!fullGenerationPending && !ingestOnly) {
 			const float nextRadius = Max(params.caustic.lookUpRadius /
 					powf(float(causticPhotonPass + 1),
 					.5f * (1.f - params.caustic.radiusReduction)),
