@@ -826,7 +826,16 @@ void PhotonGICache::Preprocess(const u_int threadCnt) {
 			SLG_LOG("PhotonGI best indirect cache radius: " << autoRadius);
 		}
 		if (params.caustic.enabled && (params.caustic.lookUpRadius == 0.f)) {
-			params.caustic.lookUpRadius = autoRadius;
+			// The probe targets 2% of the image plane (~16px at 800px),
+			// sized for the smooth indirect cache. Caustic photons are
+			// budgeted at ~2 per film pixel, so that kernel gathered
+			// hundreds of entries per eye vertex (one BSDF evaluation
+			// each): pool floor 24 spp vs 218 cache-off in 20s, and
+			// visibly blurred caustic lines. 1/5 of it (~3px) keeps
+			// ~tens of photons per lookup at any resolution: 153 spp,
+			// sharper lines, no low-frequency blotches (those start
+			// to show at 1/10).
+			params.caustic.lookUpRadius = autoRadius * .2f;
 			SLG_LOG("PhotonGI best caustic cache radius: " << autoRadius);
 		}
 	}

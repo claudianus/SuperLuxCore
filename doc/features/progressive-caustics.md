@@ -61,7 +61,12 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
 
 - **C1 zero-config** (landed): `caustic.lookup.radius=0` and
   `updatespp.minradius=0` auto-derive via `Film2SceneRadius`
-  (single shared evaluation). Remaining: `caustic.maxsize=0` →
+  (single shared evaluation). The caustic radius takes 1/5 of the
+  probe (2% of the image plane → ~0.4%, ~3px): the full probe radius
+  gathered hundreds of photons per eye vertex at the ~2 photons/pixel
+  budget, one BSDF evaluation each (2026-10, pool 800x500 20s:
+  24 → 145 spp, cache-off 218; sharper lines; 1/10 shows
+  low-frequency blotches). Remaining: `caustic.maxsize=0` →
   photons-per-pixel/memory budget (Corona scheme), `photon.maxcount`
   cap sanity, Blender "automatic" collapse.
 - **C2 progressive GPU merge radius** (landed): the render loop
