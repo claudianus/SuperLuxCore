@@ -37,6 +37,7 @@
 #include "slg/materials/mix.h"
 #include "slg/materials/twosided.h"
 #include "slg/volumes/homogenous.h"
+#include "slg/volumes/heterogenous.h"
 #include "slg/scene/sceneobjectdefs.h"
 #include "slg/engines/renderengine.h"
 #include "slg/film/film.h"
@@ -457,6 +458,26 @@ static bool SceneHasRefractiveCaster(SceneConstRef scene, const float glossyThre
 	return false;
 }
 
+// A volume that scatters (constant zero scattering - absorption-only water -
+// does not count)
+static bool SceneHasScatteringVolume(SceneConstRef scene) {
+	const auto &mats = scene.GetMaterials();
+	for (u_int i = 0; i < mats.GetSize(); ++i) {
+		const auto &m = mats.GetMaterial(i);
+		const Texture *sigmaS = nullptr;
+		if (m.GetType() == HOMOGENEOUS_VOL)
+			sigmaS = &static_cast<const HomogeneousVolume &>(m).GetSigmaS();
+		else if (m.GetType() == HETEROGENEOUS_VOL)
+			sigmaS = &static_cast<const HeterogeneousVolume &>(m).GetSigmaS();
+		else
+			continue;
+		if (!(((sigmaS->GetType() == CONST_FLOAT) || (sigmaS->GetType() == CONST_FLOAT3)) &&
+				(sigmaS->Filter() <= 0.f)))
+			return true;
+	}
+	return false;
+}
+
 // Zero-config SDS caustics (path.photongi.caustic.auto, default on). A
 // caustic seen through the caster itself - a pool floor through the water
 // surface, a table top through a glass - is a light -> S -> D -> S -> eye
@@ -491,6 +512,14 @@ void RenderConfig::ApplyAutoCausticCache() {
 			Property("path.photongi.glossinessusagethreshold")(.05f)).Get<float>();
 	if (!SceneHasRefractiveCaster(GetScene(), glossyThreshold))
 		return;
+	// Not validated with scattering media: a glass ball in world fog
+	// (showcase fogbeam) came out 3.4x a BDPT reference with the cache
+	// (11x through the ball), 1.08x without it. The light pass and the
+	// medium tools already cover volume caustics there.
+	if (SceneHasScatteringVolume(GetScene())) {
+		SDL_LOG("path.photongi.caustic.auto: skipped (scattering volume in the scene)");
+		return;
+	}
 
 	GetConfig().Set(Property("path.photongi.caustic.enabled")(true));
 	SDL_LOG("path.photongi.caustic.auto: enabled the caustic cache"

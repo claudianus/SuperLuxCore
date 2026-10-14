@@ -194,6 +194,14 @@ light tasks┘  (MIS, shrinking r) └─ focus-guided emission
     GLOSSY-only, so `IsDirectLightHitVisible` (CPU + `pgic_funcs.cl`)
     counts glossy depth too: otherwise the floor took the cache AND its
     own light hit (1.8x). e115 cases 4/5 cover it.
+  - Scattering media (2026-10, open): `caustic.auto` skips scenes with a
+    scattering volume (constant-zero scattering, e.g. absorption-only
+    water, does not count). A glass ball in world fog (showcase fogbeam)
+    rendered 3.4x a BDPT reference with the cache on (11x seen through
+    the ball), 1.08x with it off. Explicit `caustic.enabled = 1` in a
+    fog scene still shows the bias - not yet root-caused (e115 case 6
+    pins the gate). The add-on leaves the flag unset under
+    `caustic_mode = auto` for the path engines so this gate applies.
   - Deferred gen-1 (`initialUpdatePending`): the first cache is
     launched by the first `Update()` call, after ingest mode is
     resolved — GPU sessions build generation 1 purely from device

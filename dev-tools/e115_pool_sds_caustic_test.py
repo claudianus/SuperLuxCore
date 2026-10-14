@@ -31,6 +31,7 @@
 #   3  PATHOCL vs PATHCPU floor parity
 #   4  Disney floor: the cache receives photons (showcaustic debug view)
 #   5  Disney floor: PATHCPU and PATHOCL zero-config match the reference
+#   6  caustic.auto stays off with a scattering volume, on with clear water
 #
 # Run from the repo root:
 #   python3.13 dev-tools/e115_pool_sds_caustic_test.py
@@ -154,6 +155,19 @@ opencl.native.threads.count = 0
     return rgb.reshape(H, W, 3).mean(axis=2)[::-1], cache_on
 
 
+def auto_cache(scene_extra):
+    """Resolved path.photongi.caustic.enabled for a zero-config PATHCPU"""
+    scn = pysuperluxcore.Scene()
+    p = pysuperluxcore.Properties()
+    p.SetFromString(SCENE + scene_extra)
+    scn.Parse(p)
+    cfg = pysuperluxcore.Properties()
+    cfg.SetFromString("renderengine.type = PATHCPU\n")
+    props = pysuperluxcore.RenderConfig(cfg, scn).GetProperties()
+    return (props.IsDefined("path.photongi.caustic.enabled") and
+            props.Get("path.photongi.caustic.enabled").GetBool())
+
+
 def check(ok, name, detail):
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}", flush=True)
     return ok
@@ -201,6 +215,22 @@ def main():
         r = img[FLOOR].mean() / dref
         ok &= check(abs(r - 1) < 0.05, f"5 {engine} zero-config Disney floor",
                     f"ratio={r:.3f}")
+
+    # scattering media are not validated with the cache (fog world: 3.4x a
+    # BDPT reference): auto must leave it off there, but absorption-only
+    # water must not block it
+    for name, vol, want in (
+            ("fog", "scene.volumes.v.type = homogeneous\n"
+                    "scene.volumes.v.absorption = 0 0 0\n"
+                    "scene.volumes.v.scattering = 0.2 0.2 0.2\n"
+                    "scene.world.volume.default = v\n", False),
+            ("clear water", "scene.volumes.v.type = homogeneous\n"
+                    "scene.volumes.v.absorption = 0.1 0.05 0.02\n"
+                    "scene.volumes.v.scattering = 0 0 0\n"
+                    "scene.materials.water.volume.interior = v\n", True)):
+        on = auto_cache(vol)
+        ok &= check(on == want, f"6 caustic.auto with {name} volume",
+                    f"caustic.enabled={on}")
 
     print("PASS overall" if ok else "FAIL overall")
     return 0 if ok else 1
