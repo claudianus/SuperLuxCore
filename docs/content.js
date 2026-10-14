@@ -1,9 +1,9 @@
 /* Hand-written bilingual copy. Render receipts live in showcase.js (generated);
    the feature catalogue, FAQ and coverage notes live in data.js. */
 window.SLC_COPY = {
-  version: '2.11.32',
+  version: '2.11.33',
   renderVersion: '2.11.32', // build the hero and comparison images were rendered with (fogbeam: 2.11.31, caustic cache off there in both)
-  date: '2026-10-14',
+  date: '2026-10-15',
   core: 'https://github.com/claudianus/SuperLuxCore',
   addon: 'https://github.com/claudianus/SuperBlendLuxCore',
   // git: fork point e9ced7e7a (LuxCoreRender 2.11.2), compared against upstream main 4209d6537
