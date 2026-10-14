@@ -36,7 +36,11 @@ Each comparison pair shares one `scene.scn` byte for byte. The only
 differences are the `variants.json` lines (upstream gets its closest supported
 model when it has no equivalent feature) and the render flags in the receipt.
 Both sides render through the published Python modules (`pyluxcore` 2.11.2
-wheel and `pysuperluxcore` 2.11.27) and display through OpenColorIO ACES 2.0.
+wheel and the `pysuperluxcore` 2.11.32 release wheel; `finals-2.11.32.sh`,
+fogbeam stays 2.11.31 where the caustic cache is off) and display through
+OpenColorIO ACES 2.0. Lamp-lit Disney surfaces read brighter on the fork side
+since 2.11.28: upstream multiplies light-sampled Disney shading by cos θ twice,
+the fork does not (e57 furnace: 1.260 vs Burley 1.2596). The page says so.
 
 Rules for claims on the page:
 
@@ -48,7 +52,8 @@ Rules for claims on the page:
   two-seed noise into speed relative to LuxCoreRender on that machine's CPU.
   Scenes where upstream is faster are stated in the text, not left out.
 - The furnace numbers in `content.js` come from a white-metal sphere in a
-  constant white environment (256 spp, depth 64). Rerun them before changing them.
+  constant white environment (1024 spp, depth 64, rerun on 2.11.30 2026-10-14).
+  Rerun them before changing them.
 - Features that have open correctness issues stay out of the hero comparisons
   until fixed (as of 2026-10-12: GPU spectral variance/bias, OpenPBR SSS
   energy, a CPU/GPU many-lights mismatch).

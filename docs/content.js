@@ -1,9 +1,9 @@
 /* Hand-written bilingual copy. Render receipts live in showcase.js (generated);
    the feature catalogue, FAQ and coverage notes live in data.js. */
 window.SLC_COPY = {
-  version: '2.11.29',
-  renderVersion: '2.11.27', // build the hero and comparison images were rendered with
-  date: '2026-10-13',
+  version: '2.11.32',
+  renderVersion: '2.11.32', // build the hero and comparison images were rendered with (fogbeam: 2.11.31, caustic cache off there in both)
+  date: '2026-10-14',
   core: 'https://github.com/claudianus/SuperLuxCore',
   addon: 'https://github.com/claudianus/SuperBlendLuxCore',
   // git: fork point e9ced7e7a (LuxCoreRender 2.11.2), compared against upstream main 4209d6537
@@ -75,8 +75,8 @@ window.SLC_COPY = {
     sysMac: { en: 'Mac · M5 Pro', ko: 'Mac · M5 Pro' },
     sysPc: { en: 'PC · RTX 5060 Ti (Linux)', ko: 'PC · RTX 5060 Ti (Linux)' },
     speedBody: {
-      en: 'Each scene rendered twice for {s} seconds at {w}×{h}, with two different seeds. The bar is how much faster each setup gets to the same noise level as LuxCoreRender on the CPU. Longer is better.',
-      ko: '장면마다 {w}×{h}, {s}초씩 시드를 바꿔 두 번 렌더했습니다. 막대는 CPU에서 돌린 LuxCoreRender와 같은 노이즈에 몇 배 빨리 도달하는지입니다. 길수록 좋습니다.'
+      en: 'Each scene rendered twice for {s} seconds at {w}×{h}, with two different seeds. The bar is how much faster each setup gets to the same noise level as LuxCoreRender on the CPU. Longer is better. Measured with SuperLuxCore 2.11.27; none of these five scenes uses the caustic cache that 2.11.32 sped up.',
+      ko: '장면마다 {w}×{h}, {s}초씩 시드를 바꿔 두 번 렌더했습니다. 막대는 CPU에서 돌린 LuxCoreRender와 같은 노이즈에 몇 배 빨리 도달하는지입니다. 길수록 좋습니다. SuperLuxCore 2.11.27로 측정했고, 다섯 장면 모두 2.11.32에서 빨라진 커스틱 캐시를 쓰지 않습니다.'
     },
     benchBronze: { en: 'Bronze still life', ko: '청동 정물' },
     speedUnit: { en: '×N = noise of LuxCoreRender CPU ÷ noise of this setup, squared (noise falls with the square root of render time). Small print: samples per pixel. Samples alone are not a fair score: the engines leave different amounts of noise per sample (sampler, light sampling), and on caustic scenes SuperLuxCore also spends time on light-traced paths that a sample count does not show.', ko: '×N = (LuxCoreRender CPU 노이즈 ÷ 이 설정의 노이즈)². 노이즈는 렌더 시간의 제곱근에 비례해 줄기 때문입니다. 작은 글씨는 픽셀당 샘플 수입니다. 샘플 수만으로는 공정하지 않습니다. 엔진마다 샘플 하나가 남기는 노이즈가 다르고(샘플러, 광원 샘플링), 커스틱 장면에서는 SuperLuxCore가 샘플 수에 잡히지 않는 라이트 트레이싱 경로에도 시간을 쓰기 때문입니다.' },
@@ -114,7 +114,7 @@ window.SLC_COPY = {
       ko: '≈ 업스트림 OpenCL: 두 번째 시드에서 Apple 드라이버가 매번 크래시해, 렌더 한 장을 업스트림 CPU 두 장과 비교해 노이즈를 추정했습니다.'
     },
     left: { en: 'LuxCoreRender 2.11.2', ko: 'LuxCoreRender 2.11.2' },
-    right: { en: 'SuperLuxCore 2.11.27', ko: 'SuperLuxCore 2.11.27' },
+    right: { en: 'SuperLuxCore 2.11.32', ko: 'SuperLuxCore 2.11.32' },
     drag: { en: 'Drag or use ← →', ko: '드래그 또는 ← →' },
     receipt: { en: 'Render receipt', ko: '렌더 기록' },
     differs: { en: 'Only these lines differ', ko: '다른 줄은 이것뿐' },
@@ -130,7 +130,7 @@ window.SLC_COPY = {
       ko: '화이트 퍼니스는 렌더링에서 가장 오래된 정직성 테스트입니다. 균일한 흰 빛 속의 흰 물체는 사라져 보여야 합니다. 1.0보다 모자란 만큼이 렌더러가 잃어버린 빛입니다.'
     },
     furnaceTitle: { en: 'White metal, white furnace', ko: '흰 금속, 화이트 퍼니스' },
-    furnaceNote: { en: 'Ideal = 1.00. Center of a sphere, 256 spp, depth 64. Metal GPU agrees with CPU within 1%.', ko: '이상값 = 1.00. 구 중앙, 256spp, 깊이 64. Metal GPU와 CPU 차이 1% 이내.' },
+    furnaceNote: { en: 'Ideal = 1.00. Center of a sphere, 1024 spp, depth 64, SuperLuxCore 2.11.30. Metal GPU is within 2.5% of CPU.', ko: '이상값 = 1.00. 구 중앙, 1024spp, 깊이 64, SuperLuxCore 2.11.30. Metal GPU는 CPU와 2.5% 이내.' },
     roughness: { en: 'roughness', ko: '거칠기' },
     sellTitle: { en: 'Measured glass, color-neutral', ko: '실측 유리, 색 중립' },
     sellBody: {
@@ -178,8 +178,8 @@ window.SLC_COPY = {
 
     honestyTitle: { en: 'How these images were made', ko: '이 이미지들을 만든 방법' },
     honesty: {
-      en: 'Scenes are built from CC0 Poly Haven assets plus procedural optics by a script in the repository, then rendered by the published Python modules of each engine (LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.27) on one Apple M5 Pro, displayed through OpenColorIO ACES 2.0. Each image has a JSON receipt with its sample count, seconds, settings and hashes. The renderer source is Apache-2.0; the Blender extension is GPL-3.0.',
-      ko: '장면은 저장소의 스크립트가 CC0 Poly Haven 에셋과 절차적 광학 오브젝트로 만들고, 각 엔진의 공개 파이썬 모듈(LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.27)이 Apple M5 Pro 한 대에서 렌더했으며, OpenColorIO ACES 2.0으로 표시했습니다. 이미지마다 샘플 수, 시간, 설정, 해시가 담긴 JSON 기록이 있습니다. 렌더러 소스는 Apache-2.0, Blender 확장은 GPL-3.0입니다.'
+      en: 'Scenes are built from CC0 Poly Haven assets plus procedural optics by a script in the repository, then rendered by the published Python modules of each engine (LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.32) on one Apple M5 Pro, displayed through OpenColorIO ACES 2.0. Each image has a JSON receipt with its sample count, seconds, settings and hashes. The renderer source is Apache-2.0; the Blender extension is GPL-3.0.',
+      ko: '장면은 저장소의 스크립트가 CC0 Poly Haven 에셋과 절차적 광학 오브젝트로 만들고, 각 엔진의 공개 파이썬 모듈(LuxCoreRender 2.11.2 wheel, SuperLuxCore 2.11.32)이 Apple M5 Pro 한 대에서 렌더했으며, OpenColorIO ACES 2.0으로 표시했습니다. 이미지마다 샘플 수, 시간, 설정, 해시가 담긴 JSON 기록이 있습니다. 렌더러 소스는 Apache-2.0, Blender 확장은 GPL-3.0입니다.'
     },
     receipts: { en: 'All render receipts', ko: '전체 렌더 기록' },
     credits: { en: 'Built on LuxCoreRender. Assets: Poly Haven (CC0).', ko: 'LuxCoreRender 기반. 에셋: Poly Haven (CC0).' }
@@ -197,7 +197,7 @@ window.SLC_COPY = {
       tab: { en: 'Dispersion & caustics', ko: '분산 · 커스틱' },
       title: { en: 'Fire in the stone, light on the floor.', ko: '보석 속 불꽃, 바닥 위의 빛.' },
       cap: { en: 'Real wavelengths through measured glass. Caustics found automatically.', ko: '실측 유리를 지나는 실제 파장. 커스틱은 자동으로.' },
-      fair: { en: 'Upstream has no Sellmeier glass, so it gets Cauchy dispersion fitted to the same glasses and path-traces the caustics. Nothing was enabled by hand on either side: SuperLuxCore switches its caustic tools on by itself when a scene has glass or metal.', ko: '업스트림에는 Sellmeier 유리가 없어 같은 유리에 맞춘 Cauchy 분산을 줬고, 커스틱은 패스 트레이싱으로 그립니다. 양쪽 모두 손으로 켠 것은 없습니다. SuperLuxCore는 장면에 유리나 금속이 있으면 커스틱 도구를 스스로 켭니다.' }
+      fair: { en: 'Upstream has no Sellmeier glass, so it gets Cauchy dispersion fitted to the same glasses and path-traces the caustics. Nothing was enabled by hand on either side: SuperLuxCore switches its caustic tools on by itself when a scene has glass or metal. The paper backdrop is a Disney material; it reads brighter on our side because upstream applies cos θ twice to lamp-lit Disney shading (fixed in the fork in 2.11.28).', ko: '업스트림에는 Sellmeier 유리가 없어 같은 유리에 맞춘 Cauchy 분산을 줬고, 커스틱은 패스 트레이싱으로 그립니다. 양쪽 모두 손으로 켠 것은 없습니다. SuperLuxCore는 장면에 유리나 금속이 있으면 커스틱 도구를 스스로 켭니다. 종이 배경은 Disney 재질인데, 업스트림이 조명을 받는 Disney 셰이딩에 cos θ를 두 번 곱하기 때문에 우리 쪽이 더 밝습니다(포크는 2.11.28에서 수정).' }
     },
     pool: {
       tab: { en: 'Pool caustics', ko: '수영장 커스틱' },
@@ -227,7 +227,7 @@ window.SLC_COPY = {
       tab: { en: 'Rough metal', ko: '거친 금속' },
       title: { en: "Rough metal that doesn't go dark.", ko: '거칠어져도 어두워지지 않는 금속.' },
       cap: { en: 'Roughness 0.05 → 1.0. Rough gold stays gold instead of turning grey.', ko: '거칠기 0.05 → 1.0. 거친 금이 회색으로 죽지 않고 금색을 지킵니다.' },
-      fair: { en: 'Same Disney metal on both sides; the fork adds one line, multibounce = 1 (multiple-scattering GGX). Single-scattering microfacets lose the light that bounces between facets more than once, up to 72% at roughness 1 (see the furnace test below).', ko: '양쪽 모두 같은 Disney 금속이고, 포크 쪽에 multibounce = 1(다중 산란 GGX) 한 줄만 더했습니다. 단일 산란 마이크로패싯은 면 사이에서 여러 번 튕기는 빛을 잃는데, 거칠기 1에서 최대 72%입니다(아래 퍼니스 테스트).' }
+      fair: { en: 'Same Disney metal on both sides; the fork adds one line, multibounce = 1 (multiple-scattering GGX). Single-scattering microfacets lose the light that bounces between facets more than once, 69% at roughness 1 (see the furnace test below). Part of the gap is a separate upstream bug the fork fixed in 2.11.28: upstream multiplies light-sampled Disney shading by cos θ twice, so Disney surfaces lit by lamps come out darker, most at grazing light.', ko: '양쪽 모두 같은 Disney 금속이고, 포크 쪽에 multibounce = 1(다중 산란 GGX) 한 줄만 더했습니다. 단일 산란 마이크로패싯은 면 사이에서 여러 번 튕기는 빛을 잃는데, 거칠기 1에서 69%입니다(아래 퍼니스 테스트). 차이의 일부는 포크가 2.11.28에서 고친 별개의 업스트림 버그 때문입니다. 업스트림은 조명을 샘플링한 Disney 셰이딩에 cos θ를 두 번 곱해서, 조명을 받는 Disney 표면이 더 어둡게 나오고 빛이 비스듬할수록 심합니다.' }
     },
     velvet: {
       tab: { en: 'Velvet sheen', ko: '벨벳 광택' },
@@ -242,10 +242,10 @@ window.SLC_COPY = {
       fair: { en: 'Same base colours, same lights. Upstream\'s only subsurface control on a surface is Disney subsurface, which reshapes the diffuse lobe: no light ever enters the object. SuperLuxCore uses OpenPBR subsurface with measured presets (marble, light skin, apple) and walks the light through the inside. That costs more per sample, so the fork side ran on the Metal GPU; 120 seconds each.', ko: '같은 기본 색, 같은 조명. 업스트림이 표면에 쓸 수 있는 서브서피스는 Disney subsurface뿐인데, 이것은 디퓨즈 모양만 바꿀 뿐 빛이 물체 안으로 들어가지 않습니다. SuperLuxCore는 실측 프리셋(대리석, 밝은 피부, 사과)을 쓴 OpenPBR 서브서피스로 빛을 물체 안에서 이동시킵니다. 샘플당 비용이 커서 포크 쪽은 Metal GPU로 렌더했고, 각 120초입니다.' }
     }
   },
-  // White-furnace measurements (preview/fm-*.npz, 2026-10-12)
+  // White-furnace measurements (2.11.30, 2026-10-14; 64x64, 1024 spp, centre 8x8)
   furnace: [
-    { r: 0.5, up: 0.838, slc: 0.935, gpu: 0.933 },
-    { r: 1.0, up: 0.278, slc: 0.775, gpu: 0.768 }
+    { r: 0.5, up: 0.846, slc: 0.997, gpu: 0.991 },
+    { r: 1.0, up: 0.251, slc: 0.998, gpu: 0.975 }
   ],
   // Sellmeier furnace, N-SF6 orb, spectral CPU (before / after the 2026-10-12 fix)
   sellmeier: { before: [1.071, 1.05, 0.799], after: [1.0, 0.998, 1.001] }

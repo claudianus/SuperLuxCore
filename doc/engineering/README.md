@@ -88,6 +88,7 @@ docs live in `doc/features/` (see its README for the index).
 - [Verified 2.11.28 release](2026-10-13-deployment-2.11.28.md): faster PATHOCL convergence, VDB/BSSRDF work since 2.11.27; signed wheels/ZIPs, fresh-profile CPU/Metal smoke; full goal active and incomplete.
 
 - [Verified 2.11.29 release](2026-10-13-deployment-2.11.29.md): add-on render defaults back to engine/Cycles rules, every compiled GPU API in prefs; signed wheels/ZIPs, fresh-profile CPU/Metal smoke; engine code unchanged since 2.11.28.
+- [Verified 2.11.32 release](2026-10-14-deployment-2.11.32.md): zero-config pool/Disney SDS caustics, scattering-media scenes excluded from caustic.auto, caustic lookup radius 1/5 of the footprint probe (~6x eye throughput); signed wheels/ZIPs, fresh-profile CPU/Metal smoke, homepage re-rendered.
 
 - [Experimental native Cycles BSSRDF CPU transport](2026-10-10-cycles-bssrdf-transport.md): object-local random walk, entry AOV preservation, 26 guarded native checks; Metal/adjoint and release adapter remain open.
 
