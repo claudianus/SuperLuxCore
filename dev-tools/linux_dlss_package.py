@@ -56,7 +56,7 @@ def stage(args):
         shutil.copy2(args.helper / 'CUEW-LICENSE.txt', package / 'CUEW-LICENSE.txt')
         provenance = {
             'classification': 'experimental Linux CUDA Ray Reconstruction integration',
-            'engine_commit': os.environ['GITHUB_SHA'], 'sdk_commit': SDK_COMMIT,
+            'engine_commit': os.environ.get('SLC_NATIVE_COMMIT', os.environ['GITHUB_SHA']), 'sdk_commit': SDK_COMMIT,
             'sdk_repository': 'https://github.com/NVIDIA/DLSS',
             'helper_sha256': sha(library), 'nvidia_release_runtime_sha256': sha(dll),
             'GPU_evaluation_in_CI': False, 'RTX_quality_and_performance_accepted': False,
