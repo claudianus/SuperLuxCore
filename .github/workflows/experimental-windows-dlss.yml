@@ -29,14 +29,14 @@ jobs:
         shell: python
         run: |
           import json,subprocess,time
-          for attempt in range(150):
+          for attempt in range(270):
               run=json.loads(subprocess.check_output(['gh','api','repos/claudianus/SuperLuxCore/actions/runs/39162904332'],text=True))
               assert run['head_sha']=='5fa4864f76c1f84b9295cedb2464fadf721d7e26'
               if run['status']=='completed':
                   assert run['conclusion']=='success',run['conclusion']
                   break
               time.sleep(10)
-          else:raise TimeoutError('Native acceptance not complete within 25 minutes')
+          else:raise TimeoutError('Native acceptance not complete within 45 minutes')
           subprocess.run(['gh','run','download','39162904332','--repo','claudianus/SuperLuxCore','--name','cibw-wheels-windows-2022-13','--dir','addon/wheels'],check=True)
       - name: Give the wheel its unique experimental cache identity
         shell: pwsh
