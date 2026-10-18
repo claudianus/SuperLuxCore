@@ -42,6 +42,25 @@ public:
 		TextureConstPtr sssMfp = nullptr,
 		const int sssProfile = 0);
 
+	// Exact, stack-owned reuse only while walking spatially constant inputs.
+	// Spectral pauses/wavelength changes and other volumes miss this scope.
+	class InteriorScope {
+	public:
+		InteriorScope(const HomogeneousVolume &volume, const HitPoint &point);
+		~InteriorScope();
+		InteriorScope(const InteriorScope &) = delete;
+		InteriorScope &operator=(const InteriorScope &) = delete;
+	private:
+		friend class HomogeneousVolume;
+		bool Matches() const;
+		const HomogeneousVolume *volume = nullptr;
+		InteriorScope *previous;
+		luxrays::Spectrum alpha, sigmaT;
+		float wavelengths[3];
+		u_int hero = 0, aliveMask = 0;
+		int upsampling = 0;
+		bool spectral = false;
+	};
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
 	// Distance sampling MIS between the transmittance-proportional and the
@@ -67,7 +86,7 @@ public:
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission,
 		const SSSFlightProposal *proposal = nullptr) const;
 	bool DirectionProposal(const HitPoint &hitPoint, const luxrays::Spectrum &throughput,
-		const luxrays::Vector &axis, const float thickness, SSSDirectionProposal &proposal) const;
+		const luxrays::Vector &axis, const luxrays::Point &entry, const float thickness, SSSDirectionProposal &proposal) const;
 	// Evaluate the same SSS inputs once when both coefficients are needed.
 	void SSSScatteringCoefficients(const HitPoint &hitPoint,
 		luxrays::Spectrum &absorption, luxrays::Spectrum &scattering) const;

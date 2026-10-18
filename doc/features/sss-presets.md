@@ -87,17 +87,27 @@ the SSS model remains unchanged. The guarded CPU sampling upgrade below is
 separate from that earlier repair. See the
 [repair and validation record](../engineering/2026-10-19-openpbr-sss-cpu.md).
 
-## CPU sampling of dense SSS
+## CPU SSS transport
 
-The CPU renderer automatically uses a probability-corrected direction and
-free-flight guide for sufficiently thick, isotropic homogeneous SSS. Thin
-parts, unknown boundaries, anisotropic media and emitting volumes keep the
-classic walk. Absorption, scattering, refractive boundaries and the volume
-depth budget retain their existing values. This does not enable denoising
-or contribution clamping. Metal currently retains classic SSS sampling.
+The CPU eye path uses a dedicated loop for consecutive non-emitting
+homogeneous SSS vertices. It preserves the phase function, physical
+coefficients, global geometry, refractive boundaries, RR, MIS and depth
+budgets. Uniform coefficient inputs are reused exactly for the current
+walk and spectral packet; spatial inputs retain per-vertex evaluation.
 
-For a native CPU control, set `path.sss.guiding.enable = 0`; the default is
-`1`. Blender OpenPBR presets and Scale inputs need no additional setting.
-Keep geometry closed and scene units consistent with the authored radius.
-See [the transport validation](../engineering/2026-10-19-sss-transport.md)
-for the guarded domain, raw convergence study and measured limits.
+The direction/free-flight proposal balances both tangent boundaries using
+position within the observed span and weights transport channels by
+throughput times scattering albedo. Unknown boundaries, anisotropic and
+emitting media keep classic sampling. No diffusion/similarity replacement,
+denoiser or contribution clamp is introduced. Metal keeps its classic walk.
+
+A bounded geometric prepass may prove that all direct connections from a
+closed opaque domain to external lights have zero contribution. Only those
+connections are omitted; internal lights, shadow transparency, uncertain
+geometry and MNEE retain normal visibility/connection handling. Other cache,
+ReSTIR, portal and vertex-connection combinations retain the generic loop.
+
+Native CPU controls are `path.sss.fastloop.enable = 0` for the generic loop
+and `path.sss.guiding.enable = 0` for classic sampling; both default to `1`.
+Blender presets and Scale inputs need no new setting. See the
+[interior-loop contract and measured limits](../engineering/2026-10-19-sss-interior-loop.md).

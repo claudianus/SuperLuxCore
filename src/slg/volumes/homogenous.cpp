@@ -19,6 +19,7 @@
 #include <cstddef>
 
 #include "slg/volumes/homogenous.h"
+#include "slg/textures/math/scale.h"
 #include "luxrays/usings.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/textures/texture.h"
@@ -142,8 +143,54 @@ static void SSSRemapCB15(const float A, const float d, const float g,
 	sigmaT = (1.f / Max(d, 1e-6f)) / Max(1.f - g * alpha, 1e-6f);
 }
 
+namespace {
+thread_local HomogeneousVolume::InteriorScope *sssInteriorScope = nullptr;
+
+bool IsSpatiallyConstantSSS(const Texture &texture, const unsigned depth = 0) {
+	if (texture.GetType() == CONST_FLOAT || texture.GetType() == CONST_FLOAT3) return true;
+	if (depth >= 8 || texture.GetType() != SCALE_TEX) return false;
+	const auto &scale = static_cast<const ScaleTexture &>(texture);
+	return IsSpatiallyConstantSSS(scale.GetTexture1(), depth + 1) &&
+			IsSpatiallyConstantSSS(scale.GetTexture2(), depth + 1);
+}
+}
+
+HomogeneousVolume::InteriorScope::InteriorScope(const HomogeneousVolume &owner, const HitPoint &point) :
+		previous(sssInteriorScope) {
+	static const bool disabled = getenv("SUPERLUXCORE_SSS_NO_COEFFICIENT_SCOPE") != nullptr;
+	if (!disabled && owner.IsSSSParametrized() && IsSpatiallyConstantSSS(*owner.GetSSSAlbedoTexture()) &&
+			IsSpatiallyConstantSSS(*owner.GetSSSMfpTexture()) && IsSpatiallyConstantSSS(owner.GetG()) &&
+			IsSpatiallyConstantSSS(owner.GetIORTexture())) {
+		sigmaT = owner.SSSCoeffs(point, alpha);
+		const auto *sw = Spectral::Current();
+		spectral = sw != nullptr;
+		if (sw) {
+			for (unsigned i = 0; i < 3; ++i) wavelengths[i] = sw->w[i];
+			hero = sw->hero; aliveMask = sw->aliveMask;
+			upsampling = Spectral::GetUpsamplingModel();
+		}
+		volume = &owner;
+	}
+	sssInteriorScope = this;
+}
+
+HomogeneousVolume::InteriorScope::~InteriorScope() { sssInteriorScope = previous; }
+
+bool HomogeneousVolume::InteriorScope::Matches() const {
+	const auto *sw = Spectral::Current();
+	if (spectral != (sw != nullptr)) return false;
+	if (!sw) return true;
+	return hero == sw->hero && aliveMask == sw->aliveMask &&
+			upsampling == Spectral::GetUpsamplingModel() &&
+			wavelengths[0] == sw->w[0] && wavelengths[1] == sw->w[1] && wavelengths[2] == sw->w[2];
+}
+
 Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
 		Spectrum &alpha) const {
+	if (sssInteriorScope && sssInteriorScope->volume == this && sssInteriorScope->Matches()) {
+		alpha = sssInteriorScope->alpha;
+		return sssInteriorScope->sigmaT;
+	}
 	const Spectrum A = sssAlbedoTex->GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
 	const Spectrum mfp = sssMfpTex->GetSpectrumValue(hitPoint).Clamp();
 	const Spectrum g = GetG().GetSpectrumValue(hitPoint).Clamp(-0.99f, 0.99f);
@@ -324,7 +371,7 @@ void HomogeneousVolume::SSSScatteringCoefficients(const HitPoint &hitPoint,
 }
 
 bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
-		const Spectrum &throughput, const Vector &axis, const float thickness,
+		const Spectrum &throughput, const Vector &axis, const Point &proposalEntry, const float thickness,
 		SSSDirectionProposal &proposal) const {
 	if (!IsSSSParametrized() || HasVolumeEmissionTexture() || !(thickness > 0.f)) return false;
 	const Spectrum phaseG = GetG().GetSpectrumValue(hitPoint);
@@ -343,6 +390,9 @@ bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
 	if (alpha.Black()) return false;
 	// The isotropic diffusion guide is not a suitable proposal for strongly
 	// anisotropic walks; retain their verified HG/Schlick sampler.
+	static const bool legacyGuide = getenv("SUPERLUXCORE_SSS_LEGACY_GUIDE") != nullptr;
+	static const bool sharedGuide = getenv("SUPERLUXCORE_SSS_GUIDE_SHARED") != nullptr;
+	static const bool thickOnly = getenv("SUPERLUXCORE_SSS_GUIDE_THICK_ONLY") != nullptr;
 	static const float classicShare = []() {
 		const char *value = getenv("SUPERLUXCORE_SSS_DWIVEDI_CLASSIC");
 		return value ? Clamp(float(atof(value)), .05f, .95f) : .1f;
@@ -361,7 +411,7 @@ bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
 	static thread_local GuideCoefficients lastGuide;
 	if (!lastGuide.valid || lastGuide.alpha != alpha) {
 		for (unsigned i = 0; i < 3; ++i) {
-			const float a = Clamp(alpha.c[i], 1e-4f, .999999f);
+			const float a = Clamp((!legacyGuide && sharedGuide) ? alpha.Max() : alpha.c[i], 1e-4f, .999999f);
 			lastGuide.v[i] = Max(1.00001f, 1.f / sqrtf(Max(1e-7f, 1.f - powf(a,
 						2.44294f - .0215813f * a + .578637f / a))));
 			lastGuide.phaseLog[i] = logf((lastGuide.v[i] + 1.f) / (lastGuide.v[i] - 1.f));
@@ -373,7 +423,8 @@ bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
 	for (unsigned i = 0; i < 3; ++i) {
 		if (!(sigmaT.c[i] > 0.f) || !isfinite(sigmaT.c[i])) return false;
 		proposal.sigmaT[i] = sigmaT.c[i];
-		proposal.channel[i] = isfinite(throughput.c[i]) ? Max(throughput.c[i], 1e-10f) : 1e-10f;
+		proposal.channel[i] = isfinite(throughput.c[i]) ?
+				Max(throughput.c[i] * (legacyGuide ? 1.f : alpha.c[i]), 1e-10f) : 1e-10f;
 		sum += proposal.channel[i];
 		// The fit controls only the proposal, never physical coefficients.
 		proposal.v[i] = lastGuide.v[i];
@@ -381,9 +432,16 @@ bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
 		// An entry-directed half-space proposal is counterproductive
 		// for thin transmission. Keep its original chromatic walk where
 		// the opposite interface has appreciable diffusion importance.
-		if (thickness * sigmaT.c[i] / proposal.v[i] < 6.f) return false;
+		if ((legacyGuide || thickOnly) && thickness * sigmaT.c[i] / proposal.v[i] < 6.f) return false;
 	}
 	for (unsigned i = 0; i < 3; ++i) proposal.channel[i] /= sum;
+	if (!legacyGuide) {
+		// Proposal only: prefer the nearby tangent boundary and smoothly
+		// reverse toward the opposite side of thin/curved domains.
+		const float depth = Clamp(-Dot(hitPoint.p - proposalEntry, proposal.axis), 0.f, thickness);
+		const float optical = (2.f * depth - thickness) * sigmaT.Min() / proposal.v[0];
+		proposal.forward = Clamp(1.f / (1.f + expf(Clamp(optical, -20.f, 20.f))), .01f, .99f);
+	}
 	return true;
 }
 

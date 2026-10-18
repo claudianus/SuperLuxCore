@@ -870,7 +870,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 		const float initialPassThrough, Ray *ray, RayHit *rayHit, BSDF *bsdf,
 		Spectrum *connectionThroughput, const Spectrum *pathThroughput,
 		SampleResult *sampleResult, const bool backTracing,
-		PathDepthInfo *rayDepthInfo, const BSDFEvent rayEvent) const {
+		PathDepthInfo *rayDepthInfo, const BSDFEvent rayEvent,
+		const bool deferSSSBoundary) const {
 	*connectionThroughput = Spectrum(1.f);
 
 	// I need a sequence of pseudo-random numbers starting form a floating point
@@ -915,6 +916,85 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			volInfo->HasCurrentVolume() ?
 			VolumeConstPtr(std::addressof(volInfo->GetCurrentVolume())) :
 			VolumeConstPtr();
+		// Exact visibility shortcut for an opaque OpenPBR exit. A shadow
+		// connection is blocked here regardless of attenuation before it.
+		// Entering/priority boundaries, transparency, other closures and
+		// bevel impostors retain the full interpreter below.
+		if (deferSSSBoundary && hit && shadowRay && !fromLight && rayVolume &&
+				rayVolume->GetType() == HOMOGENEOUS_VOL &&
+				static_cast<const HomogeneousVolume *>(&*rayVolume)->IsSSSParametrized()) {
+			const auto &object = objDefs->GetSceneObject(rayHit->meshIndex);
+			const auto &material = object.GetMaterial();
+			const auto &mesh = object.GetExtMesh();
+			if (material.GetType() == OPENPBR && !material.HasVolumeOverrides() &&
+					!material.GetFrontTransparencyTexture() && !material.GetBackTransparencyTexture() &&
+					material.GetPassThroughShadowTransparency().Black() && mesh.GetBevelRadius() == 0.f) {
+				Transform transform;
+				mesh.GetLocal2World(ray->time, transform);
+				const Normal normal = mesh.GetGeometryNormal(transform, rayHit->triangleIndex);
+				if (Dot(ray->d, normal) >= 0.f && Dot(normal, normal) >= 1e-20f)
+					return true;
+			}
+		}
+
+		// The global intersection is still authoritative. For a flight that
+		// scatters before a plain boundary, only geometric normal/volume
+		// resolution are needed; do not shade a surface that will be discarded.
+		bool sssFlightDone = false;
+		if (deferSSSBoundary && hit && !cameraRay && !shadowRay && !fromLight &&
+				rayVolume && rayVolume->GetType() == HOMOGENEOUS_VOL) {
+			const auto &object = objDefs->GetSceneObject(rayHit->meshIndex);
+			const auto &material = object.GetMaterial();
+			const auto &mesh = object.GetExtMesh();
+			const auto *sss = static_cast<const HomogeneousVolume *>(&*rayVolume);
+			if (sss->IsSSSParametrized() && !sss->HasVolumeEmissionTexture() &&
+					!material.HasVolumeOverrides() && mesh.GetBevelRadius() == 0.f) {
+				HitPoint boundary;
+				boundary.Init();
+				mesh.GetLocal2World(ray->time, boundary.localToWorld);
+				boundary.geometryN = mesh.GetGeometryNormal(boundary.localToWorld, rayHit->triangleIndex);
+				const float normalLength = Dot(boundary.geometryN, boundary.geometryN);
+				if (!isfinite(normalLength) || normalLength < 1e-20f)
+					boundary.geometryN = Normal(ray->d);
+				boundary.intoObject = Dot(ray->d, boundary.geometryN) < 0.f;
+				boundary.p = (*ray)(rayHit->t);
+				volInfo->SetHitPointVolumes(boundary, material.GetInteriorVolume(),
+						material.GetExteriorVolume(), defaultWorldVolume);
+				const VolumeConstPtr incoming = boundary.intoObject ?
+						boundary.exteriorVolume : boundary.interiorVolume;
+				if (incoming == rayVolume) {
+					if (volInfo->sssProposalAxisValid && !(volInfo->sssProposalThickness > 0.f) &&
+							!boundary.intoObject && material.GetInteriorVolume() == rayVolume &&
+							volInfo->SimulateRemoveVolume(material.GetInteriorVolume()) != rayVolume) {
+						const float thickness = -Dot(boundary.p - volInfo->sssProposalEntry,
+								volInfo->sssProposalAxis);
+						if (thickness > 0.f) volInfo->sssProposalThickness = thickness;
+					}
+					ray->maxt = rayHit->t;
+					Spectrum emission;
+					const float scatterU = rng.floatValue();
+					const Spectrum weights = pathThroughput ?
+							*pathThroughput * *connectionThroughput : *connectionThroughput;
+					float t = sss->ScatterSSS(*ray, scatterU, volInfo->IsScatteredStart(),
+							weights, connectionThroughput, &emission, &volInfo->sssFlightProposal);
+					sssFlightDone = true;
+					if (t > 0.f) {
+						const float cosHit = AbsDot(ray->d, boundary.geometryN);
+						const float guard = 8.f * MachineEpsilon::E(boundary.p);
+						if ((rayHit->t - t) * cosHit < guard)
+							t = Max(ray->mint, rayHit->t - guard / Max(cosHit, 1e-3f));
+						rayHit->t = t;
+						rayHit->meshIndex = 0xfffffffeu;
+						bsdf->Init(false, throughShadowTransparency, *this, *ray, *rayVolume, t, passThrough);
+						bsdf->hitPoint.SetRayContext(contextRayType, rayEvent, rayDepthInfo,
+								t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
+						volInfo->SetScatteredStart(true);
+						volInfo->sssFlightProposal.active = false;
+						return true;
+					}
+				}
+			}
+		}
 		if (hit) {
 			bsdf->Init(
 				fromLight,
@@ -962,7 +1042,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			// heterogeneous ones) instead of sampling a binary scattering
 			// event: much lower variance for direct lighting through media.
 			*connectionThroughput *= rayVolume->TransmittanceEstimate(*ray, rng.floatValue());
-		} else if (rayVolume) {
+		} else if (rayVolume && !sssFlightDone) {
 			// This applies volume transmittance too
 			//
 			// The flight distance needs its own draw: passThrough is stored

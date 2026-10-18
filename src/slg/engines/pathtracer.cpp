@@ -209,7 +209,7 @@ static bool BuildSSSDirectionProposal(const BSDF &bsdf, const PathVolumeInfo &vo
 	if (disabled || !bsdf.IsVolume() || !volume.sssProposalAxisValid ||
 			bsdf.GetMaterialType() != HOMOGENEOUS_VOL) return false;
 	return static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->DirectionProposal(
-			bsdf.hitPoint, throughput, volume.sssProposalAxis, volume.sssProposalThickness, proposal);
+			bsdf.hitPoint, throughput, volume.sssProposalAxis, volume.sssProposalEntry, volume.sssProposalThickness, proposal);
 }
 
 PathTracer::~PathTracer() {
@@ -379,7 +379,8 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					// Check if the light source is visible
 					if (!scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | SHADOW_RAY, &volInfo, u4, &shadowRay,
 							&shadowRayHit, &shadowBsdf, &connectionThroughput, nullptr,
-							nullptr, true, &directLightDepthInfo, NONE)) {
+							nullptr, true, &directLightDepthInfo, NONE,
+							sssFastLoopEnable && !mneeEnable && bsdf.IsVolume())) {
 						// Add the light contribution only if it is not a shadow catcher
 						// (because, if the light is visible, the material will be
 						// transparent in the case of a shadow catcher).
@@ -978,6 +979,76 @@ static void SspTailRecordVertex(SspTail *tail, const BSDF &bsdf,
 	tail->termGn = bsdf.hitPoint.geometryN;
 }
 
+// Process consecutive non-emitting homogeneous SSS vertices without the
+// surface/cache/ReSTIR machinery. Keep NEE, global geometry, BSDF phase,
+// sample dimensions, RR, depth/LPE/AOV state and refractive boundary handling.
+bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef scene,
+		Sampler &sampler, EyePathInfo &pathInfo, Ray &ray, RayHit &hit,
+		BSDF &bsdf, Spectrum &throughput, SampleResult &result,
+		SspTail *tail, bool &found) const {
+	const auto *interior = static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get());
+	const HomogeneousVolume::InteriorScope coefficients(*interior, bsdf.hitPoint);
+	for (;;) {
+		if (!found || !bsdf.IsVolume() || bsdf.GetMaterial().get() != interior ||
+				!static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->IsSSSParametrized() ||
+				static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->HasVolumeEmissionTexture())
+			return true;
+		result.firstPathVertex = false;
+		result.clampEmission = pathInfo.depth.depth <= 1 ? cyclesClampDirect : cyclesClampIndirect;
+		result.clampDirect = cyclesClampIndirect;
+		result.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), true);
+		if (result.lastPathVertex) return false;
+		const u_int offset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
+		const float u0 = sampler.GetSample(offset + 1), u1 = sampler.GetSample(offset + 2),
+				u2 = sampler.GetSample(offset + 3), u3 = sampler.GetSample(offset + 4),
+				u4 = sampler.GetSample(offset + 5);
+		static const bool retainBlockedNEE = getenv("SUPERLUXCORE_SSS_RETAIN_BLOCKED_NEE") != nullptr;
+		if (retainBlockedNEE || mneeEnable || !pathInfo.volume.sssProposalAxisValid ||
+				!scene.IsSSSDirectOccluded(*interior, bsdf.hitPoint.p))
+			DirectLightSampling(device, scene, ray.time, u0, u1, u2, u3, u4, pathInfo, throughput, bsdf, &result);
+		Vector direction;
+		float cosine, pdf;
+		BSDFEvent event;
+		Spectrum weight = bsdf.Sample(&direction, sampler.GetSample(offset + 6),
+				sampler.GetSample(offset + 7), &pdf, &cosine, &event);
+		pathInfo.isPassThroughPath = false;
+		SSSFlightProposal flight;
+		SSSDirectionProposal proposal;
+		if (sssGuidingEnable && BuildSSSDirectionProposal(bsdf, pathInfo.volume, throughput, proposal)) {
+			const float u0 = sampler.GetSample(offset + 6), u1 = sampler.GetSample(offset + 7);
+			if (u0 < proposal.classic)
+				bsdf.Sample(&direction, u0 / proposal.classic, u1, &pdf, &cosine, &event);
+			else direction = proposal.SampleGuide((u0 - proposal.classic) / (1.f - proposal.classic), u1);
+			const Spectrum phase = bsdf.Evaluate(direction, &event, &pdf);
+			pdf = proposal.Pdf(direction, pdf, &flight);
+			weight = pdf > 0.f ? phase / pdf : Spectrum();
+			cosine = 1.f;
+		}
+		if (weight.Black()) return false;
+		verify (!weight.IsNaN() && !weight.IsInf() && !weight.IsNeg());
+		pathInfo.AddVertex(bsdf, event, pdf, hybridBackForwardGlossinessThreshold);
+		pathInfo.volume.sssFlightProposal = flight;
+		SspTailRecordVertex(tail, bsdf, cosine);
+		if (pathInfo.UseRR(rrDepth)) {
+			static const bool legacy = getenv("SUPERLUXCORE_SSS_LEGACY_RR") != nullptr;
+			const float probability = legacy ? RenderEngine::RussianRouletteProb(weight, rrImportanceCap) :
+					Clamp((throughput * weight).Max(), rrImportanceCap, 1.f);
+			if (probability < sampler.GetSample(offset + 8)) return false;
+			weight /= probability;
+		}
+		throughput *= weight;
+		result.irradiancePathThroughput *= weight;
+		ray.Update(bsdf.GetRayOrigin(direction), direction);
+		const u_int next = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
+		Spectrum connection;
+		found = scene.Intersect(IntersectionDevicePtr(&device),
+				EYE_RAY | INDIRECT_RAY | (pathInfo.IsSpecularPath() ? 0 : SHADOW_TRANSPARENCY_CONNECTION),
+				&pathInfo.volume, sampler.GetSample(next), &ray, &hit, &bsdf,
+				&connection, &throughput, &result, false, &pathInfo.depth, pathInfo.lastBSDFEvent, true);
+		throughput *= connection;
+	}
+}
+
 void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		SceneConstRef scene, Sampler& sampler, EyePathInfo &pathInfo,
 		Ray &eyeRay,  const luxrays::Spectrum &eyeTroughput,
@@ -1025,6 +1096,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	sampleResult.shadingNormal = Normal();
 	Spectrum pathThroughput(eyeTroughput);
 	BSDF bsdf;
+	RayHit eyeRayHit;
+	bool pendingIntersection = false, pendingHit = false;
 	for (;;) {
 		sampleResult.firstPathVertex = (pathInfo.depth.depth == 0);
 		// Cycles sample clamp: an emitter hit counts as the bounce the
@@ -1036,17 +1109,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				cyclesClampDirect : cyclesClampIndirect;
 		const u_int sampleOffset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
 
-		RayHit eyeRayHit;
 		Spectrum connectionThroughput;
 		const float passThrough = sampler.GetSample(sampleOffset);
-		const bool hit = scene.Intersect(
+		const bool hit = pendingIntersection ? pendingHit : scene.Intersect(
 				IntersectionDevicePtr(&device),
 				EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
 				&pathInfo.volume, passThrough,
 				&eyeRay, &eyeRayHit, &bsdf, &connectionThroughput,
 				&pathThroughput, &sampleResult, false,
 				&pathInfo.depth, pathInfo.lastBSDFEvent);
-		pathThroughput *= connectionThroughput;
+		if (!pendingIntersection) pathThroughput *= connectionThroughput;
+		pendingIntersection = false;
 		// Note: pass-through check is done inside Scene::Intersect()
 
 		// ReSTIR PT: the armed pick's landing vertex (or miss) is the
@@ -1143,6 +1216,28 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 						&bsdf.hitPoint, eyeRay, sampleResult.motionVector);
 		}
 		sampleResult.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), bsdf.IsVolumeDepthVertex());
+
+		static const bool traceSSSLoop = getenv("SUPERLUXCORE_SSS_LOOP_TRACE") != nullptr;
+		static thread_local bool traceSSSReported = false;
+		if (traceSSSLoop && !traceSSSReported && bsdf.IsVolume()) {
+			traceSSSReported = true;
+			fprintf(stderr, "SSS_LOOP_GATE fast=%d albedo=%d photon=%p guiding=%p/%d restir=%d/%d hybrid=%d portals=%zu\n",
+					sssFastLoopEnable, albedoToDo, (const void *)photonGICache,
+					(const void *)pathGuidingCache, guidingEnable, restirGIEnable, restirPTEnable,
+					hybridBackForwardEnable, portals.size());
+		}
+		if (sssFastLoopEnable && !sampleResult.firstPathVertex && !albedoToDo &&
+				!photonGICache && !pathGuidingCache && !guidingEnable && !restirGIEnable &&
+				!restirPTEnable && !vertexConnectEnable && portals.empty() && bsdf.IsVolume() &&
+				bsdf.GetMaterialType() == HOMOGENEOUS_VOL &&
+				static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->IsSSSParametrized() &&
+				!static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->HasVolumeEmissionTexture()) {
+			pendingHit = true;
+			if (!RenderSSSInterior(device, scene, sampler, pathInfo, eyeRay, eyeRayHit,
+					bsdf, pathThroughput, sampleResult, sspTail, pendingHit)) break;
+			pendingIntersection = true;
+			continue;
+		}
 
 		//----------------------------------------------------------------------
 		// Check if it is a baked material
@@ -3251,6 +3346,7 @@ void PathTracer::ParseOptions(
 	// (path.guiding.tablefile, empty = train inline on both CPU and GPU)
 	guidingEnable = cfg.Get(defaultProps.Get("path.guiding.enable")).Get<bool>();
 	sssGuidingEnable = cfg.Get(defaultProps.Get("path.sss.guiding.enable")).Get<bool>();
+	sssFastLoopEnable = cfg.Get(defaultProps.Get("path.sss.fastloop.enable")).Get<bool>();
 	guidingTableFile = cfg.Get(defaultProps.Get("path.guiding.tablefile")).Get<string>();
 	// RIS product guiding (M4b): K-candidate resampling of the
 	// BSDF/guide mixture against f*|cos|*Lhat. Parsed here (not lazily)
@@ -3448,6 +3544,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.ssp.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.sss.guiding.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.sss.fastloop.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
 			Property("path.guiding.risk")(
 				getenv("LUX_PG_RISK") ? atoi(getenv("LUX_PG_RISK")) :
@@ -3551,6 +3648,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.ssp.enable")(true) <<
 			Property("path.guiding.enable")(false) <<
 			Property("path.sss.guiding.enable")(true) <<
+			Property("path.sss.fastloop.enable")(true) <<
 			Property("path.guiding.tablefile")("") <<
 			Property("path.guiding.risk")(0) <<
 			// P5 artist gates: property wins over the LUX_PG_* env

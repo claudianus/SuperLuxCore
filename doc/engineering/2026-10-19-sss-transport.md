@@ -1,5 +1,9 @@
 # CPU SSS transport and convergence, 2026-10-19
 
+A subsequent CPU update changes the sampling defaults and introduces the
+specialized interior loop. This document retains the earlier study; see
+[the interior-loop record](2026-10-19-sss-interior-loop.md) for current behavior.
+
 The OpenPBR subsurface path now uses a joint direction/free-flight proposal
 for optically thick, isotropic homogeneous SSS. Physical absorption,
 scattering, phase functions, material interfaces and the existing path budgets

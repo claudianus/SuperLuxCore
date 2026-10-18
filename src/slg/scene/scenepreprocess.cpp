@@ -29,6 +29,10 @@
 #include "slg/lights/projectionlight.h"
 #include "slg/lights/laserlight.h"
 #include "slg/volumes/heterogenous.h"
+#include "slg/volumes/homogenous.h"
+#include <array>
+#include <map>
+#include <numeric>
 #include "slg/textures/texturedefs.h"
 #include "slg/textures/hitpointfield.h"
 
@@ -39,6 +43,102 @@ using namespace slg;
 //------------------------------------------------------------------------------
 // Scene preprocess
 //------------------------------------------------------------------------------
+
+namespace {
+// Prove one closed, consistently oriented connected shell. Exact-position
+// welding joins UV/normal seams but never bridges a geometric crack.
+// Bounded temporary storage; large/animated/uncertain meshes fall back.
+bool IsClosedSSSShell(const ExtMesh &mesh) {
+	const size_t count = mesh.GetTotalTriangleCount();
+	if (!count || count > 50000 || mesh.GetTotalVertexCount() > 150000 || mesh.GetType() == TYPE_EXT_TRIANGLE_MOTION) return false;
+	Transform transform;
+	mesh.GetLocal2World(0.f, transform);
+	std::map<std::array<float, 3>, u_int> unique;
+	std::vector<u_int> vertices(mesh.GetTotalVertexCount());
+	std::vector<Point> points;
+	for (u_int i = 0; i < vertices.size(); ++i) {
+		const Point p = mesh.GetVertex(transform, i);
+		if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z)) return false;
+		const auto [it, added] = unique.emplace(std::array<float, 3>{p.x, p.y, p.z}, unique.size());
+		vertices[i] = it->second;
+		if (added) points.push_back(p);
+	}
+	std::vector<std::array<u_int, 3>> edges;
+	edges.reserve(3 * count);
+	std::vector<u_int> parent(count);
+	std::iota(parent.begin(), parent.end(), 0u);
+	auto root = [&](u_int v) { while (parent[v] != v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; };
+	const Point center = mesh.GetBBox().Center();
+	double signedVolume = 0.;
+	u_int face = 0;
+	for (const auto &triangle : mesh.GetTriangles()) {
+		u_int ids[3];
+		for (unsigned i = 0; i < 3; ++i) ids[i] = vertices[triangle.v[i]];
+		if (ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0]) return false;
+		const Vector normal = Cross(points[ids[1]] - points[ids[0]], points[ids[2]] - points[ids[0]]);
+		if (!(Dot(normal, normal) > 0.f) || !isfinite(Dot(normal, normal))) return false;
+		const Vector a = points[ids[0]] - center, b = points[ids[1]] - center, c = points[ids[2]] - center;
+		signedVolume += double(a.x) * (double(b.y)*c.z - double(b.z)*c.y) +
+				double(a.y) * (double(b.z)*c.x - double(b.x)*c.z) +
+				double(a.z) * (double(b.x)*c.y - double(b.y)*c.x);
+		for (unsigned i = 0; i < 3; ++i) {
+			const u_int a = ids[i], b = ids[(i + 1) % 3];
+			edges.push_back({Min(a,b), (Max(a,b) << 1) | (a > b), face});
+		}
+		++face;
+	}
+	if (!(signedVolume > 0.) || !isfinite(signedVolume)) return false;
+	std::sort(edges.begin(), edges.end());
+	for (size_t i = 0; i < edges.size(); i += 2) {
+		if (i + 1 >= edges.size() || edges[i][0] != edges[i+1][0] ||
+				(edges[i][1] ^ edges[i+1][1]) != 1u) return false;
+		if (i + 2 < edges.size() && edges[i][0] == edges[i+2][0] &&
+				(edges[i][1] >> 1) == (edges[i+2][1] >> 1)) return false;
+		parent[root(edges[i+1][2])] = root(edges[i][2]);
+	}
+	for (u_int i = 0; i < count; ++i) if (root(i) != root(0)) return false;
+	return true;
+}
+}
+
+void Scene::PreprocessSSSOcclusion() {
+	sssOccludedDirectVolumes.clear();
+	std::map<const Volume *, BBox> candidates;
+	std::unordered_set<const Volume *> rejected;
+	size_t topologyBudget = 500000;
+	for (u_int i = 0; i < objDefs->GetSize(); ++i) {
+		const auto &object = objDefs->GetSceneObject(i);
+		const auto &material = object.GetMaterial();
+		// A hit-dependent volume can refer to any candidate: fail closed.
+		if (material.HasVolumeOverrides()) return;
+		if (material.GetExteriorVolume()) rejected.insert(material.GetExteriorVolume().get());
+		const auto volume = material.GetInteriorVolume();
+		if (!volume || volume->GetType() != HOMOGENEOUS_VOL ||
+				!static_cast<const HomogeneousVolume *>(&*volume)->IsSSSParametrized()) continue;
+		const auto &mesh = object.GetExtMesh();
+		if (material.GetType() != OPENPBR || material.GetFrontTransparencyTexture() ||
+				material.GetBackTransparencyTexture() || !material.GetPassThroughShadowTransparency().Black() ||
+				mesh.GetBevelRadius() != 0.f || mesh.GetTotalTriangleCount() > topologyBudget || !IsClosedSSSShell(mesh)) rejected.insert(&*volume);
+		topologyBudget -= Min(topologyBudget, mesh.GetTotalTriangleCount());
+		candidates[&*volume] = Union(candidates[&*volume], mesh.GetBBox());
+	}
+	if (defaultWorldVolume) rejected.insert(&*defaultWorldVolume);
+	for (const auto &[volume, box] : candidates) {
+		if (rejected.count(volume)) continue;
+		bool outside = true;
+		for (u_int i = 0; i < lightDefs->GetSize() && outside; ++i) {
+			const auto &light = lightDefs->GetLightSource(i);
+			if (!light.IsDirectLightSamplingEnabled() || light.IsInfinite()) continue;
+			if (light.GetType() == TYPE_TRIANGLE)
+				outside = !box.Overlaps(static_cast<const TriangleLight &>(light).sceneObject->GetExtMesh().GetBBox());
+			else if (light.GetType() == TYPE_POINT || light.GetType() == TYPE_MAPPOINT)
+				outside = !box.Inside(static_cast<const PointLight &>(light).GetAbsolutePosition());
+			else outside = false;
+		}
+		if (outside) sssOccludedDirectVolumes.emplace(volume, box);
+	}
+	SLG_LOG("SSS closed opaque NEE domains: " << sssOccludedDirectVolumes.size());
+}
 
 void Scene::PreprocessCamera(const u_int filmWidth, const u_int filmHeight, const u_int *filmSubRegion) {
 	camera->Update(filmWidth, filmHeight, filmSubRegion);
@@ -195,6 +295,9 @@ void Scene::Preprocess(Context& ctx, const u_int filmWidth, const u_int filmHeig
 			editActions.Has(IMAGEMAPS_EDIT)) {
 		lightDefs->Preprocess(*this, useRTMode);
 	}
+
+	// Rebuild on every preprocess, including edits; retain only certificates.
+	PreprocessSSSOcclusion();
 
 	// And for visibility maps
 	lightDefs->UpdateVisibilityMaps(*this, useRTMode);

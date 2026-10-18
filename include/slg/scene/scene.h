@@ -122,8 +122,13 @@ public:
 		// rayDepthInfo means all depths are 0. When not NULL, the
 		// transparentDepth counter is updated while stepping through
 		// pass-through materials (so it accumulates along the path).
-		PathDepthInfo *rayDepthInfo = nullptr, const BSDFEvent rayEvent = NONE) const;
+		PathDepthInfo *rayDepthInfo = nullptr, const BSDFEvent rayEvent = NONE,
+		const bool deferSSSBoundary = false) const;
 
+	bool IsSSSDirectOccluded(const Volume &volume, const luxrays::Point &point) const {
+		const auto it = sssOccludedDirectVolumes.find(&volume);
+		return it != sssOccludedDirectVolumes.end() && it->second.Inside(point);
+	}
 	void PreprocessCamera(const u_int filmWidth, const u_int filmHeight, const u_int *filmSubRegion);
 	void Preprocess(luxrays::Context & ctx,
 		const u_int filmWidth, const u_int filmHeight, const u_int *filmSubRegion,
@@ -381,6 +386,8 @@ protected:
 	// (the hottest function in the engine). Cached at dataSet build so
 	// the hit path is a raw-pointer chase.
 	luxrays::AcceleratorConstSPtr cachedEmbreeAccel;
+	std::unordered_map<const Volume *, luxrays::BBox> sssOccludedDirectVolumes;
+	void PreprocessSSSOcclusion();
 
 	// The bounding sphere of the scene (including the camera)
 	luxrays::BSphere sceneBSphere;

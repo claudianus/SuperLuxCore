@@ -26,6 +26,10 @@ def main():
     ap.add_argument('--threads', type=int, default=1)
     ap.add_argument('--seed', type=int, default=17)
     ap.add_argument('--rrdepth', type=int)
+    ap.add_argument('--sss-fastloop',choices=['auto','on','off'],default='auto')
+    ap.add_argument('--aovs',action='store_true')
+    ap.add_argument('--hybrid',action='store_true')
+    ap.add_argument('--mnee',action='store_true')
     ap.add_argument('--sss-guiding',choices=['auto','on','off'],default='auto')
     ap.add_argument('--cases', default='legacy,auto,chromatic,spectral,textured,anisotropic,vdh,point')
     ap.add_argument('--tiled', action='store_true', help='Exact finite per-pixel sample budget')
@@ -60,7 +64,7 @@ def main():
 
     rows = []
     for case in args.cases.split(','):
-        chromatic = case in ('chromatic', 'spectral', 'point')
+        chromatic = case in ('chromatic', 'spectral', 'point', 'litpoint')
         scene_text = fixture.SCENE
         if chromatic:
             scene_text = scene_text.replace('0.0085 0.0085 0.0085', '0.0085 0.00425 0.002125')
@@ -72,6 +76,12 @@ def main():
 scene.lights.zero.type = point
 scene.lights.zero.position = 0 0 8
 scene.lights.zero.gain = 0 0 0
+'''
+        if case == 'litpoint':
+            scene_text += '''
+scene.lights.lit.type = point
+scene.lights.lit.position = -2.776 1.0 3.279
+scene.lights.lit.gain = 100 100 100
 '''
         if case == 'textured':
             scene_text = scene_text.replace('subsurfacecolor = 0.8 0.8 0.8', 'subsurfacecolor = varying')
@@ -120,6 +130,21 @@ scene.volumes.blackcells.sssmfp = .0085 .0085 .0085
 scene.volumes.blackcells.sssprofile = vandehulst
 scene.materials.ball.volume.interior = blackcells
 '''
+        if case == 'shadowtransparent':
+            scene_text += '\nscene.materials.ball.transparency.shadow = .6 .6 .6\n'
+        if case == 'nested':
+            scene_text=scene_text.replace('0.0085 0.0085 0.0085','.2 .2 .2')
+            scene_text += '''
+scene.volumes.void.type = clear
+scene.volumes.void.ior = 1
+scene.volumes.void.absorption = .2 .4 .8
+scene.volumes.void.priority = 1
+scene.materials.nested.type = null
+scene.materials.nested.volume.interior = void
+scene.objects.nested.material = nested
+scene.objects.nested.ply = scenes/cornell/sphere-mid.ply
+scene.objects.nested.transformation = .5 0 0 0  0 .5 0 0  0 0 .5 0  -1.388 1.38 1.6395 1
+'''
         scene = s.Scene()
         scene.Parse(props(scene_text))
         cfg = props(f'''
@@ -154,6 +179,16 @@ path.clamping.variance.maxvalue = 0
             cfg.Set(s.Property('path.pathdepth.volume', 0))
         if args.rrdepth is not None:
             cfg.Set(s.Property('path.russianroulette.depth', args.rrdepth))
+        if args.hybrid:
+            cfg.Set(s.Property('path.hybridbackforward.enable',True))
+        if args.mnee:
+            cfg.Set(s.Property('path.mnee.enable',True))
+        if args.sss_fastloop != 'auto':
+            cfg.Set(s.Property('path.sss.fastloop.enable',args.sss_fastloop=='on'))
+        if args.aovs:
+            for name in ['ALBEDO','SHADING_NORMAL','IRRADIANCE','DIRECT_DIFFUSE','INDIRECT_DIFFUSE','EMISSION']:
+                cfg.Set(s.Property('film.outputs.test'+name+'.type',name))
+                cfg.Set(s.Property('film.outputs.test'+name+'.filename','unused.exr'))
         if args.sss_guiding != 'auto':
             cfg.Set(s.Property('path.sss.guiding.enable',args.sss_guiding=='on'))
         if mask:
@@ -198,13 +233,18 @@ tilepath.sampling.aa.size = {math.isqrt(args.spp)}
             elif case == 'point':
                 assert .7 < float(rgb.mean()) < .9, 'point light bypassed chromatic SSS'
             np.save(args.out/(case+'.npy'), rgb)
+            if args.aovs:
+                for name in ['ALBEDO','SHADING_NORMAL','IRRADIANCE','DIRECT_DIFFUSE','INDIRECT_DIFFUSE','EMISSION']:
+                    buffer=np.empty_like(rgb)
+                    ses.GetFilm().GetOutputFloat(getattr(s.FilmOutputType,name),buffer,0,False)
+                    np.save(args.out/(case+'-'+name+'.npy'),buffer)
             np.save(args.out/(case+'-counts.npy'), counts)
             rows.append(dict(case=case,mean=rgb.mean(axis=(0,1),dtype=np.float64).tolist(),
                              finite=bool(np.isfinite(rgb).all()),seconds=elapsed,
                              preparation_seconds=preparation,spp=args.spp,
                              size=args.size,threads=args.threads,
                              seed=args.seed,rrdepth=args.rrdepth,
-                             sss_guiding=args.sss_guiding,
+                             sss_guiding=args.sss_guiding,sss_fastloop=args.sss_fastloop,
                              min_samples=int(counts.min()),max_samples=int(counts.max())))
             print(json.dumps(rows[-1]), flush=True)
         finally:

@@ -161,6 +161,10 @@ public:
 		// 0 keeps the plain/mixture competitor).
 		const float risZhat = 0.f) const;
 
+	bool RenderSSSInterior(luxrays::IntersectionDeviceRef device, SceneConstRef scene,
+		Sampler &sampler, EyePathInfo &pathInfo, luxrays::Ray &ray,
+		luxrays::RayHit &hit, BSDF &bsdf, luxrays::Spectrum &throughput,
+		SampleResult &result, SspTail *tail, bool &found) const;
 	void RenderEyePath(
 		luxrays::IntersectionDeviceRef device,
 		SceneConstRef scene,
@@ -604,6 +608,7 @@ private:
 	// CPU analytic SSS proposal; physical coefficients and path budgets
 	// are shared with the classic walk. Unsupported cases fall back.
 	bool sssGuidingEnable;
+	bool sssFastLoopEnable;
 	std::string guidingTableFile;
 
 	// Portal-guided bounce sampling (M5, path.portal.*): artist-placed
