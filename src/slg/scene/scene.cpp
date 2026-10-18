@@ -977,10 +977,13 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 			const HomogeneousVolume *homoVol = (!equiangularLightPoints.empty() &&
 					(rayVolume->GetType() == HOMOGENEOUS_VOL)) ?
 					static_cast<const HomogeneousVolume *>(&*rayVolume) : nullptr;
-			if (homoVol && homoVol->IsEquiangularEnabled()) {
+			if (homoVol && homoVol->IsEquiangularEnabled() && !homoVol->IsSSSParametrized()) {
 				// Equiangular + transmittance MIS distance sampling
 				// (Kulla & Fajardo, EGSR 2012) with contribution-aware
-				// light selection
+				// light selection. Dense chromatic SSS must keep its own
+				// throughput-weighted channel mixture (as on the GPU);
+				// the average-sigma proposal here has heavy-tailed channel
+				// weights over long walks, even for a zero-power light.
 				t = homoVol->ScatterEquiangular(*ray, scatterU,
 						volInfo->IsScatteredStart(),
 						equiangularLightPoints, equiangularLightLuminances,

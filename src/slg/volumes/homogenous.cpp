@@ -148,6 +148,24 @@ Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
 	const Spectrum mfp = sssMfpTex->GetSpectrumValue(hitPoint).Clamp();
 	const Spectrum g = GetG().GetSpectrumValue(hitPoint).Clamp(-0.99f, 0.99f);
 	const float eta = GetIOR(hitPoint);
+	// A dense walk repeatedly solves the same 16-step CB15 inversion,
+	// including separate SigmaA/SigmaS/phase evaluations at each vertex.
+	// Keep one exact last-input result per CPU thread. Evaluate textures
+	// first: spatial changes, edits and the current spectral wavelengths
+	// are already reflected in A/mfp/g/eta. No pointer identity, quantized
+	// key, interpolation, shared mutable state or growing allocation.
+	struct Coefficients {
+		bool valid = false;
+		Spectrum albedo, mfp, g, sigmaT, alpha;
+		float eta = 0.f;
+		int profile = 0;
+	};
+	static thread_local Coefficients last;
+	if (last.valid && last.albedo == A && last.mfp == mfp &&
+			last.g == g && last.eta == eta && last.profile == sssProfile) {
+		alpha = last.alpha;
+		return last.sigmaT;
+	}
 	Spectrum sigmaT;
 	for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
 		if (sssProfile == 1)
@@ -155,6 +173,14 @@ Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,
 		else
 			SSSRemapVanDeHulst(A.c[i], mfp.c[i], g.c[i], sigmaT.c[i], alpha.c[i]);
 	}
+	last.albedo = A;
+	last.mfp = mfp;
+	last.g = g;
+	last.eta = eta;
+	last.profile = sssProfile;
+	last.sigmaT = sigmaT;
+	last.alpha = alpha;
+	last.valid = true;
 	return sigmaT;
 }
 

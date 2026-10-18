@@ -71,3 +71,17 @@ Semantics:
 
 CPU / OpenCL / Metal — presets only change parsed defaults; transport is
 the existing CB15-remapped homogeneous volume on every backend.
+
+## Blender depth settings
+
+With untouched path settings, the adapter leaves the volume budget unset so
+the engine can assign SSS its own internal-walk budget. The old adapter
+exported the default as an explicit zero, blocking this correction and
+producing dark, truncated SSS. Explicitly authored native/Cycles bounce
+limits remain respected; an authored native Volume `-1` still counts the
+walk against Diffuse depth. Increasing Volume alone can also leave Total
+as a limiting budget.
+
+CPU coefficient evaluation reuses only an exactly matching numeric result;
+the SSS model and sampling remain unchanged. See the
+[repair and validation record](../engineering/2026-10-19-openpbr-sss-cpu.md).
