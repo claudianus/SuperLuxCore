@@ -45,8 +45,11 @@ void acquireManager(unsigned device,const char *runtime,const char *cache){
     CUcontext context=nullptr;cuda(cuCtxCreate(&context,0,gpu));
     CUcontext popped=nullptr;cuda(cuCtxPopCurrent(&popped));
     try{
-        Scope scope(context);std::filesystem::create_directories(cache);
-        const auto wRuntime=std::filesystem::path(runtime).wstring(),wCache=std::filesystem::path(cache).wstring();
+        // Python's os.fsencode supplies UTF-8 on Windows as well. Narrow
+        // filesystem::path would interpret Korean user directories as ANSI.
+        const auto runtimePath=std::filesystem::u8path(runtime),cachePath=std::filesystem::u8path(cache);
+        Scope scope(context);std::filesystem::create_directories(cachePath);
+        const auto wRuntime=runtimePath.wstring(),wCache=cachePath.wstring();
         const wchar_t *paths[]={wRuntime.c_str()};NVSDK_NGX_FeatureCommonInfo common={};common.PathListInfo.Path=paths;common.PathListInfo.Length=1;
         NVSDK_NGX_FeatureDiscoveryInfo discovery={};discovery.SDKVersion=NVSDK_NGX_Version_API;discovery.FeatureID=NVSDK_NGX_Feature_RayReconstruction;
         discovery.Identifier.IdentifierType=NVSDK_NGX_Application_Identifier_Type_Project_Id;

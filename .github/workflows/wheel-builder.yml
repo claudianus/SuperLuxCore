@@ -632,7 +632,7 @@ jobs:
         run: |
           import os, pathlib, subprocess, shutil
           out = pathlib.Path('addon-build/out').resolve()
-          env = dict(os.environ, BLENDER_USER_RESOURCES=str(out/'profile'), SLC_SMOKE_OUT=str(out), PYTHONUNBUFFERED='1')
+          env = dict(os.environ, BLENDER_USER_RESOURCES=str(out/'profile-한글'), SLC_SMOKE_OUT=str(out), PYTHONUNBUFFERED='1')
           blender = str(pathlib.Path(env['BLENDER_ROOT'])/'blender.exe')
           package, = out.glob('SuperLuxCore-*-windows_x64.zip')
           def run(args, timeout):
@@ -648,7 +648,7 @@ jobs:
               run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
               run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)
           finally:
-              shutil.rmtree(out/'profile', ignore_errors=True)
+              shutil.rmtree(out/'profile-한글', ignore_errors=True)
       - uses: actions/upload-artifact@v5
         if: always()
         with:
