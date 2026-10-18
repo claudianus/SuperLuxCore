@@ -601,6 +601,9 @@ private:
 	// Guiding on/off (path.guiding.enable) + frozen table file for GPU
 	// sampling (path.guiding.tablefile, empty = inline CPU training).
 	bool guidingEnable;
+	// CPU analytic SSS proposal; physical coefficients and path budgets
+	// are shared with the classic walk. Unsupported cases fall back.
+	bool sssGuidingEnable;
 	std::string guidingTableFile;
 
 	// Portal-guided bounce sampling (M5, path.portal.*): artist-placed

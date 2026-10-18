@@ -79,6 +79,8 @@ void TilePathOCLRenderThread::UpdateSamplerData(const TileWork &tileWork,
 	sharedData.tilePass =  tileWork.passToRender;
 	sharedData.aaSamples =  engine->aaSamples;
 	sharedData.multipassIndexToRender = tileWork.multipassIndexToRender;
+	sharedData.sequenceSeed = Max(1u,
+			engine->renderConfig.GetConfig().Get(Property("renderengine.seed")(131u)).Get<u_int>());
 	// Splat-acceptance halo = filter footprint radius (+ slack for the
 	// LUT pixel-center discretization). FILTER_NONE keeps it at 0: a box
 	// splat only covers the pixel holding its center.

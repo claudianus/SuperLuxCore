@@ -20,6 +20,7 @@
 #define	_SLG_HOMOGENOUSVOL_H
 
 #include "slg/volumes/volume.h"
+#include "slg/volumes/sssproposal.h"
 #include <functional>
 
 namespace slg {
@@ -63,7 +64,13 @@ public:
 	// average lost up to half their energy at practical sample counts.
 	float ScatterSSS(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		const luxrays::Spectrum &channelWeights,
-		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
+		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission,
+		const SSSFlightProposal *proposal = nullptr) const;
+	bool DirectionProposal(const HitPoint &hitPoint, const luxrays::Spectrum &throughput,
+		const luxrays::Vector &axis, const float thickness, SSSDirectionProposal &proposal) const;
+	// Evaluate the same SSS inputs once when both coefficients are needed.
+	void SSSScatteringCoefficients(const HitPoint &hitPoint,
+		luxrays::Spectrum &absorption, luxrays::Spectrum &scattering) const;
 	virtual luxrays::Spectrum TransmittanceEstimate(const luxrays::Ray &ray,
 		const float u) const;
 

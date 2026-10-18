@@ -24,21 +24,24 @@ def main():
     ap.add_argument('--spp', type=int, default=256)
     ap.add_argument('--size', type=int, default=16)
     ap.add_argument('--threads', type=int, default=1)
+    ap.add_argument('--seed', type=int, default=17)
+    ap.add_argument('--rrdepth', type=int)
+    ap.add_argument('--sss-guiding',choices=['auto','on','off'],default='auto')
     ap.add_argument('--cases', default='legacy,auto,chromatic,spectral,textured,anisotropic,vdh,point')
     ap.add_argument('--tiled', action='store_true', help='Exact finite per-pixel sample budget')
-    ap.add_argument('--engine', choices=['PATHCPU','PATHOCL'], default='PATHCPU')
+    ap.add_argument('--engine', choices=['PATHCPU','PATHOCL','TILEPATHOCL'], default='PATHCPU')
     args = ap.parse_args()
     args.out = args.out.resolve()
     if args.tiled and math.isqrt(args.spp)**2 != args.spp:
         ap.error('--tiled requires a square --spp')
-    if args.tiled and args.engine != 'PATHCPU':
-        ap.error('--tiled is the CPU exact-output control')
+    if args.engine == 'TILEPATHOCL' and not args.tiled:
+        ap.error('TILEPATHOCL requires --tiled')
     args.out.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(Path(args.module).resolve()))
     import pysuperluxcore as s
     s.Init()
     mask = None
-    if args.engine == 'PATHOCL':
+    if args.engine != 'PATHCPU':
         desc = s.GetOpenCLDeviceDescs()
         mask = ''.join('1' if desc.Get(n+'.type').GetString() == 'METAL_GPU' else '0'
                        for n in desc.GetAllUniqueSubNames('opencl.device'))
@@ -90,11 +93,38 @@ scene.volumes.test.sssmfp = .0085 .0085 .0085
 scene.volumes.test.sssprofile = vandehulst
 scene.materials.ball.volume.interior = test
 '''
+        if case == 'interior':
+            # A finite emitter inside the body exercises volume NEE and
+            # emitter-hit MIS, beyond an opaque exterior furnace.
+            scene_text=scene_text.replace('0.0085 0.0085 0.0085','.2 .2 .2')
+            scene_text += '''
+scene.lights.env.gain = 0 0 0
+scene.materials.inner.type = matte
+scene.materials.inner.kd = 0 0 0
+scene.materials.inner.emission = 20 20 20
+scene.objects.inner.material = inner
+scene.objects.inner.vertices = -2.976 2.15 3.079  -2.576 2.15 3.079  -2.576 2.15 3.479  -2.976 2.15 3.479
+scene.objects.inner.faces = 0 1 2 0 2 3
+'''
+        if case == 'blacktextured':
+            scene_text += '''
+scene.textures.blackcells.type = checkerboard3d
+scene.textures.blackcells.texture1 = 0 0 0
+scene.textures.blackcells.texture2 = .8 .8 .8
+scene.volumes.blackcells.type = homogeneous
+scene.volumes.blackcells.ior = 1.5
+scene.volumes.blackcells.multiscattering = 1
+scene.volumes.blackcells.phase = hg
+scene.volumes.blackcells.sssalbedo = blackcells
+scene.volumes.blackcells.sssmfp = .0085 .0085 .0085
+scene.volumes.blackcells.sssprofile = vandehulst
+scene.materials.ball.volume.interior = blackcells
+'''
         scene = s.Scene()
         scene.Parse(props(scene_text))
         cfg = props(f'''
 renderengine.type = {args.engine}
-renderengine.seed = 17
+renderengine.seed = {args.seed}
 sampler.type = SOBOL
 native.threads.count = {args.threads}
 film.width = {args.size}
@@ -122,15 +152,19 @@ path.clamping.variance.maxvalue = 0
 ''')
         if case == 'legacy':
             cfg.Set(s.Property('path.pathdepth.volume', 0))
+        if args.rrdepth is not None:
+            cfg.Set(s.Property('path.russianroulette.depth', args.rrdepth))
+        if args.sss_guiding != 'auto':
+            cfg.Set(s.Property('path.sss.guiding.enable',args.sss_guiding=='on'))
         if mask:
             cfg.SetFromString(f'''opencl.devices.select = {mask}
 opencl.native.threads.count = 0
-opencl.task.count = 8192
+opencl.task.count = {max(8192,64*args.spp) if args.tiled else 8192}
 ''')
         if args.tiled:
-            cfg.SetFromString(f'''renderengine.type = TILEPATHCPU
+            cfg.SetFromString(f'''renderengine.type = {'TILEPATHCPU' if args.engine == 'PATHCPU' else 'TILEPATHOCL'}
 sampler.type = TILEPATHSAMPLER
-tile.size = 16
+tile.size = {16 if args.engine == 'PATHCPU' else 8}
 tile.multipass.enable = 0
 tilepath.sampling.aa.size = {math.isqrt(args.spp)}
 ''')
@@ -169,18 +203,26 @@ tilepath.sampling.aa.size = {math.isqrt(args.spp)}
                              finite=bool(np.isfinite(rgb).all()),seconds=elapsed,
                              preparation_seconds=preparation,spp=args.spp,
                              size=args.size,threads=args.threads,
+                             seed=args.seed,rrdepth=args.rrdepth,
+                             sss_guiding=args.sss_guiding,
                              min_samples=int(counts.min()),max_samples=int(counts.max())))
             print(json.dumps(rows[-1]), flush=True)
         finally:
             if ses.IsStarted():
                 ses.Stop()
     native = Path(getattr(s,'pysuperluxcore',s).__file__)
+    zero_light = None
     if args.tiled and {'point','chromatic'}.issubset(args.cases.split(',')):
-        assert np.array_equal(np.load(args.out/'point.npy'),np.load(args.out/'chromatic.npy')), \
-            'A zero-power point light changed SSS transport'
+        point,chromatic=np.load(args.out/'point.npy'),np.load(args.out/'chromatic.npy')
+        zero_light=dict(bit_exact=bool(np.array_equal(point,chromatic)),
+                        max_absolute_error=float(np.max(np.abs(point-chromatic))))
+        # A different GPU light list compiles a different kernel specialization;
+        # allow one small floating-point rounding difference, not a transport shift.
+        assert zero_light['bit_exact'] if args.engine=='PATHCPU' else np.allclose(point,chromatic,rtol=1e-6,atol=1e-7), \
+            ('A zero-power point light changed SSS transport',zero_light)
     (args.out/'results.json').write_text(json.dumps(dict(
         native=str(native),sha256=hashlib.sha256(native.read_bytes()).hexdigest(),
-        cases=rows),indent=2))
+        zero_light=zero_light,cases=rows),indent=2))
 
 
 if __name__ == '__main__':

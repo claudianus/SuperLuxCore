@@ -23,6 +23,7 @@
 #include "slg/bsdf/bsdf.h"
 #include "slg/usings.h"
 #include "slg/volumes/volume.h"
+#include "slg/volumes/homogenous.h"
 #include "slg/utils/pathvolumeinfo.h"
 
 using namespace std;
@@ -161,6 +162,7 @@ void PathVolumeInfo::Update(const BSDFEvent eventType, const BSDF &bsdf) {
 		scatteredStart = true;
 	else {
 		scatteredStart = false;
+		sssFlightProposal.active = false;
 
 		if (eventType & TRANSMIT) {
 			// The material has no interior volume: Add/RemoveVolume on a
@@ -168,6 +170,14 @@ void PathVolumeInfo::Update(const BSDFEvent eventType, const BSDF &bsdf) {
 			// checked without changing semantics.
 			const VolumeConstPtr intVol = bsdf.GetMaterialInteriorVolume();
 			if (intVol) {
+				if (bsdf.hitPoint.intoObject && intVol->GetType() == HOMOGENEOUS_VOL &&
+						static_cast<const HomogeneousVolume *>(&*intVol)->IsSSSParametrized()) {
+					sssProposalAxis = Vector(bsdf.hitPoint.geometryN);
+					sssProposalEntry = bsdf.hitPoint.p;
+					sssProposalThickness = 0.f;
+					sssProposalAxisValid = true;
+				} else if (!bsdf.hitPoint.intoObject)
+					sssProposalAxisValid = false;
 				if (bsdf.hitPoint.intoObject)
 					AddVolume(intVol);
 				else

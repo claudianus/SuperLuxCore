@@ -105,6 +105,9 @@ private:
 	// result is bit-identical by distributivity of XOR over XOR.
 	u_int *directionsLut;
 	u_int *directionsReversedLut;
+	// Per-instance, per-dimension lazy initialization. Each CPU render
+	// thread owns its sequence; no synchronization or global cache is used.
+	bool *lutInitialized;
 	bool blueNoiseEnable;
 	bool owenEnable;
 	u_int blueNoiseSeed;

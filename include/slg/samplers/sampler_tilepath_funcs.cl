@@ -223,8 +223,10 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 		return false;
 
 	// Initialize rng0, rng1 and rngPass
-	const uint pixelRngGenSeed = (samplerSharedData->tileStartX + pixelX + (samplerSharedData->tileStartY + pixelY) * samplerSharedData->cameraFilmWidth + 1) *
-			(samplerSharedData->multipassIndexToRender + 1);
+	const uint pixelRngGenSeed = ((samplerSharedData->tileStartX + pixelX + (samplerSharedData->tileStartY + pixelY) * samplerSharedData->cameraFilmWidth + 1) *
+			(samplerSharedData->multipassIndexToRender + 1)) ^
+			(samplerSharedData->sequenceSeed == 131u ? 0u :
+					SobolSequence_BlueNoiseHash(samplerSharedData->sequenceSeed));
 	Seed pixelSeed;
 	Rnd_Init(pixelRngGenSeed, &pixelSeed);
 

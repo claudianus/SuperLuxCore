@@ -1986,6 +1986,14 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 		// Make a copy of current PathVolumeInfo for tracing the
 		// shadow ray
 		directLightVolInfos[gid] = pathInfo->volume;
+		// A transmitted light connection starts across the boundary.
+		// Retaining the incident medium attenuates empty exterior space.
+		const float3 shadowGeometryN = VLOAD3F(&taskState->bsdf.hitPoint.geometryN.x);
+		if (!taskState->bsdf.isVolume &&
+				dot(VLOAD3F(&taskState->bsdf.hitPoint.fixedDir.x), shadowGeometryN) *
+				dot(VLOAD3F(&rays[gid].d.x), shadowGeometryN) < 0.f)
+			PathVolumeInfo_Update(&directLightVolInfos[gid], TRANSMIT,
+					&taskState->bsdf MATERIALS_PARAM);
 
 		// I have to trace the shadow ray
 		taskState->state = MK_RT_DL;
@@ -2629,8 +2637,13 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 	// Russian Roulette
 	const bool rrEnabled = EyePathInfo_UseRR(pathInfo, taskConfig->pathTracer.rrDepth);
+	const bool sssVertex = BSDF_IsVolumeDepthVertex(bsdf MATERIALS_PARAM) &&
+			!BSDF_IsChainTransparentMedium(bsdf MATERIALS_PARAM);
+	const float3 rrThroughput = VLOAD3F(taskState->throughput.c) * bsdfSample;
 	const float rrProb = rrEnabled ?
-		RussianRouletteProb(taskConfig->pathTracer.rrImportanceCap, bsdfSample) :
+		(sssVertex ? clamp(fmax(rrThroughput.x, fmax(rrThroughput.y, rrThroughput.z)),
+				taskConfig->pathTracer.rrImportanceCap, 1.f) :
+			RussianRouletteProb(taskConfig->pathTracer.rrImportanceCap, bsdfSample)) :
 		1.f;
 	const bool rrContinuePath = !rrEnabled ||
 		!(rrProb < Sampler_GetSample(taskConfig, sampleOffset + IDX_RR SAMPLER_PARAM));

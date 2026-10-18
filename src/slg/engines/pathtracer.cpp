@@ -39,6 +39,7 @@
 #include "slg/samplers/metropolis.h"
 #include "slg/utils/varianceclamping.h"
 #include "slg/materials/cyclesbssrdf.h"
+#include "slg/volumes/homogenous.h"
 #include "slg/cameras/camera.h"
 
 using namespace std;
@@ -201,6 +202,16 @@ static u_int GuidingHash(u_int x) {
 // would not run).
 void MneeDumpSessionStats();
 
+static bool BuildSSSDirectionProposal(const BSDF &bsdf, const PathVolumeInfo &volume,
+		const Spectrum &throughput, SSSDirectionProposal &proposal) {
+	// Diagnostic opt-out; an explicit config disable is checked by callers.
+	static const bool disabled = getenv("SUPERLUXCORE_SSS_CLASSIC_WALK") != nullptr;
+	if (disabled || !bsdf.IsVolume() || !volume.sssProposalAxisValid ||
+			bsdf.GetMaterialType() != HOMOGENEOUS_VOL) return false;
+	return static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->DirectionProposal(
+			bsdf.hitPoint, throughput, volume.sssProposalAxis, volume.sssProposalThickness, proposal);
+}
+
 PathTracer::~PathTracer() {
 	MneeDumpSessionStats();
 	delete pixelFilterDistribution;
@@ -329,6 +340,10 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					event = DIFFUSE | REFLECT;
 				}
 				verify (!bsdfEval.IsNaN() && !bsdfEval.IsInf());
+				SSSDirectionProposal sssDirection;
+				if (sssGuidingEnable && !guidingEnable && !restirGIEnable && !restirPTEnable && portals.empty() &&
+						BuildSSSDirectionProposal(bsdf, pathInfo.volume, pathThroughput, sssDirection))
+					bsdfPdfW = sssDirection.Pdf(shadowRay.d, bsdfPdfW);
 
 				if (!bsdfEval.Black() &&
 						(!hybridBackForwardEnable ||
@@ -355,6 +370,12 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 					Spectrum connectionThroughput;
 					// Create a new PathVolumeInfo for the path to the light source
 					PathVolumeInfo volInfo = pathInfo.volume;
+					// This connection starts on the outgoing side of the
+					// boundary, not in the incident path medium.
+					if (!bsdf.IsVolume() &&
+							Dot(bsdf.hitPoint.fixedDir, bsdf.hitPoint.geometryN) *
+							Dot(shadowRay.d, bsdf.hitPoint.geometryN) < 0.f)
+						volInfo.Update(TRANSMIT, bsdf);
 					// Check if the light source is visible
 					if (!scene.Intersect(IntersectionDevicePtr(&device), EYE_RAY | SHADOW_RAY, &volInfo, u4, &shadowRay,
 							&shadowRayHit, &shadowBsdf, &connectionThroughput, nullptr,
@@ -1932,6 +1953,24 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 			}
 		}
 
+		SSSFlightProposal sampledSSSFlight;
+		SSSDirectionProposal sssDirection;
+		if (sssGuidingEnable && !guidingEnable && !restirGIEnable && !restirPTEnable && portals.empty() &&
+				BuildSSSDirectionProposal(bsdf, pathInfo.volume, pathThroughput, sssDirection)) {
+			const float u0 = sampler.GetSample(sampleOffset + 6);
+			const float u1 = sampler.GetSample(sampleOffset + 7);
+			if (u0 < sssDirection.classic)
+				bsdf.Sample(&sampledDir, u0 / sssDirection.classic, u1,
+						&bsdfPdfW, &cosSampledDir, &bsdfEvent);
+			else
+				sampledDir = sssDirection.SampleGuide((u0 - sssDirection.classic) /
+						(1.f - sssDirection.classic), u1);
+			const Spectrum physicalPhase = bsdf.Evaluate(sampledDir, &bsdfEvent, &bsdfPdfW);
+			bsdfPdfW = sssDirection.Pdf(sampledDir, bsdfPdfW, &sampledSSSFlight);
+			bsdfSample = bsdfPdfW > 0.f ? physicalPhase / bsdfPdfW : Spectrum(0.f);
+			cosSampledDir = 1.f;
+		}
+
 		// Diagnose the upstream material when the sampler emits a degenerate
 		// spectrum: the assert below catches it, but names nothing.
 		if (bsdfSample.IsNaN() || bsdfSample.IsInf() || bsdfSample.IsNeg())
@@ -1961,12 +2000,22 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 					photonGICache->IsPhotonGIEnabled(bsdf);
 
 		pathInfo.AddVertex(bsdf, bsdfEvent, bsdfPdfW, hybridBackForwardGlossinessThreshold);
+		pathInfo.volume.sssFlightProposal = sampledSSSFlight;
 		SspTailRecordVertex(sspTail, bsdf, cosSampledDir);
 
 		// Russian Roulette
 		float rrProb = 1.f;
 		if (pathInfo.UseRR(rrDepth)) {
-			 rrProb = RenderEngine::RussianRouletteProb(bsdfSample, rrImportanceCap);
+			// CPU diagnostic control for matched convergence experiments.
+			static const bool legacySSSRR = getenv("SUPERLUXCORE_SSS_LEGACY_RR") != nullptr;
+			const bool sssVertex = bsdf.IsVolumeDepthVertex() && !bsdf.IsChainTransparentMedium();
+			// Preserve high-weight chromatic packets through a long SSS
+			// walk. Local mean albedo alone repeatedly kills their dominant
+			// channel and creates rare, very large compensated contributions.
+			// The surviving path is still divided by this exact probability.
+			rrProb = sssVertex && !legacySSSRR ?
+					Clamp((pathThroughput * bsdfSample).Max(), rrImportanceCap, 1.f) :
+					RenderEngine::RussianRouletteProb(bsdfSample, rrImportanceCap);
 			if (rrProb < sampler.GetSample(sampleOffset + 8))
 				break;
 
@@ -3201,6 +3250,7 @@ void PathTracer::ParseOptions(
 	// the record drain loop into the shared PathGuidingCache)
 	// (path.guiding.tablefile, empty = train inline on both CPU and GPU)
 	guidingEnable = cfg.Get(defaultProps.Get("path.guiding.enable")).Get<bool>();
+	sssGuidingEnable = cfg.Get(defaultProps.Get("path.sss.guiding.enable")).Get<bool>();
 	guidingTableFile = cfg.Get(defaultProps.Get("path.guiding.tablefile")).Get<string>();
 	// RIS product guiding (M4b): K-candidate resampling of the
 	// BSDF/guide mixture against f*|cos|*Lhat. Parsed here (not lazily)
@@ -3397,6 +3447,7 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.mnee.seedcache")) <<
 			cfg.Get(GetDefaultProps()->Get("path.ssp.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.sss.guiding.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
 			Property("path.guiding.risk")(
 				getenv("LUX_PG_RISK") ? atoi(getenv("LUX_PG_RISK")) :
@@ -3499,6 +3550,7 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			// the LMNEE discovery walk. Effective only with path.mnee.enable.
 			Property("path.ssp.enable")(true) <<
 			Property("path.guiding.enable")(false) <<
+			Property("path.sss.guiding.enable")(true) <<
 			Property("path.guiding.tablefile")("") <<
 			Property("path.guiding.risk")(0) <<
 			// P5 artist gates: property wins over the LUX_PG_* env

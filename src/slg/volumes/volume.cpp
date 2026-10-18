@@ -19,6 +19,7 @@
 #include <cstddef>
 
 #include "slg/volumes/volume.h"
+#include "slg/volumes/homogenous.h"
 #include "slg/bsdf/bsdf.h"
 
 using namespace std;
@@ -80,8 +81,15 @@ static Spectrum HGValue(const Spectrum &g, const float cosTheta) {
 }
 
 Spectrum SchlickScatter::GetColor(const HitPoint &hitPoint) const {
-	Spectrum r = volume.SigmaS(hitPoint);
-	const Spectrum sigmaA = volume.SigmaA(hitPoint);
+	Spectrum r, sigmaA;
+	const HomogeneousVolume *homogeneous = volume.GetType() == HOMOGENEOUS_VOL ?
+			static_cast<const HomogeneousVolume *>(&volume) : nullptr;
+	if (homogeneous && homogeneous->IsSSSParametrized())
+		homogeneous->SSSScatteringCoefficients(hitPoint, sigmaA, r);
+	else {
+		r = volume.SigmaS(hitPoint);
+		sigmaA = volume.SigmaA(hitPoint);
+	}
 	for (u_int i = 0; i < COLOR_SAMPLES; ++i) {
 		if (r.c[i] > 0.f)
 			r.c[i] /= r.c[i] + sigmaA.c[i];

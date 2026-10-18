@@ -40,12 +40,12 @@ std::unique_ptr<SamplerSharedData> TilePathSamplerSharedData::FromProperties(con
 //------------------------------------------------------------------------------
 
 TilePathSampler::TilePathSampler(const RandomGeneratorUPtr & rnd, FilmPtr flm,
-		const FilmSampleSplatterUPtr& flmSplatter
+		const FilmSampleSplatterUPtr& flmSplatter, const u_int sequenceSeed
 ) :
 	Sampler(rnd, flm, flmSplatter, true),
 	sobolSequence(),
 	tileFilm(flm),
-	aaSamples{1}
+	aaSamples{1}, sequenceSeed(sequenceSeed)
 {}
 
 TilePathSampler::~TilePathSampler() {
@@ -63,8 +63,9 @@ void TilePathSampler::RequestSamples(const SampleType smplType, const u_int size
 
 void TilePathSampler::InitNewSample() {
 	// Initialize rng0, rng1 and rngPass
-	const u_int pixelRngGenSeed = (tileWork->GetCoord().x + tileX + (tileWork->GetCoord().y + tileY) * film->GetWidth() + 1) *
-			(tileWork->multipassIndexToRender + 1);
+	const u_int pixelRngGenSeed = ((tileWork->GetCoord().x + tileX + (tileWork->GetCoord().y + tileY) * film->GetWidth() + 1) *
+			(tileWork->multipassIndexToRender + 1)) ^
+			(sequenceSeed == 131u ? 0u : SobolSequence::BlueNoiseHash(sequenceSeed));
 	TauswortheRandomGenerator pixelRngGen(pixelRngGenSeed);
 	sobolSequence.rngPass = pixelRngGen.uintValue();
 	sobolSequence.rng0 = pixelRngGen.floatValue();
@@ -131,7 +132,8 @@ PropertiesUPtr TilePathSampler::ToProperties(const Properties &cfg) {
 
 SamplerUPtr TilePathSampler::FromProperties(const Properties &cfg, const RandomGeneratorUPtr & rndGen,
 		FilmPtr film, const FilmSampleSplatterUPtr& flmSplatter, SamplerSharedDataSPtr sharedData) {
-	return std::make_unique<TilePathSampler>(rndGen, film, flmSplatter);
+	return std::make_unique<TilePathSampler>(rndGen, film, flmSplatter,
+			Max(1u, cfg.Get(Property("renderengine.seed")(131u)).Get<u_int>()));
 }
 
 slg::ocl::Sampler *TilePathSampler::FromPropertiesOCL(const Properties &cfg) {

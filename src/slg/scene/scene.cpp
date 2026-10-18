@@ -990,13 +990,21 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 						connectionThroughput, &emis);
 			} else if ((rayVolume->GetType() == HOMOGENEOUS_VOL) &&
 					static_cast<const HomogeneousVolume *>(&*rayVolume)->IsSSSParametrized()) {
+				if (hit && volInfo->sssProposalAxisValid &&
+						!(volInfo->sssProposalThickness > 0.f) && !bsdf->hitPoint.intoObject &&
+						bsdf->GetMaterialInteriorVolume() == rayVolume &&
+						volInfo->SimulateRemoveVolume(bsdf->GetMaterialInteriorVolume()) != rayVolume) {
+					const float thickness = -Dot(bsdf->hitPoint.p - volInfo->sssProposalEntry,
+							volInfo->sssProposalAxis);
+					if (thickness > 0.f) volInfo->sssProposalThickness = thickness;
+				}
 				// Random-walk SSS: chromatic distance sampling driven by
 				// the path throughput up to this flight
 				const Spectrum channelWeights = pathThroughput ?
 						(*pathThroughput * *connectionThroughput) : *connectionThroughput;
 				t = static_cast<const HomogeneousVolume *>(&*rayVolume)->ScatterSSS(
 						*ray, scatterU, volInfo->IsScatteredStart(), channelWeights,
-						connectionThroughput, &emis);
+						connectionThroughput, &emis, &volInfo->sssFlightProposal);
 			} else
 				t = rayVolume->Scatter(*ray, scatterU, volInfo->IsScatteredStart(),
 						connectionThroughput, &emis);
@@ -1044,6 +1052,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo,
 						t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
 				volInfo->SetScatteredStart(true);
+				volInfo->sssFlightProposal.active = false;
 
 				return true;
 			}

@@ -83,5 +83,21 @@ walk against Diffuse depth. Increasing Volume alone can also leave Total
 as a limiting budget.
 
 CPU coefficient evaluation reuses only an exactly matching numeric result;
-the SSS model and sampling remain unchanged. See the
+the SSS model remains unchanged. The guarded CPU sampling upgrade below is
+separate from that earlier repair. See the
 [repair and validation record](../engineering/2026-10-19-openpbr-sss-cpu.md).
+
+## CPU sampling of dense SSS
+
+The CPU renderer automatically uses a probability-corrected direction and
+free-flight guide for sufficiently thick, isotropic homogeneous SSS. Thin
+parts, unknown boundaries, anisotropic media and emitting volumes keep the
+classic walk. Absorption, scattering, refractive boundaries and the volume
+depth budget retain their existing values. This does not enable denoising
+or contribution clamping. Metal currently retains classic SSS sampling.
+
+For a native CPU control, set `path.sss.guiding.enable = 0`; the default is
+`1`. Blender OpenPBR presets and Scale inputs need no additional setting.
+Keep geometry closed and scene units consistent with the authored radius.
+See [the transport validation](../engineering/2026-10-19-sss-transport.md)
+for the guarded domain, raw convergence study and measured limits.

@@ -315,9 +315,82 @@ float HomogeneousVolume::ScatterChromatic(const float u,
 	return scatter ? scatterDistance : -1.f;
 }
 
+void HomogeneousVolume::SSSScatteringCoefficients(const HitPoint &hitPoint,
+		Spectrum &absorption, Spectrum &scattering) const {
+	Spectrum alpha;
+	const Spectrum sigmaT = SSSCoeffs(hitPoint, alpha);
+	absorption = (Spectrum(1.f) - alpha) * sigmaT;
+	scattering = alpha * sigmaT;
+}
+
+bool HomogeneousVolume::DirectionProposal(const HitPoint &hitPoint,
+		const Spectrum &throughput, const Vector &axis, const float thickness,
+		SSSDirectionProposal &proposal) const {
+	if (!IsSSSParametrized() || HasVolumeEmissionTexture() || !(thickness > 0.f)) return false;
+	const Spectrum phaseG = GetG().GetSpectrumValue(hitPoint);
+	for (unsigned i = 0; i < 3; ++i)
+		if (!isfinite(phaseG.c[i])) return false;
+	const float anisotropy = Max(fabsf(phaseG.c[0]), Max(fabsf(phaseG.c[1]), fabsf(phaseG.c[2])));
+	if (anisotropy > 1e-4f) return false;
+	const float axisLength = Dot(axis, axis);
+	if (!(axisLength > 0.f) || !isfinite(axisLength)) return false;
+	proposal.axis = axis / sqrtf(axisLength);
+	Spectrum alpha;
+	const Spectrum sigmaT = SSSCoeffs(hitPoint, alpha);
+	// A textured flight may land in a purely absorbing region. Its phase
+	// sampler returns black without a world direction; keep that absorption
+	// event on the original path instead of evaluating an unset direction.
+	if (alpha.Black()) return false;
+	// The isotropic diffusion guide is not a suitable proposal for strongly
+	// anisotropic walks; retain their verified HG/Schlick sampler.
+	static const float classicShare = []() {
+		const char *value = getenv("SUPERLUXCORE_SSS_DWIVEDI_CLASSIC");
+		return value ? Clamp(float(atof(value)), .05f, .95f) : .1f;
+	}();
+	static const float forwardShare = []() {
+		const char *value = getenv("SUPERLUXCORE_SSS_DWIVEDI_FORWARD");
+		return value ? Clamp(float(atof(value)), .01f, .99f) : .99f;
+	}();
+	proposal.classic = classicShare;
+	proposal.forward = forwardShare;
+	struct GuideCoefficients {
+		bool valid = false;
+		Spectrum alpha;
+		float v[3], phaseLog[3];
+	};
+	static thread_local GuideCoefficients lastGuide;
+	if (!lastGuide.valid || lastGuide.alpha != alpha) {
+		for (unsigned i = 0; i < 3; ++i) {
+			const float a = Clamp(alpha.c[i], 1e-4f, .999999f);
+			lastGuide.v[i] = Max(1.00001f, 1.f / sqrtf(Max(1e-7f, 1.f - powf(a,
+						2.44294f - .0215813f * a + .578637f / a))));
+			lastGuide.phaseLog[i] = logf((lastGuide.v[i] + 1.f) / (lastGuide.v[i] - 1.f));
+		}
+		lastGuide.alpha = alpha;
+		lastGuide.valid = true;
+	}
+	float sum = 0.f;
+	for (unsigned i = 0; i < 3; ++i) {
+		if (!(sigmaT.c[i] > 0.f) || !isfinite(sigmaT.c[i])) return false;
+		proposal.sigmaT[i] = sigmaT.c[i];
+		proposal.channel[i] = isfinite(throughput.c[i]) ? Max(throughput.c[i], 1e-10f) : 1e-10f;
+		sum += proposal.channel[i];
+		// The fit controls only the proposal, never physical coefficients.
+		proposal.v[i] = lastGuide.v[i];
+		proposal.phaseLog[i] = lastGuide.phaseLog[i];
+		// An entry-directed half-space proposal is counterproductive
+		// for thin transmission. Keep its original chromatic walk where
+		// the opposite interface has appreciable diffusion importance.
+		if (thickness * sigmaT.c[i] / proposal.v[i] < 6.f) return false;
+	}
+	for (unsigned i = 0; i < 3; ++i) proposal.channel[i] /= sum;
+	return true;
+}
+
 float HomogeneousVolume::ScatterSSS(const Ray &ray, const float u,
 		const bool scatteredStart, const Spectrum &channelWeights,
-		Spectrum *connectionThroughput, Spectrum *connectionEmission) const {
+		Spectrum *connectionThroughput, Spectrum *connectionEmission,
+		const SSSFlightProposal *proposal) const {
 	const float segmentLength = ray.maxt - ray.mint;
 	const bool scatterAllowed = (!scatteredStart || multiScattering);
 
@@ -328,14 +401,36 @@ float HomogeneousVolume::ScatterSSS(const Ray &ray, const float u,
 	hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
 	hitPoint.passThroughEvent = u;
 
-	const Spectrum sigmaA = SigmaA(hitPoint);
-	const Spectrum sigmaS = SigmaS(hitPoint);
+	Spectrum sigmaA, sigmaS;
+	SSSScatteringCoefficients(hitPoint, sigmaA, sigmaS);
 	const Spectrum emission = Emission(hitPoint);
 
 	Spectrum segmentTransmittance, segmentEmission;
-	const float scatterDistance = ScatterChromatic(u, scatterAllowed,
-			segmentLength, sigmaA, sigmaS, emission, channelWeights,
-			segmentTransmittance, segmentEmission);
+	float scatterDistance;
+	if (proposal && proposal->active && scatterAllowed) {
+		float pick = u;
+		unsigned selected = 8;
+		for (unsigned i = 0; i < 8; ++i) {
+			if (pick < proposal->probabilities[i]) { selected = i; break; }
+			pick -= proposal->probabilities[i];
+		}
+		const float remapped = Clamp(pick / proposal->probabilities[selected], 0.f, .99999994f);
+		const float flight = -logf(1.f - remapped) / proposal->rates[selected];
+		const bool scattered = flight < segmentLength;
+		const float distance = scattered ? flight : segmentLength;
+		double pdf = 0.;
+		for (unsigned i = 0; i < 9; ++i)
+			pdf += proposal->probabilities[i] * exp(-double(proposal->rates[i]) * distance) *
+					(scattered ? proposal->rates[i] : 1.f);
+		const Spectrum sigmaT = sigmaA + sigmaS;
+		for (unsigned i = 0; i < 3; ++i)
+			segmentTransmittance.c[i] = pdf > 0. ?
+					exp(-double(distance) * sigmaT.c[i]) * (scattered ? sigmaT.c[i] : 1.f) / pdf : 0.f;
+		scatterDistance = scattered ? distance : -1.f;
+	} else
+		scatterDistance = ScatterChromatic(u, scatterAllowed,
+				segmentLength, sigmaA, sigmaS, emission, channelWeights,
+				segmentTransmittance, segmentEmission);
 
 	*connectionEmission += *connectionThroughput * emission;
 	*connectionThroughput *= segmentTransmittance;
@@ -571,7 +666,12 @@ Spectrum HomogeneousVolume::TransmittanceEstimate(const Ray &ray, const float u)
 		hitPoint.geometryN = hitPoint.interpolatedN = hitPoint.shadeN = Normal(-ray.d);
 		hitPoint.passThroughEvent = u;
 
-		sigmaT = SigmaT(hitPoint);
+		if (IsSSSParametrized()) {
+			Spectrum absorption, scattering;
+			SSSScatteringCoefficients(hitPoint, absorption, scattering);
+			sigmaT = absorption + scattering;
+		} else
+			sigmaT = SigmaT(hitPoint);
 	}
 	if (sigmaT.Black() || (segmentLength <= 0.f))
 		return Spectrum(1.f);

@@ -24,6 +24,7 @@
 #include "luxrays/usings.h"
 #include "slg/slg.h"
 #include "slg/bsdf/hitpoint.h"
+#include "slg/volumes/sssproposal.h"
 
 namespace slg {
 
@@ -80,6 +81,11 @@ public:
 		VolumeConstPtr matExteriorVolume,
 		VolumeConstPtr defaultWorldVolume
 	) const;
+	bool sssProposalAxisValid = false;
+	luxrays::Vector sssProposalAxis;
+	luxrays::Point sssProposalEntry;
+	float sssProposalThickness = 0.f;
+	SSSFlightProposal sssFlightProposal;
 
 private:
 	static bool CompareVolumePriorities(
