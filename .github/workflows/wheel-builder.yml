@@ -53,11 +53,23 @@ on:
     branches: [release/experimental-windows-dlss-20261019]
 
 jobs:
+  packaging-regression:
+    name: Wheel staging and experimental version regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install wheel
+      - run: python dev-tools/wheel_packaging_regression.py
+
   # CUDA is never exercised on the macOS dev machines nor on the GPU-less
   # runners, so kernel code that compiles for CPU/Metal/OpenCL can ship broken
   # on CUDA (v2.11.21). NVRTC needs no GPU: compile every hardware program as
   # CUDADevice assembles it and refuse to build wheels when any of them fails.
   cuda-kernel-check:
+    needs: [packaging-regression]
     name: CUDA kernel compile gate (NVRTC)
     runs-on: ubuntu-latest
     steps:
@@ -465,6 +477,13 @@ jobs:
             output-dir: wheelhouse
             config-file: "{package}/pyproject.toml"
 
+
+      - name: Preserve tested native wheel before optional DLSS packaging
+        uses: actions/upload-artifact@v5
+        with:
+          name: native-windows-wheel-input
+          path: ./wheelhouse/*.whl
+          retention-days: 14
 
       - uses: actions/setup-python@v5
         with:

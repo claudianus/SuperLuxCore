@@ -49,6 +49,7 @@ def stage(args):
         }
         (package / 'dlss-provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
         destination = work / 'packed'
+        destination.mkdir()
         subprocess.run([os.sys.executable, '-m', 'wheel', 'pack', str(unpacked), '-d', str(destination)], check=True)
         packed, = destination.glob('*.whl')
         # Replace only after wheel pack has regenerated RECORD successfully.
