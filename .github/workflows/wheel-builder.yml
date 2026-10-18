@@ -1,57 +1,9 @@
-# SPDX-FileCopyrightText: 2024-2025 Authors (see AUTHORS.txt)
-#
-# SPDX-License-Identifier: Apache-2.0
-
-
-name: LuxCore Python Wheels Builder
-
+name: Windows GPU teardown hotfix acceptance
 on:
-  workflow_dispatch:
-      inputs:
-        build-type:
-          description: 'Build type'
-          required: true
-          default: 'Release'
-          type: choice
-          options:
-            - Release
-            - Debug
-  workflow_call:
-    inputs:
-      repository:
-        description: 'Repository to check out'
-        required: false
-        default: ''
-        type: string
-      ref:
-        description: 'The branch, tag or SHA to checkout.'
-        required: false
-        default: ''
-        type: string
-      version:
-        description: 'The version to build - must comply to semver, or blank for default'
-        type: string
-      build-type:
-        description: 'Build type'
-        required: false
-        default: 'Release'
-        type: string
-    outputs:
-      commit:
-        description: "The commit that has been checked out"
-        value: ${{ jobs.build-wheels.outputs.commit }}
-      branch:
-        description: "The branch that has been checked out"
-        value: ${{ jobs.build-wheels.outputs.branch }}
-      attestation-url:
-        description: "The url to the attestations"
-        value: ${{ jobs.attest-wheels.outputs.attestation-url }}
-      version:
-        description: "The version actually built"
-        value: ${{ jobs.build-wheels.outputs.version }}
   push:
-    branches: [release/experimental-windows-dlss-20261019]
-
+    branches: [release/windows-gpu-teardown-20261019]
+permissions:
+  contents: read
 jobs:
   packaging-regression:
     name: Wheel staging and experimental version regression
@@ -64,12 +16,24 @@ jobs:
       - run: python -m pip install wheel
       - run: python dev-tools/wheel_packaging_regression.py
 
+  teardown-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: python dev-tools/cuda_teardown_test.py --out cuda-fixed.json
+      - run: python dev-tools/film_pipeline_teardown_test.py --out film-fixed.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: teardown-host-regression
+          path: '*-fixed.json'
+
   # CUDA is never exercised on the macOS dev machines nor on the GPU-less
   # runners, so kernel code that compiles for CPU/Metal/OpenCL can ship broken
   # on CUDA (v2.11.21). NVRTC needs no GPU: compile every hardware program as
   # CUDADevice assembles it and refuse to build wheels when any of them fails.
   cuda-kernel-check:
-    needs: [packaging-regression]
+    needs: [packaging-regression, teardown-regression]
     name: CUDA kernel compile gate (NVRTC)
     runs-on: ubuntu-latest
     steps:
@@ -521,105 +485,23 @@ jobs:
           name: cibw-wheels-${{ matrix.os }}-${{ matrix.python-minor }}
           path: ./wheelhouse/*.whl
 
-  attest-wheels:
-    needs: [build-wheels]
-    runs-on: ubuntu-latest
-    permissions:
-      attestations: write
-      id-token: write
-    outputs:
-      attestation-url: ${{ steps.attestation-step.outputs.attestation-url }}
-
-    steps:
-      - uses: actions/download-artifact@v7
-        if: ${{ !env.ACT }}
-        with:
-          pattern: cibw-wheels-*
-          path: ${{ github.workspace }}/dist
-          merge-multiple: false
-
-      - name: Generate artifact attestations
-        id: attestation-step
-        if: ${{ !env.ACT }}
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: ${{ github.workspace }}/dist/*
-
-  # Rolling "wheels-latest" prerelease: the SuperBlendLuxCore bundle workflows
-  # fetch the cp313 wheels from here (public release, no secrets needed).
-  # Only for direct Release builds of this repo's main branch: reusable-workflow
-  # callers (wheel-releaser.yml passes `repository`) and Debug builds are skipped.
-  publish-latest:
-    name: Publish rolling wheels-latest release
-    needs: [build-wheels]
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      inputs.repository == '' &&
-      (github.event.inputs.build-type || 'Release') == 'Release'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: wheels-latest
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v6
-
-      # cp313 = Blender 5.x bundled Python. One wheel per OS runner.
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: cibw-wheels-*-13
-          path: ${{ github.workspace }}/wheelhouse
-          merge-multiple: true
-
-      - name: Check wheel set
-        shell: bash
-        run: |
-          set -euo pipefail
-          ls -l wheelhouse
-          for plat in win_amd64 macosx_11_0_x86_64 macosx_14_0_arm64 manylinux_2_28_x86_64; do
-            n=$(ls wheelhouse/*-cp313-cp313-*"${plat}"*.whl 2>/dev/null | wc -l)
-            if [ "$n" -ne 1 ]; then
-              echo "::error::expected exactly 1 cp313 wheel for ${plat}, found ${n}"
-              exit 1
-            fi
-          done
-
-      - name: Move wheels-latest tag and refresh release
-        shell: bash
-        run: |
-          set -euo pipefail
-          git tag -f wheels-latest "$GITHUB_SHA"
-          git push -f origin refs/tags/wheels-latest
-
-          notes="Rolling cp313 wheels built from ${GITHUB_SHA} (${GITHUB_REF_NAME}). Consumed by SuperBlendLuxCore bundle workflows; not a versioned release."
-          if gh release view wheels-latest >/dev/null 2>&1; then
-            gh release edit wheels-latest --prerelease --notes "$notes"
-          else
-            gh release create wheels-latest --prerelease --title "wheels-latest (rolling)" --notes "$notes"
-          fi
-
-          # Drop stale assets (e.g. a previous version's file names) first.
-          gh release view wheels-latest --json assets --jq '.assets[].name' |
-            while read -r asset; do
-              gh release delete-asset wheels-latest "$asset" --yes
-            done
-          gh release upload wheels-latest wheelhouse/*.whl --clobber
-
   experimental-windows-bundle:
-    name: Windows experimental ZIP and stock Blender smoke
+    name: Windows hotfix ZIP and installed upgrade smoke
     needs: [build-wheels]
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SLC_NATIVE_COMMIT: ${{ github.sha }}
     steps:
+      - name: Preserve source bytes on Windows checkout
+        shell: pwsh
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
         with:
           repository: claudianus/SuperBlendLuxCore
-          ref: d13ebe90d458c3df5494a277976b369fe5c150b2
+          ref: a4819ba6ac76c25139c0be8e11c80ef8b481e3df
           path: addon
       - uses: actions/setup-python@v5
         with:
@@ -628,6 +510,13 @@ jobs:
         with:
           name: cibw-wheels-windows-2022-13
           path: addon/wheels
+      - name: Give the wheel its unique experimental cache identity
+        shell: pwsh
+        run: |
+          python -m pip install wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python dev-tools/reversion_windows_wheel.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Fetch hash-pinned NVRTC and Blender
         shell: pwsh
         run: |
@@ -636,6 +525,8 @@ jobs:
           Invoke-WebRequest https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip -OutFile "$env:RUNNER_TEMP/blender.zip"
           Expand-Archive "$env:RUNNER_TEMP/blender.zip" "$env:RUNNER_TEMP/blender"
           Remove-Item "$env:RUNNER_TEMP/blender.zip"
+          gh release download experimental-windows-dlss-20261019 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34+dlss.exp20261019-windows_x64.zip --dir stable-package
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "BLENDER_ROOT=$env:RUNNER_TEMP/blender/blender-5.2.2-windows-x64" >> $env:GITHUB_ENV
       - name: Build and verify Windows extension
         shell: pwsh
@@ -664,6 +555,10 @@ jobs:
                   raise
               if code: raise RuntimeError('Blender failed: '+str(code))
           try:
+              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34+dlss.exp20261019-windows_x64.zip').resolve()
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(stable)], 120)
+              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34+dlss.exp20261019'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.pyd')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34+dlss.exp20261019','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
+              run(['--background','--factory-startup','--python-exit-code','1','--python-expr',expression], 120)
               run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
               run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)
           finally:

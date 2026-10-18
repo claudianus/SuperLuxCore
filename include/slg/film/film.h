@@ -647,6 +647,7 @@ private:
 
 	void ExecuteImagePipelineThreadImpl(const u_int index);
 	void ExecuteImagePipelineImpl(const u_int index);
+	void DeleteImagePipeline(ImagePipeline *pipeline);
 
 	template <bool overwrite>
 	void AddFilmImpl(const Film &film,

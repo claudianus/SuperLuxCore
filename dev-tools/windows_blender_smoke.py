@@ -14,9 +14,9 @@ bpy.ops.preferences.addon_enable(module=package)
 addon = importlib.import_module(package)
 import pysuperluxcore
 root = Path(pysuperluxcore.__file__).parent
-assert importlib.metadata.version('pysuperluxcore') == '2.11.34+dlss.exp20261019'
+assert importlib.metadata.version('pysuperluxcore') == '2.11.34+dlss.exp20261019.fix1'
 previous = json.loads(Path(os.environ['SLC_SMOKE_OUT'], 'stable-install.json').read_text())
-assert previous['version'] == '2.11.34'
+assert previous['version'] == '2.11.34+dlss.exp20261019'
 current_pyd, = root.glob('pysuperluxcore*.pyd')
 assert hashlib.sha256(current_pyd.read_bytes()).hexdigest() != previous['native_sha256']
 assert str(Path(os.environ['BLENDER_USER_RESOURCES']).resolve()).lower() in str(root.resolve()).lower(), root

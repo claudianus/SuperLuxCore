@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 
-VERSION = '2.11.34+dlss.exp20261019'
+VERSION = '2.11.34+dlss.exp20261019.fix1'
 wheels = Path('addon/wheels')
 original, = wheels.glob('pysuperluxcore-*.whl')
 with tempfile.TemporaryDirectory(prefix='slc-variant-') as directory:

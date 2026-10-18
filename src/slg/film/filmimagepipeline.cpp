@@ -36,10 +36,33 @@ using namespace slg;
 // Film image pipeline related methods
 //------------------------------------------------------------------------------
 
+void Film::DeleteImagePipeline(ImagePipeline *pipeline) {
+	if (!pipeline)
+		return;
+
+	// Parse()/DeleteAllImagePipelines() can run on a different CPU thread from
+	// ApplyHW(). Plugins own device buffers and OptiX handles, so deletion needs
+	// the film's context too, not just the final Film destructor.
+	WaitAsyncExecuteImagePipeline();
+	if (hardwareDevice)
+		hardwareDevice->PushThreadCurrentDevice();
+	try {
+		if (hardwareDevice)
+			hardwareDevice->FinishQueue();
+		delete pipeline;
+	} catch (...) {
+		if (hardwareDevice)
+			hardwareDevice->PopThreadCurrentDevice();
+		throw;
+	}
+	if (hardwareDevice)
+		hardwareDevice->PopThreadCurrentDevice();
+}
+
 void Film::SetImagePipelines(const u_int index, ImagePipeline *newImagePipeline) {
 	if (index < imagePipelines.size()) {
 		// It replaces an existing image pipeline
-		delete imagePipelines[index];
+		DeleteImagePipeline(imagePipelines[index]);
 		imagePipelines[index] = newImagePipeline;
 	} else if (index == imagePipelines.size()) {
 		// Add a new image pipeline at the end of the vector
@@ -52,7 +75,7 @@ void Film::SetImagePipelines(const u_int index, ImagePipeline *newImagePipeline)
 
 void Film::SetImagePipelines(ImagePipeline *newImagePipeline) {
 	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
+		DeleteImagePipeline(ip);
 
 	if (newImagePipeline) {
 		imagePipelines.resize(1);
@@ -64,7 +87,7 @@ void Film::SetImagePipelines(ImagePipeline *newImagePipeline) {
 
 void Film::SetImagePipelines(std::vector<ImagePipeline *> &newImagePiepelines) {
 	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
+		DeleteImagePipeline(ip);
 
 	imagePipelines = newImagePiepelines;
 	++imagePipelineRevision;
@@ -143,7 +166,9 @@ bool Film::HasDoneAsyncExecuteImagePipeline() {
 }
 
 void Film::WaitAsyncExecuteImagePipeline() {
-	if (isAsyncImagePipelineRunning)
+	// A completed worker is still joinable. Join it before replacing plugins
+	// or starting a new worker so no native thread resources remain retained.
+	if (imagePipelineThread && imagePipelineThread->joinable())
 		imagePipelineThread->join();
 }
 

@@ -225,19 +225,12 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 Film::~Film() {
 	if (imagePipelineThread) {
 		imagePipelineThread->request_stop();
-		imagePipelineThread->join();
+		if (imagePipelineThread->joinable())
+			imagePipelineThread->join();
 	}
 
-	// The image pipeline plugin destructor can use the hardware device to free
-	// some memory so I have to set the current context
-	if (hardwareDevice)
-		hardwareDevice->PushThreadCurrentDevice();
-
 	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
-
-	if (hardwareDevice)
-		hardwareDevice->PopThreadCurrentDevice();
+		DeleteImagePipeline(ip);
 
 	// I have to delete the OCL context after the image pipeline because it
 	// can be used by plugins
@@ -330,7 +323,7 @@ void Film::CopyDynamicSettings(const Film &film) {
 
 	// Copy the image pipeline
 	for (ImagePipeline *ip: imagePipelines)
-		delete ip;
+		DeleteImagePipeline(ip);
 	imagePipelines.resize(0);
 	for(ImagePipeline *ip: film.imagePipelines)
 		imagePipelines.push_back(ip->Copy());
