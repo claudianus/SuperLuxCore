@@ -1,0 +1,101 @@
+name: Experimental Windows DLSS package and upgrade gate
+on:
+  push:
+    branches: [release/windows-dlss-package-20261019]
+permissions:
+  contents: read
+jobs:
+  experimental-windows-bundle:
+    name: Windows experimental ZIP and stock Blender smoke
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Preserve source bytes on Windows checkout
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: claudianus/SuperBlendLuxCore
+          ref: 683f5bd7a1f8e06e1b9a82ff221cceb7dc675984
+          path: addon
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Await pinned native acceptance and fetch its wheel
+        shell: python
+        run: |
+          import json,subprocess,time
+          for attempt in range(150):
+              run=json.loads(subprocess.check_output(['gh','api','repos/claudianus/SuperLuxCore/actions/runs/39160845795'],text=True))
+              assert run['head_sha']=='a437ce422623898ac4665e44f37605f10ca5d60a'
+              if run['status']=='completed':
+                  assert run['conclusion']=='success',run['conclusion']
+                  break
+              time.sleep(10)
+          else:raise TimeoutError('Native acceptance not complete within 25 minutes')
+          subprocess.run(['gh','run','download','39160845795','--repo','claudianus/SuperLuxCore','--name','cibw-wheels-windows-2022-13','--dir','addon/wheels'],check=True)
+      - name: Give the wheel its unique experimental cache identity
+        shell: pwsh
+        run: |
+          python -m pip install wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python dev-tools/reversion_windows_wheel.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Fetch hash-pinned NVRTC and Blender
+        shell: pwsh
+        run: |
+          python -m pip download --require-hashes --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp -d addon/wheels -r addon/cmake/bundled-wheels-win.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Invoke-WebRequest https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip -OutFile "$env:RUNNER_TEMP/blender.zip"
+          Expand-Archive "$env:RUNNER_TEMP/blender.zip" "$env:RUNNER_TEMP/blender"
+          Remove-Item "$env:RUNNER_TEMP/blender.zip"
+          gh release download v2.11.34 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34-windows_x64.zip --dir stable-package
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "BLENDER_ROOT=$env:RUNNER_TEMP/blender/blender-5.2.2-windows-x64" >> $env:GITHUB_ENV
+      - name: Build and verify Windows extension
+        shell: pwsh
+        run: |
+          cmake -S addon -B addon-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBLC_BUNDLE_WHEELS=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build addon-build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python addon/cmake/verify_bundle.py addon-build/out --platforms windows_x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Isolated installed ZIP CPU render and DLSS discovery
+        shell: python
+        run: |
+          import os, pathlib, subprocess, shutil
+          out = pathlib.Path('addon-build/out').resolve()
+          env = dict(os.environ, BLENDER_USER_RESOURCES=str(out/'profile-한글'), SLC_SMOKE_OUT=str(out), PYTHONUNBUFFERED='1')
+          blender = str(pathlib.Path(env['BLENDER_ROOT'])/'blender.exe')
+          package, = out.glob('SuperLuxCore-*-windows_x64.zip')
+          def run(args, timeout):
+              child = subprocess.Popen([blender, *args], env=env)
+              try:
+                  code = child.wait(timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'], check=False)
+                  child.wait()
+                  raise
+              if code: raise RuntimeError('Blender failed: '+str(code))
+          try:
+              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34-windows_x64.zip').resolve()
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(stable)], 120)
+              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.pyd')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
+              run(['--background','--factory-startup','--python-exit-code','1','--python-expr',expression], 120)
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
+              run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)
+          finally:
+              shutil.rmtree(out/'profile-한글', ignore_errors=True)
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: experimental-windows-dlss
+          path: |
+            addon-build/out/*windows_x64.zip
+            addon-build/out/*.json
+            addon-build/out/*.exr
+          retention-days: 14
