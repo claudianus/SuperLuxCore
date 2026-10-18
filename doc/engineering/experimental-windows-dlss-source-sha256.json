@@ -3,7 +3,7 @@
   "include/slg/film/denoiser/denoisingguide.h": "762d8a6bfb77f8a389f9a5db8830b05d102a7f105eddcfc6a670553d822fb22d",
   "include/slg/film/denoiser/presentationresample.h": "8bc8d0f2e3fc45f13a98617e2a573832a8d58f6748ab743f010f5741774fc547",
   "include/slg/materials/denoisingfeatures.h": "5bdde583604b9d13a4692da87afc176ee5fb7d0f8576e99a88b71f917186d284",
-  "src/slg/film/denoiser/dlss/CMakeLists.txt": "f92cbc48fa8f49ddeb985575cf278e1b88b3dcbdf4cf5aee229642514c4d83a8",
+  "src/slg/film/denoiser/dlss/CMakeLists.txt": "13002cc1ac754d2233ce8537e3136977e91cc53f7e8871e044f8a08d3710e208",
   "src/slg/film/denoiser/dlss/api.h": "04e7f0e1af5d0f210e004b5e52c83f73e7aec3bfe5a77e49915d862cfa63e53e",
   "src/slg/film/denoiser/dlss/runtime.cpp": "71a0b978270df95c880465e08f5876891b47d4d20d78d1f9d44fc7faef218470",
   "include/luxcore/cfg.h.in": "2c52a1fb17bc7c5d8793b912b708a2faf2e02a243bf87ccd4b9b1c702a6759f3",

@@ -15,6 +15,10 @@ if(WIN32)
   # The header-only NVIDIA loader discovers the installed driver via registry.
   target_link_libraries(superluxcore_dlss PRIVATE advapi32)
 endif()
+if(MSVC)
+  # NVIDIA's header-only loader expands variadic argument pairs recursively.
+  target_compile_options(superluxcore_dlss PRIVATE /Zc:preprocessor)
+endif()
 install(TARGETS superluxcore_dlss LIBRARY DESTINATION . RUNTIME DESTINATION .)
 install(FILES "${DLSS_ROOT}/LICENSE.txt" DESTINATION . RENAME NVIDIA-DLSS-LICENSE.txt)
 install(FILES "${SLC_ROOT}/deps/cuew/LICENSE" DESTINATION . RENAME CUEW-LICENSE.txt)
