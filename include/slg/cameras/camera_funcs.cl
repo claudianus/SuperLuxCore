@@ -226,6 +226,10 @@ OPENCL_FORCE_INLINE void PerspectiveCamera_GenerateRayImpl(
 	const float maxt = (cameraBase->yon - hither) / rayDir.z;
 	const float time = mix(cameraBase->shutterOpen, cameraBase->shutterClose, timeSample);
 
+	// Match CPU primary-ray bounds: epsilon is evaluated in camera space,
+	// after lens sampling and before the world/motion transforms.
+	const float mint = MachineEpsilon_E_Float3(rayOrig);
+
 	// Transform ray in world coordinates
 	rayOrig = Transform_ApplyPoint(cameraToWorld, rayOrig);
 	rayDir = Transform_ApplyVector(cameraToWorld, rayDir);
@@ -236,10 +240,12 @@ OPENCL_FORCE_INLINE void PerspectiveCamera_GenerateRayImpl(
 		MotionSystem_Sample(&cameraBase->motionSystem, time, cameraBase->interpolatedTransforms, &m);
 
 		rayOrig = Matrix4x4_ApplyPoint_Private(&m, rayOrig);
-		rayDir = Matrix4x4_ApplyVector_Private(&m, rayDir);
+		// Camera motion may contain scale; CPU restores a unit direction.
+		rayDir = normalize(Matrix4x4_ApplyVector_Private(&m, rayDir));
 	}
 
 	Ray_Init3(ray, rayOrig, rayDir, maxt, time);
+	ray->mint = mint;
 	
 	if (cameraPersp->projCamera.enableClippingPlane) {
 		Camera_ApplyArbitraryClippingPlane(ray,
@@ -314,6 +320,10 @@ OPENCL_FORCE_INLINE void OrthographicCamera_GenerateRay(
 	const float maxt = (camera->base.yon - hither);
 	const float time = mix(camera->base.shutterOpen, camera->base.shutterClose, timeSample);
 
+	// Match CPU primary-ray bounds: epsilon is evaluated in camera space,
+	// after lens sampling and before the world/motion transforms.
+	const float mint = MachineEpsilon_E_Float3(rayOrig);
+
 	// Transform ray in world coordinates
 	rayOrig = Transform_ApplyPoint(&camera->base.cameraToWorld, rayOrig);
 	rayDir = Transform_ApplyVector(&camera->base.cameraToWorld, rayDir);
@@ -324,10 +334,12 @@ OPENCL_FORCE_INLINE void OrthographicCamera_GenerateRay(
 		MotionSystem_Sample(&camera->base.motionSystem, time, camera->base.interpolatedTransforms, &m);
 
 		rayOrig = Matrix4x4_ApplyPoint_Private(&m, rayOrig);
-		rayDir = Matrix4x4_ApplyVector_Private(&m, rayDir);
+		// Camera motion may contain scale; CPU restores a unit direction.
+		rayDir = normalize(Matrix4x4_ApplyVector_Private(&m, rayDir));
 	}
 
 	Ray_Init3(ray, rayOrig, rayDir, maxt, time);
+	ray->mint = mint;
 
 	if (camera->ortho.projCamera.enableClippingPlane) {
 		Camera_ApplyArbitraryClippingPlane(ray,
@@ -365,6 +377,10 @@ OPENCL_FORCE_INLINE void EnvironmentCamera_GenerateRayImpl(
 	const float maxt = (cameraBase->yon - cameraBase->hither);
 	const float time = mix(cameraBase->shutterOpen, cameraBase->shutterClose, timeSample);
 
+	// Match CPU primary-ray bounds: epsilon is evaluated in camera space,
+	// after lens sampling and before the world/motion transforms.
+	const float mint = MachineEpsilon_E_Float3(rayOrig);
+
 	// Transform ray in world coordinates
 	rayOrig = Transform_ApplyPoint(cameraToWorld, rayOrig);
 	rayDir = Transform_ApplyVector(cameraToWorld, rayDir);
@@ -375,10 +391,12 @@ OPENCL_FORCE_INLINE void EnvironmentCamera_GenerateRayImpl(
 		MotionSystem_Sample(&cameraBase->motionSystem, time, cameraBase->interpolatedTransforms, &m);
 
 		rayOrig = Matrix4x4_ApplyPoint_Private(&m, rayOrig);
-		rayDir = Matrix4x4_ApplyVector_Private(&m, rayDir);
+		// Camera motion may contain scale; CPU restores a unit direction.
+		rayDir = normalize(Matrix4x4_ApplyVector_Private(&m, rayDir));
 	}
 
 	Ray_Init3(ray, rayOrig, rayDir, maxt, time);
+	ray->mint = mint;
 
 	/*printf("(%f, %f, %f) (%f, %f, %f) [%f, %f]\n",
 		ray->o.x, ray->o.y, ray->o.z, ray->d.x, ray->d.y, ray->d.z,

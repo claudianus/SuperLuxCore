@@ -47,6 +47,7 @@ void Film::SetImagePipelines(const u_int index, ImagePipeline *newImagePipeline)
 		imagePipelines[index] = newImagePipeline;
 	} else
 		throw runtime_error("Wrong image pipeline index in Film::SetImagePipelines(): " + ToString(index));
+	++imagePipelineRevision;
 }
 
 void Film::SetImagePipelines(ImagePipeline *newImagePipeline) {
@@ -58,6 +59,7 @@ void Film::SetImagePipelines(ImagePipeline *newImagePipeline) {
 		imagePipelines[0] = newImagePipeline;
 	} else
 		imagePipelines.resize(0);
+	++imagePipelineRevision;
 }
 
 void Film::SetImagePipelines(std::vector<ImagePipeline *> &newImagePiepelines) {
@@ -65,6 +67,7 @@ void Film::SetImagePipelines(std::vector<ImagePipeline *> &newImagePiepelines) {
 		delete ip;
 
 	imagePipelines = newImagePiepelines;
+	++imagePipelineRevision;
 }
 
 void Film::MergeSampleBuffers(const u_int imagePipelineIndex) {

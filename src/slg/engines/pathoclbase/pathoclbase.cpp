@@ -355,6 +355,10 @@ void PathOCLBaseRenderEngine::InitFilm() {
 	}
 
 	GetFilm().AddChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED);
+	if (GetType() == RTPATHOCL && renderConfig.GetConfig().Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>()) {
+		GetFilm().AddChannel(Film::ALPHA);
+		GetFilm().AddChannel(Film::SAMPLECOUNT);
+	}
 
 	// pathTracer has not yet been initialized
 	const bool hybridBackForwardEnable = renderConfig.GetConfig().Get(PathTracer::GetDefaultProps()->
@@ -438,14 +442,77 @@ bool PathOCLBaseRenderEngine::HasCachedKernels(const RenderConfig &renderConfig)
 	return std::filesystem::exists(filePath);
 }
 
+void PathOCLBaseRenderEngine::ReserveDenoisingGuideBytes(const size_t bytes) {
+	std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+	if (denoisingGuideReservedBytes > denoisingGuidesMaxBytes || bytes > denoisingGuidesMaxBytes - denoisingGuideReservedBytes)
+		throw runtime_error("Renderer-owned denoising guide memory budget exceeded");
+	denoisingGuideReservedBytes += bytes;
+}
+
+void PathOCLBaseRenderEngine::ReleaseDenoisingGuideBytes(const size_t bytes) {
+	std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+	assert(bytes <= denoisingGuideReservedBytes);
+	denoisingGuideReservedBytes -= bytes;
+}
+
+void PathOCLBaseRenderEngine::ResizeDenoisingGuides() {
+	std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+	const size_t oldBytes = denoisingGuideFilm.size() * sizeof(float);
+	assert(oldBytes <= denoisingGuideReservedBytes);
+	denoisingGuideReservedBytes -= oldBytes;
+	std::vector<float>().swap(denoisingGuideFilm);
+	denoisingGuideWidth = GetFilm().GetWidth();
+	denoisingGuideHeight = GetFilm().GetHeight();
+	if (!denoisingGuidesEnabled) return;
+	const size_t values = size_t(denoisingGuideWidth) * denoisingGuideHeight * DENOISING_GUIDE_STRIDE;
+	const size_t bytes = values * sizeof(float);
+	if (denoisingGuideReservedBytes > denoisingGuidesMaxBytes || bytes > denoisingGuidesMaxBytes - denoisingGuideReservedBytes)
+		throw runtime_error("Renderer-owned denoising guide film memory budget exceeded");
+	denoisingGuideFilm.assign(values, 0.f);
+	denoisingGuideReservedBytes += bytes;
+}
+
+std::vector<float> PathOCLBaseRenderEngine::GetDenoisingGuideSnapshot() const {
+	std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+	if (!denoisingGuidesEnabled) throw runtime_error("Renderer-owned denoising guides are disabled");
+	return denoisingGuideFilm;
+}
+
+void PathOCLBaseRenderEngine::MergeDenoisingGuides(const std::vector<float> &records,
+		const u_int tileX, const u_int tileY, const u_int tileWidth, const u_int tileHeight) {
+	std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+	if (!denoisingGuidesEnabled) return;
+	for (size_t j = 0; j + DENOISING_GUIDE_STRIDE <= records.size(); j += DENOISING_GUIDE_STRIDE) {
+		if (records[j + 7] == 0.f) continue;
+		const u_int x = records[j + 16], y = records[j + 17];
+		if (x >= tileWidth || y >= tileHeight || tileX + x >= denoisingGuideWidth || tileY + y >= denoisingGuideHeight) continue;
+		const size_t dst = (size_t(tileY + y) * denoisingGuideWidth + tileX + x) * DENOISING_GUIDE_STRIDE;
+		std::copy_n(records.data() + j, DENOISING_GUIDE_STRIDE, denoisingGuideFilm.data() + dst);
+	}
+}
+
 void PathOCLBaseRenderEngine::StartLockLess() {
 	auto& cfg = renderConfig.GetConfig();
+	denoisingFramesEnabled = GetType() == RTPATHOCL && cfg.Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>();
+	denoisingGuidesEnabled = denoisingFramesEnabled || cfg.Get(Property("film.denoisingguides.enable")(false)).Get<bool>();
+	denoisingGuidesMaxBytes = cfg.Get(Property("film.denoisingguides.maxbytes")(u_longlong(1024) * 1024 * 1024)).Get<u_longlong>();
+	if (denoisingGuidesEnabled) {
+		if (GetType() != TILEPATHOCL && GetType() != RTPATHOCL)
+			throw runtime_error("Renderer-owned guide capture currently requires TILEPATHOCL/RTPATHOCL");
+		if (cfg.Get(Property("tilepath.sampling.aa.size")(1)).Get<u_int>() != 1)
+			throw runtime_error("Renderer-owned guide capture requires one independent sample per pixel/frame");
+	}
+	ResizeDenoisingGuides();
 
 	//--------------------------------------------------------------------------
 	// Sampler
 	//--------------------------------------------------------------------------
 
 	oclSampler = Sampler::FromPropertiesOCL(cfg);
+	if (denoisingFramesEnabled) {
+		oclSampler->tilepath.adaptiveStrength = 0.f;
+		oclSampler->tilepath.foveaStrength = 0.f;
+	}
 
 	// Path guiding (P1-3 M4e): GPU descends the same flattened SD-tree
 	// the CPU queries, evaluating the fitted vMF leaf mixtures in the
@@ -543,6 +610,10 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 		}
 	}
 
+	if (photonGICache) {
+		photonGICache->SetScene(renderConfig.GetScene());
+		photonGICache->ResetUpdateSynchronization(renderNativeThreads.size() + renderOCLThreads.size());
+	}
 	pathTracer.SetPhotonGICache(photonGICache);
 
 	//--------------------------------------------------------------------------
@@ -671,6 +742,12 @@ void PathOCLBaseRenderEngine::StopLockLess() {
 	compiledScene = nullptr;
 	delete photonGICache;
 	photonGICache = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(denoisingGuideMutex);
+		denoisingGuideReservedBytes -= denoisingGuideFilm.size() * sizeof(float);
+		std::vector<float>().swap(denoisingGuideFilm);
+		denoisingGuideWidth = denoisingGuideHeight = 0;
+	}
 }
 
 void PathOCLBaseRenderEngine::BeginSceneEditLockLess() {
@@ -689,6 +766,14 @@ void PathOCLBaseRenderEngine::BeginSceneEditLockLess() {
 }
 
 void PathOCLBaseRenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
+	if (photonGICache && (GetType() != RTPATHOCL)) {
+		// Every cache participant retired its update seat on edit entry.
+		// Rebuild cache + compiled GPU/deposit state together. Incremental
+		// buffer updates alone would retain old photons and stopped deposits.
+		StopLockLess();
+		StartLockLess();
+		return;
+	}
 	if (lightSamplerSharedData)
 		lightSamplerSharedData->Reset();
 	compiledScene->Recompile(editActions);

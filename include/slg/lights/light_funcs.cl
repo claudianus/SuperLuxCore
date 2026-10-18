@@ -713,6 +713,11 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 
 	// Setup the shadow ray
 	Ray_Init4(shadowRay, shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
+	// TriangleLight::Illuminate already offsets the sampled light point.
+	// Keep that same endpoint: Ray_Init4's second end shrink can skip a
+	// nearby transparent pane and lose the connection's MIS ownership.
+	// Retain the existing GPU origin guard.
+	shadowRay->maxt = shadowRayDistance;
 
 	return Material_GetEmittedRadiance(materialIndex,
 			tmpHitPoint, triLight->triangle.invMeshArea

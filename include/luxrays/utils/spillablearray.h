@@ -87,7 +87,7 @@ public:
 	}
 	void clear() { Reset(); }
 	void resize(const size_t n) { EnsureHeap(); storage.resize(n); Sync(); }
-	void reserve(const size_t n) { EnsureHeap(); storage.reserve(n); }
+	void reserve(const size_t n) { EnsureHeap(); storage.reserve(n); Sync(); }
 	void shrink_to_fit() { EnsureHeap(); storage.shrink_to_fit(); Sync(); }
 	// vector interop used by image-map staging call sites
 	SpillableArray(std::vector<T> &&v) : storage(std::move(v)) { Sync(); }
@@ -121,6 +121,11 @@ public:
 	// copy-on-write file mapping. Returns the spilled byte count, 0 on
 	// failure or when already spilled.
 	size_t Spill(const std::string &fileName) {
+		// A byte mapping cannot relocate owning members (vectors, smart
+		// pointers, etc.). Keep those arrays on the heap: destroying their
+		// original elements would invalidate the pointers in the mapping.
+		if constexpr (!std::is_trivially_copyable_v<T>)
+			return 0;
 		if (keeper || count == 0)
 			return 0;
 		std::shared_ptr<void> k = SpillToFile(ptr, count * sizeof(T), fileName);

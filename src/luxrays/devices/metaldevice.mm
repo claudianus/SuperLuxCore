@@ -55,6 +55,13 @@ using namespace std;
 
 namespace luxrays {
 
+// This translation unit uses manual Objective-C reference counting.
+// Keep +1 temporary objects exception-safe, including early returns.
+struct ObjCRelease {
+	void operator()(void *object) const { [(__bridge id)object release]; }
+};
+using OwnedObjC = std::unique_ptr<void, ObjCRelease>;
+
 //------------------------------------------------------------------------------
 // MetalDeviceDescription
 //------------------------------------------------------------------------------
@@ -104,9 +111,12 @@ void MetalDeviceDescription::AddDeviceDescs(std::vector<DeviceDescriptionUPtr> &
 		// default device when it is also in the external list.
 		NSMutableArray<id<MTLDevice>> *devices = [NSMutableArray array];
 		id<MTLDevice> def = MTLCreateSystemDefaultDevice();
+		OwnedObjC defaultOwner((__bridge void *)def);
 		if (def)
 			[devices addObject:def];
-		for (id<MTLDevice> d in MTLCopyAllDevices())
+		NSArray<id<MTLDevice>> *allDevices = MTLCopyAllDevices();
+		OwnedObjC devicesOwner((__bridge void *)allDevices);
+		for (id<MTLDevice> d in allDevices)
 			if (d != def)
 				[devices addObject:d];
 
@@ -535,7 +545,7 @@ MetalDeviceProgram::~MetalDeviceProgram() {
 	if (binaryArchive) {
 		@autoreleasepool {
 			id<MTLBinaryArchive> archive =
-					(__bridge_transfer id<MTLBinaryArchive>)binaryArchive;
+					(__bridge id<MTLBinaryArchive>)binaryArchive;
 			if (archiveDirty && !archivePath.empty()) {
 				// The archive may have been loaded from archivePath itself:
 				// serialize beside it and rename over it atomically.
@@ -557,6 +567,8 @@ MetalDeviceProgram::~MetalDeviceProgram() {
 			}
 		}
 	}
+	[(__bridge id<MTLBinaryArchive>)binaryArchive release];
+	[(__bridge id<MTLLibrary>)library release];
 }
 
 HardwareDeviceProgramUPtr MetalDevice::CompileProgram(
@@ -618,6 +630,7 @@ HardwareDeviceProgramUPtr MetalDevice::CompileProgram(
 		bool exists = [fm fileExistsAtPath:nsPath];
 
 		MTLBinaryArchiveDescriptor *ad = [[MTLBinaryArchiveDescriptor alloc] init];
+		OwnedObjC descriptorOwner((__bridge void *)ad);
 		if (exists)
 			ad.url = [NSURL fileURLWithPath:nsPath];
 
@@ -659,12 +672,14 @@ static void RunLayoutProbe(MetalDeviceKernel::Marshalling &m,
 
 	id<MTLFunction> fn = [lib newFunctionWithName:
 			[NSString stringWithFormat:@"_LayoutProbe_%s", kernelName.c_str()]];
+	OwnedObjC functionOwner((__bridge void *)fn);
 	if (!fn)
 		return;   // probe missing: keep the computed offsets
 
 	NSError *err = nil;
 	id<MTLComputePipelineState> pso =
 		[dev newComputePipelineStateWithFunction:fn error:&err];
+	OwnedObjC pipelineOwner((__bridge void *)pso);
 	if (!pso)
 		return;
 
@@ -672,6 +687,9 @@ static void RunLayoutProbe(MetalDeviceKernel::Marshalling &m,
 	const size_t nOut = 2 + m.scalarNames.size() + 8;
 	id<MTLBuffer> out = [dev newBufferWithLength:nOut * sizeof(uint32_t)
 		options:MTLResourceStorageModeShared];
+	OwnedObjC bufferOwner((__bridge void *)out);
+	if (!out)
+		throw runtime_error("Metal layout probe buffer allocation failed");
 	memset(out.contents, 0, nOut * sizeof(uint32_t));
 
 	id<MTLCommandBuffer> cb = [probeQueue commandBuffer];
@@ -815,6 +833,8 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 			[NSString stringWithUTF8String:kernelName.c_str()]];
 	if (!fn)
 		throw runtime_error("Metal kernel not found: " + kernelName);
+	// The kernel owns the function even if PSO creation/marshalling throws.
+	metalDeviceKernel.function = (__bridge void *)fn;
 
 	id<MTLDevice> dev = (__bridge id<MTLDevice>)device;
 	id<MTLBinaryArchive> archive =
@@ -827,6 +847,7 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	// Metal backend).
 	NSError *err = nil;
 	MTLComputePipelineDescriptor *pd = [[MTLComputePipelineDescriptor alloc] init];
+	OwnedObjC descriptorOwner((__bridge void *)pd);
 	pd.computeFunction = fn;
 	pd.label = fn.name;
 	if (archive)
@@ -851,6 +872,7 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 	if (!pso)
 		throw runtime_error("Metal PSO creation failed for " + kernelName +
 			": " + (err ? err.localizedDescription.UTF8String : "?"));
+	metalDeviceKernel.pipeline = (__bridge void *)pso;
 
 	// Populate the archive with every pipeline compiled from source. This
 	// also covers a LOADED archive: a session whose cold compile failed
@@ -865,9 +887,6 @@ HardwareDeviceKernelUPtr MetalDevice::GetKernel(
 		if ([archive addComputePipelineFunctionsWithDescriptor:pd error:&aerr])
 			metalDeviceProgram.archiveDirty = true;
 	}
-
-	metalDeviceKernel.function = (__bridge_retained void *)fn;
-	metalDeviceKernel.pipeline = (__bridge_retained void *)pso;
 
 	ParseMarshalling(metalDeviceKernel.marsh, kernelName,
 			metalDeviceProgram.layoutJson);
@@ -1340,6 +1359,7 @@ void MetalDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,
 	// are pruned in the same pass so inFlightWork can not grow
 	// unboundedly when reads replace FinishQueue() drains.
 	MTLCommandBufferHandle blocker = nullptr;
+	OwnedObjC blockerOwner;
 	{
 		std::lock_guard<std::mutex> lock(inFlightMutex);
 		CommitPendingLocked();
@@ -1355,6 +1375,11 @@ void MetalDevice::EnqueueReadBuffer(const HardwareDeviceBuffer *buff,
 				blocker = it->cb;
 			++it;
 		}
+		// A concurrent FinishQueue/WaitOnBuffer may retire the tracked
+		// reference as soon as this lock is released. Pin our selected
+		// command buffer until readback completes.
+		if (blocker)
+			blockerOwner.reset((__bridge void *)[(__bridge id<MTLCommandBuffer>)blocker retain]);
 	}
 	if (blocker)
 		[(__bridge id<MTLCommandBuffer>)blocker waitUntilCompleted];

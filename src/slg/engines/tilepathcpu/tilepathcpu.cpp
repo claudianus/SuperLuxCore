@@ -145,6 +145,10 @@ void TilePathCPURenderEngine::StartLockLess() {
 	//--------------------------------------------------------------------------
 
 	pathTracer.InitPixelFilterDistribution(GetPixelFilter());
+	if (photonGICache) {
+		photonGICache->SetScene(renderConfig.GetScene());
+		photonGICache->ResetUpdateSynchronization(renderThreads.size());
+	}
 	pathTracer.SetPhotonGICache(photonGICache);
 
 	delete pathGuidingCache;

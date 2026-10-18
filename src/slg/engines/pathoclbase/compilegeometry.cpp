@@ -22,6 +22,7 @@
 
 #include <iosfwd>
 #include <limits>
+#include <set>
 
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string.hpp>
@@ -63,6 +64,83 @@ void CompiledScene::CompileGeometry() {
 	curveCps.Reset();
 	curveSegIndices.Reset();
 	curveCpAttrs.Reset();
+
+	// Reserve the exact unique payload before appending it. Geometric vector
+	// growth otherwise temporarily keeps the old and new multi-GB allocations
+	// alive while the original scene and acceleration structure are resident.
+	// Count by base-mesh identity, matching the sharing rules below; two meshes
+	// with equal sizes or values are deliberately not treated as the same mesh.
+	std::set<const ExtTriangleMesh *> uniqueBaseMeshes;
+	size_t vertexCount = 0, triangleCount = 0, normalCount = 0;
+	size_t uvCount = 0, colorCount = 0, alphaCount = 0;
+	size_t vertexAOVCount = 0, triangleAOVCount = 0;
+	size_t curveCpCount = 0, curveAttrCount = 0, curveIndexCount = 0;
+	size_t interpolatedTransformCount = 0;
+	for (u_int i = 0; i < objCount; ++i) {
+		const ExtMesh &mesh = scene.GetObjects().GetSceneObject(i).GetExtMesh();
+		const ExtTriangleMesh *base;
+		switch (mesh.GetType()) {
+			case TYPE_EXT_TRIANGLE_INSTANCE:
+				base = &static_cast<const ExtInstanceTriangleMesh &>(mesh).GetExtTriangleMesh();
+				break;
+			case TYPE_EXT_TRIANGLE_MOTION: {
+				const auto &motion = static_cast<const ExtMotionTriangleMesh &>(mesh);
+				base = &motion.GetExtTriangleMesh();
+				const auto &system = motion.GetMotionSystem();
+				interpolatedTransformCount += system.interpolatedTransforms.size() +
+						system.interpolatedInverseTransforms.size();
+				break;
+			}
+			case TYPE_EXT_TRIANGLE:
+				base = &static_cast<const ExtTriangleMesh &>(mesh);
+				break;
+			default:
+				throw runtime_error("Unsupported mesh type in CompiledScene::CompileGeometry(): " + ToString(mesh.GetType()));
+		}
+		if (!uniqueBaseMeshes.insert(base).second)
+			continue;
+		const size_t vertices = base->GetTotalVertexCount();
+		const size_t triangles = base->GetTotalTriangleCount();
+		vertexCount += vertices;
+		triangleCount += triangles;
+		if (base->HasNormals()) normalCount += vertices;
+		for (u_int layer = 0; layer < EXTMESH_MAX_DATA_COUNT; ++layer) {
+			if (base->HasUVs(layer)) uvCount += vertices;
+			if (base->HasColors(layer)) colorCount += vertices;
+			if (base->HasAlphas(layer)) alphaCount += vertices;
+			if (base->HasVertexAOV(layer)) vertexAOVCount += vertices;
+			if (base->HasTriAOV(layer)) triangleAOVCount += triangles;
+		}
+		if (base->HasCurveData()) {
+			curveCpCount += base->GetCurveCps().size();
+			curveAttrCount += base->GetCurveCpAttrs().size();
+			curveIndexCount += base->GetCurveSegIndices().size();
+		}
+	}
+	verts.reserve(vertexCount);
+	normals.reserve(normalCount);
+	triNormals.reserve(triangleCount);
+	uvs.reserve(uvCount);
+	cols.reserve(colorCount);
+	alphas.reserve(alphaCount);
+	vertexAOVs.reserve(vertexAOVCount);
+	triAOVs.reserve(triangleAOVCount);
+	tris.reserve(triangleCount);
+	curveCps.reserve(curveCpCount);
+	curveCpAttrs.reserve(curveAttrCount);
+	curveSegIndices.reserve(curveIndexCount);
+	meshDescs.reserve(objCount);
+	interpolatedTransforms.reserve(interpolatedTransformCount);
+	SLG_LOG("Geometry staging unique meshes: " << uniqueBaseMeshes.size() <<
+			", vertices: " << vertexCount << ", triangles: " << triangleCount);
+	SLG_LOG("Geometry staging payload bytes: " <<
+			vertexCount * sizeof(verts[0]) + normalCount * sizeof(normals[0]) +
+			triangleCount * (sizeof(triNormals[0]) + sizeof(tris[0])) +
+			uvCount * sizeof(uvs[0]) + colorCount * sizeof(cols[0]) +
+			alphaCount * sizeof(alphas[0]) + vertexAOVCount * sizeof(vertexAOVs[0]) +
+			triangleAOVCount * sizeof(triAOVs[0]) + curveCpCount * sizeof(curveCps[0]) +
+			curveAttrCount * sizeof(curveCpAttrs[0]) + curveIndexCount * sizeof(curveSegIndices[0]) +
+			objCount * sizeof(meshDescs[0]) + interpolatedTransformCount * sizeof(interpolatedTransforms[0]));
 
 	//--------------------------------------------------------------------------
 	// Translate geometry
@@ -237,8 +315,17 @@ void CompiledScene::CompileGeometry() {
 			case TYPE_EXT_TRIANGLE: {
 				baseMesh = static_cast<const ExtTriangleMesh &>(mesh);
 
-				// It is a not instanced mesh
-				InitMeshDesc(currentMeshDesc, baseMesh, baseMesh.get());
+				// Direct objects may reference the same base mesh as another
+				// direct object or an instance. Only the immutable payload is
+				// shared; every object still gets its own type/transform descriptor.
+				const auto it = definedMeshs.find(&baseMesh.get());
+				isExistingInstance = it != definedMeshs.end();
+				if (isExistingInstance)
+					currentMeshDesc = meshDescs[it->second];
+				else {
+					InitMeshDesc(currentMeshDesc, baseMesh.get(), baseMesh.get());
+					definedMeshs[&baseMesh.get()] = meshDescs.size();
+				}
 
 				currentMeshDesc.type = slg::ocl::TYPE_EXT_TRIANGLE;
 
@@ -249,7 +336,6 @@ void CompiledScene::CompileGeometry() {
 				memcpy(&currentMeshDesc.triangle.appliedTrans.mInv, &t.mInv, sizeof(float[4][4]));
 				currentMeshDesc.triangle.appliedTransSwapsHandedness = t.SwapsHandedness();
 
-				isExistingInstance = false;
 				break;
 			}
 			default:

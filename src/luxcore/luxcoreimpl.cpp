@@ -119,6 +119,11 @@ PropertiesUPtr FilmImpl::GetStats() const {
 	auto stats = std::make_unique<Properties>();
 
 	stats->Set(Property("stats.film.total.samplecount")(film.GetTotalSampleCount()));
+	// Eye/light counters are exact for a quiescent film. The hot-path total
+	// can lag a CPU thread's pending batch; do not infer camera readiness
+	// from it or from light-path work.
+	stats->Set(Property("stats.film.total.eye.samplecount")(film.GetTotalEyeSampleCount()));
+	stats->Set(Property("stats.film.total.light.samplecount")(film.GetTotalLightSampleCount()));
 	stats->Set(Property("stats.film.spp")(film.GetTotalSampleCount() / static_cast<float>(film.GetWidth() * film.GetHeight())));
 	stats->Set(Property("stats.film.radiancegorup.count")(film.GetRadianceGroupCount()));
 

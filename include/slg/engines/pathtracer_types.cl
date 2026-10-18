@@ -311,6 +311,10 @@ typedef struct {
 		AlbedoSpecularSetting specularSetting;
 		float specularGlossinessThreshold;
 	} albedo;
+
+	// Opt-in frame-wide pixel offset, shared with the CPU path tracer.
+	int pixelJitterEnable;
+	float pixelJitterX, pixelJitterY;
 } PathTracer;
 
 #if defined(SLG_OPENCL_KERNEL)

@@ -139,7 +139,10 @@ void ViewportSmoothPlugin::Apply(Film &film, const u_int index) {
 					const float *cS = &cur[s * 3];
 					const float lC = cC[0] + cC[1] + cC[2];
 					const float lS = cS[0] + cS[1] + cS[2];
-					const float wC = expf(-fabsf(lS - lC) / (sigmaColor * (lC + .1f)));
+					// Spectral reconstruction may produce valid negative RGB.
+					// A signed scale reverses the exponent and can overflow,
+					// turning finite radiance into inf/inf during normalization.
+					const float wC = expf(-fabsf(lS - lC) / (sigmaColor * (fabsf(lC) + .1f)));
 
 					const float w = kW[dy + 1][dx + 1] * wZ * wN * wC;
 					for (u_int c = 0; c < 3; ++c)

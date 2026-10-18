@@ -93,13 +93,20 @@ endif()
 target_precompile_headers(luxcore_static PRIVATE
   ${PROJECT_SOURCE_DIR}/src/pch/stable_pch.hpp)
 
+# Film parsing calls the LPE compiler in slg-core, while slg-core itself uses
+# Film. GNU ld's single archive scan can leave that back-reference unresolved
+# in the Python module even though linking succeeds. Keep the renderer's
+# mutually dependent archives in one rescan group on Linux.
+set(_luxcore_renderer_libraries slg-core slg-film slg-kernels luxrays)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_luxcore_renderer_libraries
+    "$<LINK_GROUP:RESCAN,slg-core,slg-film>" slg-kernels luxrays)
+endif()
+
 target_link_libraries(luxcore PRIVATE
     onetbb::onetbb
     oidn::oidn
-    slg-core
-    slg-film
-    slg-kernels
-    luxrays
+    ${_luxcore_renderer_libraries}
     bcd
     tsl::robin_map
     boost::boost
@@ -112,10 +119,7 @@ target_link_libraries(luxcore PRIVATE
     luxparser
 )
 target_link_libraries(luxcore_static PRIVATE
-    slg-core
-    slg-film
-    slg-kernels
-    luxrays
+    ${_luxcore_renderer_libraries}
     bcd
     tsl::robin_map
     boost::boost

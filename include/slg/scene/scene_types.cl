@@ -31,7 +31,9 @@ typedef enum {
 	// For rays used for direct light sampling
 	SHADOW_RAY = 16,
 	// For rays used for indirect light sampling
-	INDIRECT_RAY = 32
+	INDIRECT_RAY = 32,
+	// Internal continuation flag, not a public rayinfo classification.
+	SHADOW_TRANSPARENCY_CONNECTION = 64
 } SceneRayTypeType;
 
 // Note: keep aligned with the copy in scene.h

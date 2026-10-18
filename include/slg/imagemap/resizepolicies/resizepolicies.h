@@ -156,10 +156,6 @@ public:
 	u_int minSize;
 
 private:
-	// Used by serialization
-	ImageMapResizeMinMemPolicy() : scale(1.f), minSize(32) {		
-	}
-
 	template<class Archive> void serialize(Archive &ar, const u_int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImageMapResizePolicy);
 
@@ -187,10 +183,6 @@ public:
 	u_int minSize;
 
 private:
-	// Used by serialization
-	ImageMapResizeMipMapMemPolicy() : scale(1.f), minSize(32) {		
-	}
-
 	template<class Archive> void serialize(Archive &ar, const u_int version) {
 		ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(ImageMapResizePolicy);
 

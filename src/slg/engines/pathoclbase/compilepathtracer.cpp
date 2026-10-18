@@ -28,6 +28,9 @@ using namespace luxrays;
 using namespace slg;
 
 void CompiledScene::CompilePathTracer() {
+	compiledPathTracer.pixelJitterEnable = pathTracer->pixelJitterEnable;
+	compiledPathTracer.pixelJitterX = pathTracer->pixelJitterX;
+	compiledPathTracer.pixelJitterY = pathTracer->pixelJitterY;
 	compiledPathTracer.eyeSampleBootSize = pathTracer->eyeSampleBootSize;
 	compiledPathTracer.eyeSampleStepSize = pathTracer->eyeSampleStepSize;
 	compiledPathTracer.eyeSampleSize = pathTracer->eyeSampleSize;

@@ -74,9 +74,16 @@ public:
 	);
 
 	virtual MaterialType GetType() const { return OPENPBR; }
+	// TRANSMIT only when transmission or subsurface can refract into the
+	// interior: the flag excludes a surface from PhotonGI receivers/visibility
+	// and caustic classification, so an opaque OpenPBR surface reporting it
+	// would be completely skipped by PhotonGI.
 	virtual BSDFEvent GetEventTypes() const {
-		return DIFFUSE | GLOSSY | REFLECT | TRANSMIT;
+		return DIFFUSE | GLOSSY | REFLECT | (HasTransmission() ? TRANSMIT : NONE);
 	};
+	bool HasTransmission() const {
+		return IsPositiveTex(TransmissionWeight) || IsPositiveTex(SubsurfaceWeight);
+	}
 	virtual bool IsDelta() const { return false; }
 
 	virtual void Bump(HitPoint *hitPoint) const;
@@ -89,6 +96,7 @@ public:
 	TextureConstPtr GetCoatNormal() const { return CoatNormal; }
 
 	virtual luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;
+	bool GetDenoisingFeatures(const HitPoint &hitPoint, DenoisingFeatures &features) const override;
 
 	virtual luxrays::Spectrum Evaluate(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
@@ -202,7 +210,8 @@ private:
 	// Lobe weights + probabilities at outgoing direction wo.
 	void ComputeWeights(const HitPoint &hitPoint, const Params &p,
 			const luxrays::Vector &wo,
-			luxrays::Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT]) const;
+			luxrays::Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT],
+			luxrays::Spectrum *directionalAlbedos = nullptr) const;
 
 	// Per-lobe evaluate: f * |cosI| (LuxCore convention), fills pdf.
 	luxrays::Spectrum EvalGlossyRefl(const HitPoint &hitPoint, const Params &p,
@@ -230,6 +239,11 @@ private:
 	// shaded as the front, like Cycles which faces N toward the ray
 	static bool IsOpaqueBackface(const Params &p, const float fixedZ) {
 		return (fixedZ < 0.f) && (p.transWeight <= 0.f) && (p.sssWeight <= 0.f);
+	}
+	static bool IsPositiveTex(TextureConstPtr tex) {
+		return tex && !(((tex->GetType() == CONST_FLOAT) ||
+				(tex->GetType() == CONST_FLOAT3)) &&
+				(tex->Filter() <= 0.f));
 	}
 
 	bool coatAffectsBaseIor = true;

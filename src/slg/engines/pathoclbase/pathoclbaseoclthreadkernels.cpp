@@ -564,6 +564,10 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// AGX::ComputeContext::prepareForEnqueue).
 	if (wavefrontQueues)
 		kernelsParameters.push_back("-D PATHOCL_WAVEFRONT_QUEUES");
+	if (renderEngine->denoisingGuidesEnabled)
+		kernelsParameters.push_back("-D SLC_DENOISING_GUIDES");
+	if (renderEngine->denoisingFramesEnabled)
+		kernelsParameters.push_back("-D SLC_DENOISING_FRAMES");
 
 	const DeviceType deviceType = intersectionDevice.GetDeviceDesc().GetType();
 #if defined(__APPLE__)
@@ -597,9 +601,18 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		kernelsParameters.insert(kernelsParameters.end(), renderEngine->additionalCUDAKernelOptions.begin(), renderEngine->additionalCUDAKernelOptions.end());
 
 	// Build the kernel source/parameters hash
+	// These states are unreachable when their existing dispatch gates are
+	// false. Do not create expensive Metal PSOs for them on every startup.
+	// Include the selection in the in-session hash so enabling a feature
+	// later cannot reuse a kernel set that is missing its state handlers.
+	const auto &ptConfig = threadTaskConfig.pathTracer;
+	const bool compileVisibility = ptConfig.restir.visibilityEnable && ptConfig.restir.visCandCount > 0;
+	const bool compileGI = ptConfig.restirGI.enabled && ptConfig.restirGI.giCandCount > 0;
+	const bool compilePT = ptConfig.restirPT.enabled && ptConfig.restirPT.ptCandCount > 0;
+	const u_int optionalKernelMask = compileVisibility | (compileGI << 1) | (compilePT << 2);
 	const string newKernelSrcHash = oclKernelPersistentCache::HashString(oclKernelPersistentCache::ToOptsString(kernelsParameters))
 			+ "-" +
-			oclKernelPersistentCache::HashString(kernelSource);
+			oclKernelPersistentCache::HashString(kernelSource) + "-" + ToString(optionalKernelMask);
 	if (newKernelSrcHash == kernelSrcHash) {
 		// There is no need to re-compile the kernel
 		return;
@@ -634,11 +647,6 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_HIT_NOTHING, nullptr, true, "AdvancePaths_MK_HIT_NOTHING"},
 		{&advancePathsKernel_MK_HIT_OBJECT, nullptr, true, "AdvancePaths_MK_HIT_OBJECT"},
 		{&advancePathsKernel_MK_RT_DL, nullptr, true, "AdvancePaths_MK_RT_DL"},
-		{&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"},
-		{&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"},
-		{&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"},
-		{&advancePathsKernel_MK_PT_BOUNCE, nullptr, true, "AdvancePaths_MK_PT_BOUNCE"},
-		{&advancePathsKernel_MK_PT_RESOLVE, nullptr, true, "AdvancePaths_MK_PT_RESOLVE"},
 		{&advancePathsKernel_MK_DL_ILLUMINATE, nullptr, true, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{&advancePathsKernel_MK_DL_SAMPLE_BSDF, nullptr, true, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
 		{&advancePathsKernel_MK_MNEE_NEXT_VERTEX, nullptr, true, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
@@ -647,6 +655,29 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_NEXT_SAMPLE, nullptr, true, "AdvancePaths_MK_NEXT_SAMPLE"},
 		{&advancePathsKernel_MK_GENERATE_CAMERA_RAY, nullptr, true, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
 	};
+	if ((renderEngine->GetType() == TILEPATHOCL) && threadTaskConfig.film.hasChannelDepth)
+		jobs.push_back({&tileResolveFilmDataKernel, &tileResolveFilmDataWorkGroupSize,
+				false, "TilePathResolveFilmData"});
+	else
+		tileResolveFilmDataKernel.reset();
+	if (compileVisibility)
+		jobs.push_back({&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"});
+	else
+		advancePathsKernel_MK_RT_RESTIR.reset();
+	if (compileGI) {
+		jobs.push_back({&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"});
+		jobs.push_back({&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"});
+	} else {
+		advancePathsKernel_MK_RT_GI_BOUNCE.reset();
+		advancePathsKernel_MK_RT_GI_RESOLVE.reset();
+	}
+	if (compilePT) {
+		jobs.push_back({&advancePathsKernel_MK_PT_BOUNCE, nullptr, true, "AdvancePaths_MK_PT_BOUNCE"});
+		jobs.push_back({&advancePathsKernel_MK_PT_RESOLVE, nullptr, true, "AdvancePaths_MK_PT_RESOLVE"});
+	} else {
+		advancePathsKernel_MK_PT_BOUNCE.reset();
+		advancePathsKernel_MK_PT_RESOLVE.reset();
+	}
 	// Wavefront per-state queue builder (B2/E3): refills the queues
 	// from taskState->state once per iteration; the histogram kernel
 	// counts the per-(state, lambda) population for the host prefix.
@@ -804,6 +835,8 @@ void PathOCLBaseOCLRenderThread::SetInitKernelArgs(const u_int filmIndex) {
 
 	// Film parameters
 	argIndex = threadFilms[filmIndex]->SetFilmKernelArgs(intersectionDevice, initKernel, argIndex);
+	if (renderEngine->denoisingGuidesEnabled)
+		intersectionDevice.SetKernelArg(initKernel, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 
 	initKernelArgsCount = argIndex;
 }
@@ -1019,12 +1052,16 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 				filmIndex, MK_HIT_NOTHING);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_NOTHING,
 				argIndex++, emitLightsDistributionBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_NOTHING, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
 	if (advancePathsKernel_MK_HIT_OBJECT) {
 		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_OBJECT,
 				filmIndex, MK_HIT_OBJECT);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_OBJECT,
 				argIndex++, emitLightsDistributionBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_OBJECT, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
 	if (advancePathsKernel_MK_RT_DL)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_DL, filmIndex, MK_RT_DL);
@@ -1049,9 +1086,16 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		// SSP tail recorder slot (path.ssp.enable; NULL-safe)
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
 				argIndex++, sspTailsBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
+					argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
-	if (advancePathsKernel_MK_SPLAT_SAMPLE)
-		SetAdvancePathsKernelArgs(advancePathsKernel_MK_SPLAT_SAMPLE, filmIndex, MK_SPLAT_SAMPLE);
+	if (advancePathsKernel_MK_SPLAT_SAMPLE) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_SPLAT_SAMPLE, filmIndex, MK_SPLAT_SAMPLE);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_SPLAT_SAMPLE,
+					argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
+	}
 	if (advancePathsKernel_MK_NEXT_SAMPLE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_NEXT_SAMPLE, filmIndex, MK_NEXT_SAMPLE);
 	if (advancePathsKernel_MK_GENERATE_CAMERA_RAY)

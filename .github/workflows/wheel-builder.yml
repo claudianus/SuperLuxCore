@@ -50,6 +50,7 @@ on:
         description: "The version actually built"
         value: ${{ jobs.build-wheels.outputs.version }}
   push:
+    branches: [release/experimental-windows-dlss-20261019]
 
 jobs:
   # CUDA is never exercised on the macOS dev machines nor on the GPU-less
@@ -87,6 +88,7 @@ jobs:
     name: Build wheel ${{ matrix.os }}-3.${{ matrix.python-minor }}
     needs: [cuda-kernel-check]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -94,9 +96,10 @@ jobs:
         # (blender_manifest.toml: blender_version_min = "5.2.0").
         python-minor: [13]
         #os: [ubuntu-latest, windows-2022, macos-15-intel, macos-15, windows-11-arm]
-        os: [ubuntu-latest, windows-2022, macos-15-intel, macos-15]
+        os: [windows-2022]
     env:
       # Reminder: report all variables here to CIBW_ENVIRONMENT_PASS_LINUX
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
       BUILD_TYPE: ${{ github.event.inputs.build-type || 'Release' }}
       CXX_VERSION: 20
       GCC_VERSION: 14
@@ -311,6 +314,34 @@ jobs:
           echo "version=${_version}" >> "$GITHUB_OUTPUT"
 
 
+      - name: Checkout pinned NVIDIA SDK release files
+        uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/DLSS
+          ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
+          path: .dlss-sdk
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /include/
+            /LICENSE.txt
+            /lib/Windows_x86_64/rel/nvngx_dlssd.dll
+
+      - name: Verify official runtime signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature .dlss-sdk/lib/Windows_x86_64/rel/nvngx_dlssd.dll
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'NVIDIA') { throw "Invalid NVIDIA release signature: $($sig.Status)" }
+
+      - name: Build optional CUDA DLSS helper
+        shell: pwsh
+        run: |
+          cmake -S src/slg/film/denoiser/dlss -B out/dlss -A x64 "-DDLSS_ROOT=$env:GITHUB_WORKSPACE/.dlss-sdk" "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE/out/dlss-install" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build out/dlss --config Release --parallel 2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --install out/dlss --config Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       # Build wheel
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.4.0
@@ -435,6 +466,23 @@ jobs:
             config-file: "{package}/pyproject.toml"
 
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Stage DLSS payload and verify installed Windows ABI
+        shell: pwsh
+        run: |
+          python -m pip install wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python dev-tools/windows_dlss_package.py stage --wheels wheelhouse --sdk .dlss-sdk --helper out/dlss-install
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $wheel = (Get-ChildItem wheelhouse/*.whl | Select-Object -First 1).FullName
+          python -m pip install --no-deps --force-reinstall $wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python dev-tools/windows_dlss_package.py abi
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       - name: Save dependency cache
         if: always()
         id: cache-deps-save
@@ -541,3 +589,72 @@ jobs:
               gh release delete-asset wheels-latest "$asset" --yes
             done
           gh release upload wheels-latest wheelhouse/*.whl --clobber
+
+  experimental-windows-bundle:
+    name: Windows experimental ZIP and stock Blender smoke
+    needs: [build-wheels]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: claudianus/SuperBlendLuxCore
+          ref: d13ebe90d458c3df5494a277976b369fe5c150b2
+          path: addon
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: cibw-wheels-windows-2022-13
+          path: addon/wheels
+      - name: Fetch hash-pinned NVRTC and Blender
+        shell: pwsh
+        run: |
+          python -m pip download --require-hashes --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp -d addon/wheels -r addon/cmake/bundled-wheels-win.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Invoke-WebRequest https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip -OutFile "$env:RUNNER_TEMP/blender.zip"
+          Expand-Archive "$env:RUNNER_TEMP/blender.zip" "$env:RUNNER_TEMP/blender"
+          Remove-Item "$env:RUNNER_TEMP/blender.zip"
+          "BLENDER_ROOT=$env:RUNNER_TEMP/blender/blender-5.2.2-windows-x64" >> $env:GITHUB_ENV
+      - name: Build and verify Windows extension
+        shell: pwsh
+        run: |
+          cmake -S addon -B addon-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBLC_BUNDLE_WHEELS=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build addon-build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python addon/cmake/verify_bundle.py addon-build/out --platforms windows_x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Isolated installed ZIP CPU render and DLSS discovery
+        shell: python
+        run: |
+          import os, pathlib, subprocess, shutil
+          out = pathlib.Path('addon-build/out').resolve()
+          env = dict(os.environ, BLENDER_USER_RESOURCES=str(out/'profile'), SLC_SMOKE_OUT=str(out), PYTHONUNBUFFERED='1')
+          blender = str(pathlib.Path(env['BLENDER_ROOT'])/'blender.exe')
+          package, = out.glob('SuperLuxCore-*-windows_x64.zip')
+          def run(args, timeout):
+              child = subprocess.Popen([blender, *args], env=env)
+              try:
+                  code = child.wait(timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'], check=False)
+                  child.wait()
+                  raise
+              if code: raise RuntimeError('Blender failed: '+str(code))
+          try:
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
+              run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)
+          finally:
+              shutil.rmtree(out/'profile', ignore_errors=True)
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: experimental-windows-dlss
+          path: |
+            addon-build/out/*windows_x64.zip
+            addon-build/out/*.json
+            addon-build/out/*.exr
+          retention-days: 14

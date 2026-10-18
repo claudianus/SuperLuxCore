@@ -85,6 +85,21 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 	PathOCLRenderEngine *engine = (PathOCLRenderEngine *)renderEngine;
 	const u_int taskCount = engine->taskCount;
+	const auto updateFilmSampleCounts = [&]() {
+		// Light tasks feed the screen-normalized radiance channel; the
+		// corresponding denominator must describe the same GPU snapshot.
+		const u_int eyeTaskCount = taskCount - engine->lightTaskCount;
+		double eyeSampleCount = 0.0, lightSampleCount = 0.0;
+		for (size_t i = 0; i < taskCount; ++i) {
+			if (i < eyeTaskCount)
+				eyeSampleCount += gpuTaskStats[i].sampleCount;
+			else
+				lightSampleCount += gpuTaskStats[i].sampleCount;
+		}
+		threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
+				eyeSampleCount, lightSampleCount);
+		return lightSampleCount;
+	};
 
 	intersectionDevice.PushThreadCurrentDevice();
 
@@ -184,16 +199,7 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 			// tasks feed the screen-normalized channel, so their samples
 			// count toward RADIANCE_PER_SCREEN_NORMALIZED, not the
 			// per-pixel statistic
-			const u_int eyeTaskCount = taskCount - engine->lightTaskCount;
-			double eyeSampleCount = 0.0, lightSampleCount = 0.0;
-			for (size_t i = 0; i < taskCount; ++i) {
-				if (i < eyeTaskCount)
-					eyeSampleCount += gpuTaskStats[i].sampleCount;
-				else
-					lightSampleCount += gpuTaskStats[i].sampleCount;
-			}
-			threadFilms[0]->GetFilm().SetSampleCount(eyeSampleCount + lightSampleCount,
-					eyeSampleCount, lightSampleCount);
+			const double lightSampleCount = updateFilmSampleCounts();
 
 			// PhotonGI GPU photon generation (B1'): drain the deposit
 			// buffers while the queue is synchronized; the light-task
@@ -486,7 +492,15 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 		SLG_LOG("[PathOCLRenderThread::" << threadIndex << "] Rendering thread halted");
 
 	threadFilms[0]->RecvFilm(intersectionDevice);
+	// The final batch can render more samples after the last periodic
+	// readback. Refresh pixels and task counters together before publishing
+	// threadDone: retaining the older light count over-brightens the final
+	// screen-normalized film, especially at low halt SPP.
+	intersectionDevice.EnqueueReadBuffer(taskStatsBuff, CL_FALSE,
+			sizeof(slg::ocl::pathoclbase::GPUTaskStats) * taskCount,
+			gpuTaskStats.get());
 	intersectionDevice.FinishQueue();
+	updateFilmSampleCounts();
 	
 	threadDone = true;
 

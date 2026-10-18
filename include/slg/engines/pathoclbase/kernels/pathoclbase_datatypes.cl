@@ -921,5 +921,9 @@ typedef struct {
 
 typedef struct {
 	unsigned int sampleCount;
+	// Tile work must drain every valid eye sample before its film is merged.
+	// Kept separate from sampleCount: padding/inactive and light tasks do not
+	// own an eye sample, including sparse RTPATH and partial edge tiles.
+	unsigned int activeEyeSample;
 } GPUTaskStats;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

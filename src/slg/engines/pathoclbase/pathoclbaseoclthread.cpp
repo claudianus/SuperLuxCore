@@ -230,6 +230,7 @@ void PathOCLBaseOCLRenderThread::Interrupt() {
 
 void PathOCLBaseOCLRenderThread::Stop() {
 	StopRenderThread();
+	for (auto &threadFilm : threadFilms) threadFilm->FreeDenoisingGuides();
 
 	// Guiding stats (try/ok accumulators for validation)
 	if (guideDbgBuff) {

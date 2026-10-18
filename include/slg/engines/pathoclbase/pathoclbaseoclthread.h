@@ -103,6 +103,13 @@ public:
 				const u_int tileX = 0, const u_int tileY = 0);
 		void SendFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice,
 				const u_int tileX = 0, const u_int tileY = 0);
+		void CommitDenoisingGuides();
+		void FreeDenoisingGuides();
+		luxrays::HardwareDeviceBuffer *denoisingGuidesBuff = nullptr;
+		std::vector<float> denoisingGuideRecords;
+		size_t denoisingGuideChargedBytes = 0;
+		u_int denoisingTileX = 0, denoisingTileY = 0;
+		bool denoisingGuidePending = false;
 
 		FilmRef GetFilm() { return *film; }
 		FilmConstRef GetFilm() const { return *film; }
@@ -302,6 +309,9 @@ protected:
 	luxrays::HardwareDeviceBuffer *curveSegIndicesBuff;
 	luxrays::HardwareDeviceBuffer *curveCpAttrsBuff;
 	luxrays::HardwareDeviceBuffer *cameraBuff;
+	// Host copy whose lifetime matches the actual device upload. Fast camera
+	// edits can recompile the shared scene while the previous frame renders.
+	slg::ocl::Camera threadCameraSnapshot;
 	luxrays::HardwareDeviceBuffer *cameraBokehDistributionBuff;
 	luxrays::HardwareDeviceBuffer *lightIndexOffsetByMeshIndexBuff;
 	luxrays::HardwareDeviceBuffer *lightIndexByTriIndexBuff;
@@ -426,6 +436,8 @@ protected:
 	// OpenCL kernels
 	luxrays::HardwareDeviceKernelUPtr initSeedKernel;
 	luxrays::HardwareDeviceKernelUPtr initKernel;
+	luxrays::HardwareDeviceKernelUPtr tileResolveFilmDataKernel;
+	size_t tileResolveFilmDataWorkGroupSize;
 	size_t initWorkGroupSize;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_NEXT_VERTEX;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_HIT_NOTHING;

@@ -89,12 +89,28 @@ public:
 private:
 	template<class Archive> void serialize(Archive &ar, const unsigned int version) {
 		ar & threadCount;
+		if constexpr (Archive::is_loading::value) {
+			if (!threadCount)
+				throw std::runtime_error("Invalid serialized film sample-counter thread count");
+			// The default constructor only allocates one slot. Allocate
+			// the saved count before reading any per-thread values.
+			Init(threadCount);
+		}
 		// PerThreadCounts is trivially-copyable
+		double total = 0.0;
 		for (u_int i = 0; i < threadCount; ++i) {
 			ar & perThread[i].total;
 			ar & perThread[i].pixelNorm;
 			ar & perThread[i].screenNorm;
+			if constexpr (Archive::is_loading::value)
+				total += perThread[i].total;
 		}
+		// The fast-path atomic and pending batches are execution state,
+		// absent from the archive. Init cleared pending batches; restore
+		// the authoritative total from all saved slots, without changing
+		// the existing archive format.
+		if constexpr (Archive::is_loading::value)
+			total_SampleCountAtomic.store(total, std::memory_order_relaxed);
 	}
 	u_int threadCount;
 	// Per-thread counters were 3 adjacent doubles each - neighbouring
@@ -229,6 +245,10 @@ public:
 
 	void CopyDynamicSettings(const Film &film);
 	void CopyHaltSettings(const Film &film);
+	uint64_t GetImagePipelineRevision() const { return imagePipelineRevision; }
+	size_t GetChannelStorageSize() const;
+	size_t GetChannelStorageSize(const FilmChannels &selectedChannels, const u_int imagePipelineCount) const;
+	void CopyRadianceChannelScales(const Film &film);
 
 	//--------------------------------------------------------------------------
 
@@ -290,6 +310,7 @@ public:
 	void WaitAsyncExecuteImagePipeline();
 	bool HasDoneAsyncExecuteImagePipeline();
 	void ExecuteImagePipeline(const u_int index);
+	void MergeImagePipelineInput(const u_int index) { MergeSampleBuffers(index); }
 
 	//--------------------------------------------------------------------------
 	// Outputs
@@ -648,6 +669,7 @@ private:
 
 
 	std::vector<ImagePipeline *> imagePipelines;
+	uint64_t imagePipelineRevision = 0;
 	luxrays::JThreadUPtr imagePipelineThread;
 	std::atomic<bool> isAsyncImagePipelineRunning;
 

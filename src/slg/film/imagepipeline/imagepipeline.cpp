@@ -121,6 +121,7 @@ ImagePipeline *ImagePipeline::Copy() const {
 	for(ImagePipelinePlugin *plugin: pipeline) {
 		ip->AddPlugin(plugin->Copy());
 	}
+	ip->radianceChannelScales = radianceChannelScales;
 
 	return ip;
 }

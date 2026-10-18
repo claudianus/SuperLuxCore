@@ -69,8 +69,9 @@ void PathOCLBaseOCLRenderThread::InitFilm() {
 
 void PathOCLBaseOCLRenderThread::InitCamera() {
 	CompiledScene *cscene = renderEngine->compiledScene;
+	threadCameraSnapshot = cscene->camera;
 
-	intersectionDevice.AllocBufferRO(&cameraBuff, &cscene->camera,
+	intersectionDevice.AllocBufferRO(&cameraBuff, &threadCameraSnapshot,
 			sizeof(slg::ocl::Camera), "Camera");
 	if (not cscene->cameraBokehDistribution.empty())
 		intersectionDevice.AllocBufferRO(&cameraBokehDistributionBuff, cscene->cameraBokehDistribution.data(),

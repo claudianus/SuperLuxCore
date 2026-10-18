@@ -45,6 +45,7 @@ public:
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
 
 	virtual luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;
+	bool GetDenoisingFeatures(const HitPoint &hitPoint, DenoisingFeatures &features) const override;
 
 	virtual luxrays::Spectrum Evaluate(const HitPoint &hitPoint,
 		const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir, BSDFEvent *event,

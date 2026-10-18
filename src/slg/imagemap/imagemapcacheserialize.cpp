@@ -41,6 +41,8 @@ template void ImageMapResizePolicy::serialize(LuxInputArchiveText &ar, const u_i
 
 BOOST_CLASS_EXPORT_IMPLEMENT(slg::ImageMapResizeNonePolicy)
 BOOST_CLASS_EXPORT_IMPLEMENT(slg::ImageMapResizeFixedPolicy)
+BOOST_CLASS_EXPORT_IMPLEMENT(slg::ImageMapResizeMinMemPolicy)
+BOOST_CLASS_EXPORT_IMPLEMENT(slg::ImageMapResizeMipMapMemPolicy)
 
 //------------------------------------------------------------------------------
 // ImageMapCache

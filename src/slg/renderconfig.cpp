@@ -716,6 +716,18 @@ void RenderConfig::UpdateFilmProperties(const luxrays::Properties &props) {
 		// Reset the properties cache
 		propsCache->Clear();
 	}
+
+	// RTPATHOCL applies these together with a film edit, while its threads
+	// are stopped and the task population can be resized safely.
+	if (GetConfig().Get(Property("renderengine.type")("PATHCPU")).Get<string>() == "RTPATHOCL") {
+		for (const char *name : {"rtpath.resolutionreduction",
+				"rtpath.resolutionreduction.preview", "rtpath.resolutionreduction.preview.step"}) {
+			if (props.IsDefined(name)) {
+				GetConfig().Set(props.Get(name));
+				propsCache->Clear();
+			}
+		}
+	}
 }
 
 void RenderConfig::Delete(const string &prefix) {

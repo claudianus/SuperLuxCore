@@ -18,6 +18,8 @@
 
 #include <boost/lexical_cast.hpp>
 
+#include <cmath>
+
 #include "luxrays/core/color/color.h"
 #include "slg/samplers/sampler.h"
 #include "slg/samplers/tilepathsampler.h"
@@ -40,12 +42,12 @@ std::unique_ptr<SamplerSharedData> TilePathSamplerSharedData::FromProperties(con
 //------------------------------------------------------------------------------
 
 TilePathSampler::TilePathSampler(const RandomGeneratorUPtr & rnd, FilmPtr flm,
-		const FilmSampleSplatterUPtr& flmSplatter
+		const FilmSampleSplatterUPtr& flmSplatter, const bool fixedCenters
 ) :
 	Sampler(rnd, flm, flmSplatter, true),
 	sobolSequence(),
 	tileFilm(flm),
-	aaSamples{1}
+	aaSamples{1}, fixedPixelCenters(fixedCenters)
 {}
 
 TilePathSampler::~TilePathSampler() {
@@ -72,8 +74,16 @@ void TilePathSampler::InitNewSample() {
 
 	// Initialize sample0 and sample1
 	const u_int *subRegion = film->GetSubRegion();
-	sample0 = tileWork->GetCoord().x - subRegion[0] + tileX + sobolSequence.GetSample(tilePass, 0);
-	sample1 = tileWork->GetCoord().y - subRegion[2] + tileY + sobolSequence.GetSample(tilePass, 1);
+	// Preserve pixel ownership even when float addition rounds a sample
+	// close to 1 up to the next integer. Fixed frame jitter remains exact.
+	const auto pixelSample = [](const u_int pixel, const float u) {
+		return Min(static_cast<float>(pixel) + u,
+				std::nextafter(static_cast<float>(pixel + 1u), 0.f));
+	};
+	sample0 = pixelSample(tileWork->GetCoord().x - subRegion[0] + tileX,
+			fixedPixelCenters ? .5f : sobolSequence.GetSample(tilePass, 0));
+	sample1 = pixelSample(tileWork->GetCoord().y - subRegion[2] + tileY,
+			fixedPixelCenters ? .5f : sobolSequence.GetSample(tilePass, 1));
 }
 
 float TilePathSampler::GetSample(const u_int index) {
@@ -131,7 +141,8 @@ PropertiesUPtr TilePathSampler::ToProperties(const Properties &cfg) {
 
 SamplerUPtr TilePathSampler::FromProperties(const Properties &cfg, const RandomGeneratorUPtr & rndGen,
 		FilmPtr film, const FilmSampleSplatterUPtr& flmSplatter, SamplerSharedDataSPtr sharedData) {
-	return std::make_unique<TilePathSampler>(rndGen, film, flmSplatter);
+	return std::make_unique<TilePathSampler>(rndGen, film, flmSplatter,
+			cfg.Get(Property("path.sampling.pixeljitter.enable")(false)).Get<bool>());
 }
 
 slg::ocl::Sampler *TilePathSampler::FromPropertiesOCL(const Properties &cfg) {

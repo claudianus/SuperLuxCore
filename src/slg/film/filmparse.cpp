@@ -653,6 +653,7 @@ void Film::ParseRadianceGroupsScale(const Properties &props, const u_int imagePi
 		radianceChannelScale.enabled = props.Get(Property(prefix + ".enabled")(true)).Get<bool>();
 
 		imagePipelines[imagePipelineIndex]->SetRadianceChannelScale(index, radianceChannelScale);
+		++imagePipelineRevision;
 	}
 }
 

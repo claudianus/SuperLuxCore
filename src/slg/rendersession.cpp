@@ -25,6 +25,9 @@
 #include "slg/renderstate.h"
 #include "slg/cameras/camera.h"
 #include "luxrays/utils/safesave.h"
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+#include "slg/engines/rtpathocl/rtpathocl.h"
+#endif
 
 using namespace std;
 using namespace luxrays;
@@ -300,7 +303,19 @@ RenderStateSPtr RenderSession::GetRenderState() {
 void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 	assert (renderEngine->IsStarted());
 
-	if ((props->IsDefined("film.width") && (props->Get("film.width").Get<u_int>() != film->GetWidth())) ||
+	bool resolutionPolicyChanged = false;
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+	if (renderEngine->GetType() == RTPATHOCL) {
+		for (const char *name : {"rtpath.resolutionreduction",
+				"rtpath.resolutionreduction.preview", "rtpath.resolutionreduction.preview.step"}) {
+			if (props->IsDefined(name) && props->Get(name).Get<int>() !=
+					renderConfig.GetProperty(name).Get<int>())
+				resolutionPolicyChanged = true;
+		}
+	}
+#endif
+	if (resolutionPolicyChanged ||
+			(props->IsDefined("film.width") && (props->Get("film.width").Get<u_int>() != film->GetWidth())) ||
 			(props->IsDefined("film.height") && (props->Get("film.height").Get<u_int>() != film->GetHeight()))) {
 		// I have to use a special procedure if the parsed props include
 		// a film resize
@@ -338,7 +353,16 @@ void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 		PublishViewportCamera(false);
 	} else {
 		std::unique_lock<std::mutex> lock(filmMutex);
+		const uint64_t previousPipelineRevision = film->GetImagePipelineRevision();
 		film->Parse(props);
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+		if (props->IsDefined("rtpath.denoisingframes.haltspp"))
+			if (auto *rt = dynamic_cast<RTPathOCLRenderEngine *>(renderEngine.get()))
+				rt->SetDenoisingFrameHaltSPP(props->Get("rtpath.denoisingframes.haltspp").Get<u_longlong>());
+		if (film->GetImagePipelineRevision() != previousPipelineRevision)
+			if (auto *rt = dynamic_cast<RTPathOCLRenderEngine *>(renderEngine.get()))
+				rt->InvalidateDenoisingImagePipeline(film->GetImagePipelineRevision());
+#endif
 		// Cryptomatte manifests follow the parsed channel set
 		renderConfig.InjectCryptomatteManifests(*film);
 

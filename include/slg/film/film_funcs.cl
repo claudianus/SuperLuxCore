@@ -318,43 +318,63 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultColor(const uint x, const uint y,
 	}
 }
 
+// Write one selected primary sample as a coherent data-channel cohort.
+// Callers must provide a single writer for this pixel.
+OPENCL_FORCE_INLINE void Film_WriteSampleResultData(const uint index1,
+        __constant const Film* restrict film,
+        __global SampleResult *sampleResult,
+        __global float *filmPosition, __global float *filmGeometryNormal,
+        __global float *filmShadingNormal, __global uint *filmMaterialID,
+        __global float *filmUV, __global uint *filmObjectID,
+        __global float *filmMotionVector) {
+	const uint index2 = index1 * 2;
+	const uint index3 = index1 * 3;
+	if (film->hasChannelPosition)
+		Film_SetPixel3(&filmPosition[index3], &sampleResult->position.x);
+	if (film->hasChannelGeometryNormal)
+		Film_SetPixel3(&filmGeometryNormal[index3], &sampleResult->geometryNormal.x);
+	if (film->hasChannelShadingNormal)
+		Film_SetPixel3(&filmShadingNormal[index3], &sampleResult->shadingNormal.x);
+	if (film->hasChannelMaterialID)
+		filmMaterialID[index1] = sampleResult->materialID;
+	if (film->hasChannelUV)
+		Film_SetPixel2(&filmUV[index2], &sampleResult->uv.u);
+	if (film->hasChannelObjectID) {
+		const uint objectID = sampleResult->objectID;
+		if (objectID != NULL_INDEX)
+			filmObjectID[index1] = sampleResult->objectID;
+	}
+	if (film->hasChannelMotionVector) {
+		// Raw {vx, vy, valid, objectMotion}, not weight-normalized
+		__global float *dst = &filmMotionVector[index1 * 4];
+		dst[0] = sampleResult->motionVector[0];
+		dst[1] = sampleResult->motionVector[1];
+		dst[2] = sampleResult->motionVector[2];
+		dst[3] = sampleResult->motionVector[3];
+	}
+}
+
 OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
 		__global SampleResult *sampleResult
 		FILM_PARAM_DECL) {
 	const bool usePixelAtomics = film->usePixelAtomics;
 
 	const uint index1 = x + y * filmWidth;
-	const uint index2 = index1 * 2;
-	const uint index3 = index1 * 3;
 
-	bool depthWrite = true;
-	if (film->hasChannelDepth)
-		depthWrite = Film_MinPixel(usePixelAtomics, &filmDepth[index1], sampleResult->depth);
-
-	if (depthWrite) {
-		if (film->hasChannelPosition)
-			Film_SetPixel3(&filmPosition[index3], &sampleResult->position.x);
-		if (film->hasChannelGeometryNormal)
-			Film_SetPixel3(&filmGeometryNormal[index3], &sampleResult->geometryNormal.x);
-		if (film->hasChannelShadingNormal)
-			Film_SetPixel3(&filmShadingNormal[index3], &sampleResult->shadingNormal.x);
-		if (film->hasChannelMaterialID)
-			filmMaterialID[index1] = sampleResult->materialID;
-		if (film->hasChannelUV)
-			Film_SetPixel2(&filmUV[index2], &sampleResult->uv.u);
-		if (film->hasChannelObjectID) {
-			const uint objectID = sampleResult->objectID;
-			if (objectID != NULL_INDEX)
-				filmObjectID[index1] = sampleResult->objectID;
-		}
-		if (film->hasChannelMotionVector) {
-			// Raw {vx, vy, valid, objectMotion}, not weight-normalized
-			__global float *dst = &filmMotionVector[index1 * 4];
-			dst[0] = sampleResult->motionVector[0];
-			dst[1] = sampleResult->motionVector[1];
-			dst[2] = sampleResult->motionVector[2];
-			dst[3] = sampleResult->motionVector[3];
-		}
+	// Final tiled AA tasks share a pixel. Resolve depth and its dependent
+	// channels once, after all completed SampleResults are available.
+	bool deferData = false;
+#if defined(RENDER_ENGINE_TILEPATHOCL)
+	deferData = film->hasChannelDepth;
+#endif
+	if (!deferData) {
+		bool depthWrite = true;
+		if (film->hasChannelDepth)
+			depthWrite = Film_MinPixel(usePixelAtomics, &filmDepth[index1], sampleResult->depth);
+		if (depthWrite)
+			Film_WriteSampleResultData(index1, film, sampleResult,
+					filmPosition, filmGeometryNormal, filmShadingNormal,
+					filmMaterialID, filmUV, filmObjectID, filmMotionVector);
 	}
 
 	if (film->hasChannelRayCount)

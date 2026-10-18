@@ -116,8 +116,10 @@ void PhotonGICache::serialize(Archive &ar, const u_int version) {
 	ar & causticPhotonTracedCount;
 	ar & causticPhotonPass;
 
-	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
-	finishDroppedParties = 0;
+	// Saving a paused live cache must not mutate its synchronization.
+	// The engine rebinds a loaded cache to its current participant count.
+	if constexpr (Archive::is_loading::value)
+		ResetUpdateSynchronization(threadCount);
 }
 
 namespace slg {

@@ -149,6 +149,23 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 				renderThread->renderEngine->useFilmOutOfCoreMemory) ?
 		((BufferType)(BUFFER_TYPE_READ_WRITE | BUFFER_TYPE_OUT_OF_CORE)) :
 		BUFFER_TYPE_READ_WRITE;
+	if (renderThread->renderEngine->denoisingGuidesEnabled) {
+		const size_t values = size_t(renderThread->renderEngine->taskCount) * DENOISING_GUIDE_STRIDE;
+		const size_t bytes = values * sizeof(float);
+		renderThread->renderEngine->ReserveDenoisingGuideBytes(bytes * 2);
+		denoisingGuideChargedBytes = bytes * 2;
+		try {
+			denoisingGuideRecords.resize(values);
+			renderThread->intersectionDevice.AllocBuffer(&denoisingGuidesBuff, BUFFER_TYPE_READ_WRITE,
+					nullptr, bytes, "Renderer-owned denoising guides");
+		} catch (...) {
+			renderThread->intersectionDevice.FreeBuffer(&denoisingGuidesBuff);
+			std::vector<float>().swap(denoisingGuideRecords);
+			renderThread->renderEngine->ReleaseDenoisingGuideBytes(denoisingGuideChargedBytes);
+			denoisingGuideChargedBytes = 0;
+			throw;
+		}
+	}
 
 	channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.resize(film->GetRadianceGroupCount(), NULL);
 	for (u_int i = 0; i < channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.size(); ++i) {
@@ -442,7 +459,18 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::Init(FilmRef engineFlm,
 	}
 }
 
+void PathOCLBaseOCLRenderThread::ThreadFilm::FreeDenoisingGuides() {
+	renderThread->intersectionDevice.FreeBuffer(&denoisingGuidesBuff);
+	std::vector<float>().swap(denoisingGuideRecords);
+	denoisingGuidePending = false;
+	if (denoisingGuideChargedBytes) {
+		renderThread->renderEngine->ReleaseDenoisingGuideBytes(denoisingGuideChargedBytes);
+		denoisingGuideChargedBytes = 0;
+	}
+}
+
 void PathOCLBaseOCLRenderThread::ThreadFilm::FreeAllOCLBuffers() {
+	FreeDenoisingGuides();
 	// Film buffers
 	for (u_int i = 0; i < channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.size(); ++i)
 		renderThread->intersectionDevice.FreeBuffer(&channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff[i]);
@@ -666,6 +694,12 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::WriteEngineFilmChannel(
 void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(
 		HardwareIntersectionDeviceRef intersectionDevice,
 		const u_int tileX, const u_int tileY) {
+	if (denoisingGuidesBuff) {
+		intersectionDevice.EnqueueReadBuffer(denoisingGuidesBuff, CL_FALSE,
+				denoisingGuidesBuff->GetSize(), denoisingGuideRecords.data());
+		denoisingTileX = tileX; denoisingTileY = tileY;
+		denoisingGuidePending = true;
+	}
 	// Async. transfer of the Film buffers
 
 	for (u_int i = 0; i < channel_RADIANCE_PER_PIXEL_NORMALIZEDs_Buff.size(); ++i) {
@@ -1035,6 +1069,14 @@ void PathOCLBaseOCLRenderThread::ThreadFilm::RecvFilm(
 			denoiser_HistoImage_Buff->GetSize(),
 			denoiser.GetHistoImage());
 	}
+}
+
+void PathOCLBaseOCLRenderThread::ThreadFilm::CommitDenoisingGuides() {
+	// Called only after FinishQueue, before this work's buffers are reused.
+	if (!denoisingGuidePending) return;
+	renderThread->renderEngine->MergeDenoisingGuides(denoisingGuideRecords,
+			denoisingTileX, denoisingTileY, film->GetWidth(), film->GetHeight());
+	denoisingGuidePending = false;
 }
 
 void PathOCLBaseOCLRenderThread::ThreadFilm::SendFilm(

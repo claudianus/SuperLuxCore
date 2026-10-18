@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include <mutex>
+#include <limits>
 #include <boost/format.hpp>
 #include <optional>
 
@@ -626,6 +627,7 @@ PropertiesUPtr TileRepository::ToProperties(const Properties &cfg) {
 
 	*props <<
 			cfg.Get(GetDefaultProps()->Get("tile.multipass.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("tile.multipass.startindex")) <<
 			cfg.Get(GetDefaultProps()->Get("tile.multipass.convergencetest.threshold.reduction")) <<
 			cfg.Get(GetDefaultProps()->Get("tile.multipass.convergencetest.warmup.count"));
 
@@ -642,6 +644,13 @@ TileRepository *TileRepository::FromProperties(const luxrays::Properties &cfg) {
 	auto tileRepository = std::make_unique<TileRepository>(tileWidth, tileHeight);
 
 	tileRepository->enableMultipassRendering = cfg.Get(GetDefaultProps()->Get("tile.multipass.enable")).Get<bool>();
+	// Explicit fresh scramble for independent single-pass frame captures.
+	// Zero preserves the existing sequence; restored repositories retain their
+	// serialized index. Reserve UINT_MAX because the sampler uses index + 1.
+	const u_int startIndex = cfg.Get(GetDefaultProps()->Get("tile.multipass.startindex")).Get<u_int>();
+	if (startIndex == std::numeric_limits<u_int>::max())
+		throw runtime_error("tile.multipass.startindex must be below UINT_MAX");
+	tileRepository->multipassRenderingIndex = startIndex;
 
 	if (cfg.IsDefined("tile.multipass.convergencetest.threshold"))
 		tileRepository->convergenceTestThreshold = cfg.Get(GetDefaultProps()->Get("tile.multipass.convergencetest.threshold")).Get<double>();
@@ -661,6 +670,7 @@ PropertiesUPtr TileRepository::GetDefaultProps() {
 	*props <<
 			Property("tile.size")(32) <<
 			Property("tile.multipass.enable")(true) <<
+			Property("tile.multipass.startindex")(0u) <<
 			Property("tile.multipass.convergencetest.threshold")(6.f / 256.f) <<
 			Property("tile.multipass.convergencetest.threshold.reduction")(0.f) <<
 			Property("tile.multipass.convergencetest.warmup.count")(32);

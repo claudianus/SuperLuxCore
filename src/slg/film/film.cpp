@@ -250,6 +250,74 @@ Film::~Film() {
 	FreeChannels();
 }
 
+
+size_t Film::GetChannelStorageSize() const {
+	return GetChannelStorageSize(channels, channel_IMAGEPIPELINEs.size());
+}
+
+size_t Film::GetChannelStorageSize(const FilmChannels &selectedChannels, const u_int imagePipelineCount) const {
+	size_t bytes = 0;
+	auto add = [&](const FilmChannelType type, const auto &buffer) {
+		if (selectedChannels.count(type) && buffer) bytes += buffer->GetSize();
+	};
+	add(ALBEDO, channel_ALBEDO);
+	add(ALPHA, channel_ALPHA);
+	add(AVG_SHADING_NORMAL, channel_AVG_SHADING_NORMAL);
+	for (const auto &buffer: channel_BY_MATERIAL_IDs) add(BY_MATERIAL_ID, buffer);
+	for (const auto &buffer: channel_BY_OBJECT_IDs) add(BY_OBJECT_ID, buffer);
+	add(CONVERGENCE, channel_CONVERGENCE);
+	add(CRYPTOMATTE_MATERIAL, channel_CRYPTOMATTE_MATERIAL);
+	add(CRYPTOMATTE_OBJECT, channel_CRYPTOMATTE_OBJECT);
+	add(DEPTH, channel_DEPTH);
+	add(DIRECT_DIFFUSE, channel_DIRECT_DIFFUSE);
+	add(DIRECT_DIFFUSE_REFLECT, channel_DIRECT_DIFFUSE_REFLECT);
+	add(DIRECT_DIFFUSE_TRANSMIT, channel_DIRECT_DIFFUSE_TRANSMIT);
+	add(DIRECT_GLOSSY, channel_DIRECT_GLOSSY);
+	add(DIRECT_GLOSSY_REFLECT, channel_DIRECT_GLOSSY_REFLECT);
+	add(DIRECT_GLOSSY_TRANSMIT, channel_DIRECT_GLOSSY_TRANSMIT);
+	add(DIRECT_SHADOW_MASK, channel_DIRECT_SHADOW_MASK);
+	add(EMISSION, channel_EMISSION);
+	add(GEOMETRY_NORMAL, channel_GEOMETRY_NORMAL);
+	for (u_int i = 0; i < Min<size_t>(channel_IMAGEPIPELINEs.size(), imagePipelineCount); ++i)
+		add(IMAGEPIPELINE, channel_IMAGEPIPELINEs[i]);
+	add(INDIRECT_DIFFUSE, channel_INDIRECT_DIFFUSE);
+	add(INDIRECT_DIFFUSE_REFLECT, channel_INDIRECT_DIFFUSE_REFLECT);
+	add(INDIRECT_DIFFUSE_TRANSMIT, channel_INDIRECT_DIFFUSE_TRANSMIT);
+	add(INDIRECT_GLOSSY, channel_INDIRECT_GLOSSY);
+	add(INDIRECT_GLOSSY_REFLECT, channel_INDIRECT_GLOSSY_REFLECT);
+	add(INDIRECT_GLOSSY_TRANSMIT, channel_INDIRECT_GLOSSY_TRANSMIT);
+	add(INDIRECT_SHADOW_MASK, channel_INDIRECT_SHADOW_MASK);
+	add(INDIRECT_SPECULAR, channel_INDIRECT_SPECULAR);
+	add(INDIRECT_SPECULAR_REFLECT, channel_INDIRECT_SPECULAR_REFLECT);
+	add(INDIRECT_SPECULAR_TRANSMIT, channel_INDIRECT_SPECULAR_TRANSMIT);
+	add(IRRADIANCE, channel_IRRADIANCE);
+	// LPE buffers are configured by expressions, independently of the channel
+	// set. CopyDynamicSettings retains them even for a selected presentation.
+	for (const auto &buffer: channel_LPEs) if (buffer) bytes += buffer->GetSize();
+	add(MATERIAL_ID, channel_MATERIAL_ID);
+	add(MATERIAL_ID_COLOR, channel_MATERIAL_ID_COLOR);
+	for (const auto &buffer: channel_MATERIAL_ID_MASKs) add(MATERIAL_ID_MASK, buffer);
+	add(MOTION_VECTOR, channel_MOTION_VECTOR);
+	add(NOISE, channel_NOISE);
+	add(OBJECT_ID, channel_OBJECT_ID);
+	for (const auto &buffer: channel_OBJECT_ID_MASKs) add(OBJECT_ID_MASK, buffer);
+	add(POSITION, channel_POSITION);
+	for (const auto &buffer: channel_RADIANCE_PER_PIXEL_NORMALIZEDs) add(RADIANCE_PER_PIXEL_NORMALIZED, buffer);
+	for (const auto &buffer: channel_RADIANCE_PER_SCREEN_NORMALIZEDs) add(RADIANCE_PER_SCREEN_NORMALIZED, buffer);
+	add(RAYCOUNT, channel_RAYCOUNT);
+	add(SAMPLECOUNT, channel_SAMPLECOUNT);
+	add(SHADING_NORMAL, channel_SHADING_NORMAL);
+	add(USER_IMPORTANCE, channel_USER_IMPORTANCE);
+	add(UV, channel_UV);
+	add(VARIANCE, channel_VARIANCE);
+	return bytes;
+}
+
+void Film::CopyRadianceChannelScales(const Film &film) {
+	for (size_t i = 0; i < Min(imagePipelines.size(), film.imagePipelines.size()); ++i)
+		imagePipelines[i]->radianceChannelScales = film.imagePipelines[i]->radianceChannelScales;
+}
+
 void Film::CopyDynamicSettings(const Film &film) {
 	channels = film.channels;
 	maskMaterialIDs = film.maskMaterialIDs;
@@ -261,9 +329,13 @@ void Film::CopyDynamicSettings(const Film &film) {
 	lpeAutomata = film.lpeAutomata;
 
 	// Copy the image pipeline
+	for (ImagePipeline *ip: imagePipelines)
+		delete ip;
 	imagePipelines.resize(0);
 	for(ImagePipeline *ip: film.imagePipelines)
 		imagePipelines.push_back(ip->Copy());
+	imagePipelineRevision = film.imagePipelineRevision;
+	filmMetadata = film.filmMetadata;
 
 	filmDenoiser->SetEnabled(film.filmDenoiser->IsEnabled());
 }

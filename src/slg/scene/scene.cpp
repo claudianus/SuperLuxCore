@@ -883,6 +883,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 	const bool fromLight = rayType & LIGHT_RAY;
 	const bool cameraRay = rayType & CAMERA_RAY;
 	const bool shadowRay = rayType & SHADOW_RAY;
+	const bool shadowConnection = rayType & SHADOW_TRANSPARENCY_CONNECTION;
+	const SceneRayType contextRayType = rayType & ~SHADOW_TRANSPARENCY_CONNECTION;
 	bool throughShadowTransparency = false;
 
 	// This field can be checked by the calling code even if there was no
@@ -918,16 +920,21 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 		if (hit) {
 			bsdf->Init(
 				fromLight,
-				throughShadowTransparency,
+				throughShadowTransparency && !shadowConnection,
 				*this,
 				*ray,
 				*rayHit,
 				passThrough,
 				volInfo
 			);
+			// Indirect connections can end on a real receiver or emitter.
+			// BSDF::Init's shadow-only shortcut omits its frame, bump and
+			// triangle light, so keep full shading state for these rays.
+			// Emission ownership remains separate from that optimization.
+			bsdf->hitPoint.throughShadowTransparency = throughShadowTransparency;
 			// Fill the context of the ray that produced this hit point
 			// (used by the "rayinfo" texture)
-			bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo,
+			bsdf->hitPoint.SetRayContext(contextRayType, rayEvent, rayDepthInfo,
 					rayHit->t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
 			rayVolume = bsdf->hitPoint.intoObject ?
 				bsdf->hitPoint.exteriorVolume : bsdf->hitPoint.interiorVolume;
@@ -1038,7 +1045,7 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 					t,
 					passThrough
 				);
-				bsdf->hitPoint.SetRayContext(rayType, rayEvent, rayDepthInfo,
+				bsdf->hitPoint.SetRayContext(contextRayType, rayEvent, rayDepthInfo,
 						t, hasCam ? Dot(bsdf->hitPoint.p - camPos, camDir) : 0.f);
 				volInfo->SetScatteredStart(true);
 
@@ -1080,12 +1087,13 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				}
 			}
 
-			if (!continueToTrace && shadowRay) {
+			if (!continueToTrace && (shadowRay || (shadowConnection && !bsdf->IsLightSource()))) {
 				const Spectrum &shadowTransparency = bsdf->GetPassThroughShadowTransparency();
 
 				if (!shadowTransparency.Black()) {
 					*connectionThroughput *= shadowTransparency;
 					throughShadowTransparency = true;
+					bsdf->hitPoint.throughShadowTransparency = true;
 					continueToTrace = true;
 					if (rayDepthInfo)
 						++(rayDepthInfo->transparentDepth);
@@ -1113,7 +1121,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				return true;
 			}
 		} else {
-			// Nothing was hit
+			// Preserve connection ownership even when the final segment missed.
+			bsdf->hitPoint.throughShadowTransparency = throughShadowTransparency;
 			return false;
 		}
 

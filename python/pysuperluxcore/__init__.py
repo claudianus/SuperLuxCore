@@ -172,6 +172,11 @@ def try_load_libs(name, prefix):
         return  # Only for Linux
 
     path_to_libs = _LUXFOLDER / ".." / "pysuperluxcore.libs"
+    # A static/development build can load its dependencies without an
+    # auditwheel bundle. Its native import above already checked the linker;
+    # an absent optional bundle must not prevent loading the Python package.
+    if not path_to_libs.is_dir():
+        return
 
     prefix = "lib" + prefix
     libs = [l for l in path_to_libs.iterdir() if l.name.startswith(prefix)]

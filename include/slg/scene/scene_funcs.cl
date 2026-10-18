@@ -25,7 +25,7 @@ OPENCL_FORCE_INLINE void HitPoint_SetRayContext(__global HitPoint *hitPoint,
 		__global const PathDepthInfo *depthInfo, const float length,
 		const float viewDepth) {
 	hitPoint->rayEvent = event;
-	hitPoint->rayFlags = rayType;
+	hitPoint->rayFlags = rayType & ~SHADOW_TRANSPARENCY_CONNECTION;
 	hitPoint->rayDepth = depthInfo ? depthInfo->depth : 0u;
 	hitPoint->rayDiffuseDepth = depthInfo ? depthInfo->diffuseDepth : 0u;
 	hitPoint->rayGlossyDepth = depthInfo ? depthInfo->glossyDepth : 0u;
@@ -75,6 +75,7 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 	
 	const bool cameraRay = rayType & CAMERA_RAY;
 	const bool shadowRay = rayType & SHADOW_RAY;
+	const bool shadowConnection = rayType & SHADOW_TRANSPARENCY_CONNECTION;
 
 	const bool hit = (rayHit->meshIndex != NULL_INDEX);
 
@@ -269,13 +270,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			}
 		}
 
-		if (!continueToTrace && shadowRay) {
+		if (!continueToTrace && (shadowRay ||
+				(shadowConnection && (bsdf->triangleLightSourceIndex == NULL_INDEX)))) {
 			const float3 shadowTransparency = BSDF_GetPassThroughShadowTransparency(bsdf
 				MATERIALS_PARAM);
 
 			if (!Spectrum_IsBlack(shadowTransparency)) {
 				*connectionThroughput *= shadowTransparency;
 				*throughShadowTransparency = true;
+				bsdf->hitPoint.throughShadowTransparency = true;
 				continueToTrace = true;
 				if (rayDepthInfo)
 					++(rayDepthInfo->transparentDepth);
@@ -293,8 +296,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 			ray->mint = rayHit->t + MachineEpsilon_E(rayHit->t);
 
 			// A safety check in case of not enough numerical precision
-			if ((ray->mint == rayHit->t) || (ray->mint >= ray->maxt))
+			if ((ray->mint == rayHit->t) || (ray->mint >= ray->maxt)) {
+				// The accepted transparent hit exhausted the shadow segment.
+				// CPU Scene::Intersect reports visibility here; MK_RT_DL
+				// also needs a miss marker to avoid treating the old pane
+				// as an opaque blocker after the walk has terminated.
+				if (shadowRay)
+					rayHit->meshIndex = NULL_INDEX;
 				return false;
+			}
 			else
 				return true;
 		} else {
@@ -303,6 +313,7 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 		}
 	} else {
 		// Nothing was hit, stop tracing the ray
+		bsdf->hitPoint.throughShadowTransparency = *throughShadowTransparency;
 		return false;
 	}
 }
