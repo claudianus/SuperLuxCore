@@ -2,7 +2,7 @@
 import argparse,hashlib,json,os,shutil,signal,subprocess,sys,zipfile
 from pathlib import Path
 
-VERSION='2.11.34+dlss.exp20261019.fix3'
+VERSION='2.11.34+dlss.exp20261019.fix4'
 HELPER_COMMIT='f3449d59676ebdf8fe1e3064e9d92ae36595eee6';HELPER_RUN=39202645597
 LINUX_NATIVE='524385a46906b71cc7b9f5f4d68b42b4014bc7a6';LINUX_RUN=39203919041
 WINDOWS_NATIVE='62551c4a8cb0097d35536ece26a79460e5f19db7';WINDOWS_RUN=39196423363
@@ -31,11 +31,11 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--platform',choices=['windows','linux'],required=True);args=parser.parse_args();windows=args.platform=='windows'
     assert (os.name=='nt')==windows
     base=Path.cwd();work=base/'package-input';work.mkdir();out=base/'addon-build/out';out.mkdir(parents=True);wheels=base/'addon/wheels';wheels.mkdir(exist_ok=True)
-    platform='windows_x64' if windows else 'linux_x64';previous_version='2.11.34+dlss.exp20261019.fix2' if windows else '2.11.34+dlss.exp20261019';previous_tag='experimental-windows-dlss-20261019-fix2' if windows else 'experimental-windows-dlss-20261019'
+    platform='windows_x64' if windows else 'linux_x64';previous_version='2.11.34+dlss.exp20261019.fix3';previous_tag='experimental-windows-dlss-20261019-fix3' if windows else 'experimental-linux-dlss-20261019-fix3'
     previous_name='SuperLuxCore-'+previous_version+'-'+platform+'.zip';previous_dir=work/'previous';previous_dir.mkdir()
     accepted(HELPER_RUN,HELPER_COMMIT);accepted(WINDOWS_RUN if windows else LINUX_RUN,WINDOWS_NATIVE if windows else LINUX_NATIVE)
     run(['gh','release','download',previous_tag,'--repo','claudianus/SuperBlendLuxCore','--pattern',previous_name,'--dir',previous_dir])
-    previous=previous_dir/previous_name;assert sha(previous)==('49dcf1e834679861f9ca42c58f08108a1bfef61bd813be1bd241a62daf40ceeb' if windows else '830ca35479047570cb9fd9f50f48e59a5787b703e869911a17cdd82c46cb91f1')
+    previous=previous_dir/previous_name;assert sha(previous)==('061f832dba291ed057b783c2cf9988bae2b4a789c726476e089a5e148b39375b' if windows else '40141aa32bb0ada0688fe811ff09ccbe5676cd8b98d05047507633120d9b50f5')
     helper_dir=work/'helper';run(['gh','run','download',str(HELPER_RUN),'--repo','claudianus/SuperLuxCore','--name','dlss-frame-windows-helper' if windows else 'dlss-frame-linux-helper','--dir',helper_dir])
     install=helper_dir/'out'/('dlss-install' if windows else 'dlss-linux-install');proof=helper_dir/('helper-abi.json' if windows else 'linux-helper-abi.json')
     raw=work/'raw';raw.mkdir()
@@ -44,6 +44,12 @@ def main():
             name,=[n for n in z.namelist() if n.startswith('wheels/pysuperluxcore-') and n.endswith('.whl')]
             with z.open(name) as src,(raw/Path(name).name).open('wb') as dst:shutil.copyfileobj(src,dst)
     else:run(['gh','run','download',str(LINUX_RUN),'--repo','claudianus/SuperLuxCore','--name','native-linux-wheel-input','--dir',raw])
+    baseline=work/'base-fix3.py';baseline.write_bytes(subprocess.check_output(['git','-C','addon','show','fe7a9ce469377b807f587e1d088aa59151285d32:engine/base.py']))
+    test='addon/dev-tools/viewport_error_stop_test.py'
+    with (out/'recovery-baseline.log').open('w') as log:
+        q=subprocess.run([sys.executable,test,'--source',str(baseline),'--out',str(out/'recovery-baseline.json')],stdout=log,stderr=subprocess.STDOUT,timeout=30)
+    b=json.loads((out/'recovery-baseline.json').read_text());assert q.returncode==1 and sum(not x['passed'] for x in b['records'])==4 and len(b['records'])==7
+    run([sys.executable,test,'--out',str(out/'recovery-fixed.json')],30)
     wheel,=raw.glob('*.whl');native_commit=WINDOWS_NATIVE if windows else LINUX_NATIVE;native_run=WINDOWS_RUN if windows else LINUX_RUN
     stage=[sys.executable,'dev-tools/dlss_component_stage.py','--platform',args.platform,'--wheel',wheel,'--helper',install,'--helper-proof',proof,'--out',wheels,'--version',VERSION,'--renderer-commit',native_commit,'--renderer-ci','https://github.com/claudianus/SuperLuxCore/actions/runs/'+str(native_run),'--helper-commit',HELPER_COMMIT,'--package-commit',os.environ['GITHUB_SHA']]
     if not windows:stage+=['--runtime',base/'.dlss-sdk/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16','--runtime-license',base/'.dlss-sdk/LICENSE.txt']

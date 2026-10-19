@@ -1,0 +1,11 @@
+{
+  "Windows_renderer_native_commit": "62551c4a8cb0097d35536ece26a79460e5f19db7",
+  "helper_source_commit": "f3449d59676ebdf8fe1e3064e9d92ae36595eee6",
+  "changed_non_workflow_test_doc_paths": [
+    "src/slg/film/denoiser/dlss/api.h",
+    "src/slg/film/denoiser/dlss/runtime.cpp"
+  ],
+  "standalone_helper_excluded_from_renderer_target": true,
+  "Windows_renderer_reuse_source_equivalence_verified": true,
+  "unaccepted_Phase71_79_renderer_implementation_excluded": true
+}

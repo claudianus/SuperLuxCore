@@ -1,0 +1,118 @@
+name: Viewport error Stop fix4 installed package acceptance
+on:
+  push:
+    branches: [review/viewport-error-stop-20261019]
+permissions:
+  contents: read
+jobs:
+  staging-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --no-cache-dir wheel
+      - run: python dev-tools/dlss_component_stage_test.py staging-fixtures.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: fix4-staging-fixtures
+          path: staging-fixtures.json
+  package-windows:
+    needs: [staging-fixtures]
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Preserve source bytes
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: claudianus/SuperBlendLuxCore
+          ref: 3a2c6603e4c2a38d5c87e9f39065fb43ff982aaa
+          path: addon
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --no-cache-dir wheel cmake ninja
+      - name: Fetch official hash-verified stock Blender
+        run: python dev-tools/dlss_fetch_blender.py
+      - name: Whole ZIP build and installed upgrade acceptance
+        run: python dev-tools/dlss_stability_package.py --platform windows
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: dlss-fix4-windows-package
+          path: |
+            addon-build/out/*windows_x64.zip
+            addon-build/out/*.json
+            addon-build/out/*.exr
+            addon-build/out/recovery-*.log
+          retention-days: 14
+      - name: Remove owned temporary Blender and profiles
+        if: always()
+        shell: python
+        run: |
+          import os,pathlib,shutil
+          for p in [pathlib.Path(os.environ['RUNNER_TEMP'])/'slc-fix3-stock-blender',pathlib.Path('addon-build/out/profile-한글'),pathlib.Path('package-input')]:
+              shutil.rmtree(p,ignore_errors=True)
+              assert not p.exists(),p
+  package-linux:
+    needs: [staging-fixtures]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Preserve source bytes
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: claudianus/SuperBlendLuxCore
+          ref: 3a2c6603e4c2a38d5c87e9f39065fb43ff982aaa
+          path: addon
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --no-cache-dir wheel cmake ninja
+      - uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/DLSS
+          ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
+          path: .dlss-sdk
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /LICENSE.txt
+            /lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16
+      - name: Stock Blender system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 libgl1 libsm6 libxrender1
+      - name: Fetch official hash-verified stock Blender
+        run: python dev-tools/dlss_fetch_blender.py
+      - name: Whole ZIP build and installed upgrade acceptance
+        run: python dev-tools/dlss_stability_package.py --platform linux
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: dlss-fix4-linux-package
+          path: |
+            addon-build/out/*linux_x64.zip
+            addon-build/out/*.json
+            addon-build/out/*.exr
+            addon-build/out/recovery-*.log
+          retention-days: 14
+      - name: Remove owned temporary Blender and profiles
+        if: always()
+        shell: python
+        run: |
+          import os,pathlib,shutil
+          for p in [pathlib.Path(os.environ['RUNNER_TEMP'])/'slc-fix3-stock-blender',pathlib.Path('addon-build/out/profile-한글'),pathlib.Path('package-input')]:
+              shutil.rmtree(p,ignore_errors=True)
+              assert not p.exists(),p
