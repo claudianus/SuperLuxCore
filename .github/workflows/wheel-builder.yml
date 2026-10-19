@@ -1,7 +1,7 @@
-name: Windows GPU teardown hotfix acceptance
+name: Windows DLSS stability fix2 acceptance
 on:
   push:
-    branches: [release/windows-gpu-teardown-20261019]
+    branches: [release/windows-dlss-stability-20261019-fix2]
 permissions:
   contents: read
 jobs:
@@ -22,10 +22,34 @@ jobs:
       - uses: actions/checkout@v6
       - run: python dev-tools/cuda_teardown_test.py --out cuda-fixed.json
       - run: python dev-tools/film_pipeline_teardown_test.py --out film-fixed.json
+      - run: python dev-tools/film_async_error_test.py --out async-fixed.json
+      - run: python dev-tools/opencl_cleanup_error_test.py --out opencl-fixed.json
+      - run: python dev-tools/film_cleanup_ownership_test.py --out ownership-fixed.json
+      - run: python dev-tools/cuda_buffer_cleanup_test.py --out cuda-buffer-fixed.json
+      - run: python dev-tools/optix_denoiser_cleanup_test.py --out optix-fixed.json
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --out dlss-runtime-fixed.json
       - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: teardown-host-regression
+          path: '*-fixed.json'
+
+  windows-no-console:
+    name: Windows MSVC teardown with and without a console
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --out windows-console-fixed.json
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --no-console --out windows-gui-fixed.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: windows-cleanup-no-console
           path: '*-fixed.json'
 
   # CUDA is never exercised on the macOS dev machines nor on the GPU-less
@@ -33,7 +57,7 @@ jobs:
   # on CUDA (v2.11.21). NVRTC needs no GPU: compile every hardware program as
   # CUDADevice assembles it and refuse to build wheels when any of them fails.
   cuda-kernel-check:
-    needs: [packaging-regression, teardown-regression]
+    needs: [packaging-regression, teardown-regression, windows-no-console]
     name: CUDA kernel compile gate (NVRTC)
     runs-on: ubuntu-latest
     steps:
@@ -501,7 +525,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: claudianus/SuperBlendLuxCore
-          ref: a4819ba6ac76c25139c0be8e11c80ef8b481e3df
+          ref: 7582980f5e8198bb189baa22d0226934e31cb6a5
           path: addon
       - uses: actions/setup-python@v5
         with:
@@ -510,6 +534,13 @@ jobs:
         with:
           name: cibw-wheels-windows-2022-13
           path: addon/wheels
+      - name: Viewport fallback and failure presentation regression
+        shell: pwsh
+        run: |
+          python addon/dev-tools/dlss_viewport_fallback_test.py --out viewport-fallback.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python addon/dev-tools/dlss_viewport_backend_ui_test.py --out viewport-backend-ui.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Give the wheel its unique experimental cache identity
         shell: pwsh
         run: |
@@ -525,7 +556,7 @@ jobs:
           Invoke-WebRequest https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip -OutFile "$env:RUNNER_TEMP/blender.zip"
           Expand-Archive "$env:RUNNER_TEMP/blender.zip" "$env:RUNNER_TEMP/blender"
           Remove-Item "$env:RUNNER_TEMP/blender.zip"
-          gh release download experimental-windows-dlss-20261019 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34+dlss.exp20261019-windows_x64.zip --dir stable-package
+          gh release download experimental-windows-dlss-20261019-fix1 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34+dlss.exp20261019.fix1-windows_x64.zip --dir stable-package
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "BLENDER_ROOT=$env:RUNNER_TEMP/blender/blender-5.2.2-windows-x64" >> $env:GITHUB_ENV
       - name: Build and verify Windows extension
@@ -555,9 +586,9 @@ jobs:
                   raise
               if code: raise RuntimeError('Blender failed: '+str(code))
           try:
-              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34+dlss.exp20261019-windows_x64.zip').resolve()
+              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34+dlss.exp20261019.fix1-windows_x64.zip').resolve()
               run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(stable)], 120)
-              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34+dlss.exp20261019'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.pyd')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34+dlss.exp20261019','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
+              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34+dlss.exp20261019.fix1'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.pyd')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34+dlss.exp20261019.fix1','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
               run(['--background','--factory-startup','--python-exit-code','1','--python-expr',expression], 120)
               run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
               run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)

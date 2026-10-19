@@ -201,27 +201,32 @@ void Film::CreateHWContext() {
 	}
 }
 
-void Film::DeleteHWContext() {
-	if (hardwareDevice) {
-		hardwareDevice->PushThreadCurrentDevice();
-
-		const size_t size = hardwareDevice->GetUsedMemory();
-		SLG_LOG("[" << hardwareDevice->GetName() << "] Memory used for hardware image pipeline: " <<
-				(size < 10000 ? size : (size / 1024)) << (size < 10000 ? "bytes" : "Kbytes"));
-
-		hardwareDevice->FreeBuffer(&hw_IMAGEPIPELINE);
-		hardwareDevice->FreeBuffer(&hw_ALPHA);
-		hardwareDevice->FreeBuffer(&hw_OBJECT_ID);
-		hardwareDevice->FreeBuffer(&hw_ALBEDO);
-		hardwareDevice->FreeBuffer(&hw_AVG_SHADING_NORMAL);
-		hardwareDevice->FreeBuffer(&hw_mergeBuffer);
-
-		hardwareDevice->PopThreadCurrentDevice();
-		hardwareDevice = nullptr;
-	}
-
-	ctx.reset();
-	dataSet.reset();
+void Film::DeleteHWContext() noexcept {
+ if (hardwareDevice) {
+  bool pushed = false;
+  try { hardwareDevice->PushThreadCurrentDevice(); pushed = true; }
+  catch (...) { std::fprintf(stderr, "Film hardware cleanup: context push failed\n"); }
+  if (pushed) {
+   try { hardwareDevice->FinishQueue(); }
+   catch (...) { std::fprintf(stderr, "Film hardware cleanup: queue drain failed\n"); }
+  }
+  hardwareDevice->FreeBufferForDestruction(&hw_IMAGEPIPELINE);
+  hardwareDevice->FreeBufferForDestruction(&hw_ALPHA);
+  hardwareDevice->FreeBufferForDestruction(&hw_OBJECT_ID);
+  hardwareDevice->FreeBufferForDestruction(&hw_ALBEDO);
+  hardwareDevice->FreeBufferForDestruction(&hw_AVG_SHADING_NORMAL);
+  hardwareDevice->FreeBufferForDestruction(&hw_mergeBuffer);
+  if (pushed) {
+   try { hardwareDevice->PopThreadCurrentDevice(); }
+   catch (...) { std::fprintf(stderr, "Film hardware cleanup: context pop failed\n"); }
+  }
+  hardwareDevice = nullptr;
+ }
+ // This Film context has no intersection workers. Do not re-enter throwing
+ // Context::Stop from its noexcept destructor after a driver failure.
+ if (ctx) ctx->StopHardwareForDestruction();
+ ctx.reset();
+ dataSet.reset();
 }
 
 void Film::AllocateHWBuffers() {

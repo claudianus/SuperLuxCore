@@ -50,7 +50,7 @@ GammaCorrectionPlugin::GammaCorrectionPlugin(const float g, const u_int tableSiz
 
 GammaCorrectionPlugin::~GammaCorrectionPlugin() {
 	if (hardwareDevice)
-		hardwareDevice->FreeBuffer(&hwGammaTable);
+		hardwareDevice->FreeBufferForDestruction(&hwGammaTable);
 }
 
 ImagePipelinePlugin *GammaCorrectionPlugin::Copy() const {

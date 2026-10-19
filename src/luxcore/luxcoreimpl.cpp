@@ -537,6 +537,7 @@ void FilmImplSession::WaitAsyncExecuteImagePipeline() {
 
 	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
 	renderSession.GetSLGRenderSession().film->WaitAsyncExecuteImagePipeline();
+	renderSession.GetSLGRenderSession().film->HasDoneAsyncExecuteImagePipeline();
 
 	API_END();
 }
@@ -953,6 +954,7 @@ void FilmImplStandalone::WaitAsyncExecuteImagePipeline() {
 	API_BEGIN_NOARGS();
 
 	standAloneFilm->WaitAsyncExecuteImagePipeline();
+	standAloneFilm->HasDoneAsyncExecuteImagePipeline();
 
 	API_END();
 }

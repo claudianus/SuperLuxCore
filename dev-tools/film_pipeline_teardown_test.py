@@ -14,6 +14,7 @@ from cuda_teardown_test import method, ROOT
 
 PREAMBLE = r'''
 #include <atomic>
+#include <cstdio>
 #include <cassert>
 #include <chrono>
 #include <memory>
@@ -29,6 +30,7 @@ atomic<bool> workerOwns{false};
 int deleted = 0;
 struct Device {
     int saved = 0, syncs = 0;
+    bool HasCleanupError()const noexcept { return false; }
     void PushThreadCurrentDevice() { saved = current; current = 7; }
     void PopThreadCurrentDevice() { current = saved; }
     void FinishQueue() { assert(current == 7); ++syncs; }
@@ -48,7 +50,7 @@ struct Film {
     atomic<bool> isAsyncImagePipelineRunning{false};
     Device *hardwareDevice = nullptr;
     unsigned long long imagePipelineRevision = 0;
-    void DeleteImagePipeline(ImagePipeline *);
+    bool DeleteImagePipeline(ImagePipeline *);
     void WaitAsyncExecuteImagePipeline();
     void SetImagePipelines(u_int, ImagePipeline *);
     void SetImagePipelines(ImagePipeline *);
@@ -98,8 +100,12 @@ def main():
                   'void Film::SetImagePipelines(const u_int index',
                   'void Film::SetImagePipelines(ImagePipeline *',
                   'void Film::SetImagePipelines(std::vector<ImagePipeline *> &']
-    if 'void Film::DeleteImagePipeline(' in source:
+    if 'bool Film::DeleteImagePipeline(' in source:
+        signatures.insert(0, 'bool Film::DeleteImagePipeline(')
+    elif 'void Film::DeleteImagePipeline(' in source:
         signatures.insert(0, 'void Film::DeleteImagePipeline(')
+        global PREAMBLE
+        PREAMBLE = PREAMBLE.replace('bool DeleteImagePipeline', 'void DeleteImagePipeline')
     body = '\n'.join(method(source, sig) for sig in signatures)
     results = []
     with tempfile.TemporaryDirectory(prefix='slc-film-teardown-') as tmp:

@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <exception>
 #include <iostream>
 #include <vector>
 #include <unordered_set>
@@ -639,7 +640,7 @@ private:
 
 	void SetUpHW();
 	void CreateHWContext();
-	void DeleteHWContext();
+	void DeleteHWContext() noexcept;
 	void AllocateHWBuffers();
 	void CompileHWKernels();
 	void WriteAllHWBuffers();
@@ -647,7 +648,7 @@ private:
 
 	void ExecuteImagePipelineThreadImpl(const u_int index);
 	void ExecuteImagePipelineImpl(const u_int index);
-	void DeleteImagePipeline(ImagePipeline *pipeline);
+	bool DeleteImagePipeline(ImagePipeline *pipeline);
 
 	template <bool overwrite>
 	void AddFilmImpl(const Film &film,
@@ -673,6 +674,7 @@ private:
 	uint64_t imagePipelineRevision = 0;
 	luxrays::JThreadUPtr imagePipelineThread;
 	std::atomic<bool> isAsyncImagePipelineRunning;
+	std::exception_ptr asyncImagePipelineError;
 
 	// Halt conditions
 	FilmConvTest *convTest;

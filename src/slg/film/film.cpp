@@ -322,15 +322,19 @@ void Film::CopyDynamicSettings(const Film &film) {
 	lpeAutomata = film.lpeAutomata;
 
 	// Copy the image pipeline
-	for (ImagePipeline *ip: imagePipelines)
-		DeleteImagePipeline(ip);
-	imagePipelines.resize(0);
+	bool cleanupOK = true;
+	for (auto *&ip: imagePipelines) {
+		cleanupOK = DeleteImagePipeline(ip) && cleanupOK;
+		ip = nullptr;
+	}
+	imagePipelines.clear();
 	for(ImagePipeline *ip: film.imagePipelines)
 		imagePipelines.push_back(ip->Copy());
 	imagePipelineRevision = film.imagePipelineRevision;
 	filmMetadata = film.filmMetadata;
 
 	filmDenoiser->SetEnabled(film.filmDenoiser->IsEnabled());
+	if (!cleanupOK) throw runtime_error("Image pipeline cleanup failed after copying owned settings");
 }
 
 void Film::CopyHaltSettings(const Film &film) {

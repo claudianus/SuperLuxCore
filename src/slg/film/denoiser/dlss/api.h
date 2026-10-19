@@ -38,6 +38,8 @@ SLC_DLSS_API void *slc_dlss_create(uint32_t device,const char *runtime_dir,const
 SLC_DLSS_API int slc_dlss_set_preset(void *,uint32_t preset,char *error,uint32_t capacity);
 SLC_DLSS_API int slc_dlss_process(void *,const SlcDLSSFrame *,float *output,uint64_t output_float_capacity,char *error,uint32_t capacity);
 SLC_DLSS_API void slc_dlss_stats(void *,SlcDLSSStats *);
+// Consumes a non-null instance once; destroy(NULL) is a no-op. Driver cleanup
+// failures do not escape the C ABI and disable further use until host restart.
 SLC_DLSS_API void slc_dlss_destroy(void *);
 #ifdef __cplusplus
 }

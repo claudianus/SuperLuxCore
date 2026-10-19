@@ -48,7 +48,7 @@ GaussianBlur3x3FilterPlugin::~GaussianBlur3x3FilterPlugin() {
 	delete[] tmpBuffer;
 
 	if (hardwareDevice)
-		hardwareDevice->FreeBuffer(&hwTmpBuffer);
+		hardwareDevice->FreeBufferForDestruction(&hwTmpBuffer);
 }
 
 ImagePipelinePlugin *GaussianBlur3x3FilterPlugin::Copy() const {

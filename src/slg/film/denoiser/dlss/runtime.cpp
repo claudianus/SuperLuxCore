@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -23,18 +24,40 @@ void ngx(NVSDK_NGX_Result r){if(NVSDK_NGX_FAILED(r))throw std::runtime_error("NG
 void error(char *target,uint32_t capacity,const char *message){if(target&&capacity){std::strncpy(target,message,capacity-1);target[capacity-1]=0;}}
 struct Manager {
     CUcontext context=nullptr;unsigned refs=0,device=0;std::string runtime,cache;
+    bool cleanupFailed=false;
 } manager;
+bool cudaCleanup(CUresult result,const char *operation) noexcept {
+    if(result==CUDA_SUCCESS)return true;
+    manager.cleanupFailed=true;
+    std::fprintf(stderr,"DLSS cleanup: %s failed (CUDA %d); restart Blender\n",operation,int(result));
+    return false;
+}
+bool ngxCleanup(NVSDK_NGX_Result result,const char *operation) noexcept {
+    if(!NVSDK_NGX_FAILED(result))return true;
+    manager.cleanupFailed=true;
+    std::fprintf(stderr,"DLSS cleanup: %s failed (NGX %u); restart Blender\n",operation,unsigned(result));
+    return false;
+}
 struct Scope {
     explicit Scope(CUcontext context){cuda(cuCtxPushCurrent(context));}
     ~Scope(){CUcontext unused=nullptr;cuCtxPopCurrent(&unused);}
 };
-void releaseManager(){
-    if(--manager.refs==0){
-        {Scope scope(manager.context);NVSDK_NGX_CUDA_Shutdown();}
-        cuCtxDestroy(manager.context);manager=Manager();
+void releaseManager() noexcept {
+    if(!manager.refs||--manager.refs)return;
+    if(cudaCleanup(cuCtxPushCurrent(manager.context),"shutdown context push")){
+        ngxCleanup(NVSDK_NGX_CUDA_Shutdown(),"NGX shutdown");
+        CUcontext previous=nullptr;
+        cudaCleanup(cuCtxPopCurrent(&previous),"shutdown context pop");
+    }
+    // The context owns allocations whose explicit release failed. Do not
+    // replace a still-owned context after a failed destroy or reuse failed NGX.
+    if(cudaCleanup(cuCtxDestroy(manager.context),"context destroy")){
+        const bool failed=manager.cleanupFailed;
+        manager=Manager();manager.cleanupFailed=failed;
     }
 }
 void acquireManager(unsigned device,const char *runtime,const char *cache){
+    if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before creating another instance");
     if(!runtime||!cache||!*cache)throw std::runtime_error("Runtime and writable cache paths are required");
     if(manager.refs){
         if(device!=manager.device||runtime!=manager.runtime||cache!=manager.cache)throw std::runtime_error("Active DLSS instances must share one GPU/runtime/cache");
@@ -77,7 +100,15 @@ struct Texture {
             cuda(cuTexObjectCreate(&texture,&resource,&desc,nullptr));cuda(cuSurfObjectCreate(&surface,&resource));
         }catch(...){release();throw;}
     }
-    void release(){if(surface)cuSurfObjectDestroy(surface);if(texture)cuTexObjectDestroy(texture);if(array)cuArrayDestroy(array);surface=0;texture=0;array=nullptr;}
+    void release() noexcept {
+        if(surface)cudaCleanup(cuSurfObjectDestroy(surface),"surface destroy");
+        if(texture)cudaCleanup(cuTexObjectDestroy(texture),"texture destroy");
+        if(array)cudaCleanup(cuArrayDestroy(array),"array destroy");
+        surface=0;texture=0;array=nullptr;
+    }
+    // A failed owning-context push must never free objects in the caller's
+    // context. Retain native ownership in manager.context, consume host owners.
+    void abandon() noexcept {surface=0;texture=0;array=nullptr;}
     ~Texture(){release();}
     Texture(const Texture&)=delete;Texture&operator=(const Texture&)=delete;
     void upload(const float *values){
@@ -102,11 +133,17 @@ struct Instance {
     std::vector<float> scratch;uint64_t lastId=0,lastScene=0;bool history=false;
     explicit Instance(uint64_t bytes):limit(bytes){stats.sdk_private_bytes=UINT64_MAX;}
     ~Instance(){clear();}
-    void clear(){
-        if(feature){cuCtxSynchronize();NVSDK_NGX_CUDA_ReleaseFeature(feature);feature=nullptr;}
+    void clear() noexcept {
+        if(feature){cudaCleanup(cuCtxSynchronize(),"feature synchronize");ngxCleanup(NVSDK_NGX_CUDA_ReleaseFeature(feature),"feature release");feature=nullptr;}
         color.reset();depth.reset();diffuse.reset();specular.reset();normal.reset();motion.reset();specMotion.reset();output.reset();
         std::vector<float>().swap(scratch);history=false;stats.texture_bytes=stats.host_scratch_bytes=0;
         stats.width=stats.height=stats.output_width=stats.output_height=0;
+    }
+    void abandon() noexcept {
+        feature=nullptr;
+        for(auto *texture:{color.get(),depth.get(),diffuse.get(),specular.get(),normal.get(),motion.get(),specMotion.get(),output.get()})
+            if(texture)texture->abandon();
+        clear();
     }
     bool resize(const SlcDLSSFrame &f){
         if(feature&&stats.width==f.width&&stats.height==f.height&&stats.output_width==f.output_width&&stats.output_height==f.output_height)return false;
@@ -114,6 +151,7 @@ struct Instance {
         const uint64_t hostBytes=uint64_t(f.output_width)*f.output_height*4*4;
         if(textureBytes+hostBytes>limit)throw std::runtime_error("DLSS owned-memory budget exceeded; SDK-private allocations are additional and unknown");
         clear();
+        if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before resizing");
         try{
             Parameters p;p->Set(NVSDK_NGX_Parameter_Width,f.width);p->Set(NVSDK_NGX_Parameter_Height,f.height);
             p->Set(NVSDK_NGX_Parameter_OutWidth,f.output_width);p->Set(NVSDK_NGX_Parameter_OutHeight,f.output_height);
@@ -194,6 +232,7 @@ uint32_t slc_dlss_abi(){return 1;}
 int slc_dlss_set_preset(void *handle,uint32_t preset,char *message,uint32_t capacity){
     std::lock_guard<std::mutex> lock(mutex);error(message,capacity,"");
     try{
+        if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before selecting a preset");
         if(!handle || (preset!=0 && preset!=4 && preset!=5 && preset!=6))throw std::runtime_error("Invalid DLSS model preset");
         auto &instance=*static_cast<Instance*>(handle);
         if(instance.feature || instance.stats.frames)throw std::runtime_error("DLSS model must be selected before the first frame");
@@ -207,9 +246,24 @@ void *slc_dlss_create(uint32_t device,const char *runtime,const char *cache,uint
 }
 int slc_dlss_process(void *handle,const SlcDLSSFrame *frame,float *output,uint64_t outputCapacity,char *message,uint32_t capacity){
     std::lock_guard<std::mutex> lock(mutex);error(message,capacity,"");
-    try{if(!handle||!frame)throw std::runtime_error("Invalid DLSS handle/frame");Scope scope(manager.context);static_cast<Instance*>(handle)->process(*frame,output,outputCapacity);return 1;}
+    try{if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before processing");if(!handle||!frame)throw std::runtime_error("Invalid DLSS handle/frame");Scope scope(manager.context);static_cast<Instance*>(handle)->process(*frame,output,outputCapacity);return 1;}
     catch(const std::exception &e){error(message,capacity,e.what());return 0;}
 }
 void slc_dlss_stats(void *handle,SlcDLSSStats *stats){std::lock_guard<std::mutex> lock(mutex);if(handle&&stats)*stats=static_cast<Instance*>(handle)->stats;}
-void slc_dlss_destroy(void *handle){std::lock_guard<std::mutex> lock(mutex);if(handle){{Scope scope(manager.context);delete static_cast<Instance*>(handle);}releaseManager();}}
+void slc_dlss_destroy(void *handle){
+    if(!handle)return;
+    try{
+        std::lock_guard<std::mutex> lock(mutex);
+        const bool pushed=cudaCleanup(cuCtxPushCurrent(manager.context),"instance context push");
+        auto *instance=static_cast<Instance*>(handle);
+        if(!pushed)instance->abandon();
+        delete instance;
+        if(pushed){CUcontext previous=nullptr;cudaCleanup(cuCtxPopCurrent(&previous),"instance context pop");}
+        releaseManager();
+    }catch(...){
+        // Do not allow a C++ mutex/runtime exception to cross ctypes' C ABI.
+        // If locking itself failed, shared ownership cannot safely be mutated.
+        std::fprintf(stderr,"DLSS cleanup: runtime lock failure; restart Blender\n");
+    }
+}
 }

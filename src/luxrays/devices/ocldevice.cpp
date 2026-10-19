@@ -1,3 +1,4 @@
+#include <cstdio>
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -157,11 +158,16 @@ OpenCLDevice::OpenCLDevice(
 }
 
 OpenCLDevice::~OpenCLDevice() {
-
+	// Continue to release the context even when queue release reports a
+	// driver error. Throwing here would terminate the host during teardown.
+	const auto report = [](const cl_int error, const char *operation) {
+		if (error != CL_SUCCESS)
+			std::fprintf(stderr, "OpenCL cleanup: %s failed (code %d)\n", operation, error);
+	};
 	if (oclQueue)
-		CHECK_OCL_ERROR(clReleaseCommandQueue(oclQueue));
+		report(clReleaseCommandQueue(oclQueue), "clReleaseCommandQueue");
 	if (oclContext)
-		CHECK_OCL_ERROR(clReleaseContext(oclContext));
+		report(clReleaseContext(oclContext), "clReleaseContext");
 }
 
 void OpenCLDevice::Start() {
@@ -477,6 +483,20 @@ void OpenCLDevice::AllocBuffer(HardwareDeviceBuffer **buff, const BufferType typ
 	}
 	
 	AllocBuffer(clFlags, &(oclDeviceBuff->oclBuff), src, size, desc);
+}
+
+void OpenCLDevice::FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept {
+ if (!buff || !*buff) return;
+ auto *owned = static_cast<OpenCLDeviceBuffer *>(*buff);
+ *buff = nullptr;
+ if (!owned->IsNull()) {
+  try { FreeMemory(owned->GetSize()); }
+  catch (...) { MarkCleanupError(); std::fprintf(stderr, "OpenCL buffer cleanup: size/accounting unavailable\n"); }
+  const cl_int error = clReleaseMemObject(owned->oclBuff);
+  owned->oclBuff = nullptr;
+  if (error != CL_SUCCESS) { MarkCleanupError(); std::fprintf(stderr, "OpenCL buffer cleanup: release failed (code %d)\n", int(error)); }
+ }
+ delete owned;
 }
 
 void OpenCLDevice::FreeBuffer(HardwareDeviceBuffer **buff) {

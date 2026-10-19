@@ -1566,6 +1566,20 @@ void MetalDevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType ty
 	AllocMemory(size);
 }
 
+void MetalDevice::FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept {
+ if (!buff || !*buff) return;
+ auto *owned = static_cast<MetalDeviceBuffer *>(*buff);
+ *buff = nullptr;
+ if (!owned->IsNull()) {
+  try { FinishQueue(); }
+  catch (...) { MarkCleanupError(); std::fprintf(stderr, "Metal buffer cleanup: queue drain failed\n"); }
+  FreeMemory(owned->GetSize());
+  [(__bridge id<MTLBuffer>)owned->metalBuff release];
+  owned->metalBuff = nullptr;
+ }
+ delete owned;
+}
+
 void MetalDevice::FreeBuffer(HardwareDeviceBuffer **buff) {
 	if (*buff) {
 		if (!(*buff)->IsNull()) {

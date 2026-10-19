@@ -50,9 +50,9 @@ with tempfile.TemporaryDirectory(prefix='slc-wheel-regression-') as temp:
     with zipfile.ZipFile(wheel) as archive:
         assert archive.read('pysuperluxcore/native-payload') == payload['pysuperluxcore/native-payload']
         assert archive.read('pysuperluxcore/superluxcore_dlss.dll') == (helper/'superluxcore_dlss.dll').read_bytes()
-        assert b'Version: 2.11.34+dlss.exp20261019.fix1' in archive.read('pysuperluxcore-2.11.34+dlss.exp20261019.fix1.dist-info/METADATA')
+        assert b'Version: 2.11.34+dlss.exp20261019.fix2' in archive.read('pysuperluxcore-2.11.34+dlss.exp20261019.fix2.dist-info/METADATA')
         with zipfile.ZipFile(wheel) as z:
-            for name, digest, size in csv.reader(io.StringIO(z.read('pysuperluxcore-2.11.34+dlss.exp20261019.fix1.dist-info/RECORD').decode())):
+            for name, digest, size in csv.reader(io.StringIO(z.read('pysuperluxcore-2.11.34+dlss.exp20261019.fix2.dist-info/RECORD').decode())):
                 if digest:
                     data=z.read(name)
                     assert digest=='sha256='+base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()

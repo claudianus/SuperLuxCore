@@ -553,6 +553,31 @@ void CUDADevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType typ
 	AllocMemory(size);
 }
 
+void CUDADevice::FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept {
+ if (!buff || !*buff) return;
+ auto *owned = static_cast<CUDADeviceBuffer *>(*buff);
+ *buff = nullptr;
+ const auto report = [this](CUresult error, const char *operation) {
+  if (error != CUDA_SUCCESS) { MarkCleanupError(); std::fprintf(stderr, "CUDA buffer cleanup: %s failed (code %d)\n", operation, int(error)); }
+ };
+ if (!owned->IsNull()) {
+  // A failed outer Film context push must never free under a foreign context.
+  const CUresult pushed = cuCtxPushCurrent(cudaContext);
+  report(pushed, "cuCtxPushCurrent");
+  if (pushed == CUDA_SUCCESS) {
+   size_t size = 0;
+   const CUresult queried = cuMemGetAddressRange(nullptr, &size, owned->cudaBuff);
+   report(queried, "cuMemGetAddressRange");
+   if (queried == CUDA_SUCCESS) FreeMemory(size);
+   report(cuMemFree(owned->cudaBuff), "cuMemFree");
+   CUcontext popped = nullptr;
+   report(cuCtxPopCurrent(&popped), "cuCtxPopCurrent");
+  }
+  // If the device context is unusable, its destruction reclaims allocations.
+ }
+ delete owned;
+}
+
 void CUDADevice::FreeBuffer(HardwareDeviceBuffer **buff) {
 	if (*buff) {
 		if (!(*buff)->IsNull()) {
