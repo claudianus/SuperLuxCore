@@ -210,6 +210,47 @@ float OpenPBRMaterial::InteriorIor(const HitPoint &hitPoint, const Params &p) co
 			DispersiveIOR(p.specIor, p.disp);
 }
 
+bool OpenPBRMaterial::UseCoupledSSSBoundary(const Params &p) const {
+	static const bool enabled = getenv("SUPERLUXCORE_SSS_LEGACY_BOUNDARY") == nullptr;
+	return enabled && !p.independentNormals && p.sssWeight > 0.f &&
+			p.specWeight > 0.f && p.filmWeight == 0.f;
+}
+
+float OpenPBRMaterial::SSSBoundaryReflectionProbability(const HitPoint &hp,
+		const Params &p, const Vector &fixed, const Vector &wh,
+		const Spectrum *weights) const {
+	const float nearIor = fixed.z > 0.f ? p.extIor : InteriorIor(hp, p);
+	const float farIor = fixed.z > 0.f ? DispersiveIOR(p.specIor, p.disp) : p.extIor;
+	const float eta = farIor / nearIor;
+	const float mu = fabsf(Dot(fixed, wh));
+	if (Sqr(1.f / eta) * Max(0.f, 1.f - mu * mu) >= 1.f)
+		return 1.f;
+	const float F = FresnelDielectricModulated(mu,
+			fixed.z > 0.f ? EtaS(p, p.disp) : eta, p.specWeight);
+	const float r = weights[LOBE_SPEC].Filter() * F;
+	const float t = weights[LOBE_BTDF].Filter() * (1.f - F) / (eta * eta);
+	// Positive coverage preserves support even when coating/IOR conventions
+	// make the proposal's albedo differ from the unchanged physical lobes.
+	return (r + t > 0.f) ? Clamp(r / (r + t), 1e-5f, 1.f - 1e-5f) : .5f;
+}
+
+float OpenPBRMaterial::SSSBoundaryPdf(const HitPoint &hp, const Params &p,
+		const Vector &fixed, const Vector &sampled, const Spectrum *weights,
+		const float *probs) const {
+	const float nearIor = fixed.z > 0.f ? p.extIor : InteriorIor(hp, p);
+	const float farIor = fixed.z > 0.f ? DispersiveIOR(p.specIor, p.disp) : p.extIor;
+	if (fabsf(farIor / nearIor - 1.f) < 1e-4f)
+		return probs[LOBE_SPEC] * LobePdf(hp, p, LOBE_SPEC, fixed, sampled) +
+				probs[LOBE_BTDF] * LobePdf(hp, p, LOBE_BTDF, fixed, sampled);
+	const bool reflected = fixed.z * sampled.z > 0.f;
+	Vector wh = reflected ? fixed + sampled : fixed + (farIor / nearIor) * sampled;
+	if (!(wh.LengthSquared() > 0.f)) return 0.f;
+	wh = Normalize(wh);
+	const float pr = SSSBoundaryReflectionProbability(hp, p, fixed, wh, weights);
+	const float density = LobePdf(hp, p, reflected ? LOBE_SPEC : LOBE_BTDF, fixed, sampled);
+	return (probs[LOBE_SPEC] + probs[LOBE_BTDF]) * (reflected ? pr : 1.f - pr) * density;
+}
+
 //------------------------------------------------------------------------------
 // Thin film: single-wavelength Airy reflectance (complex arithmetic, 6-step
 // summation per the OpenPBR reference implementation)
@@ -746,6 +787,7 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 	Spectrum weights[LOBE_COUNT];
 	float probs[LOBE_COUNT];
 	ComputeWeights(hitPoint, p, wFixed, weights, probs);
+	const bool coupledSSS = UseCoupledSSSBoundary(p);
 
 	const float muI = fabsf(wi.z);
 	const bool sameHemisphere = (wi.z * wo.z) > 0.f;
@@ -781,16 +823,17 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 			// the BTDF sampler can produce via its reflection fallback.
 			float pdf;
 			result += weights[LOBE_SPEC] * EvalGlossyRefl(hitPoint, p, false, wo, wi, pdf);
-			pdfF += probs[LOBE_SPEC] * LobePdf(hitPoint, p, LOBE_SPEC, wFixed, wSmp);
+			if (!coupledSSS) pdfF += probs[LOBE_SPEC] * LobePdf(hitPoint, p, LOBE_SPEC, wFixed, wSmp);
 			ev = BSDFEvent(ev | GLOSSY | REFLECT);
 		}
 		if (probs[LOBE_BTDF] > 0.f) {
 			// BTDF sampling can also land here via its TIR reflection
 			// fallback; EvalBtdf reports the reflection pdf for those
 			// directions (f is contributed by the specular lobe above).
-			float pdf;
-			EvalBtdf(hitPoint, p, wo, wi, pdf);
-			pdfF += probs[LOBE_BTDF] * pdf;
+			// The density is conditional on the sampled endpoint. Using the
+			// eye direction here gave the wrong VNDF G1 on light subpaths.
+			if (!coupledSSS) pdfF += probs[LOBE_BTDF] *
+					LobePdf(hitPoint, p, LOBE_BTDF, wFixed, wSmp);
 		}
 		if (frontSide && probs[LOBE_DIFF] > 0.f) {
 			// Albedo scaling: the base gets what the rough specular layer
@@ -809,10 +852,11 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 	if (!sameHemisphere && probs[LOBE_BTDF] > 0.f) {
 		float pdf;
 		result += weights[LOBE_BTDF] * EvalBtdf(hitPoint, p, wo, wi, pdf);
-		pdfF += probs[LOBE_BTDF] * LobePdf(hitPoint, p, LOBE_BTDF, wFixed, wSmp);
+		if (!coupledSSS) pdfF += probs[LOBE_BTDF] * LobePdf(hitPoint, p, LOBE_BTDF, wFixed, wSmp);
 		ev = BSDFEvent(ev | GLOSSY | TRANSMIT);
 	}
 
+	if (coupledSSS) pdfF += SSSBoundaryPdf(hitPoint, p, wFixed, wSmp, weights, probs);
 	if (event)
 		*event = ev;
 	if (directPdfW)
@@ -830,15 +874,16 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 				pdfR += rProbs[LOBE_COAT] * LobePdf(hitPoint, p, LOBE_COAT, wSmp, wFixed);
 			if (rProbs[LOBE_METAL] > 0.f)
 				pdfR += rProbs[LOBE_METAL] * LobePdf(hitPoint, p, LOBE_METAL, wSmp, wFixed);
-			if (rProbs[LOBE_SPEC] > 0.f)
+			if (!coupledSSS && rProbs[LOBE_SPEC] > 0.f)
 				pdfR += rProbs[LOBE_SPEC] * LobePdf(hitPoint, p, LOBE_SPEC, wSmp, wFixed);
-			if (rProbs[LOBE_BTDF] > 0.f)
+			if (!coupledSSS && rProbs[LOBE_BTDF] > 0.f)
 				pdfR += rProbs[LOBE_BTDF] * LobePdf(hitPoint, p, LOBE_BTDF, wSmp, wFixed);
 			if (frontSide && rProbs[LOBE_DIFF] > 0.f)
 				pdfR += rProbs[LOBE_DIFF] * LobePdf(hitPoint, p, LOBE_DIFF, wSmp, wFixed);
 		}
-		if (!sameHemisphere && rProbs[LOBE_BTDF] > 0.f)
+		if (!coupledSSS && !sameHemisphere && rProbs[LOBE_BTDF] > 0.f)
 			pdfR += rProbs[LOBE_BTDF] * LobePdf(hitPoint, p, LOBE_BTDF, wSmp, wFixed);
+		if (coupledSSS) pdfR += SSSBoundaryPdf(hitPoint, p, wSmp, wFixed, rWeights, rProbs);
 		*reversePdfW = pdfR;
 	}
 
@@ -911,6 +956,26 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 		++lobe;
 	if (probs[lobe] <= 0.f)
 		return Spectrum();
+	Vector coupledWh;
+	bool coupledWhReady = false;
+	if (UseCoupledSSSBoundary(p) && (lobe == LOBE_SPEC || lobe == LOBE_BTDF)) {
+		const float nearIor = localFixedDir.z > 0.f ? p.extIor : InteriorIor(hitPoint, p);
+		const float farIor = localFixedDir.z > 0.f ? DispersiveIOR(p.specIor, p.disp) : p.extIor;
+		if (fabsf(farIor / nearIor - 1.f) >= 1e-4f) {
+			float at, ab;
+			OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, at, ab);
+			const float ca = cosf(-p.specRotation * 2.f * M_PI), sa = sinf(-p.specRotation * 2.f * M_PI);
+			const Vector wf = localFixedDir.z > 0.f ? localFixedDir : -localFixedDir;
+			const Vector whr = GgxSampleVNDF(RotateXY(wf, ca, sa), at, ab, u0, u1);
+			coupledWh = whr;
+			coupledWhReady = true;
+			const Vector wh = RotateXY(whr, ca, -sa);
+			const float q = (passThroughEvent - cum[LOBE_METAL]) /
+					(probs[LOBE_SPEC] + probs[LOBE_BTDF]);
+			lobe = q < SSSBoundaryReflectionProbability(hitPoint, p, localFixedDir, wh, weights) ?
+					LOBE_SPEC : LOBE_BTDF;
+		}
+	}
 
 	const Frame &sampleFrame = LobeFrame(p, static_cast<LobeId>(lobe));
 	const Vector wo = p.independentNormals ? sampleFrame.ToLocal(localFixedDir) : localFixedDir;
@@ -937,7 +1002,7 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 			const Vector wor = RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			OpenPBRAnisoAlphas(alpha, aniso, alphaT, alphaB);
-			Vector wh = GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
+			Vector wh = coupledWhReady ? coupledWh : GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
 			const Vector wir = 2.f * Dot(wor, wh) * wh - wor;
@@ -960,7 +1025,7 @@ Spectrum OpenPBRMaterial::SampleImpl(const HitPoint &hitPoint,
 			const Vector wor = RotateXY(wFl, cosA, sinA);
 			float alphaT, alphaB;
 			OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, alphaT, alphaB);
-			Vector wh = GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
+			Vector wh = coupledWhReady ? coupledWh : GgxSampleVNDF(wor, alphaT, alphaB, u0, u1);
 			if (wh.z < 0.f)
 				wh = -wh;
 			// eta' = n(fixed side)/n(sampled side) = 1/eta of EvalBtdf

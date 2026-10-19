@@ -6,6 +6,7 @@ docs live in `doc/features/` (see its README for the index).
 
 | File | Contents |
 |---|---|
+| [2026-10-19-sss-boundary-sampling.md](2026-10-19-sss-boundary-sampling.md) | CPU microfacet Fresnel proposal, endpoint TIR PDF correction, matched raw-noise evidence and local Cycles comparison |
 | [2026-10-11-film-scene-edit-moments.md](2026-10-11-film-scene-edit-moments.md) | Reset adaptive luminance moments on scene edits, preserve merges, independent-seed image comparisons |
 | [2026-10-11-metropolis-startup.md](2026-10-11-metropolis-startup.md) | Sparse-path normalization bootstrap, atomic CPU publication, actual sampler and black-render contracts |
 | [2026-10-10-cycles-bssrdf-device-transport.md](2026-10-10-cycles-bssrdf-device-transport.md) | Experimental nonlocal Metal walk, object boundaries, Generated zero precision and explicit eye-only gates |

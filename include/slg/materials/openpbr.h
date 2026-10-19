@@ -198,6 +198,13 @@ private:
 	// volume's when one is set (the parser's implicit SSS/transmission
 	// volume carries specular_ior), else the substrate ior itself.
 	float InteriorIor(const HitPoint &hitPoint, const Params &p) const;
+	bool UseCoupledSSSBoundary(const Params &p) const;
+	float SSSBoundaryReflectionProbability(const HitPoint &hp, const Params &p,
+			const luxrays::Vector &fixed, const luxrays::Vector &wh,
+			const luxrays::Spectrum *weights) const;
+	float SSSBoundaryPdf(const HitPoint &hp, const Params &p,
+			const luxrays::Vector &fixed, const luxrays::Vector &sampled,
+			const luxrays::Spectrum *weights, const float *probs) const;
 
 	// Lobe weights + probabilities at outgoing direction wo.
 	void ComputeWeights(const HitPoint &hitPoint, const Params &p,

@@ -35,6 +35,11 @@ def main():
     ap.add_argument('--tiled', action='store_true', help='Exact finite per-pixel sample budget')
     ap.add_argument('--engine', choices=['PATHCPU','PATHOCL','TILEPATHOCL'], default='PATHCPU')
     args = ap.parse_args()
+    allowed_cases = {'legacy','auto','chromatic','spectral','textured','anisotropic',
+                     'vdh','point','litpoint','interior','blacktextured','shadowtransparent','nested'}
+    unknown_cases = set(args.cases.split(',')) - allowed_cases
+    if unknown_cases:
+        ap.error('Unknown SSS cases: ' + ', '.join(sorted(unknown_cases)))
     args.out = args.out.resolve()
     if args.tiled and math.isqrt(args.spp)**2 != args.spp:
         ap.error('--tiled requires a square --spp')

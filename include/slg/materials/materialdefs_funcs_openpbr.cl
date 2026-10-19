@@ -783,9 +783,10 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitP
 		if (probs[OPENPBR_LOBE_BTDF] > 0.f) {
 			// BTDF sampling also reaches reflection directions via its TIR
 			// fallback; EvalBtdf reports the reflection pdf there.
-			float pdf;
-			OpenPBRMat_EvalBtdf(hitPoint, p, wo, wi, &pdf MATERIALS_PARAM);
-			pdfF += probs[OPENPBR_LOBE_BTDF] * pdf;
+			// VNDF density is conditional on the sampled endpoint, including
+			// light subpaths where it is the light rather than eye direction.
+			pdfF += probs[OPENPBR_LOBE_BTDF] * OpenPBRMat_LobePdf(hitPoint, p,
+					OPENPBR_LOBE_BTDF, wFixed, wSmp MATERIALS_PARAM);
 		}
 		if (frontSide && probs[OPENPBR_LOBE_DIFF] > 0.f) {
 			// Albedo scaling (openpbr.cpp): the base gets what the rough
