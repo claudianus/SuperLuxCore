@@ -1,0 +1,121 @@
+name: Linux DLSS experimental package and upgrade acceptance
+on:
+  push:
+    branches: [release/linux-dlss-package-20261019]
+permissions:
+  contents: read
+jobs:
+  experimental-linux-bundle:
+    name: Linux experimental ZIP and stock Blender smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SLC_NATIVE_COMMIT: 6d27fa625aec10ad5c2726de1366cb6665db2fc8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: claudianus/SuperBlendLuxCore
+          ref: 683f5bd7a1f8e06e1b9a82ff221cceb7dc675984
+          path: addon
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Fetch the exact native wheel after its renderer acceptance
+        shell: python
+        run: |
+          import json,subprocess
+          run=json.loads(subprocess.check_output(['gh','api','repos/claudianus/SuperLuxCore/actions/runs/39168248405'],text=True))
+          assert run['head_sha']=='6d27fa625aec10ad5c2726de1366cb6665db2fc8' and run['status']=='completed'
+          jobs=json.loads(subprocess.check_output(['gh','api','repos/claudianus/SuperLuxCore/actions/runs/39168248405/jobs'],text=True))['jobs']
+          build,=[j for j in jobs if j['name']=='Build wheel ubuntu-latest-3.13']
+          assert next(s for s in build['steps'] if s['name']=='Build wheels')['conclusion']=='success'
+          failures=[s['name'] for s in build['steps'] if s['conclusion']=='failure']
+          assert failures==['Stage DLSS payload and verify installed Linux ABI'],failures
+          assert next(j for j in jobs if j['name']=='CUDA kernel compile gate (NVRTC)')['conclusion']=='success'
+          subprocess.run(['gh','run','download','39168248405','--repo','claudianus/SuperLuxCore','--name','native-linux-wheel-input','--dir','addon/wheels'],check=True)
+      - uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/DLSS
+          ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
+          path: .dlss-sdk
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /include/
+            /LICENSE.txt
+            /lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16
+      - name: Build and load helper inside manylinux with explicit output mount
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/project" -w /project quay.io/pypa/manylinux_2_28_x86_64 bash -euxo pipefail -c '
+            export CC=/opt/rh/gcc-toolset-14/root/usr/bin/gcc
+            export CXX=/opt/rh/gcc-toolset-14/root/usr/bin/g++
+            cmake -S src/slg/film/denoiser/dlss -B out/dlss -DCMAKE_BUILD_TYPE=Release -DDLSS_ROOT=/project/.dlss-sdk -DCMAKE_INSTALL_PREFIX=/project/out/dlss-install -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -pthread"
+            cmake --build out/dlss --parallel 2
+            cmake --install out/dlss
+            /opt/python/cp313-cp313/bin/python -c "import ctypes; assert ctypes.CDLL(\"/project/out/dlss-install/libsuperluxcore_dlss.so\").slc_dlss_abi()==1; print(\"PASS helper ABI on glibc2.28\")"
+          '
+          test -s out/dlss-install/libsuperluxcore_dlss.so
+          python -m pip install wheel
+          python dev-tools/linux_dlss_package.py stage --wheels addon/wheels --sdk .dlss-sdk --helper out/dlss-install
+          python -m pip install --no-deps --force-reinstall addon/wheels/*.whl
+          python dev-tools/linux_dlss_package.py abi
+      - name: Package unique experimental wheel and fetch Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install wheel cmake ninja
+          python dev-tools/reversion_linux_wheel.py
+          python -m pip download --require-hashes --no-deps --only-binary=:all: --platform manylinux2014_x86_64 --python-version 3.13 --implementation cp -d addon/wheels -r addon/cmake/bundled-wheels-linux.txt
+          sudo apt-get update -y
+          sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 libgl1 libsm6 libxrender1
+          curl --fail --location --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz -o "$RUNNER_TEMP/blender.tar.xz"
+          curl --fail --location --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.2.sha256 -o "$RUNNER_TEMP/blender.sha256"
+          (cd "$RUNNER_TEMP"; grep 'blender-5.2.2-linux-x64.tar.xz$' blender.sha256 | sed 's@blender-5.2.2-linux-x64.tar.xz@blender.tar.xz@' | sha256sum --check --strict)
+          tar -xJf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/blender.tar.xz"
+          echo "BLENDER_ROOT=$RUNNER_TEMP/blender-5.2.2-linux-x64" >> "$GITHUB_ENV"
+          gh release download v2.11.34 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34-linux_x64.zip --dir stable-package
+      - name: Build and verify Linux extension
+        run: |
+          set -euo pipefail
+          cmake -S addon -B addon-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBLC_BUNDLE_WHEELS=ON
+          cmake --build addon-build
+          python addon/cmake/verify_bundle.py addon-build/out --platforms linux_x64
+      - name: Installed ZIP upgrade, CPU render and DLSS discovery
+        shell: python
+        run: |
+          import os,pathlib,subprocess,shutil,signal
+          out=pathlib.Path('addon-build/out').resolve()
+          env=dict(os.environ,BLENDER_USER_RESOURCES=str(out/'profile-한글'),SLC_SMOKE_OUT=str(out),PYTHONUNBUFFERED='1')
+          blender=str(pathlib.Path(env['BLENDER_ROOT'])/'blender')
+          package,=out.glob('SuperLuxCore-*-linux_x64.zip')
+          def run(args,timeout):
+              child=subprocess.Popen([blender,*args],env=env,start_new_session=True)
+              try:
+                  code=child.wait(timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  os.killpg(child.pid,signal.SIGKILL)
+                  child.wait()
+                  raise
+              if code:raise RuntimeError('Blender failed: '+str(code))
+          try:
+              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34-linux_x64.zip').resolve()
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(stable)],120)
+              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.so')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
+              run(['--background','--factory-startup','--python-exit-code','1','--python-expr',expression],120)
+              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)],120)
+              run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/linux_blender_smoke.py'],240)
+          finally:
+              shutil.rmtree(out/'profile-한글',ignore_errors=True)
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: experimental-linux-dlss
+          path: |
+            addon-build/out/*linux_x64.zip
+            addon-build/out/*.json
+            addon-build/out/*.exr
+          retention-days: 14
