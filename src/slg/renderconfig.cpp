@@ -428,7 +428,21 @@ void RenderConfig::ApplyAutoLightTracing() {
 	// fast and the blur vanishes into the noise floor (Kaplanyan
 	// decaying schedule: asymptotically unbiased, sigma snaps to 0
 	// under 1e-5). Any explicit path.regularization.* property wins.
-	if (GetConfig().Get(Property("path.regularization.auto")(true)).Get<bool>()) {
+	// An implicit SSS default must retain the authored scattering/boundary
+	// model. Auto PSR changes rough lobes at finite samples, so it requires
+	// an explicit auto/sigma request in an SSS scene. Preserve that opt-in
+	// and the existing automatic policy for scenes without SSS volumes.
+	bool hasSSS = false;
+	for (u_int i = 0; i < GetScene().GetMaterials().GetSize(); ++i) {
+		const auto &material = GetScene().GetMaterials().GetMaterial(i);
+		if (material.GetType() == HOMOGENEOUS_VOL &&
+				static_cast<const HomogeneousVolume &>(material).IsSSSParametrized()) {
+			hasSSS = true;
+			break;
+		}
+	}
+	if (GetConfig().Get(Property("path.regularization.auto")(true)).Get<bool>() &&
+			(!hasSSS || GetConfig().IsDefined("path.regularization.auto"))) {
 		if (!GetConfig().IsDefined("path.regularization.sigma") &&
 				!GetConfig().IsDefined("path.regularization.halflife")) {
 			GetConfig().Set(Property("path.regularization.sigma")(0.03f));

@@ -21,13 +21,24 @@ p.add_argument('--threads',type=int,default=4);p.add_argument('--spectral',actio
 a=p.parse_args();assert a.spp>0 and math.isqrt(a.spp)**2==a.spp
 module=a.module.resolve();scene=a.scene.resolve();out=a.out.resolve();assert not out.exists(),out;out.mkdir(parents=True)
 sys.path.insert(0,str(module));import pysuperluxcore as s
-s.Init();native=Path(s.pysuperluxcore.__file__);identity=hashlib.sha256(native.read_bytes()).hexdigest()
+s.Init();native=Path(s.pysuperluxcore.__file__);identity=hashlib.sha256(native.read_bytes()).hexdigest();benchmark_identity_before=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 os.chdir(scene);props=s.Properties(str(scene/'render.cfg'))
 for k,v in {'renderengine.type':'TILEPATHCPU','renderengine.seed':a.seed,'native.threads.count':a.threads,
             'sampler.type':'TILEPATHSAMPLER','tile.multipass.enable':False,'tilepath.sampling.aa.size':math.isqrt(a.spp),
             'batch.haltspp':0,'batch.halttime':0,'path.spectral.enable':a.spectral,
-            'film.outputs.sssraycount.type':'RAYCOUNT','film.outputs.sssraycount.filename':'unused.exr'}.items():props.Set(s.Property(k,v))
+            'film.outputs.sssraycount.type':'RAYCOUNT','film.outputs.sssraycount.filename':'unused.exr',
+            'path.regularization.auto':False,'path.regularization.sigma':0.,'path.regularization.halflife':0.,
+            'path.filterglossy':0.,'path.clamping.cycles.direct':0.,'path.clamping.cycles.indirect':0.,
+            'path.clamping.variance.maxvalue':0.}.items():props.Set(s.Property(k,v))
+authored=scene/'authored-scene.json'
+authored_sha=hashlib.sha256(authored.read_bytes()).hexdigest() if authored.exists() else None
 (out/'render.cfg').write_text(str(props));t=time.monotonic();cpu_start=time.process_time();config=s.RenderConfig(props);renderer=s.RenderSession(config)
+effective=config.GetProperties()
+checked={key:effective.Get(key).GetFloat() for key in
+         ['path.regularization.sigma','path.regularization.halflife','path.filterglossy',
+          'path.clamping.cycles.direct','path.clamping.cycles.indirect','path.clamping.variance.maxvalue']}
+assert all(v==0 for v in checked.values()),checked
+(out/'effective.cfg').write_text(str(config.GetProperties()))
 try:
     prep=time.monotonic();renderer.Start();preparation=time.monotonic()-prep;deadline=time.monotonic()+300
     while not renderer.HasDone():
@@ -42,7 +53,11 @@ finally:
     if renderer.IsStarted():renderer.Stop()
 assert np.isfinite(raw).all() and counts.min()==counts.max()==a.spp
 np.save(out/'linear.npy',raw);np.save(out/'samples.npy',counts);np.save(out/'rays.npy',rays)
-record=dict(engine='SUPERLUXCORE',spp=a.spp,seed=a.seed,spectral=a.spectral,threads=a.threads,size=[width,height],
+assert hashlib.sha256(Path(__file__).read_bytes()).hexdigest()==benchmark_identity_before,'Benchmark source changed during render'
+record=dict(comparison_contract='sss-unregularized-v2',authored_scene_sha256=authored_sha,benchmark_source_sha256=benchmark_identity_before,
+            raw_controls=dict(denoising=False,adaptive_sampling=False),
+            native_fidelity=checked,
+            engine='SUPERLUXCORE',spp=a.spp,seed=a.seed,spectral=a.spectral,threads=a.threads,size=[width,height],
             seconds=elapsed,cpu_seconds=cpu_elapsed,preparation_seconds=preparation,raycount_buffer_mean=float(rays.mean(dtype=float)),native_sha256=identity,min_samples=int(counts.min()),
             max_samples=int(counts.max()),finite=True,mean_rgb=raw.mean(axis=(0,1),dtype=float).tolist(),
             timing_scope='Native config/preparation/tracing/film readback; excludes Blender, EXR and display',
