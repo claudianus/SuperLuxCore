@@ -18,11 +18,14 @@
 
 #include "luxrays/utils/properties.h"
 #include <memory>
+#include <cstring>
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include "slg/slg.h"
 #include "slg/cameras/perspective.h"
+#include "slg/film/imagepipeline/imagepipeline.h"
 #include "slg/engines/rtpathocl/rtpathocl.h"
+#include "slg/film/denoiser/denoisingguide.h"
 
 using namespace std;
 using namespace luxrays;
@@ -65,7 +68,20 @@ PathOCLBaseOCLRenderThread *RTPathOCLRenderEngine::CreateOCLThread(const u_int i
 	return new RTPathOCLRenderThread(index, device, this);
 }
 
+void RTPathOCLRenderEngine::UpdateResolutionReduction() {
+	auto &cfg = renderConfig.GetConfig();
+	previewResolutionReduction = RoundUpPow2(Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview")).Get<int>()), 64));
+	previewResolutionReductionStep = Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview.step")).Get<int>()), 64);
+	resolutionReduction = RoundUpPow2(Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction")).Get<int>()), 64));
+	if (denoisingFramesEnabled)
+		previewResolutionReduction = resolutionReduction = 1;
+}
+
 void RTPathOCLRenderEngine::StartLockLess() {
+	viewportDemandReadback = false;
+	++viewportRequestedEpoch;
+	viewportAppliedEpoch = viewportRequestedEpoch.load();
+	viewportMetadataEpoch = pendingViewportMetadataEpoch = ~uint64_t(0);
 	//--------------------------------------------------------------------------
 	// Rendering parameters
 	//--------------------------------------------------------------------------
@@ -74,11 +90,41 @@ void RTPathOCLRenderEngine::StartLockLess() {
 	GetFilm().GetDenoiser().SetEnabled(false);
 
 	auto& cfg = renderConfig.GetConfig();
+	denoisingFramesEnabled = cfg.Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>();
+	denoisingImagePipelineEnabled = cfg.Get(Property("rtpath.denoisingframes.imagepipeline.enable")(false)).Get<bool>();
+	denoisingImagePipelineAccumulated = cfg.Get(Property("rtpath.denoisingframes.imagepipeline.accumulated")(false)).Get<bool>();
+	denoisingInputReduction = cfg.Get(Property("rtpath.denoisingframes.input.reduction")(1u)).Get<u_int>();
+	if (denoisingInputReduction != 1u && denoisingInputReduction != 2u)
+		throw runtime_error("Canonical denoising input reduction must be 1 or 2");
+	if (denoisingInputReduction > 1u && (!denoisingFramesEnabled || !denoisingImagePipelineEnabled ||
+			GetFilm().GetWidth() % 2u || GetFilm().GetHeight() % 2u ||
+			GetFilm().GetWidth() < 32u || GetFilm().GetHeight() < 32u))
+		throw runtime_error("Reduced neural input requires coherent pipeline capture and an even target raster of at least 32x32");
+	denoisingLosslessDelivery = cfg.Get(Property("rtpath.denoisingframes.lossless")(false)).Get<bool>();
+	denoisingExactHaltSPP = cfg.Get(Property("rtpath.denoisingframes.haltspp")(u_longlong(0))).Get<u_longlong>();
+	denoisingImagePipelineMaxBytes = cfg.Get(Property("rtpath.denoisingframes.imagepipeline.maxbytes")(u_longlong(256) * 1024 * 1024)).Get<u_longlong>();
+	denoisingImagePipelineRevision = GetFilm().GetImagePipelineRevision();
+	denoisingRequiredPipelineRevision = denoisingImagePipelineRevision;
+	if (denoisingImagePipelineEnabled && !denoisingFramesEnabled)
+		throw runtime_error("Coherent image-pipeline contexts require independent denoising frames");
+	if ((denoisingLosslessDelivery || denoisingImagePipelineAccumulated || denoisingExactHaltSPP > 0) && !denoisingFramesEnabled)
+		throw runtime_error("Lossless final delivery requires independent denoising frames");
+	if (denoisingImagePipelineAccumulated && !denoisingImagePipelineEnabled)
+		throw runtime_error("Accumulated presentation requires coherent image-pipeline capture");
+	if (denoisingFramesEnabled && cfg.Get(Property("path.lighttracing.only")(false)).Get<bool>())
+		throw runtime_error("Independent denoising frames require camera samples, not light-only tracing");
 
-	previewResolutionReduction = RoundUpPow2(Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview")).Get<int>()), 64));
-	previewResolutionReductionStep = Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview.step")).Get<int>()), 64);
-
-	resolutionReduction = RoundUpPow2(Min(Max(1, cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction")).Get<int>()), 64));
+	UpdateResolutionReduction();
+	if (denoisingFramesEnabled) {
+		runtimeResolutionReduction = 0;
+		InitDenoisingFrameFilm();
+		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+		latestDenoisingFrame.reset();
+		denoisingAcknowledgedFrameId = denoisingFrameId;
+		denoisingFramesStopped = false;
+		denoisingFrameHalt = false;
+		++denoisingSceneEpoch;
+	}
 
 	TilePathOCLRenderEngine::StartLockLess();
 
@@ -86,7 +132,10 @@ void RTPathOCLRenderEngine::StartLockLess() {
 	maxTilePerDevice = 1;
 
 	tileRepository->enableRenderingDonePrint = false;
-	tileRepository->enableFirstPassClear = true;
+	// RT tiles contain real scattered samples, not replicated preview blocks.
+	// Start/edit/resize already clear the film explicitly. Replacing pass 1
+	// would discard the preceding valid pass while retaining its counters.
+	tileRepository->enableFirstPassClear = false;
 
 	updateActions.Reset();
 	useFastCameraEditPath = false;
@@ -101,9 +150,17 @@ void RTPathOCLRenderEngine::StartLockLess() {
 	// StopLockLess() may wait on the barrier (a failed start never
 	// reaches this point and must not block).
 	syncThreadsRunning = true;
+	viewportReadbackStopped = false;
 }
 
 void RTPathOCLRenderEngine::StopLockLess() {
+	viewportReadbackStopped = true;
+	CancelViewportReadbacks();
+	{
+		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+		denoisingFramesStopped = true;
+		denoisingFrameCondition.notify_all();
+	}
 	// Only handshake when the render threads actually entered their sync
 	// loop: after a failed Start (i.e. a kernel compilation error) the
 	// barrier partner does not exist and waiting would hang forever.
@@ -111,6 +168,8 @@ void RTPathOCLRenderEngine::StopLockLess() {
 		syncThreadsRunning = false;
 
 		syncType = SYNCTYPE_STOP;
+		for (auto *thread : renderOCLThreads)
+			static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
 		syncBarrier->arrive_and_wait();
 
 		// All render threads are now suspended and I can set the interrupt signal
@@ -124,21 +183,139 @@ void RTPathOCLRenderEngine::StopLockLess() {
 	// Render threads will now detect the interruption
 
 	TilePathOCLRenderEngine::StopLockLess();
+	denoisingFrameFilm.reset();
+	{
+		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+		latestDenoisingFrame.reset();
+	}
+}
+
+PropertiesUPtr RTPathOCLRenderEngine::ReadViewportOutput(
+        std::function<PropertiesUPtr(Film &)> read) {
+    viewportDemandReadback = true;
+    {
+        std::lock_guard<std::mutex> lock(*filmMutex);
+        if (viewportReadbackStopped.load()) return nullptr;
+        if (GetFilm().GetTotalEyeSampleCount() > 0.0) return read(GetFilm());
+    }
+    auto request = std::make_shared<ViewportReadRequest>();
+    request->read = read;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        for (auto it = viewportReads.begin(); it != viewportReads.end();) {
+            // Keep the request alive until its mutex guard is released.
+            auto queued = *it;
+            std::lock_guard<std::mutex> guard(queued->mutex);
+            if (queued->cancelled) it = viewportReads.erase(it);
+            else ++it;
+        }
+        if (viewportReadbackStopped.load() || viewportReads.size() >= 4) return nullptr;
+        viewportReads.push_back(request);
+    }
+    std::unique_lock<std::mutex> lock(request->mutex);
+    if (!request->condition.wait_for(lock, std::chrono::milliseconds(250),
+            [&] { return request->done; })) {
+        if (!request->started) {
+            // The buffer lease is about to return to Python. A queued
+            // callback may never touch that pointer after cancellation.
+            request->cancelled = request->done = true;
+            request->read = {};
+            return nullptr;
+        }
+        // A running copy owns the caller buffer until completion.
+        request->condition.wait(lock, [&] { return request->done; });
+    }
+    if (request->error) std::rethrow_exception(request->error);
+    return std::move(request->result);
+}
+
+void RTPathOCLRenderEngine::ServiceViewportReadbacks() {
+    std::deque<std::shared_ptr<ViewportReadRequest>> requests;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        requests.swap(viewportReads);
+    }
+    for (auto &request : requests) {
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            if (request->cancelled) continue;
+            request->started = true;
+        }
+        PropertiesUPtr result;
+        std::exception_ptr error;
+        try {
+            std::lock_guard<std::mutex> lock(*filmMutex);
+            result = request->read(GetFilm());
+        } catch (...) { error = std::current_exception(); }
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->result = std::move(result);
+            request->error = error;
+            request->done = true;
+        }
+        request->condition.notify_all();
+    }
+}
+
+void RTPathOCLRenderEngine::CancelViewportReadbacks() {
+    std::deque<std::shared_ptr<ViewportReadRequest>> requests;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        requests.swap(viewportReads);
+    }
+    for (auto &request : requests) {
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->cancelled = request->done = true;
+            request->read = {};
+        }
+        request->condition.notify_all();
+    }
+}
+
+void RTPathOCLRenderEngine::BeginSceneEdit() {
+    ++viewportRequestedEpoch;
+    TilePathOCLRenderEngine::BeginSceneEdit();
+}
+
+void RTPathOCLRenderEngine::ApplyViewportCameraMetadataLockLess() {
+    // Both camera and film mutexes held, or all rendering threads stopped.
+    if (pendingViewportMetadataEpoch != viewportAppliedEpoch.load()) return;
+    for (const auto &key : pendingViewportMetadata.GetAllNames())
+        GetFilm().SetMetadata(key, pendingViewportMetadata.Get(key).Get<string>());
+    viewportMetadataEpoch = pendingViewportMetadataEpoch;
+}
+
+void RTPathOCLRenderEngine::SetViewportCameraMetadata(const Properties &metadata) {
+    std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
+    pendingViewportMetadata.Set(metadata);
+    pendingViewportMetadataEpoch = viewportRequestedEpoch.load();
+    std::lock_guard<std::mutex> filmLock(*filmMutex);
+    ApplyViewportCameraMetadataLockLess();
 }
 
 void RTPathOCLRenderEngine::EndSceneEdit(const EditActionList &editActions) {
 	// Check if I can use the fast camera edit path
-	if (editActions.HasOnly(CAMERA_EDIT) &&
+	if (!denoisingFramesEnabled && editActions.HasOnly(CAMERA_EDIT) &&
 			(renderConfig.GetScene().GetCamera().GetType() == Camera::PERSPECTIVE) &&
 			// Camera is not using custom bokeh
 			!(dynamic_cast<const PerspectiveCamera*>(&renderConfig.GetScene().GetCamera()))->bokehDistributionImageMap &&
 			// Camera was not using custom bokeh
 			!cameraIsUsingCustomBokeh) {
+		std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
 		TilePathOCLRenderEngine::EndSceneEdit(editActions);
+		pendingViewportCameraEpoch = viewportRequestedEpoch.load();
 		useFastCameraEditPath = true;
+		// Demand readers need a completed current-camera pass. Coalesce
+		// newer cameras at its boundary instead of cancelling every pass.
+		if (!viewportDemandReadback.load())
+			for (auto *thread : renderOCLThreads)
+				static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
 	} else {
 		syncType = SYNCTYPE_ENDSCENEEDIT;
 		updateActions.AddActions(editActions.GetActions());
+		for (auto *thread : renderOCLThreads)
+			static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
 		syncBarrier->arrive_and_wait();
 
 		TilePathOCLRenderEngine::EndSceneEdit(editActions);
@@ -155,7 +332,12 @@ void RTPathOCLRenderEngine::EndSceneEdit(const EditActionList &editActions) {
 
 // A fast path for film resize
 void RTPathOCLRenderEngine::BeginFilmEdit() {
+	viewportReadbackStopped = true;
+	CancelViewportReadbacks();
+	++viewportRequestedEpoch;
 	syncType = SYNCTYPE_BEGINFILMEDIT;
+	for (auto *thread : renderOCLThreads)
+		static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
 	syncBarrier->arrive_and_wait();
 
 	// All render threads are now suspended and I can set the interrupt signal
@@ -172,10 +354,28 @@ void RTPathOCLRenderEngine::BeginFilmEdit() {
 
 // A fast path for film resize
 void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
+	// Threads are stopped by BeginFilmEdit. A viewport resize can cross
+	// the configured sampling-budget boundary too: size task buffers for
+	// the new policy before restarting them, without rebuilding the scene.
+	UpdateResolutionReduction();
+	taskConfig.renderEngine.rtpathocl.previewResolutionReduction = previewResolutionReduction;
+	taskConfig.renderEngine.rtpathocl.previewResolutionReductionStep = previewResolutionReductionStep;
+	taskConfig.renderEngine.rtpathocl.resolutionReduction = resolutionReduction;
 	// Update the film pointer
-	film = &flm;
-	filmMutex = flmMutex;
+	{
+		std::lock_guard<std::mutex> filmLock(*flmMutex);
+		film = &flm;
+		filmMutex = flmMutex;
+	}
 	InitFilm();
+	ResizeDenoisingGuides();
+	if (denoisingFramesEnabled) {
+		InitDenoisingFrameFilm();
+		++denoisingSceneEpoch;
+		denoisingFrameHalt = false;
+		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+		latestDenoisingFrame.reset();
+	}
 
 	// Disable denoiser statistics collection
 	GetFilm().GetDenoiser().SetEnabled(false);
@@ -183,12 +383,22 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	// Create a tile repository based on the new film
 	InitTileRepository();
 	tileRepository->enableRenderingDonePrint = false;
-	tileRepository->enableFirstPassClear = true;
+	tileRepository->enableFirstPassClear = false;
 
 	// The camera has been updated too
 	EditActionList a;
 	a.AddActions(CAMERA_EDIT);
 	compiledScene->Recompile(a);
+
+	{
+		std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
+		std::lock_guard<std::mutex> filmLock(*filmMutex);
+		// InitCamera on the new threads supersedes any old pending camera edit.
+		useFastCameraEditPath = false;
+		pendingViewportCameraEpoch = viewportRequestedEpoch.load();
+		viewportAppliedEpoch = pendingViewportCameraEpoch;
+		viewportMetadataEpoch = ~uint64_t(0);
+	}
 
 	// Re-start all rendering threads. The handshake is re-established
 	// below: a thread failing to start (kernel compilation error) must
@@ -201,10 +411,255 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	syncType = SYNCTYPE_NONE;
 	syncBarrier->arrive_and_wait();
 	syncThreadsRunning = true;
+	viewportReadbackStopped = false;
 }
 
 void RTPathOCLRenderEngine::UpdateFilmLockLess() {
 	// Nothing to do: the render threads are in charge of updating the film
+}
+
+void RTPathOCLRenderEngine::InitDenoisingFrameFilm() {
+	const Film &source = GetFilm();
+	if (denoisingInputReduction > 1u) {
+		const auto region = source.GetSubRegion();
+		if (source.GetWidth() % 2u || source.GetHeight() % 2u ||
+				source.GetWidth() < 32u || source.GetHeight() < 32u ||
+				region[0] || region[2] || region[1] != source.GetWidth() - 1u || region[3] != source.GetHeight() - 1u)
+			throw runtime_error("Canonical reduced input requires an even complete target raster");
+	}
+	denoisingFrameFilm = Film::Create(source.GetWidth(), source.GetHeight(), source.GetSubRegion());
+	denoisingFrameFilm->CopyDynamicSettings(source);
+	denoisingFrameFilm->hwEnable = false;
+	denoisingFrameFilm->GetDenoiser().SetEnabled(false);
+	denoisingFrameFilm->Init();
+}
+
+std::shared_ptr<const DenoisingFrameSnapshot> RTPathOCLRenderEngine::GetDenoisingFrame(
+		const uint64_t afterId, const u_int timeoutMs) {
+	std::unique_lock<std::mutex> lock(denoisingFrameMutex);
+	if (!denoisingFramesEnabled) throw runtime_error("Independent denoising frames are disabled");
+	denoisingFrameCondition.wait_for(lock, std::chrono::milliseconds(Min(timeoutMs, 1000u)), [&] {
+		return denoisingFramesStopped || (latestDenoisingFrame && latestDenoisingFrame->frameId > afterId);
+	});
+	return latestDenoisingFrame && latestDenoisingFrame->frameId > afterId ? latestDenoisingFrame : nullptr;
+}
+
+void RTPathOCLRenderEngine::InvalidateDenoisingImagePipeline(const uint64_t revision) {
+	if (!denoisingFramesEnabled) return;
+	std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+	denoisingRequiredPipelineRevision = revision;
+	latestDenoisingFrame.reset();
+	denoisingFrameCondition.notify_all();
+}
+
+void RTPathOCLRenderEngine::AcknowledgeDenoisingFrame(const std::shared_ptr<const DenoisingFrameSnapshot> &frame, const bool keepLossless) {
+	std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+	if (!denoisingLosslessDelivery || denoisingFramesStopped)
+		throw runtime_error("Lossless denoising-frame delivery is not active");
+	if (!frame || latestDenoisingFrame != frame)
+		throw runtime_error("Only the currently published denoising frame may be acknowledged");
+	denoisingAcknowledgedFrameId = frame->frameId;
+	if (!keepLossless) denoisingLosslessDelivery = false;
+	denoisingFrameCondition.notify_all();
+}
+
+void RTPathOCLRenderEngine::ReleaseDenoisingFrameDelivery() {
+	std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+	denoisingLosslessDelivery = false;
+	denoisingFrameCondition.notify_all();
+}
+
+void RTPathOCLRenderEngine::SetDenoisingFrameHaltSPP(const uint64_t samples) {
+	if (!denoisingFramesEnabled)
+		throw runtime_error("Independent denoising frames are disabled");
+	// The caller holds filmMutex, matching the render thread's cap read.
+	// Lock order remains film -> frame. A parked completed frame can resume
+	// after raising/disabling the cap, without discarding its raw accumulation.
+	std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+	denoisingExactHaltSPP = samples;
+	denoisingFrameHalt = false;
+	denoisingFrameCondition.notify_all();
+}
+
+void RTPathOCLRenderEngine::PublishDenoisingFrame(const slg::ocl::Camera &camera) {
+	// All devices have finished and merged their tiles at the frame barrier.
+	// This film contains only this frame; the ordinary film still accumulates
+	// every contribution and AOV for raw/final/diagnostic consumers.
+	auto snapshot = std::make_shared<DenoisingFrameSnapshot>();
+	snapshot->frameId = ++denoisingFrameId;
+	snapshot->sceneEpoch = denoisingSceneEpoch;
+	snapshot->losslessDelivery = denoisingLosslessDelivery;
+	snapshot->width = GetFilm().GetWidth(); snapshot->height = GetFilm().GetHeight();
+	snapshot->targetWidth = snapshot->width; snapshot->targetHeight = snapshot->height;
+	snapshot->inputReduction = denoisingInputReduction;
+	snapshot->jitterX = taskConfig.pathTracer.pixelJitterX;
+	snapshot->jitterY = taskConfig.pathTracer.pixelJitterY;
+	const size_t pixels = size_t(snapshot->width) * snapshot->height;
+	snapshot->color.resize(pixels * 4);
+	snapshot->sampleCount.resize(pixels);
+	denoisingFrameFilm->GetOutput<u_int>(FilmOutputs::SAMPLECOUNT, snapshot->sampleCount.data(), 0, false);
+	snapshot->guides = GetDenoisingGuideSnapshot();
+	if (denoisingInputReduction > 1u) {
+		snapshot->targetHoldout.resize(pixels);
+		for (size_t i = 0; i < pixels; ++i)
+			snapshot->targetHoldout[i] = snapshot->guides[i * DENOISING_GUIDE_STRIDE + 7] == 5.f;
+	}
+	snapshot->complete = std::all_of(snapshot->sampleCount.begin(), snapshot->sampleCount.end(), [](const auto n) {return n == 1u;});
+	snapshot->motionCameraCompatible =
+		camera.base.motionSystem.interpolatedTransformFirstIndex == NULL_INDEX &&
+		((camera.type == slg::ocl::PERSPECTIVE && camera.persp.projCamera.lensRadius <= 0.f && !camera.persp.enableOculusRiftBarrel) ||
+		 (camera.type == slg::ocl::ORTHOGRAPHIC && camera.ortho.projCamera.lensRadius <= 0.f));
+	static_assert(sizeof(snapshot->cameraToWorld) == sizeof(camera.base.cameraToWorld.m));
+	std::memcpy(snapshot->cameraToWorld, &camera.base.cameraToWorld.m, sizeof(snapshot->cameraToWorld));
+	std::memcpy(snapshot->worldToCamera, &camera.base.cameraToWorld.mInv, sizeof(snapshot->worldToCamera));
+	std::memcpy(snapshot->cameraToRaster, &camera.base.rasterToCamera.mInv, sizeof(snapshot->cameraToRaster));
+	snapshot->completedTime = WallClockTime();
+	{
+		std::unique_lock<std::mutex> lock(*filmMutex);
+		const Film &source = GetFilm();
+		// LightMix belongs to the input HDR merge and must follow hot edits.
+		// The later presentation path applies plugins without merging/scaling
+		// this already merged HDR a second time.
+		denoisingFrameFilm->CopyRadianceChannelScales(source);
+		// Final delivery needs the AOV/alpha context of the same accumulated
+		// raw prefix. Merge each physical frame exactly once, as in latest mode.
+		if (denoisingImagePipelineAccumulated)
+			GetFilm().AddFilm(*denoisingFrameFilm);
+		if (denoisingImagePipelineRevision != source.GetImagePipelineRevision()) {
+			denoisingImagePipelineRevision = source.GetImagePipelineRevision();
+			++denoisingSceneEpoch;
+		}
+		snapshot->sceneEpoch = denoisingSceneEpoch;
+		snapshot->presentationRevision = denoisingImagePipelineRevision;
+		if (denoisingImagePipelineEnabled) {
+			try {
+				if (source.GetImagePipelineCount() == 0)
+					throw runtime_error("Coherent presentation requires a primary image pipeline");
+				const auto *primary = source.GetImagePipeline(0);
+				Film::FilmChannels selected = source.GetChannels();
+				const auto &plugins = primary->GetPlugins();
+				// Hardware-capable plugins declare every auxiliary channel they
+				// read for upload. Use that same contract only when every plugin
+				// also has a native implementation. CPU-only/unknown pipelines
+				// conservatively retain all raw channels.
+				const bool primaryOnly = std::all_of(plugins.begin(), plugins.end(), [](const auto *plugin) {
+						return plugin->CanUseHW() && plugin->CanUseNative();
+					});
+				if (primaryOnly) {
+					selected = {Film::RADIANCE_PER_PIXEL_NORMALIZED, Film::RADIANCE_PER_SCREEN_NORMALIZED,
+						Film::ALPHA, Film::IMAGEPIPELINE};
+					primary->AddHWChannelsUsed(selected);
+				}
+				const size_t extraAlpha = source.HasChannel(Film::ALPHA) ? 0 : pixels * 2 * sizeof(float);
+				const size_t extraImage = source.HasChannel(Film::IMAGEPIPELINE) ? 0 : pixels * 3 * sizeof(float);
+				const size_t channelBytes = source.GetChannelStorageSize(selected,
+					primaryOnly ? 1 : source.GetImagePipelineCount()) + extraAlpha + extraImage;
+				const size_t coverageBytes = denoisingInputReduction > 1u ? pixels * (4 * sizeof(float) + sizeof(uint8_t)) : 0;
+				if (channelBytes + coverageBytes > denoisingImagePipelineMaxBytes)
+					throw runtime_error("Coherent image-pipeline channels exceed rtpath.denoisingframes.imagepipeline.maxbytes");
+				auto context = Film::Create(source.GetWidth(), source.GetHeight(), source.GetSubRegion());
+				context->CopyDynamicSettings(source);
+				// Only pipeline zero presents reconstructed beauty. Raw AOVs and
+				// their other image pipelines stay intact in the canonical film.
+				if (primaryOnly) context->SetImagePipelines(primary->Copy());
+				for (const auto channel: source.GetChannels())
+					if (!selected.count(channel)) context->RemoveChannel(channel);
+				context->AddChannel(Film::ALPHA);
+				context->AddChannel(Film::IMAGEPIPELINE);
+				context->hwEnable = false;
+				context->GetDenoiser().SetEnabled(false);
+				context->Init();
+				if (context->GetChannelStorageSize() > channelBytes)
+					throw runtime_error("Coherent presentation storage exceeded its preflight estimate");
+				const Film &contextSource = denoisingImagePipelineAccumulated ? source : *denoisingFrameFilm;
+				context->SetFilm(contextSource);
+				if (!contextSource.HasChannel(Film::ALPHA)) {
+					float *alpha = context->channel_ALPHA->GetPixels();
+					std::fill(alpha, alpha + pixels * 2, 1.f);
+				}
+				snapshot->presentationChannelBytes = context->GetChannelStorageSize();
+				if (denoisingInputReduction > 1u) {
+					snapshot->targetAlpha.resize(pixels);
+					context->GetOutput<float>(FilmOutputs::ALPHA, snapshot->targetAlpha.data(), 0, false);
+					if (std::any_of(snapshot->targetHoldout.begin(), snapshot->targetHoldout.end(), [](const auto n) { return n != 0; })) {
+						snapshot->targetHoldoutRGB.resize(pixels * 3);
+						context->GetOutput<float>(FilmOutputs::RGB, snapshot->targetHoldoutRGB.data(), 0, false);
+					}
+				}
+				snapshot->presentationFilm = std::shared_ptr<Film>(std::move(context));
+			} catch (const std::exception &e) {
+				// Display allocation failure must leave canonical rendering alive.
+				snapshot->presentationError = e.what();
+			}
+		}
+		denoisingFrameFilm->GetOutput<float>(FilmOutputs::RGBA, snapshot->color.data(), 0, false);
+		if (!denoisingImagePipelineAccumulated)
+			GetFilm().AddFilm(*denoisingFrameFilm);
+		snapshot->presentationAccumulated = denoisingImagePipelineAccumulated;
+		snapshot->accumulatedEyeSamples = source.GetTotalEyeSampleCount() / double(pixels);
+	}
+	denoisingFrameFilm->Reset();
+	if (denoisingInputReduction > 1u) {
+		// Keep the exact GPU-traced target coverage and raw AOV context. The
+		// source is an actual subgrid of those rays, never interpolated colour,
+		// normals, depth or visibility. Rendering workload stays full-resolution.
+		const unsigned reduction = denoisingInputReduction;
+		const unsigned w = snapshot->width / reduction, h = snapshot->height / reduction;
+		std::vector<float> color(size_t(w) * h * 4), guides(size_t(w) * h * DENOISING_GUIDE_STRIDE);
+		std::vector<unsigned> counts(size_t(w) * h);
+		for (unsigned y = 0; y < h; ++y) for (unsigned x = 0; x < w; ++x) {
+			const size_t source = size_t(y * reduction + reduction / 2) * snapshot->width + x * reduction + reduction / 2;
+			const size_t target = size_t(y) * w + x;
+			std::copy_n(snapshot->color.data() + source * 4, 4, color.data() + target * 4);
+			std::copy_n(snapshot->guides.data() + source * DENOISING_GUIDE_STRIDE, DENOISING_GUIDE_STRIDE,
+					guides.data() + target * DENOISING_GUIDE_STRIDE);
+			guides[target * DENOISING_GUIDE_STRIDE + 16] = x;
+			guides[target * DENOISING_GUIDE_STRIDE + 17] = y;
+			counts[target] = snapshot->sampleCount[source];
+		}
+		snapshot->color.swap(color); snapshot->guides.swap(guides); snapshot->sampleCount.swap(counts);
+		// A selected child centre is +.25 source pixels at reduction2. NGX
+		// receives this actual offset; its projection matrix stays unjittered.
+		snapshot->jitterX = (snapshot->jitterX + reduction / 2 + .5f) / reduction - .5f;
+		snapshot->jitterY = (snapshot->jitterY + reduction / 2 + .5f) / reduction - .5f;
+		for (unsigned i = 0; i < 8; ++i) snapshot->cameraToRaster[i] /= reduction;
+		snapshot->width = w; snapshot->height = h;
+	}
+	{
+		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
+		// Parse can invalidate the display settings between the film merge
+		// and publication. Never relabel that old snapshot as the new look.
+		if (snapshot->presentationRevision == denoisingRequiredPipelineRevision)
+			latestDenoisingFrame = std::move(snapshot);
+	}
+	denoisingFrameCondition.notify_all();
+}
+
+void RTPathOCLRenderEngine::AdvanceDenoisingFrameJitter() {
+	const double n = double(denoisingFrameId);
+	taskConfig.pathTracer.pixelJitterX = std::fmod(n * .7548776662466927 + .5, 1.) - .5;
+	taskConfig.pathTracer.pixelJitterY = std::fmod(n * .5698402909980532 + .5, 1.) - .5;
+	for (auto *baseThread : renderOCLThreads) {
+		auto *thread = static_cast<RTPathOCLRenderThread *>(baseThread);
+		thread->threadTaskConfig.pathTracer.pixelJitterEnable = 1;
+		thread->threadTaskConfig.scene = taskConfig.scene;
+		thread->threadTaskConfig.pathTracer.pixelJitterX = taskConfig.pathTracer.pixelJitterX;
+		thread->threadTaskConfig.pathTracer.pixelJitterY = taskConfig.pathTracer.pixelJitterY;
+		thread->intersectionDevice.PushThreadCurrentDevice();
+		thread->intersectionDevice.EnqueueWriteBuffer(thread->taskConfigBuff, true,
+				sizeof(thread->threadTaskConfig), &thread->threadTaskConfig);
+		thread->intersectionDevice.PopThreadCurrentDevice();
+	}
+}
+
+bool RTPathOCLRenderEngine::HasDone() const {
+	return denoisingFramesEnabled ? denoisingFrameHalt.load() : TilePathOCLRenderEngine::HasDone();
+}
+
+void RTPathOCLRenderEngine::WaitForDone() const {
+	if (!denoisingFramesEnabled) { TilePathOCLRenderEngine::WaitForDone(); return; }
+	std::unique_lock<std::mutex> lock(denoisingFrameMutex);
+	denoisingFrameCondition.wait(lock, [&] { return denoisingFramesStopped || denoisingFrameHalt.load(); });
 }
 
 void RTPathOCLRenderEngine::WaitNewFrame() {
@@ -238,7 +693,9 @@ PropertiesUPtr RTPathOCLRenderEngine::ToProperties(const Properties &cfg) {
 			//------------------------------------------------------------------
 			cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview")) <<
 			cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction.preview.step")) <<
-			cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction"));
+			cfg.Get(GetDefaultProps()->Get("rtpath.resolutionreduction")) <<
+			cfg.Get(GetDefaultProps()->Get("rtpath.denoisingframes.input.reduction")) <<
+			cfg.Get(GetDefaultProps()->Get("rtpath.interactive.gpu"));
 	return props_ptr;
 }
 
@@ -263,7 +720,9 @@ PropertiesUPtr RTPathOCLRenderEngine::GetDefaultProps() {
 			//------------------------------------------------------------------
 			Property("rtpath.resolutionreduction.preview")(4) <<
 			Property("rtpath.resolutionreduction.preview.step")(8) <<
-			Property("rtpath.resolutionreduction")(4);
+			Property("rtpath.resolutionreduction")(4) <<
+			Property("rtpath.denoisingframes.input.reduction")(1u) <<
+			Property("rtpath.interactive.gpu")(false);
 
 	return props;
 }

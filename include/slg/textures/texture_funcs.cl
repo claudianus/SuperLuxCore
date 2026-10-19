@@ -81,6 +81,8 @@ OPENCL_FORCE_INLINE float Texture_GetFloatValue(const uint texIndex,
 		case CONST_FLOAT3:
 			return ConstFloat3Texture_ConstEvaluateFloat(tex);
 		case IMAGEMAP:
+			if (tex->imageMapTex.vectorTexIndex != NULL_INDEX)
+				return Texture_GetFloatValueSlowPath(texIndex, hitPoint TEXTURES_PARAM);
 			return ImageMapTexture_ConstEvaluateFloat(tex, hitPoint TEXTURES_PARAM);
 		//----------------------------------------------------------------------
 		// Fall back to the slow path
@@ -94,7 +96,8 @@ OPENCL_FORCE_INLINE float Texture_GetFloatValue(const uint texIndex,
 // Texture_GetSpectrumValue()
 //------------------------------------------------------------------------------
 
-OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIndex,
+OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPathWithDepth(const uint texIndex,
+		const uint initialRawDepth,
 		__global const HitPoint *hitPoint
 		TEXTURES_PARAM_DECL) {
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
@@ -116,7 +119,7 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIn
 
 	uint evalStackOffsetVal = 0;
 	uint *evalStackOffset = &evalStackOffsetVal; // Used by macros
-	uint spectralRawDepth = 0;
+	uint spectralRawDepth = initialRawDepth;
 	for (uint i = 0; i < evalSpectrumOpLength; ++i) {
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 		printf("EvalOp: #%d\n", i);
@@ -141,6 +144,11 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIn
 	return result;
 }
 
+OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIndex,
+		__global const HitPoint *hitPoint TEXTURES_PARAM_DECL) {
+	return Texture_GetSpectrumValueSlowPathWithDepth(texIndex, 0u, hitPoint TEXTURES_PARAM);
+}
+
 OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		__global const HitPoint *hitPoint
 		TEXTURES_PARAM_DECL) {
@@ -160,6 +168,11 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 #endif
 		}
 		case IMAGEMAP: {
+			// Explicit vector inputs are arbitrary texture graphs. The
+			// compiled stack evaluates their raw coordinates before the image;
+			// the constant-image shortcut only handles the built-in mapping.
+			if (tex->imageMapTex.vectorTexIndex != NULL_INDEX)
+				return Texture_GetSpectrumValueSlowPath(texIndex, hitPoint TEXTURES_PARAM);
 			const float3 v = ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
 #if defined(SLG_SPECTRAL)
 			return Spectral_LeafEval(v, hitPoint, SLG_SPECTRAL_UPSAMPLING_TABLE);
@@ -190,9 +203,11 @@ OPENCL_FORCE_INLINE float3 Texture_GetRawSpectrumValue(const uint texIndex,
 		case CONST_FLOAT3:
 			return ConstFloat3Texture_ConstEvaluateSpectrum(tex);
 		case IMAGEMAP:
-			return ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
+			if (tex->imageMapTex.vectorTexIndex == NULL_INDEX)
+				return ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
+			// Fall through to the raw stack, including the vector graph.
 		default:
-			return Texture_GetSpectrumValue(texIndex, hitPoint TEXTURES_PARAM);
+			return Texture_GetSpectrumValueSlowPathWithDepth(texIndex, 1u, hitPoint TEXTURES_PARAM);
 	}
 }
 

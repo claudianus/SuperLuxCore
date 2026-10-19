@@ -547,7 +547,7 @@ static float SpecLayerAlbedo(const float mu, const float etaS,
 
 void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 		const Vector &wFixed,
-		Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT]) const {
+		Spectrum weights[LOBE_COUNT], float probs[LOBE_COUNT], Spectrum *directionalAlbedos) const {
 	const Vector specFixed = p.independentNormals ? p.specFrame.ToLocal(wFixed) : wFixed;
 	const Vector coatFixed = p.independentNormals ? p.coatFrame.ToLocal(wFixed) : wFixed;
 	const Vector fuzzFixed = p.independentNormals ? p.fuzzFrame.ToLocal(wFixed) : wFixed;
@@ -635,6 +635,41 @@ void OpenPBRMaterial::ComputeWeights(const HitPoint &hitPoint, const Params &p,
 	const float invSum = (sum > 0.f) ? 1.f / sum : 0.f;
 	for (u_int i = 0; i < LOBE_COUNT; ++i)
 		probs[i] = imp[i] * invSum;
+	if (directionalAlbedos) {
+		directionalAlbedos[LOBE_FUZZ] = weights[LOBE_FUZZ] * ((fuzzFixed.z > 0.f) ?
+				zeltner::DirAlbedo(fabsf(fuzzFixed.z), p.fuzzRoughness) : 0.f);
+		directionalAlbedos[LOBE_COAT] = weights[LOBE_COAT] * coatF;
+		directionalAlbedos[LOBE_METAL] = weights[LOBE_METAL] * p.specWeight * FresnelF82(muF, F0, p.specColor);
+		directionalAlbedos[LOBE_SPEC] = weights[LOBE_SPEC] * Fspec;
+		directionalAlbedos[LOBE_BTDF] = weights[LOBE_BTDF] * (1.f - Fspec);
+		directionalAlbedos[LOBE_DIFF] = weights[LOBE_DIFF] * ((p.independentNormals || diffFixed.z > 0.f) ?
+				1.f - SpecLayerAlbedo(muF, etaS, p.specWeight, p.specRoughness) : 0.f);
+		directionalAlbedos[LOBE_SSS] = Spectrum();
+	}
+}
+
+bool OpenPBRMaterial::GetDenoisingFeatures(const HitPoint &hp, DenoisingFeatures &f) const {
+	Params p;
+	EvaluateParams(hp, p);
+	if (p.filmWeight > 0.f || p.disp.Active()) return false;
+	const Frame frame = hp.GetFrame();
+	Vector wo = frame.ToLocal(hp.fixedDir);
+	if (!p.independentNormals && IsOpaqueBackface(p, wo.z)) wo.z = -wo.z;
+	Spectrum weights[LOBE_COUNT], albedos[LOBE_COUNT];
+	float probs[LOBE_COUNT];
+	ComputeWeights(hp, p, wo, weights, probs, albedos);
+	float specT, specB, coatT, coatB;
+	OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, specT, specB);
+	OpenPBRAnisoAlphas(p.coatRoughness, p.coatAniso, coatT, coatB);
+	const float specR = sqrtf(sqrtf(specT * specB));
+	const float coatR = sqrtf(sqrtf(coatT * coatB));
+	const float r[LOBE_COUNT] = {p.fuzzRoughness, coatR, specR, specR, specR, 1.f, 1.f};
+	for (u_int i = 0; i < LOBE_COUNT; ++i) {
+		const Vector n = p.independentNormals ? frame.ToWorld(LobeFrame(p, static_cast<LobeId>(i)).Z) : Vector(hp.shadeN);
+		f.Add(albedos[i], n, r[i], i == LOBE_FUZZ || i == LOBE_DIFF || i == LOBE_SSS);
+	}
+	f.transmission = p.transWeight > 0.f || p.sssWeight > 0.f;
+	return true;
 }
 
 // PDF of sampling `wi` given fixed `wo` for a single lobe.

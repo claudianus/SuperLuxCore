@@ -135,10 +135,20 @@ void TilePathOCLRenderEngine::InitTaskCount() {
 						Get("path.hybridbackforward.partition")).Get<double>(), 0.0, 0.9);
 				// taskCount <= 8192 leaves no tail to steal from (the
 				// subtraction would wrap): all tasks stay eye tasks
-				lightTaskCount = (taskCount > 8192u) ?
-						Min(taskCount - 8192u,
-						RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
-				eyeTaskCount = taskCount - lightTaskCount;
+				if (GetType() == RTPATHOCL && cfg.Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>()) {
+					// Full independent frames cannot donate camera lanes to
+					// the light tail: every pixel needs its own fresh sample.
+					const u_longlong extra = ((u_longlong(ceil(taskCount * double(f) / Max(1.f-f, .1f))) + 8191u) / 8192u) * 8192u;
+					if (extra > std::numeric_limits<u_int>::max() - taskCount)
+						throw runtime_error("Independent frame light-task population overflow");
+					eyeTaskCount = taskCount;
+					lightTaskCount = extra;
+					taskCount += lightTaskCount;
+				} else {
+					lightTaskCount = (taskCount > 8192u) ? Min(taskCount - 8192u,
+							RoundUp<u_int>((u_int)(taskCount * f), 8192u)) : 0;
+					eyeTaskCount = taskCount - lightTaskCount;
+				}
 			}
 		}
 		if (lightTaskCount == 0) {
@@ -196,6 +206,13 @@ void TilePathOCLRenderEngine::InitTileRepository() {
 			tileWidth = (film->GetWidth() + 1) / intersectionDevices.size();
 			tileHeight = film->GetHeight();
 		}
+		if (cfgProps->Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>()) {
+			// Full coverage must not allocate a path state for every screen
+			// pixel. Reuse a bounded tile population across one complete frame.
+			const u_int edge = Clamp(cfgProps->Get(Property("rtpath.denoisingframes.tilesize")(256u)).Get<u_int>(), 32u, 512u);
+			tileWidth = Min(edge, film->GetWidth());
+			tileHeight = Min(edge, film->GetHeight());
+		}
 
 		// Tile width must be a multiple of RESOLUTION_REDUCTION to support RT variable resolution rendering
 		RTPathOCLRenderEngine *rtengine = (RTPathOCLRenderEngine *)this;
@@ -249,6 +266,10 @@ void TilePathOCLRenderEngine::StartLockLess() {
 	// pathTracer must be configured here because it is then used
 	// to set tileRepository->varianceClamping, etc.
 	pathTracer.ParseOptions(cfg, *defaultProps);
+	if (GetType() == RTPATHOCL && cfg.Get(Property("rtpath.denoisingframes.enable")(false)).Get<bool>()) {
+		pathTracer.pixelJitterEnable = true;
+		pathTracer.pixelJitterX = pathTracer.pixelJitterY = 0.f;
+	}
 
 	//--------------------------------------------------------------------------
 	// Restore render state if there is one

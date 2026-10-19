@@ -39,9 +39,9 @@ using namespace std::chrono_literals;
 TilePathOCLRenderThread::TilePathOCLRenderThread(const u_int index,
 	HardwareIntersectionDeviceRef device, TilePathOCLRenderEngine *re) : 
 	PathOCLBaseOCLRenderThread(index, device, re) {
-	// TILEPATHOCL relies on multi-state-per-iteration progression
-	// (worstCaseIterationCount = maxDepth * 2 - 1): the wavefront
-	// one-state-per-iteration model is not applicable here.
+	// Tile kernels can advance multiple states per iteration. Drain active
+	// samples after the depth-based initial batch, including extra transparent
+	// intersections; the wavefront one-state-per-iteration model differs.
 	wavefrontQueues = false;
 }
 
@@ -95,7 +95,7 @@ void TilePathOCLRenderThread::UpdateSamplerData(const TileWork &tileWork,
 
 void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 		slg::ocl::TilePathSamplerSharedData &sharedData,
-		const u_int filmIndex) {
+		const u_int filmIndex, std::stop_token stop_token) {
 	TilePathOCLRenderEngine *engine = (TilePathOCLRenderEngine *)renderEngine;
 
 	threadFilms[filmIndex]->GetFilm().Reset();
@@ -146,11 +146,14 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 	const u_int ptPasses =
 			(threadTaskConfig.pathTracer.restirPT.ptCandCount > 0u) ?
 			2u : 0u;
-	const u_int worstCaseIterationCount =
+	const u_int initialIterationCount =
 			(maxDepth == 1) ? (visCands ? 3 : 2) + giPasses + ptPasses :
 			(maxDepth * (visCands ? 3u : 2u) - (visCands ? 2u : 1u) +
 			giPasses + ptPasses);
-	for (u_int i = 0; i < worstCaseIterationCount; ++i) {
+	auto cancelled = [&]() {
+		return stop_token.stop_requested() || tileWorkCancelled.load(std::memory_order_acquire);
+	};
+	auto advance = [&]() {
 		// Trace rays (tail slots hold the light camera-visibility rays
 		// - lightVisRayBase - then the ReSTIR visibility candidate
 		// shadow rays and the GI/PT bounce/NEE/merge-visibility rays)
@@ -168,6 +171,67 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 
 		// Advance to next path state
 		EnqueueAdvancePathsKernel();
+	};
+	// Bound the GPU backlog for viewport cancellation. The original full
+	// iteration count still runs when work is not cancelled: ending the
+	// initial batch early when eye paths finish would truncate LIGHT work.
+	// Final/standalone sessions retain the existing unbounded submission.
+	const bool interactiveGPU = (engine->GetType() == RTPATHOCL) &&
+			engine->renderConfig.GetConfig().Get(
+					Property("rtpath.interactive.gpu")(false)).Get<bool>();
+	for (u_int i = 0; i < initialIterationCount && !cancelled(); ++i) {
+		advance();
+		if (interactiveGPU && ((i + 1u) % 8u == 0u))
+			intersectionDevice.FinishQueue();
+	}
+
+	// A depth bound counts BSDF vertices, not transparent intersections,
+	// shadow continuations or subsurface steps. A fixed trace count can leave
+	// valid paths unsplatted and then discard them at the next tile Init.
+	// Read actual completion; do not fill holes, increase sample weights or
+	// change the transport/depth limits to make a frame appear complete.
+	double eyeCount = 0.0;
+	for (;;) {
+		intersectionDevice.EnqueueReadBuffer(taskStatsBuff, CL_TRUE,
+				sizeof(slg::ocl::pathoclbase::GPUTaskStats) * engine->taskCount,
+				gpuTaskStats.get());
+		bool pending = false;
+		eyeCount = 0.0;
+		for (u_int i = 0; i < engine->taskCount; ++i) {
+			if (gpuTaskStats[i].activeEyeSample) {
+				eyeCount += gpuTaskStats[i].sampleCount;
+				pending |= !gpuTaskStats[i].sampleCount;
+			}
+		}
+		if (!pending || cancelled())
+			break;
+		// Bound cancellation latency without imposing another physical path
+		// cutoff. Completed eye tasks remain MK_DONE during these batches.
+		for (u_int i = 0; i < 8 && !cancelled(); ++i)
+			advance();
+	}
+
+	// All completed SampleResults are stable after the blocking stats read.
+	// Resolve primary data on the device before this film slot is read back
+	// or reused. No extra sample buffer, host transfer, or GPU spin lock.
+	if (tileResolveFilmDataKernel) {
+		auto &film = *threadFilms[filmIndex];
+		u_int arg = 0;
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, taskConfigBuff);
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, taskStatsBuff);
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, sampleResultsBuff);
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, engine->eyeTaskCount);
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, engine->aaSamples);
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, film.GetFilm().GetWidth());
+		intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, film.GetFilm().GetHeight());
+		for (auto *buffer : {film.channel_DEPTH_Buff, film.channel_POSITION_Buff,
+				film.channel_GEOMETRY_NORMAL_Buff, film.channel_SHADING_NORMAL_Buff,
+				film.channel_MATERIAL_ID_Buff, film.channel_UV_Buff,
+				film.channel_OBJECT_ID_Buff, film.channel_MOTION_VECTOR_Buff})
+			intersectionDevice.SetKernelArg(tileResolveFilmDataKernel, arg++, buffer);
+		intersectionDevice.EnqueueKernel(tileResolveFilmDataKernel,
+				HardwareDeviceRange(RoundUp<u_int>(filmPixelCount, tileResolveFilmDataWorkGroupSize)),
+				HardwareDeviceRange(tileResolveFilmDataWorkGroupSize));
 	}
 
 	// Async. transfer of the Film buffers (the tile coord lets the
@@ -184,21 +248,33 @@ void TilePathOCLRenderThread::RenderTileWork(const TileWork &tileWork,
 	if (engine->lightTaskCount > 0) {
 		if (gpuTaskStatsPerFilm.size() <= filmIndex) {
 			gpuTaskStatsPerFilm.resize(filmIndex + 1);
+			gpuTaskStatsPerFilmSize.resize(filmIndex + 1, 0);
 			lightSampleCountPending.resize(filmIndex + 1, 0);
 		}
-		if (!gpuTaskStatsPerFilm[filmIndex])
+		// RTPATHOCL film edits reuse this render-thread object while changing
+		// taskCount. The device buffer is resized by InitRender(), but this
+		// per-film host snapshot survives Stop()/Start(). Match its capacity
+		// before the async readback; a larger task population would otherwise
+		// overwrite the heap. A film slot is reused only after FinishQueue().
+		if (gpuTaskStatsPerFilmSize[filmIndex] != engine->taskCount) {
 			gpuTaskStatsPerFilm[filmIndex] = std::make_unique<
 					slg::ocl::pathoclbase::GPUTaskStats[]>(engine->taskCount);
+			gpuTaskStatsPerFilmSize[filmIndex] = engine->taskCount;
+		}
 		intersectionDevice.EnqueueReadBuffer(taskStatsBuff, CL_FALSE,
 				sizeof(slg::ocl::pathoclbase::GPUTaskStats) * engine->taskCount,
 				gpuTaskStatsPerFilm[filmIndex].get());
 		lightSampleCountPending[filmIndex] = 1;
 	}
 
-	const double eyeCount = tileWork.GetCoord().width * tileWork.GetCoord().height *
-			engine->aaSamples * engine->aaSamples;
-	// The screen-normalized count is deferred to ConsumeLightSampleCounts()
-	threadFilms[filmIndex]->GetFilm().AddSampleCount(0, eyeCount, 0.0);
+	// Count completed camera samples from the same drained work as the film.
+	// Full tile area overstates sparse RT passes by resolutionReduction^2;
+	// inactive padding, light tasks and cancelled unsplatted paths do not
+	// contribute camera samples. Tile pass/sampling progression is unchanged.
+	// This film contains one work item. Set its exact totals: a small edge
+	// tile must not lose a pending (<64) CPU-style counter batch at merge.
+	// The screen-normalized count is deferred to ConsumeLightSampleCounts().
+	threadFilms[filmIndex]->GetFilm().SetSampleCount(eyeCount, eyeCount, 0.0);
 }
 
 void TilePathOCLRenderThread::ConsumeLightSampleCounts() {
@@ -215,7 +291,9 @@ void TilePathOCLRenderThread::ConsumeLightSampleCounts() {
 		const slg::ocl::pathoclbase::GPUTaskStats *stats = gpuTaskStatsPerFilm[i].get();
 		for (u_int t = eyeTaskCount; t < engine->taskCount; ++t)
 			lightCount += stats[t].sampleCount;
-		threadFilms[i]->GetFilm().AddSampleCount(0, 0.0, lightCount);
+		Film &film = threadFilms[i]->GetFilm();
+		const double eyeCount = film.GetTotalEyeSampleCount();
+		film.SetSampleCount(eyeCount + lightCount, eyeCount, lightCount);
 	}
 }
 
@@ -273,21 +351,16 @@ void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                                 //SLG_LOG("[TilePathOCLRenderThread::" << threadIndex << "] TileWork: " << tileWork);
 
                                 // Render the tile
-                                RenderTileWork(tileWorks[i], samplerDatas[i], i);
+                                RenderTileWork(tileWorks[i], samplerDatas[i], i, stop_token);
 
                                 allTileDone = false;
                         } else
                                 tileWorks[i].Reset();
                 }
 
-                // Async. transfer of GPU task statistics
-                intersectionDevice.EnqueueReadBuffer(
-                        taskStatsBuff,
-                        CL_FALSE,
-                        sizeof(slg::ocl::pathoclbase::GPUTaskStats) * taskCount,
-                        gpuTaskStats.get());
-
+                // RenderTileWork has already read the completed task statistics.
                 intersectionDevice.FinishQueue();
+				for (auto &threadFilm : threadFilms) threadFilm->CommitDenoisingGuides();
 
                 // Fold the measured light-path counts into the thread
                 // films; they are merged into the engine film by the

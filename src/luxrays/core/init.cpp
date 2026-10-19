@@ -84,8 +84,10 @@ void Init() {
 			isCudaAvilable = true;
 
 			// Try to initialize Optix too
-			if (optixInit() == OPTIX_SUCCESS)
-				isOptixAvilable = true;
+			// CUDA can be usable on a compute-only installation without
+			// libnvoptix. Clear the default/previous flag on loader failure;
+			// otherwise device construction calls an empty OptiX table.
+			isOptixAvilable = (optixInit() == OPTIX_SUCCESS);
 		}
 	} else {
 		// Same as above: cuewInit failing (missing nvcuda/nvrtc) must not

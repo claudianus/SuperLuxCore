@@ -1,3 +1,4 @@
+#include <atomic>
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -204,6 +205,10 @@ public:
 
 	size_t GetUsedMemory() const { return usedMemory; }
 
+	// A failed destruction-time release poisons this device until it is retired.
+	void MarkCleanupError() noexcept { cleanupFailed.store(true); }
+	bool HasCleanupError() const noexcept { return cleanupFailed.load(); }
+
 	virtual void AllocBuffer(HardwareDeviceBuffer **buff, const BufferType type,
 			void *src, const size_t size, const std::string &desc = "") = 0;
 	virtual void AllocBufferRO(HardwareDeviceBuffer **buff,
@@ -214,6 +219,8 @@ public:
 		AllocBuffer(buff, BUFFER_TYPE_READ_WRITE, src, size, desc);
 	}
 	virtual void FreeBuffer(HardwareDeviceBuffer **buff) = 0;
+	// Cleanup only: consume the wrapper even after a driver failure.
+	virtual void FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept = 0;
 
 	virtual ~HardwareDevice();
 
@@ -230,6 +237,7 @@ protected:
 
 	std::vector<std::string> additionalCompileOpts;
 	size_t usedMemory;
+	std::atomic<bool> cleanupFailed{false};
 };
 
 typedef HardwareDeviceBuffer * HardwareDeviceBufferRPtr;

@@ -49,6 +49,10 @@ RoughGlassMaterial::RoughGlassMaterial(TextureConstPtr frontTransp, TextureConst
 	glossiness = ComputeGlossiness(nu, nv);
 }
 
+Dispersion RoughGlassMaterial::GetDispersion(const HitPoint &hitPoint) const {
+	return EvaluateDispersion(cauchyB, sellmeierB, sellmeierC, hitPoint);
+}
+
 Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,
 	float *directPdfW, float *reversePdfW) const {

@@ -72,8 +72,16 @@ static void GenerateEyeRay(CameraConstRef camera, Ray &eyeRay,
 	// interface so I resort to this simple method 
 
 	if (camera.GetType() == Camera::ORTHOGRAPHIC) {
-		dpdx = 1.f / imagePlaneDeltaX;
-		dpdy = 1.f / imagePlaneDeltaY;
+		// Parallel rays have a world-space origin footprint, independent
+		// of their distance to the receiver and of the raster resolution.
+		Ray dx, dy;
+		PathVolumeInfo vx, vy;
+		camera.GenerateRay(time, sampleResult.filmX + imagePlaneDeltaX,
+				sampleResult.filmY, &dx, &vx, u0, u1);
+		camera.GenerateRay(time, sampleResult.filmX,
+				sampleResult.filmY + imagePlaneDeltaY, &dy, &vy, u0, u1);
+		dpdx = Distance(eyeRay.o, dx.o);
+		dpdy = Distance(eyeRay.o, dy.o);
 	} else {
 		// Evaluate the camera ray + imagePlaneDeltaX
 
@@ -170,7 +178,7 @@ static void Film2SceneRadiusThread(Film2SceneRadiusThreadParams &params) {
 		PathVolumeInfo volInfo;
 		float cameraDpDx, cameraDpDy;
 		GenerateEyeRay(camera, eyeRay, volInfo, &sampler, sampleResult, cameraDpDx, cameraDpDy,
-				params.imagePlaneRadius, params.timeStart, params.timeStart);
+				params.imagePlaneRadius, params.timeStart, params.timeEnd);
 
 		if (!IsValid(cameraDpDx) || !IsValid(cameraDpDy))
 			continue;
@@ -210,7 +218,8 @@ static void Film2SceneRadiusThread(Film2SceneRadiusThreadParams &params) {
 			if (!params.validator || params.validator->IsValid(bsdf)) {
 				// Found a place for a valid cache entry
 
-				params.accumulatedRadiusSize += Max(cameraDpDx * pathLength, cameraDpDy * pathLength);
+				const float footprintScale = camera.GetType() == Camera::ORTHOGRAPHIC ? 1.f : pathLength;
+				params.accumulatedRadiusSize += Max(cameraDpDx, cameraDpDy) * footprintScale;
 				++params.radiusSizeCount;
 				break;
 			}

@@ -18,6 +18,7 @@
 
 #include "slg/cameras/stereo.h"
 #include "slg/cameras/environment.h"
+#include "slg/utils/pathvolumeinfo.h"
 #include <algorithm>
 #include <utility>
 
@@ -104,16 +105,26 @@ void StereoCamera::Update(const u_int width, const u_int height,
 	y = Cross(x, dir);
 	y = Normalize(y);
 
+	// Each eye owns its camera motion copy; sharing the raw pointer would
+	// double-delete it when the eyes are rebuilt. Its transforms stay local
+	// to the camera, so the GPU compiler still applies the parent motion once.
+	auto initEye = [this](Camera &eye) {
+		eye.clipHither = clipHither;
+		eye.clipYon = clipYon;
+		eye.shutterOpen = shutterOpen;
+		eye.shutterClose = shutterClose;
+		eye.autoVolume = autoVolume;
+		if (motionSystem)
+			eye.motionSystem = new MotionSystem(*motionSystem);
+		// The latest parent volume is added in GenerateRay(), after the
+		// auto-volume update. Never retain stale volume pointers in an eye.
+	};
+
 	switch(stereoType) {
 		case STEREO_PERSPECTIVE: {
 			// Create left eye camera
 			auto left = std::make_unique<PerspectiveCamera>(orig - .5f * horizStereoEyesDistance * x, target, up);
-			left->clipHither = clipHither;
-			left->clipYon = clipYon;
-			left->shutterOpen = shutterOpen;
-			left->shutterClose = shutterClose;
-			left->autoVolume = autoVolume;
-			left->SetVolume(*volume);
+			initEye(*left);
 
 			left->clippingPlaneCenter = clippingPlaneCenter;
 			left->clippingPlaneNormal = clippingPlaneNormal;
@@ -132,13 +143,8 @@ void StereoCamera::Update(const u_int width, const u_int height,
 
 			// Create right eye camera
 			auto right = std::make_unique<PerspectiveCamera>(orig + .5f * horizStereoEyesDistance * x, target, up);
+			initEye(*right);
 
-			right->clipHither = clipHither;
-			right->clipYon = clipYon;
-			right->shutterOpen = shutterOpen;
-			right->shutterClose = shutterClose;
-			right->autoVolume = autoVolume;
-			right->SetVolume(*volume);
 
 			right->clippingPlaneCenter = clippingPlaneCenter;
 			right->clippingPlaneNormal = clippingPlaneNormal;
@@ -159,6 +165,7 @@ void StereoCamera::Update(const u_int width, const u_int height,
 		case STEREO_ENVIRONMENT_180: {
 			// Create left eye camera
 			auto left = std::make_unique<EnvironmentCamera>(orig - .5f * horizStereoEyesDistance * x, target, up);
+			initEye(*left);
 			left->screenOffsetX = -horizStereoLensDistance * .5f;
 			left->degrees = 180.f;
 
@@ -167,6 +174,7 @@ void StereoCamera::Update(const u_int width, const u_int height,
 
 			// Create right eye camera
 			auto right = std::make_unique<EnvironmentCamera>(orig + .5f * horizStereoEyesDistance * x, target, up);
+			initEye(*right);
 			right->screenOffsetX = horizStereoLensDistance * .5f;
 			right->degrees = 180.f;
 
@@ -177,6 +185,7 @@ void StereoCamera::Update(const u_int width, const u_int height,
 		case STEREO_ENVIRONMENT_360: {
 			// Create left eye camera
 			auto left = std::make_unique<EnvironmentCamera>(orig - .5f * horizStereoEyesDistance * x, target, up);
+			initEye(*left);
 			left->screenOffsetX = -horizStereoLensDistance * .5f;
 			left->degrees = 360.f;
 
@@ -185,6 +194,7 @@ void StereoCamera::Update(const u_int width, const u_int height,
 
 			// Create right eye camera
 			auto right = std::make_unique<EnvironmentCamera>(orig + .5f * horizStereoEyesDistance * x, target, up);
+			initEye(*right);
 			right->screenOffsetX = horizStereoLensDistance * .5f;
 			right->degrees = 360.f;
 
@@ -195,6 +205,15 @@ void StereoCamera::Update(const u_int width, const u_int height,
 		default:
 			throw runtime_error("Unknown StereoCamera type in StereoCamera::Update(): " + ToString(stereoType));
 	}
+}
+
+void StereoCamera::UpdateAuto(SceneConstRef scene) {
+	ProjectiveCamera::UpdateAuto(scene);
+	// Auto-focus may have changed the parent's focal distance after Update.
+	// Rebuild both eyes with the resolved settings, keeping the film crop.
+	const u_int subRegion[4] = {filmSubRegion[0], filmSubRegion[1],
+		filmSubRegion[2], filmSubRegion[3]};
+	Update(filmWidth, filmHeight, subRegion);
 }
 
 void StereoCamera::GenerateRay(const float time,
@@ -217,7 +236,9 @@ void StereoCamera::GenerateRay(const float time,
 			break;
 		default:
 			throw runtime_error("Unknown StereoCamera type in StereoCamera::GenerateRay(): " + ToString(stereoType));
-	}		
+	}
+	if (HasVolume())
+		volInfo->AddVolume(GetVolume());
 }
 
 bool StereoCamera::GetSamplePosition(Ray *eyeRay, float *filmX, float *filmY) const {

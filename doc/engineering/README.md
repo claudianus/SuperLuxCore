@@ -1,5 +1,7 @@
 # Engineering notes
 
+- [2026-10-16 review: memory and render lifecycle fixes](2026-10-16-review-lifecycle-fixes.md)
+
 Deep implementation notes, debugging findings and platform gotchas
 extracted from the old monolithic `AGENTS.md`. Feature/user-facing
 docs live in `doc/features/` (see its README for the index).
@@ -108,3 +110,32 @@ docs live in `doc/features/` (see its README for the index).
 - [Finite heterogeneous emission and CPU scene edit samples](2026-10-11-vdb-emission-and-edit-reset.md): independent CPU/Metal emission integrals and four real CPU VDB edit cases.
 
 - [Metal scene edit films and exact blackbody cache](2026-10-11-metal-edit-film-and-blackbody-cache.md): four real Metal VDB edits and 6912 bit-identical spectral evaluations; full compatibility remains open.
+- [Metal startup: reachable PSO selection and prefill](2026-10-16-metal-startup.md)
+
+- [DLSS CUDA backend and Cycles 5.3 beta contract (in progress)](2026-10-16-dlss-cuda.md)
+
+- [Atomic viewport updates and RT runtime policy, Phases74–75](2026-10-19-viewport-atomic-runtime-policy.md) — correctness and local ZIP gates; heavy resize/RTX remain open.
+
+- [Viewport empty-film investigation, Phases76–77](2026-10-19-viewport-empty-film-investigation.md) — actual diagnostics, rejected UI gates and exact restoration.
+
+- [Wavefront mapped-device bounds, Phase78](2026-10-19-wavefront-device-bounds.md) — host progress fix, current720p8/8AOV gates and bounded actual ZIP evidence.
+
+- [Windows fix1 viewport DLSS fallback and continued crash feedback](2026-10-19-windows-dlss-feedback.md)
+
+- [Windows fix1 OpenCL cleanup follow-up](2026-10-19-windows-opencl-cleanup.md)
+- [2026-10-19-windows-film-cleanup.md](2026-10-19-windows-film-cleanup.md) — Film GPU cleanup ownership V2, host faults and stock GUI evidence; Windows RTX unverified.
+- [2026-10-19-windows-dlss-runtime-cleanup.md](2026-10-19-windows-dlss-runtime-cleanup.md) — DLSS C ABI cleanup fault reproduction, Windows no-console gate, bounded fix2 CI.
+- [2026-10-19-dlss-init-transaction.md](2026-10-19-dlss-init-transaction.md) — DLSS initialization ownership transaction; helper-only fault/SDK/ABI gates, no RTX acceptance.
+- [2026-10-19-dlss-frame-transaction.md](2026-10-19-dlss-frame-transaction.md) — DLSS frame output/history transaction, Windows/Linux SDK/ABI/dependency gates; no real RTX acceptance.
+
+- [2026-10-19 DLSS stability fix3 package](2026-10-19-dlss-stability-fix3.md) — Windows whole-ZIP upgrade/provenance and pending Linux rebuild; actual RTX acceptance remains open.
+
+- [2026-10-19 viewport draw error Stop ownership](2026-10-19-viewport-error-stop.md) — one caller-lock defect, source/installed ZIP7-case regression, RTX acceptance open.
+
+- [2026-10-19: Private viewport read scheduling — rejected](2026-10-19-viewport-read-scheduling.md): bounded native checks pass; heavy orbit/resize acceptance fails, no adoption or speed claim.
+
+- [2026-10-19: Coherent viewport preview and latest-camera acknowledgement](2026-10-19-viewport-consume-fencing.md): exact7ready discarded frames; private9preview/0false-reset acknowledgements; strict camera response0/30orbit2/14resize, no adoption.
+
+- [2026-10-19: Independent requested/applied camera pose timeline](2026-10-19-viewport-pose-timeline.md): corrected86/86bounded pose matches; stats-call vs snapshot wait and cached frame intervals; failed probe preserved/repaired; no product/performance promotion.
+
+- [2026-10-19: Metal kernel cost shares and requested wrap-up](2026-10-19-metal-kernel-cost-wrap-up.md): LT/VC71.54percent in altered-batching profiler; no optimization promotion; publicfix4 digests reverified, own resources cleaned, full goal incomplete.

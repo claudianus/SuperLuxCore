@@ -22,6 +22,11 @@
 #include "luxrays/core/geometry/frame.h"
 #include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/materials/material.h"
+#include "slg/materials/mirror.h"
+#include "slg/materials/glass.h"
+#include "slg/materials/roughglass.h"
+#include "slg/materials/glossytranslucent.h"
+#include "slg/materials/mix.h"
 #include "slg/materials/microfacet.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/textures/fresnel/fresneltexture.h"
@@ -56,6 +61,96 @@ Material::Material(TextureConstPtr frontTransp, TextureConstPtr backTransp,
 }
 
 Material::~Material() = default;
+
+bool Material::GetDenoisingFeatures(const HitPoint &hp, DenoisingFeatures &f) const {
+	if (GetType() == MATTE || GetType() == ROUGHMATTE || GetType() == MATTETRANSLUCENT) {
+		// Lambert transmission is diffuse too; its Albedo includes both
+		// hemispheres with the material's energy-conserving Kr/Kt split.
+		f.Add(Albedo(hp), Vector(hp.shadeN), 1.f, true);
+		return true;
+	}
+	if (GetType() == MIRROR) {
+		const auto &m = static_cast<const MirrorMaterial &>(*this);
+		f.Add(m.GetKr()->GetSpectrumValue(hp).Clamp(0.f, 1.f), Vector(hp.shadeN), 0.f, false);
+		return true;
+	}
+	if (GetType() == MIX) {
+		const auto &m = static_cast<const MixMaterial &>(*this);
+		const float factor = m.IsAdditive() ? .5f : Clamp(m.GetMixFactor().GetFloatValue(hp), 0.f, 1.f);
+		const float scale = m.IsAdditive() ? 2.f : 1.f;
+		const float weights[2] = {scale*(1.f-factor), scale*factor};
+		const Material *children[2] = {&m.GetMaterialA(), &m.GetMaterialB()};
+		for (u_int i = 0; i < 2; ++i) {
+			const float w = weights[i];
+			if (!(w > 0.f)) continue;
+			// Flat closures share this actual hit/frame. A child's own bump
+			// or another compound layer needs a separate feature evaluation.
+			if (children[i]->GetType() == MIX || children[i]->GetBumpTexture()) return false;
+			DenoisingFeatures child;
+			if (!children[i]->GetDenoisingFeatures(hp, child)) return false;
+			f.diffuse += child.diffuse*w; f.specular += child.specular*w;
+			f.normal += child.normal*w; f.roughness += child.roughness*w;
+			f.weight += child.weight*w; f.nonspecularWeight += child.nonspecularWeight*w;
+			f.transmission = f.transmission || child.transmission;
+		}
+		return true;
+	}
+	if (GetType() == GLOSSYTRANSLUCENT) {
+		const auto &m = static_cast<const GlossyTranslucentMaterial &>(*this);
+		// A directional auxiliary estimate for the single, nonabsorbing coat.
+		// Absorption/multibounce need their own layer-albedo estimate. Never
+		// replace the physical material or its legacy Schlick distribution.
+		if (m.IsMultibounce() || m.IsMultibounce_bf() ||
+				m.GetDepth()->GetFloatValue(hp) != 0.f || m.GetDepth_bf()->GetFloatValue(hp) != 0.f)
+			return false;
+		Spectrum ks = m.GetKs()->GetSpectrumValue(hp), kb = m.GetKs_bf()->GetSpectrumValue(hp);
+		const float i = m.GetIndex()->GetFloatValue(hp), ib = m.GetIndex_bf()->GetFloatValue(hp);
+		if (i > 0.f) { const float t = (i-1.f)/(i+1.f); ks *= t*t; }
+		if (ib > 0.f) { const float t = (ib-1.f)/(ib+1.f); kb *= t*t; }
+		const float signedMu = Dot(hp.fixedDir, hp.shadeN), mu = fabsf(signedMu);
+		const Spectrum F = FresnelTexture::SchlickEvaluate(ks.Clamp(0.f, 1.f), mu);
+		const Spectrum Fb = FresnelTexture::SchlickEvaluate(kb.Clamp(0.f, 1.f), mu);
+		const Spectrum sideF = signedMu >= 0.f ? F : Fb;
+		const Spectrum kd = m.GetKd()->GetSpectrumValue(hp).Clamp(0.f, 1.f);
+		const Spectrum kt = m.GetKt()->GetSpectrumValue(hp).Clamp(0.f, 1.f);
+		f.Add(kd*(Spectrum(1.f)-sideF) + kt*(Spectrum(1.f)-kd)*
+				Sqrt((Spectrum(1.f)-F)*(Spectrum(1.f)-Fb)), Vector(hp.shadeN), 1.f, true);
+		const float u = Clamp((signedMu >= 0.f ? m.GetNu() : m.GetNu_bf())->GetFloatValue(hp), 1e-9f, 1.f);
+		const float v = Clamp((signedMu >= 0.f ? m.GetNv() : m.GetNv_bf())->GetFloatValue(hp), 1e-9f, 1.f);
+		// Match the NDF peak to GGX alpha, only for the scalar RR feature:
+		// Schlick D(N)=1/(pi*u*v), GGX D(N)=1/(pi*alpha^2).
+		const float r = m.IsGgx() ? sqrtf(sqrtf(Max(u*u, 1e-4f)*Max(v*v, 1e-4f))) : sqrtf(sqrtf(u*v));
+		f.Add(sideF, Vector(hp.shadeN), r, false);
+		return true;
+	}
+	if (GetType() == GLASS || GetType() == ROUGHGLASS) {
+		TextureConstPtr kr, kt, ncTex, ntTex, film;
+		Dispersion dispersion;
+		float r = 0.f;
+		if (GetType() == GLASS) {
+			const auto &m = static_cast<const GlassMaterial &>(*this);
+			kr = m.GetKr(); kt = m.GetKt(); ncTex = m.GetExteriorIOR(); ntTex = m.GetInteriorIOR();
+			film = m.GetFilmThickness(); dispersion = m.GetDispersion(hp);
+		} else {
+			const auto &m = static_cast<const RoughGlassMaterial &>(*this);
+			if (!m.IsGgx()) return false;
+			kr = m.GetKr(); kt = m.GetKt(); ncTex = m.GetExteriorIOR(); ntTex = m.GetInteriorIOR();
+			film = m.GetFilmThickness(); dispersion = m.GetDispersion(hp);
+			r = sqrtf(Clamp(m.GetNu()->GetFloatValue(hp), 0.f, 1.f) *
+					Clamp(m.GetNv()->GetFloatValue(hp), 0.f, 1.f));
+		}
+		// Film/dispersion need wavelength-aware guide estimates, not RGB guesses.
+		if (dispersion.Active() || (film && film->GetFloatValue(hp) > 0.f)) return false;
+		const float nc = ExtractExteriorIors(hp, ncTex), nt = ExtractInteriorIors(hp, ntTex);
+		const float eta = hp.intoObject ? nt / nc : nc / nt;
+		const float F = FresnelDielectric(fabsf(Dot(hp.fixedDir, hp.shadeN)), eta);
+		f.Add(kr->GetSpectrumValue(hp).Clamp(0.f, 1.f) * F +
+				kt->GetSpectrumValue(hp).Clamp(0.f, 1.f) * (1.f - F), Vector(hp.shadeN), r, false);
+		f.transmission = !kt->GetSpectrumValue(hp).Clamp(0.f, 1.f).Black();
+		return true;
+	}
+	return false;
+}
 
 void Material::SetEmittedTheta(const float theta) {
 	if (theta <= 0.f) {
@@ -471,8 +566,15 @@ Dispersion slg::EvaluateDispersion(TextureConstPtr cauchyB,
 		// Sellmeier coefficients are non-color data: read them raw. The
 		// spectral GetSpectrumValue() would upsample them as an RGB color
 		// to the path wavelengths and corrupt the dispersion curve.
-		const Spectrum b = sellmeierB->EvalSpectrumValue(hitPoint);
-		const Spectrum c = sellmeierC->EvalSpectrumValue(hitPoint);
+		Spectrum b, c;
+		{
+			// Bypassing only the root RGB conversion is insufficient:
+			// composed textures call GetSpectrumValue() on their children.
+			// Keep the complete coefficient graph in non-color mode.
+			const Spectral::ScopePause pause;
+			b = sellmeierB->EvalSpectrumValue(hitPoint);
+			c = sellmeierC->EvalSpectrumValue(hitPoint);
+		}
 		for (u_int i = 0; i < 3; ++i) {
 			d.sellB[i] = b.c[i];
 			d.sellC[i] = c.c[i];

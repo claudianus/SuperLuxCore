@@ -34,7 +34,11 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdlib>
+#include <cmath>
+#include <limits>
 #include <vector>
+
+#include "metalrtprecise.h"
 
 using namespace std;
 
@@ -346,6 +350,7 @@ public:
 		FreeAccelerationStructures();
 		[primRetainBag release];
 		[instRetainBag release];
+		if (preciseTable) [preciseTable release];
 		[pso release];
 		if (psoMotion) [psoMotion release];
 	}
@@ -372,6 +377,9 @@ private:
 	// acceleration structures (macOS 14+) and LUXRAYS_METAL_CURVES != 0.
 	// Meshes without curve data always use the triangle path regardless.
 	bool useCurveData;
+	// Opt-in until the accuracy, mixed-primitive and performance gates pass.
+	bool preciseTriangles;
+	id<MTLIntersectionFunctionTable> preciseTable;
 
 	// True when the instance acceleration structure was built with motion
 	// instance descriptors (any leaf carries a transform-motion system or
@@ -471,9 +479,12 @@ bool MetalRTKernel::IsSupported(HardwareIntersectionDevice &dev, const MBVHAccel
 
 MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &acc) :
 		HardwareIntersectionKernel(dev), mdev(dynamic_cast<MetalIntersectionDevice &>(dev)),
-		mbvh(acc), pso(nil), psoMotion(nil), workGroupSize(64), instanceAS(nil),
+		mbvh(acc), useCurveData(false), preciseTriangles(false), preciseTable(nil),
 		instanceASIsMotion(false), motionKernelReady(false),
-		useVertexMotion(false), hasVertexMotionGeometry(false) {
+		useVertexMotion(false), hasVertexMotionGeometry(false),
+		mtlDev(nil), queue(nil), pso(nil), psoMotion(nil), workGroupSize(64), instanceAS(nil),
+		primRetainBag(nil), instRetainBag(nil) {
+	try {
 	@autoreleasepool {
 		mtlDev = (__bridge id<MTLDevice>)mdev.GetMTLDevice();
 		queue = (__bridge id<MTLCommandQueue>)mdev.GetMTLCommandQueue();
@@ -501,6 +512,28 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 		useVertexMotion = !(vmEnv && string(vmEnv) == "0") &&
 				[mtlDev supportsPrimitiveMotionBlur];
 
+		const char *preciseEnv = getenv("LUXRAYS_METAL_PRECISE");
+		if (preciseEnv && string(preciseEnv) == "1") {
+			if (@available(macOS 13.0, *)) {
+				preciseTriangles = true;
+				for (size_t i = 0; i < mbvh.bvhLeafs.size(); ++i)
+					if (mbvh.bvhLeafs[i].bvhLeaf.motionIndex != NULL_INDEX)
+						preciseTriangles = false;
+				for (size_t k = 0; k < mbvh.uniqueLeafs.size(); ++k) {
+					const ExtTriangleMesh *base = ResolveExtTriangleMesh(
+							mbvh.uniqueLeafs[k]->GetMeshes()[0]);
+					if (base && (base->HasVertexMotion() || (useCurveData &&
+							base->HasCurveData() && base->AreCurvePrimitivesEnabled())))
+						preciseTriangles = false;
+				}
+			}
+			if (preciseTriangles)
+				useCurveData = false;
+			else
+				LR_LOG(dev.GetContext(), "Metal HWRT precise triangles unavailable: "
+						"requires macOS 13 and static triangle scene; retaining native path");
+		}
+
 		// Compile the native MSL kernel (never goes through cl2msl)
 		MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
 		NSError *err = nil;
@@ -521,9 +554,11 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 			}
 		}
 		if (!useCurveData) {
-			opts.languageVersion = MTLLanguageVersion2_3;
+			opts.languageVersion = preciseTriangles ? MTLLanguageVersion3_0 : MTLLanguageVersion2_3;
+			if (preciseTriangles) opts.fastMathEnabled = NO;
 			lib = [mtlDev newLibraryWithSource:
-					[NSString stringWithUTF8String:HWRT_MSL_SOURCE]
+					[NSString stringWithUTF8String:preciseTriangles ?
+							HWRT_MSL_SOURCE_PRECISE : HWRT_MSL_SOURCE]
 					options:opts error:&err];
 		}
 		[opts release];
@@ -532,11 +567,39 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 					(err ? err.localizedDescription.UTF8String : "?"));
 
 		id<MTLFunction> fn = [lib newFunctionWithName:@"Accelerator_Intersect_RayBuffer_HWRT"];
+		id<MTLFunction> preciseFn = preciseTriangles ?
+				[lib newFunctionWithName:@"PreciseTriangleIntersection"] : nil;
 		[lib release];
-		if (!fn)
+		if (!fn || (preciseTriangles && !preciseFn)) {
+			[fn release]; [preciseFn release];
 			throw runtime_error("Metal HWRT kernel function not found");
+		}
 
-		pso = [mtlDev newComputePipelineStateWithFunction:fn error:&err];
+		if (preciseTriangles) {
+			MTLComputePipelineDescriptor *desc = [MTLComputePipelineDescriptor new];
+			desc.computeFunction = fn;
+			MTLLinkedFunctions *linked = [MTLLinkedFunctions linkedFunctions];
+			linked.functions = @[preciseFn];
+			desc.linkedFunctions = linked;
+			pso = [mtlDev newComputePipelineStateWithDescriptor:desc
+					options:MTLPipelineOptionNone reflection:nil error:&err];
+			[desc release];
+			if (pso) {
+				MTLIntersectionFunctionTableDescriptor *tableDesc =
+						[MTLIntersectionFunctionTableDescriptor intersectionFunctionTableDescriptor];
+				tableDesc.functionCount = 1;
+				preciseTable = [pso newIntersectionFunctionTableWithDescriptor:tableDesc];
+				id<MTLFunctionHandle> handle = [pso functionHandleWithFunction:preciseFn];
+				if (preciseTable && handle)
+					[preciseTable setFunction:handle atIndex:0];
+				else {
+					[preciseTable release]; preciseTable = nil;
+					[pso release]; pso = nil;
+				}
+			}
+		} else
+			pso = [mtlDev newComputePipelineStateWithFunction:fn error:&err];
+		[preciseFn release];
 		[fn release];
 		if (!pso)
 			throw runtime_error(string("Metal HWRT pipeline error: ") +
@@ -606,7 +669,21 @@ MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &a
 				<< mbvh.bvhLeafs.size() << " instances"
 				<< (instanceASIsMotion ? ", motion instance AS" : "")
 				<< (hasVertexMotionGeometry ? " + primitive vertex motion" : "")
+				<< (preciseTriangles ? " + precise static triangle intersections" : "")
 				<< ")");
+	}
+	} catch (...) {
+		// A throwing constructor never calls ~MetalRTKernel. Reap any AS
+		// submissions before releasing resources, including partially built
+		// earlier meshes if a later precise-buffer allocation fails.
+		try { mdev.FinishQueue(); } catch (...) { }
+		[instanceAS release];
+		for (auto a : primitiveAS) [a release];
+		for (auto b : ownedPrimBuffers) [b release];
+		for (auto b : ownedInstBuffers) [b release];
+		[primRetainBag release]; [instRetainBag release];
+		[preciseTable release]; [psoMotion release]; [pso release];
+		throw;
 	}
 }
 
@@ -653,6 +730,10 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 		id<MTLCommandBuffer> cb = [queue commandBuffer];
 		id<MTLAccelerationStructureCommandEncoder> enc =
 				[cb accelerationStructureCommandEncoder];
+		struct EndEncoder {
+			id<MTLAccelerationStructureCommandEncoder> value;
+			~EndEncoder() { if (value) [value endEncoding]; }
+		} endEncoder{enc};
 
 		for (size_t k = 0; k < mbvh.uniqueLeafs.size(); ++k) {
 			const Mesh *mesh = mbvh.uniqueLeafs[k]->GetMeshes()[0];
@@ -895,6 +976,47 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 				}
 			}
 
+			if (!geo && preciseTriangles) {
+				if (@available(macOS 13.0, *)) {
+					const auto verts = mesh->GetVertices();
+					const auto tris = mesh->GetTriangles();
+					if (tris.size() > std::numeric_limits<NSUInteger>::max() / (9 * sizeof(float)))
+						throw runtime_error("Metal precise triangle buffer size overflow");
+					id<MTLBuffer> bounds = [mtlDev newBufferWithLength:
+							tris.size() * sizeof(MTLAxisAlignedBoundingBox)
+							options:MTLResourceStorageModeShared];
+					id<MTLBuffer> data = [mtlDev newBufferWithLength:tris.size() * 9 * sizeof(float)
+							options:MTLResourceStorageModeShared];
+					if (!bounds || !data) {
+						[bounds release]; [data release];
+						throw runtime_error("Metal precise triangle buffer allocation failed");
+					}
+					ownedPrimBuffers.push_back(bounds); ownedPrimBuffers.push_back(data);
+					MTLAxisAlignedBoundingBox *boxes = (MTLAxisAlignedBoundingBox *)bounds.contents;
+					float *packed = (float *)data.contents;
+					const float inf = std::numeric_limits<float>::infinity();
+					for (size_t j = 0; j < tris.size(); ++j) {
+						for (int axis = 0; axis < 3; ++axis) {
+							const float a = verts[tris[j].v[0]][axis];
+							const float b = verts[tris[j].v[1]][axis];
+							const float c = verts[tris[j].v[2]][axis];
+							packed[j*9+axis] = a; packed[j*9+3+axis] = b; packed[j*9+6+axis] = c;
+							((float *)&boxes[j].min)[axis] = std::nextafter(std::min(a,std::min(b,c)),-inf);
+							((float *)&boxes[j].max)[axis] = std::nextafter(std::max(a,std::max(b,c)),inf);
+						}
+					}
+					MTLAccelerationStructureBoundingBoxGeometryDescriptor *bgeo =
+							[MTLAccelerationStructureBoundingBoxGeometryDescriptor descriptor];
+					bgeo.boundingBoxBuffer = bounds;
+					bgeo.boundingBoxStride = sizeof(MTLAxisAlignedBoundingBox);
+					bgeo.boundingBoxCount = tris.size();
+					bgeo.primitiveDataBuffer = data;
+					bgeo.primitiveDataStride = bgeo.primitiveDataElementSize = 9 * sizeof(float);
+					bgeo.opaque = NO;
+					bgeo.allowDuplicateIntersectionFunctionInvocation = NO;
+					geo = bgeo;
+				}
+			}
 			if (!geo) {
 				const std::span<Point> verts = mesh->GetVertices();
 				const std::span<Triangle> tris = mesh->GetTriangles();
@@ -954,6 +1076,7 @@ void MetalRTKernel::BuildPrimitiveStructures() {
 			primitiveAS.push_back(pas);
 		}
 		[enc endEncoding];
+		endEncoder.value = nil;
 		// Track so FinishQueue() covers AS builds as well
 		mdev.CommitAndTrackInFlight((__bridge MTLCommandBufferHandle)cb, {});
 		// Synchronous error check: a failed primitive build otherwise
@@ -1198,6 +1321,8 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 			u_int rc2 = rc;
 			[enc setBytes:&rc2 length:sizeof(rc2) atIndex:2];
 			[enc setAccelerationStructure:instanceAS atBufferIndex:3];
+			if (preciseTriangles)
+				[enc setIntersectionFunctionTable:preciseTable atBufferIndex:4];
 			// setAccelerationStructure only covers the top-level instance
 			// AS: the primitive structures it references are reached
 			// transitively during traversal, so each must be made

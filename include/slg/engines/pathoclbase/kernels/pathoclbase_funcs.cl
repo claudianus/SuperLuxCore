@@ -30,6 +30,329 @@
 		*ptr++ = (unsigned char)(Rnd_UintValue(&seed) & 0xff);
 }*/
 
+#if defined(SLC_DENOISING_GUIDES)
+#define KERNEL_ARGS_DENOISING_GUIDES , __global float *denoisingGuides
+#define SLC_DENOISING_GUIDE_STRIDE 32u
+
+typedef struct {
+	float3 diffuse, specular, normal;
+	float roughness, weight, nonspecular;
+	bool transmission;
+} SLCDenoisingFeatures;
+
+OPENCL_FORCE_INLINE void SLCDenoising_Add(__private SLCDenoisingFeatures *f, const float3 albedo,
+		const float3 normal, const float roughness, const bool diffuse) {
+	const float w = Spectrum_Filter(albedo);
+	if (!(w > 0.f)) return;
+#if defined(SLC_DENOISING_FRAMES)
+	// Independent RR frames use the same smooth GGX-alpha split for all
+	// closures, including rough transmission; ordinary albedo stays untouched.
+	const float t = clamp(roughness * roughness / .15f, 0.f, 1.f);
+	const float nonspecular = t * t * (3.f - 2.f * t);
+	f->diffuse += albedo * nonspecular;
+	f->specular += albedo * (1.f - nonspecular);
+#else
+	if (diffuse) f->diffuse += albedo;
+	else f->specular += albedo;
+	const float t = clamp(roughness * roughness / .15f, 0.f, 1.f);
+	const float nonspecular = t * t * (3.f - 2.f * t);
+#endif
+	f->normal += normal * w;
+	f->roughness += roughness * w;
+	f->weight += w;
+	f->nonspecular += w * nonspecular;
+}
+
+// Uses the exact BSDF/hit point that produced this eye-path sample. Never
+// retraces a ray on the CPU or infers material features from beauty AOVs.
+OPENCL_FORCE_INLINE uint SLCDenoising_MaterialLeaf(__global BSDF *bsdf,
+		__private SLCDenoisingFeatures *f MATERIALS_PARAM_DECL) {
+	__global const HitPoint *hp = &bsdf->hitPoint;
+	__global const Material *material = &mats[bsdf->materialIndex];
+	const float3 shadeN = VLOAD3F(&hp->shadeN.x);
+	if (bsdf->isVolume) return 2u;
+	if (material->type == MATTE || material->type == ROUGHMATTE) {
+		SLCDenoising_Add(f, Material_Albedo(bsdf->materialIndex, hp MATERIALS_PARAM), shadeN, 1.f, true);
+		return 1u;
+	}
+	if (material->type == MATTETRANSLUCENT) {
+		// Both Lambert lobes are diffuse. The white-environment directional
+		// albedo includes Kr + Kt * (1 - Kr), with the BSDF's texture/clamp
+		// and energy-conservation rules. No glossy feature continuation is
+		// needed for diffuse transmission, just as for diffuse reflection.
+		SLCDenoising_Add(f, Material_Albedo(bsdf->materialIndex, hp MATERIALS_PARAM), shadeN, 1.f, true);
+		return 1u;
+	}
+	if (material->type == GLOSSYTRANSLUCENT) {
+		// Same directional auxiliary estimate as the host reference. Physical
+		// GLT sampling/evaluation and its Schlick/GGX choice remain untouched.
+		if (material->glossytranslucent.multibounce || material->glossytranslucent.multibouncebf ||
+				Texture_GetFloatValue(material->glossytranslucent.depthTexIndex, hp TEXTURES_PARAM) != 0.f ||
+				Texture_GetFloatValue(material->glossytranslucent.depthbfTexIndex, hp TEXTURES_PARAM) != 0.f)
+			return 2u;
+		float3 ks = Texture_GetSpectrumValue(material->glossytranslucent.ksTexIndex, hp TEXTURES_PARAM);
+		float3 kb = Texture_GetSpectrumValue(material->glossytranslucent.ksbfTexIndex, hp TEXTURES_PARAM);
+		const float i = Texture_GetFloatValue(material->glossytranslucent.indexTexIndex, hp TEXTURES_PARAM);
+		const float ib = Texture_GetFloatValue(material->glossytranslucent.indexbfTexIndex, hp TEXTURES_PARAM);
+		if (i > 0.f) { const float t = (i-1.f)/(i+1.f); ks *= t*t; }
+		if (ib > 0.f) { const float t = (ib-1.f)/(ib+1.f); kb *= t*t; }
+		const float signedMu = dot(VLOAD3F(&hp->fixedDir.x), shadeN), mu = fabs(signedMu);
+		const float3 F = FresnelSchlick_Evaluate(Spectrum_Clamp(ks), mu);
+		const float3 Fb = FresnelSchlick_Evaluate(Spectrum_Clamp(kb), mu);
+		const float3 sideF = signedMu >= 0.f ? F : Fb;
+		const float3 kd = Spectrum_Clamp(Texture_GetSpectrumValue(material->glossytranslucent.kdTexIndex, hp TEXTURES_PARAM));
+		const float3 kt = Spectrum_Clamp(Texture_GetSpectrumValue(material->glossytranslucent.ktTexIndex, hp TEXTURES_PARAM));
+		SLCDenoising_Add(f, kd*(WHITE-sideF) + kt*(WHITE-kd)*sqrt((WHITE-F)*(WHITE-Fb)), shadeN, 1.f, true);
+		const uint ui = signedMu >= 0.f ? material->glossytranslucent.nuTexIndex : material->glossytranslucent.nubfTexIndex;
+		const uint vi = signedMu >= 0.f ? material->glossytranslucent.nvTexIndex : material->glossytranslucent.nvbfTexIndex;
+		const float u = clamp(Texture_GetFloatValue(ui, hp TEXTURES_PARAM), 1e-9f, 1.f);
+		const float v = clamp(Texture_GetFloatValue(vi, hp TEXTURES_PARAM), 1e-9f, 1.f);
+		// Peak-matching proxy, not a change of the physical distribution.
+		const float r = material->glossytranslucent.useGgx ? sqrt(sqrt(fmax(u*u, 1e-4f)*fmax(v*v, 1e-4f))) : sqrt(sqrt(u*v));
+		SLCDenoising_Add(f, sideF, shadeN, r, false);
+		return 1u;
+	}
+	if (material->type == MIRROR) {
+		SLCDenoising_Add(f, Spectrum_Clamp(Texture_GetSpectrumValue(material->mirror.krTexIndex, hp TEXTURES_PARAM)), shadeN, 0.f, false);
+#if defined(SLC_DENOISING_FRAMES)
+		return 1u;
+#else
+		return 3u;
+#endif
+	}
+#if defined(SLC_DENOISING_FRAMES)
+	if (material->type == GLASS || material->type == ROUGHGLASS) {
+		const bool rough = material->type == ROUGHGLASS;
+		if (rough && !material->roughglass.useGgx) return 2u;
+		const uint krIndex = rough ? material->roughglass.krTexIndex : material->glass.krTexIndex;
+		const uint ktIndex = rough ? material->roughglass.ktTexIndex : material->glass.ktTexIndex;
+		const uint ncIndex = rough ? material->roughglass.exteriorIorTexIndex : material->glass.exteriorIorTexIndex;
+		const uint ntIndex = rough ? material->roughglass.interiorIorTexIndex : material->glass.interiorIorTexIndex;
+		const uint filmIndex = rough ? material->roughglass.filmThicknessTexIndex : material->glass.filmThicknessTexIndex;
+		const uint cauchyIndex = rough ? material->roughglass.cauchyBTex : material->glass.cauchyBTex;
+		const uint sellIndex = rough ? material->roughglass.sellmeierBTex : material->glass.sellmeierBTex;
+		if ((filmIndex != NULL_INDEX && Texture_GetFloatValue(filmIndex, hp TEXTURES_PARAM) > 0.f) ||
+				(cauchyIndex != NULL_INDEX && Texture_GetFloatValue(cauchyIndex, hp TEXTURES_PARAM) > 0.f) ||
+				(sellIndex != NULL_INDEX && Texture_GetRawSpectrumValue(sellIndex, hp TEXTURES_PARAM).x >= 0.f)) return 2u;
+		const float nc = ExtractExteriorIors(hp, ncIndex TEXTURES_PARAM);
+		const float nt = ExtractInteriorIors(hp, ntIndex TEXTURES_PARAM);
+		const float eta = hp->intoObject ? nt/nc : nc/nt;
+		const float F = FresnelCauchy_Evaluate(eta, fabs(dot(VLOAD3F(&hp->fixedDir.x), shadeN)));
+		const float3 kr = Spectrum_Clamp(Texture_GetSpectrumValue(krIndex, hp TEXTURES_PARAM));
+		const float3 kt = Spectrum_Clamp(Texture_GetSpectrumValue(ktIndex, hp TEXTURES_PARAM));
+		const float u = rough ? clamp(Texture_GetFloatValue(material->roughglass.nuTexIndex, hp TEXTURES_PARAM), 0.f, 1.f) : 0.f;
+		const float v = rough ? clamp(Texture_GetFloatValue(material->roughglass.nvTexIndex, hp TEXTURES_PARAM), 0.f, 1.f) : 0.f;
+		SLCDenoising_Add(f, kr*F + kt*(1.f-F), shadeN, sqrt(u*v), false);
+		f->transmission = !Spectrum_IsBlack(kt);
+		return 1u;
+	}
+#endif
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_METAL2)
+	if (material->type == METAL2) {
+		if (!material->metal2.useGgx) return 2u;
+		float3 n, k;
+		Metal2Material_GetNK(material, hp, &n, &k MATERIALS_PARAM);
+		const float u = clamp(Texture_GetFloatValue(material->metal2.nuTexIndex, hp TEXTURES_PARAM), 0.f, 1.f);
+		const float v = clamp(Texture_GetFloatValue(material->metal2.nvTexIndex, hp TEXTURES_PARAM), 0.f, 1.f);
+		const float r = sqrt(sqrt(fmax(u*u, 1e-4f) * fmax(v*v, 1e-4f)));
+		SLCDenoising_Add(f, Spectrum_Clamp(FresnelGeneral_Evaluate(n, k,
+				fabs(dot(VLOAD3F(&hp->fixedDir.x), shadeN)))), shadeN, r, false);
+		return 1u;
+	}
+#endif
+#if !defined(PARAM_SPECIALIZE_MAT) || defined(PARAM_MAT_OPENPBR)
+	if (material->type == OPENPBR) {
+		OpenPBRParams p;
+		OpenPBRMat_EvaluateParams(material, hp, &p, true MATERIALS_PARAM);
+		if (p.filmWeight > 0.f || p.dispersion > 0.f || p.sellB.x >= 0.f) return 2u;
+#if defined(SLC_DENOISING_FRAMES)
+		// Subsurface exit-point/throughput guides are not produced yet.
+		// Do not let a rough diffuse closure terminate those paths early.
+		if (p.sssWeight > 0.f) return 2u;
+#endif
+		float3 wo = Frame_ToLocal(&bsdf->frame, VLOAD3F(&hp->fixedDir.x));
+		if (!p.independentNormals && wo.z < 0.f && p.transWeight <= 0.f && p.sssWeight <= 0.f) wo.z = -wo.z;
+		float3 weights[OPENPBR_LOBE_COUNT], albedo[OPENPBR_LOBE_COUNT];
+		float probs[OPENPBR_LOBE_COUNT];
+		OpenPBRMat_ComputeWeights(hp, &p, wo, weights, probs MATERIALS_PARAM);
+		const float3 specFixed = p.independentNormals ? Frame_ToLocal_Private(&p.specFrame, wo) : wo;
+		const float3 coatFixed = p.independentNormals ? Frame_ToLocal_Private(&p.coatFrame, wo) : wo;
+		const float3 fuzzFixed = p.independentNormals ? Frame_ToLocal_Private(&p.fuzzFrame, wo) : wo;
+		const float3 diffFixed = p.independentNormals ? Frame_ToLocal_Private(&p.diffuseFrame, wo) : wo;
+		const float mu = fabs(specFixed.z), eta = OpenPBRMat_EtaS(&p, hp);
+		const float F = Microfacet_FresnelDielectricModulated(mu, eta, p.specWeight);
+		albedo[OPENPBR_LOBE_FUZZ] = weights[OPENPBR_LOBE_FUZZ] * ((fuzzFixed.z > 0.f) ? Zeltner_DirAlbedo(fabs(fuzzFixed.z), p.fuzzRoughness) : 0.f);
+		albedo[OPENPBR_LOBE_COAT] = weights[OPENPBR_LOBE_COAT] * ((coatFixed.z > 0.f && fabs(p.coatIor-p.extIor) > 1e-4f) ? Microfacet_FresnelDielectric(fabs(coatFixed.z), p.coatIor/p.extIor) : 0.f);
+		albedo[OPENPBR_LOBE_METAL] = weights[OPENPBR_LOBE_METAL] * p.specWeight * Microfacet_FresnelF82(mu, Spectrum_Clamp(p.baseWeight*p.baseColor), p.specColor);
+		albedo[OPENPBR_LOBE_SPEC] = weights[OPENPBR_LOBE_SPEC] * F;
+		albedo[OPENPBR_LOBE_BTDF] = weights[OPENPBR_LOBE_BTDF] * (1.f-F);
+		albedo[OPENPBR_LOBE_DIFF] = weights[OPENPBR_LOBE_DIFF] * ((p.independentNormals || diffFixed.z > 0.f) ? 1.f-OpenPBRMat_SpecLayerAlbedo(mu, eta, p.specWeight, p.specRoughness) : 0.f);
+		float at, ab, ct, cb;
+		Microfacet_OpenPBRAnisoAlphas(p.specRoughness, p.specAniso, &at, &ab);
+		Microfacet_OpenPBRAnisoAlphas(p.coatRoughness, p.coatAniso, &ct, &cb);
+		const float sr = sqrt(sqrt(at*ab)), cr = sqrt(sqrt(ct*cb));
+		for (uint i = 0; i < OPENPBR_LOBE_COUNT; ++i) {
+			const Frame frame = OpenPBRMat_LobeFrame(&p, i);
+			const float3 normal = p.independentNormals ? Frame_ToWorld(&bsdf->frame, MAKE_FLOAT3(frame.Z.x, frame.Z.y, frame.Z.z)) : shadeN;
+			const float r = i == OPENPBR_LOBE_DIFF ? 1.f : (i == OPENPBR_LOBE_FUZZ ? p.fuzzRoughness : (i == OPENPBR_LOBE_COAT ? cr : sr));
+			SLCDenoising_Add(f, albedo[i], normal, r, i == OPENPBR_LOBE_DIFF || i == OPENPBR_LOBE_FUZZ);
+		}
+		f->transmission = p.transWeight > 0.f || p.sssWeight > 0.f;
+		return 1u;
+	}
+#endif
+	// These primary boundaries need continuation before their guides are usable.
+	if (material->type == GLASS || material->type == ROUGHGLASS) return 3u;
+	return 2u;
+}
+
+OPENCL_FORCE_INLINE uint SLCDenoising_Material(__global BSDF *bsdf,
+		__private SLCDenoisingFeatures *f MATERIALS_PARAM_DECL) {
+	const uint originalIndex = bsdf->materialIndex;
+	__global const Material *material = &mats[originalIndex];
+	if (material->type != MIX) return SLCDenoising_MaterialLeaf(bsdf, f MATERIALS_PARAM);
+	if (bsdf->isVolume) return 2u;
+	const float factor = material->mix.additive ? .5f :
+			clamp(Texture_GetFloatValue(material->mix.mixFactorTexIndex, &bsdf->hitPoint TEXTURES_PARAM), 0.f, 1.f);
+	const float scale = material->mix.additive ? 2.f : 1.f;
+	const float weights[2] = {scale*(1.f-factor), scale*factor};
+	const uint children[2] = {material->mix.matAIndex, material->mix.matBIndex};
+	uint status = 1u;
+	for (uint i = 0; i < 2u; ++i) {
+		const float w = weights[i];
+		if (!(w > 0.f)) continue;
+		__global const Material *childMaterial = &mats[children[i]];
+		// Never recurse or approximate a child's extra bump layer. The flat
+		// children use the actual parent's hit/frame, just as their BSDFs do.
+		if (childMaterial->type == MIX || childMaterial->bumpTexIndex != NULL_INDEX) {
+			status = 2u; break;
+		}
+		SLCDenoisingFeatures child;
+		child.diffuse = child.specular = child.normal = BLACK;
+		child.roughness = child.weight = child.nonspecular = 0.f; child.transmission = false;
+		// Leaf albedo/parameter dispatch reads this index. Restore it on every
+		// exit before the physical BSDF sampling/evaluation resumes.
+		bsdf->materialIndex = children[i];
+		uint childStatus = SLCDenoising_MaterialLeaf(bsdf, &child MATERIALS_PARAM);
+		if (childStatus == 3u && childMaterial->type == MIRROR) childStatus = 1u;
+		if (childStatus != 1u) { status = childStatus; break; }
+		f->diffuse += child.diffuse*w; f->specular += child.specular*w;
+		f->normal += child.normal*w; f->roughness += child.roughness*w;
+		f->weight += child.weight*w; f->nonspecular += child.nonspecular*w;
+		f->transmission = f->transmission || child.transmission;
+	}
+	bsdf->materialIndex = originalIndex;
+	return status;
+}
+
+OPENCL_FORCE_INLINE void SLCDenoising_WriteSurface(__global float *record,
+		__global BSDF *bsdf, __global const Camera *camera, __global SampleResult *sample,
+		const float time MATERIALS_PARAM_DECL) {
+	SLCDenoisingFeatures f;
+	f.diffuse = f.specular = f.normal = BLACK;
+	f.roughness = f.weight = f.nonspecular = 0.f; f.transmission = false;
+	uint status = SLCDenoising_Material(bsdf, &f MATERIALS_PARAM);
+	float r = 1.f;
+	float3 normal = BLACK;
+	if (f.weight > 0.f) {
+		normal = Transform_InvApplyVector(&camera->base.cameraToWorld, f.normal/f.weight);
+		r = clamp(f.roughness/f.weight, 0.f, 1.f);
+		const float t = clamp(2.f*f.nonspecular/f.weight, 0.f, 1.f);
+		if (status == 1u && (f.transmission || t < 1.f)) status = 3u;
+	}
+	const float3 transparency = VLOAD3F(sample->cameraTransparency.c);
+	if (status == 1u && (transparency.x != 1.f || transparency.y != 1.f || transparency.z != 1.f)) status = 3u;
+	const float3 position = VLOAD3F(&bsdf->hitPoint.p.x);
+	VSTORE3F(f.diffuse, record); record[3] = r;
+	VSTORE3F(f.specular, record+4); record[7] = status;
+	VSTORE3F(normal, record+8); record[11] = 1.f;
+	VSTORE3F(position, record+12); record[15] = Transform_InvApplyPoint(&camera->base.cameraToWorld, position).z;
+	record[16] = sample->pixelX; record[17] = sample->pixelY; record[18] = time;
+}
+
+#if defined(SLC_DENOISING_FRAMES)
+// Auxiliary features follow this exact eye path. No new ray, BSDF sample,
+// random dimension, roulette decision or transport weight is introduced.
+// [19] semantic version; [20:24] deferred RGB/active; [24:28] motion point/kind;
+// [28:31] first reflector shading normal; [31] motion-relevant first event.
+OPENCL_FORCE_INLINE void SLCDenoising_WritePathSurface(__global float *record,
+		__global BSDF *bsdf, __global const Camera *camera, __global SampleResult *sample,
+		const float time, const uint depth, const float segmentLength MATERIALS_PARAM_DECL) {
+	const float3 position = VLOAD3F(&bsdf->hitPoint.p.x);
+	if (depth == 0u) {
+		for (uint i = 0; i < SLC_DENOISING_GUIDE_STRIDE; ++i) record[i] = 0.f;
+		record[19] = 2.f;
+		VSTORE3F(WHITE, record+20); record[23] = 1.f;
+		VSTORE3F(position, record+12);
+		VSTORE3F(VLOAD3F(&bsdf->hitPoint.shadeN.x), record+28);
+		record[16] = sample->pixelX; record[17] = sample->pixelY; record[18] = time;
+		record[7] = 3.f; record[11] = 1.f;
+		const float3 transparency = VLOAD3F(sample->cameraTransparency.c);
+		if (transparency.x != 1.f || transparency.y != 1.f || transparency.z != 1.f) {
+			record[7] = 2.f; record[23] = 0.f;
+		}
+	} else if (depth == 1u && record[31] == 1.f) {
+		const float3 first = VLOAD3F(record+12), n = VLOAD3F(record+28);
+		const float n2 = dot(n,n);
+		if (n2 > 0.f) {
+			VSTORE3F(position - n*(2.f*dot(position-first,n)/n2), record+24);
+			record[27] = 1.f;
+		}
+	}
+	if (record[23] == 0.f || record[7] == 2.f || record[7] == 5.f) return;
+	if (depth == 0u && BSDF_IsHoldout(bsdf MATERIALS_PARAM)) {
+		// The canonical first-hit holdout has zero radiance and coverage.
+		// Retain its real occlusion position/normal without inventing a BSDF
+		// feature. Consumers restore its exact mask after reconstruction.
+		record[3] = 1.f; record[7] = 5.f; record[23] = 0.f;
+		VSTORE3F(Transform_InvApplyVector(&camera->base.cameraToWorld,
+				VLOAD3F(&bsdf->hitPoint.shadeN.x)), record+8);
+		record[15] = length(Transform_InvApplyPoint(&camera->base.cameraToWorld, position));
+		return;
+	}
+	if (BSDF_IsShadowCatcher(bsdf MATERIALS_PARAM)) {
+		record[7] = 2.f; record[23] = 0.f; return;
+	}
+	SLCDenoisingFeatures f;
+	f.diffuse = f.specular = f.normal = BLACK;
+	f.roughness = f.weight = f.nonspecular = 0.f; f.transmission = false;
+	if (SLCDenoising_Material(bsdf, &f MATERIALS_PARAM) != 1u) {
+		record[7] = 2.f; record[23] = 0.f;
+		// Only rejected records: these slots cannot be consumed as motion
+		// guides. Preserve the actual failing material and vertex for diagnosis
+		// without a new allocation, path sample or accepted-guide change.
+		record[24] = (float)mats[bsdf->materialIndex].type;
+		record[25] = (float)bsdf->materialIndex;
+		record[26] = (float)depth;
+		record[27] = -1.f;
+		return;
+	}
+	const float3 throughput = VLOAD3F(record+20);
+	const float weight = Spectrum_Filter(throughput);
+	const float t = f.weight > 0.f ? clamp(2.f*f.nonspecular/f.weight, 0.f, 1.f) : 0.f;
+	const float featureWeight = t*t*(3.f-2.f*t);
+	// First segment includes the perspective near clip. Later lengths are
+	// supplied by the actual intersection, rather than a primary-hit retrace.
+	record[15] += (depth == 0u ? length(Transform_InvApplyPoint(&camera->base.cameraToWorld, position)) : segmentLength) * weight;
+	if (f.weight > 0.f) {
+		const float3 normal = Transform_InvApplyVector(&camera->base.cameraToWorld, f.normal/f.weight);
+		VSTORE3F(VLOAD3F(record+8) + normal*(featureWeight*weight), record+8);
+	}
+	VSTORE3F(VLOAD3F(record) + f.diffuse*(featureWeight*throughput), record);
+	if (depth == 0u) {
+		record[3] = f.weight > 0.f ? clamp(f.roughness/f.weight, 0.f, 1.f) : 0.f;
+		VSTORE3F(f.specular, record+4);
+	}
+	const float3 deferred = throughput*f.specular*(1.f-featureWeight);
+	VSTORE3F(deferred, record+20);
+	record[23] = fmax(fmax(fabs(deferred.x),fabs(deferred.y)),fabs(deferred.z)) > 1e-4f ? 1.f : 0.f;
+	if (record[23] == 0.f) record[7] = 1.f;
+}
+#endif
+#else
+#define KERNEL_ARGS_DENOISING_GUIDES
+#endif
+
 //------------------------------------------------------------------------------
 // Init functions
 //------------------------------------------------------------------------------
@@ -69,8 +392,12 @@ OPENCL_FORCE_INLINE void InitSampleResult(
 
 	// Sample according the pixel filter distribution
 	float distX, distY;
-	FilterDistribution_SampleContinuous(&taskConfig->pixelFilter, pixelFilterDistribution,
-			uSubPixelX, uSubPixelY, &distX, &distY);
+	if (taskConfig->pathTracer.pixelJitterEnable) {
+		distX = taskConfig->pathTracer.pixelJitterX;
+		distY = taskConfig->pathTracer.pixelJitterY;
+	} else
+		FilterDistribution_SampleContinuous(&taskConfig->pixelFilter, pixelFilterDistribution,
+				uSubPixelX, uSubPixelY, &distX, &distY);
 
 	sampleResult->filmX = pixelX + .5f + distX;
 	sampleResult->filmY = pixelY + .5f + distY;
@@ -351,9 +678,11 @@ OPENCL_FORCE_INLINE void DirectHitFiniteLight(__constant const Film* restrict fi
 	if (!CheckDirectHitVisibilityFlags(light, &pathInfo->depth, pathInfo->lastBSDFEvent) ||
 			((light->linkMask != 0ull) &&
 			((light->linkMask & pathInfo->linkAcceptMask) == 0ull)) ||
-			// If the material is shadow transparent, Direct Light sampling
-			// will take care of transporting all emitted light
-			bsdf->hitPoint.throughShadowTransparency)
+			// Keep the analog hit when NEE cannot sample this emitter
+			// (disabled/large-mesh AUTO or infinite-only distribution).
+			(bsdf->hitPoint.throughShadowTransparency &&
+			light->isDirectLightSamplingEnabled &&
+			!pathInfo->lastOnlyInfiniteLights))
 		return;
 
 	float directPdfA;
@@ -3571,8 +3900,10 @@ OPENCL_FORCE_INLINE bool DirectLight_BSDFSampling(
 
 	const bool misEnabled = !lastPathVertex &&
 			Light_IsEnvOrIntersectable(light) &&
-			CheckDirectHitVisibilityFlags(light, tmpDepthInfo, event) &&
-			!bsdf->hitPoint.throughShadowTransparency;
+			CheckDirectHitVisibilityFlags(light, tmpDepthInfo, event);
+	// Incoming shadow-transparency ownership only suppresses an emitter
+	// reached by that incoming connection. This vertex's new NEE connection
+	// decides its own MIS ownership after the shadow walk in MK_RT_DL.
 
 	float weight;
 	if (PT_VC_ON(taskConfig)) {
@@ -7649,8 +7980,15 @@ __kernel void Init(
 		__global Camera *camera,
 		__global const float* restrict cameraBokehDistribution
 		KERNEL_ARGS_FILM
+		KERNEL_ARGS_DENOISING_GUIDES
 		) {
 	const size_t gid = get_global_id(0);
+	taskStats[gid].sampleCount = 0u;
+	taskStats[gid].activeEyeSample = 0u;
+	if (filmDataPending) filmDataPending[gid].valid = 0u;
+#if defined(SLC_DENOISING_GUIDES)
+	for (uint i = 0; i < SLC_DENOISING_GUIDE_STRIDE; ++i) denoisingGuides[gid*SLC_DENOISING_GUIDE_STRIDE+i] = 0.f;
+#endif
 
 	// ReSTIR visibility (E2a): mark the candidate shadow-ray slots in
 	// the rays[] tail as masked so the first trace pass skips them
@@ -7728,6 +8066,7 @@ __kernel void Init(
 			filmWidth, filmHeight,
 			filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3
 			SAMPLER_PARAM);
+	taskStats[gid].activeEyeSample = validSample ? 1u : 0u;
 
 	if (validSample) {
 #if defined(RENDER_ENGINE_TILEPATHOCL) || defined(RENDER_ENGINE_RTPATHOCL)

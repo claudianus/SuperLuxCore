@@ -564,6 +564,10 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	// AGX::ComputeContext::prepareForEnqueue).
 	if (wavefrontQueues)
 		kernelsParameters.push_back("-D PATHOCL_WAVEFRONT_QUEUES");
+	if (renderEngine->denoisingGuidesEnabled)
+		kernelsParameters.push_back("-D SLC_DENOISING_GUIDES");
+	if (renderEngine->denoisingFramesEnabled)
+		kernelsParameters.push_back("-D SLC_DENOISING_FRAMES");
 
 	const DeviceType deviceType = intersectionDevice.GetDeviceDesc().GetType();
 #if defined(__APPLE__)
@@ -597,9 +601,18 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		kernelsParameters.insert(kernelsParameters.end(), renderEngine->additionalCUDAKernelOptions.begin(), renderEngine->additionalCUDAKernelOptions.end());
 
 	// Build the kernel source/parameters hash
+	// These states are unreachable when their existing dispatch gates are
+	// false. Do not create expensive Metal PSOs for them on every startup.
+	// Include the selection in the in-session hash so enabling a feature
+	// later cannot reuse a kernel set that is missing its state handlers.
+	const auto &ptConfig = threadTaskConfig.pathTracer;
+	const bool compileVisibility = ptConfig.restir.visibilityEnable && ptConfig.restir.visCandCount > 0;
+	const bool compileGI = ptConfig.restirGI.enabled && ptConfig.restirGI.giCandCount > 0;
+	const bool compilePT = ptConfig.restirPT.enabled && ptConfig.restirPT.ptCandCount > 0;
+	const u_int optionalKernelMask = compileVisibility | (compileGI << 1) | (compilePT << 2);
 	const string newKernelSrcHash = oclKernelPersistentCache::HashString(oclKernelPersistentCache::ToOptsString(kernelsParameters))
 			+ "-" +
-			oclKernelPersistentCache::HashString(kernelSource);
+			oclKernelPersistentCache::HashString(kernelSource) + "-" + ToString(optionalKernelMask);
 	if (newKernelSrcHash == kernelSrcHash) {
 		// There is no need to re-compile the kernel
 		return;
@@ -634,11 +647,6 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_HIT_NOTHING, nullptr, true, "AdvancePaths_MK_HIT_NOTHING"},
 		{&advancePathsKernel_MK_HIT_OBJECT, nullptr, true, "AdvancePaths_MK_HIT_OBJECT"},
 		{&advancePathsKernel_MK_RT_DL, nullptr, true, "AdvancePaths_MK_RT_DL"},
-		{&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"},
-		{&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"},
-		{&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"},
-		{&advancePathsKernel_MK_PT_BOUNCE, nullptr, true, "AdvancePaths_MK_PT_BOUNCE"},
-		{&advancePathsKernel_MK_PT_RESOLVE, nullptr, true, "AdvancePaths_MK_PT_RESOLVE"},
 		{&advancePathsKernel_MK_DL_ILLUMINATE, nullptr, true, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{&advancePathsKernel_MK_DL_SAMPLE_BSDF, nullptr, true, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
 		{&advancePathsKernel_MK_MNEE_NEXT_VERTEX, nullptr, true, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
@@ -647,6 +655,34 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{&advancePathsKernel_MK_NEXT_SAMPLE, nullptr, true, "AdvancePaths_MK_NEXT_SAMPLE"},
 		{&advancePathsKernel_MK_GENERATE_CAMERA_RAY, nullptr, true, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
 	};
+	if ((renderEngine->GetType() == TILEPATHOCL) && threadTaskConfig.film.hasChannelDepth)
+		jobs.push_back({&tileResolveFilmDataKernel, &tileResolveFilmDataWorkGroupSize,
+				false, "TilePathResolveFilmData"});
+	else
+		tileResolveFilmDataKernel.reset();
+	if (filmDataPendingBuff)
+		jobs.push_back({&filmDataCommitKernel, &filmDataCommitWorkGroupSize,
+				false, "CommitFilmData"});
+	else
+		filmDataCommitKernel.reset();
+	if (compileVisibility)
+		jobs.push_back({&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"});
+	else
+		advancePathsKernel_MK_RT_RESTIR.reset();
+	if (compileGI) {
+		jobs.push_back({&advancePathsKernel_MK_RT_GI_BOUNCE, nullptr, true, "AdvancePaths_MK_RT_GI_BOUNCE"});
+		jobs.push_back({&advancePathsKernel_MK_RT_GI_RESOLVE, nullptr, true, "AdvancePaths_MK_RT_GI_RESOLVE"});
+	} else {
+		advancePathsKernel_MK_RT_GI_BOUNCE.reset();
+		advancePathsKernel_MK_RT_GI_RESOLVE.reset();
+	}
+	if (compilePT) {
+		jobs.push_back({&advancePathsKernel_MK_PT_BOUNCE, nullptr, true, "AdvancePaths_MK_PT_BOUNCE"});
+		jobs.push_back({&advancePathsKernel_MK_PT_RESOLVE, nullptr, true, "AdvancePaths_MK_PT_RESOLVE"});
+	} else {
+		advancePathsKernel_MK_PT_BOUNCE.reset();
+		advancePathsKernel_MK_PT_RESOLVE.reset();
+	}
 	// Wavefront per-state queue builder (B2/E3): refills the queues
 	// from taskState->state once per iteration; the histogram kernel
 	// counts the per-(state, lambda) population for the host prefix.
@@ -804,6 +840,8 @@ void PathOCLBaseOCLRenderThread::SetInitKernelArgs(const u_int filmIndex) {
 
 	// Film parameters
 	argIndex = threadFilms[filmIndex]->SetFilmKernelArgs(intersectionDevice, initKernel, argIndex);
+	if (renderEngine->denoisingGuidesEnabled)
+		intersectionDevice.SetKernelArg(initKernel, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 
 	initKernelArgsCount = argIndex;
 }
@@ -1008,6 +1046,7 @@ constexpr u_int MK_PT_RESOLVE = 19;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
+	SetFilmDataCommitKernelArgs(filmIndex);
 	if (advancePathsKernel_MK_RT_NEXT_VERTEX)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_NEXT_VERTEX, filmIndex, MK_RT_NEXT_VERTEX);
 	// Vertex connection (M6): MK_HIT_NOTHING and MK_HIT_OBJECT take the
@@ -1019,12 +1058,16 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 				filmIndex, MK_HIT_NOTHING);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_NOTHING,
 				argIndex++, emitLightsDistributionBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_NOTHING, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
 	if (advancePathsKernel_MK_HIT_OBJECT) {
 		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_HIT_OBJECT,
 				filmIndex, MK_HIT_OBJECT);
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_OBJECT,
 				argIndex++, emitLightsDistributionBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_HIT_OBJECT, argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
 	if (advancePathsKernel_MK_RT_DL)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_DL, filmIndex, MK_RT_DL);
@@ -1049,9 +1092,16 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		// SSP tail recorder slot (path.ssp.enable; NULL-safe)
 		intersectionDevice.SetKernelArg(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
 				argIndex++, sspTailsBuff);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
+					argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
 	}
-	if (advancePathsKernel_MK_SPLAT_SAMPLE)
-		SetAdvancePathsKernelArgs(advancePathsKernel_MK_SPLAT_SAMPLE, filmIndex, MK_SPLAT_SAMPLE);
+	if (advancePathsKernel_MK_SPLAT_SAMPLE) {
+		u_int argIndex = SetAdvancePathsKernelArgs(advancePathsKernel_MK_SPLAT_SAMPLE, filmIndex, MK_SPLAT_SAMPLE);
+		if (renderEngine->denoisingGuidesEnabled)
+			intersectionDevice.SetKernelArg(advancePathsKernel_MK_SPLAT_SAMPLE,
+					argIndex++, threadFilms[filmIndex]->denoisingGuidesBuff);
+	}
 	if (advancePathsKernel_MK_NEXT_SAMPLE)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_NEXT_SAMPLE, filmIndex, MK_NEXT_SAMPLE);
 	if (advancePathsKernel_MK_GENERATE_CAMERA_RAY)
@@ -1161,6 +1211,22 @@ void PathOCLBaseOCLRenderThread::SetKernelArgs() {
 	SetInitKernelArgs(0);
 }
 
+void PathOCLBaseOCLRenderThread::SetFilmDataCommitKernelArgs(const u_int filmIndex) {
+	if (!filmDataCommitKernel) return;
+	auto &film = *threadFilms[filmIndex];
+	u_int arg = 0;
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, taskConfigBuff);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, filmDataPendingBuff);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, renderEngine->taskCount);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, film.GetFilm().GetWidth());
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, film.GetFilm().GetHeight());
+	for (auto *buffer : {film.channel_DEPTH_Buff, film.channel_POSITION_Buff,
+			film.channel_GEOMETRY_NORMAL_Buff, film.channel_SHADING_NORMAL_Buff,
+			film.channel_MATERIAL_ID_Buff, film.channel_UV_Buff,
+			film.channel_OBJECT_ID_Buff, film.channel_MOTION_VECTOR_Buff})
+		intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, buffer);
+}
+
 void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	const u_int taskCount = renderEngine->taskCount;
 
@@ -1246,6 +1312,10 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_SPLAT_SAMPLE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (filmDataCommitKernel)
+		intersectionDevice.EnqueueKernel(filmDataCommitKernel,
+				HardwareDeviceRange(RoundUp<u_int>(taskCount, filmDataCommitWorkGroupSize)),
+				HardwareDeviceRange(filmDataCommitWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_NEXT_SAMPLE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_CAMERA_RAY,
@@ -1300,21 +1370,15 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 				HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
 	}
 
-	// Peek the totals through the shared-storage mapping when the
-	// device exposes one: on Metal EnqueueReadBuffer drains the whole
-	// command queue (FinishQueue) to service a host memcpy, which
-	// serialized every wavefront iteration and defeated batching. A
-	// racing read is safe here - WAVEFRONT_GUARD bounds lanes against
-	// the device-side totals, so stale or undersized launch sizes only
-	// defer tail work to the next BuildQueues pass. The taskCount
-	// clamp keeps a torn counter from inflating a launch range past
-	// the queue capacity.
-	if (void *totalsHost = taskQueueTotalsBuff->GetHostVisiblePointer()) {
-		memcpy(wavefrontQueueTotals.data(), totalsHost,
-				sizeof(u_int) * wavefrontQueueTotals.size());
-		for (u_int &t : wavefrontQueueTotals)
-			t = std::min(t, taskCount);
-	} else
+	// Host-visible storage does not make a CPU peek a completion fence.
+	// During an asynchronous batch its stale zero/short counts can skip
+	// newly populated device queues until the next FinishQueue(). Launch
+	// capacity-bounded lanes instead: WAVEFRONT_GUARD uses the current
+	// device totals after QueuePrefix/BuildQueues in queue order. Inactive
+	// lanes exit without touching a task. Non-mapped devices retain their
+	// synchronized compact launch sizes.
+	const bool deviceBoundsLaunch = taskQueueTotalsBuff->GetHostVisiblePointer() != nullptr;
+	if (!deviceBoundsLaunch)
 		intersectionDevice.EnqueueReadBuffer(taskQueueTotalsBuff,
 				CL_TRUE, sizeof(u_int) * wavefrontQueueTotals.size(),
 				wavefrontQueueTotals.data());
@@ -1464,7 +1528,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	};
 
 	for (const auto &[kernelMember, state] : dispatchTable) {
-		const u_int count = wavefrontQueueTotals[state];
+		const u_int count = deviceBoundsLaunch ? taskCount : wavefrontQueueTotals[state];
 		const HardwareDeviceKernelUPtr &kernel = this->*kernelMember;
 		if (count && kernel) {
 			// OpenCL requires the global size to be a multiple of the
@@ -1474,6 +1538,12 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 					/ advancePathsWorkGroupSize * advancePathsWorkGroupSize;
 			intersectionDevice.EnqueueKernel(kernel,
 					HardwareDeviceRange(launchSize), HardwareDeviceRange(advancePathsWorkGroupSize));
+			// The queued path must retire winning data snapshots before
+			// NEXT_SAMPLE can reuse them, just like the dense path.
+			if (state == MK_SPLAT_SAMPLE && filmDataCommitKernel)
+				intersectionDevice.EnqueueKernel(filmDataCommitKernel,
+						HardwareDeviceRange(RoundUp<u_int>(taskCount, filmDataCommitWorkGroupSize)),
+						HardwareDeviceRange(filmDataCommitWorkGroupSize));
 		}
 	}
 }

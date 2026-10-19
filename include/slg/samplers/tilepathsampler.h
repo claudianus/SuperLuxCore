@@ -57,7 +57,8 @@ public:
 class TilePathSampler : public Sampler {
 public:
 	TilePathSampler(const luxrays::RandomGeneratorUPtr & rnd, FilmPtr flm,
-			const FilmSampleSplatterUPtr& flmSplatter, const u_int sequenceSeed = 131u);
+			const FilmSampleSplatterUPtr& flmSplatter, const bool fixedPixelCenters = false,
+			const u_int sequenceSeed = 131u);
 	virtual ~TilePathSampler();
 
 	virtual SamplerType GetType() const { return GetObjectType(); }
@@ -104,6 +105,7 @@ private:
 	u_int tileX, tileY, tilePass;
 
 	float sample0, sample1;
+	const bool fixedPixelCenters;
 	const u_int sequenceSeed;
 };
 

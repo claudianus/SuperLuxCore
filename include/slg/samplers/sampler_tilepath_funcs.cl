@@ -24,6 +24,13 @@
 
 #define TILEPATHSAMPLER_TOTAL_U_SIZE 2
 
+OPENCL_FORCE_INLINE float TilePathSampler_PixelSample(const uint pixel, const float u) {
+	// Even u < 1 can round pixel + u up to the next integer. Keep the
+	// selected pixel's half-open interval before GenerateEyeRay floors it.
+	const float upper = as_float(as_uint((float)(pixel + 1u)) - 1u);
+	return min((float)pixel + u, upper);
+}
+
 OPENCL_FORCE_INLINE __global const uint* restrict TilePathSampler_GetSobolDirectionsPtr(
 		__global TilePathSamplerSharedData *samplerSharedData) {
 	// Sobol directions array is appended at the end of slg::ocl::TilePathSamplerSharedData
@@ -135,6 +142,12 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 	// coset once per full cycle - every pixel is reached within gcd
 	// cycles. 64-bit math keeps i*A exact.
 	uint pix = (uint)(((ulong)i * 0x9E3779B1ul + epoch) % pixelCount);
+#if defined(SLC_DENOISING_FRAMES)
+	// A complete independent frame needs a permutation within THIS pass.
+	// The progressive lattice can repeat a coset when its multiplier and
+	// pixelCount share factors. Dense coverage is exact for every resize.
+	pix = gid;
+#endif
 
 	// Viewport adaptive sampling: walk the lattice forward while the
 	// picked pixel looks converged. Same acceptance semantics as the
@@ -205,8 +218,8 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 
 	sample->pass = samplerSharedData->tilePass;
 
-	samplesData[IDX_SCREEN_X] = pixelX + Rnd_FloatValue(seed);
-	samplesData[IDX_SCREEN_Y] = pixelY + Rnd_FloatValue(seed);
+	samplesData[IDX_SCREEN_X] = TilePathSampler_PixelSample(pixelX, taskConfig->pathTracer.pixelJitterEnable ? .5f : Rnd_FloatValue(seed));
+	samplesData[IDX_SCREEN_Y] = TilePathSampler_PixelSample(pixelY, taskConfig->pathTracer.pixelJitterEnable ? .5f : Rnd_FloatValue(seed));
 #else
 	// aaSamples * aaSamples threads for each pixel
 
@@ -238,12 +251,12 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 
 	__global const uint* restrict sobolDirections = TilePathSampler_GetSobolDirectionsPtr(samplerSharedData);
 
-	samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
+	samplesData[IDX_SCREEN_X] = TilePathSampler_PixelSample(pixelX, taskConfig->pathTracer.pixelJitterEnable ? .5f : SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
 			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, false, false,
-			NULL, NULL);
-	samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
+			NULL, NULL));
+	samplesData[IDX_SCREEN_Y] = TilePathSampler_PixelSample(pixelY, taskConfig->pathTracer.pixelJitterEnable ? .5f : SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
 			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, false, false,
-			NULL, NULL);
+			NULL, NULL));
 #endif
 
 	return true;

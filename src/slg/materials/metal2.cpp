@@ -134,6 +134,17 @@ Spectrum Metal2Material::Albedo(const HitPoint &hitPoint) const {
 	
 	return F;
 }
+
+bool Metal2Material::GetDenoisingFeatures(const HitPoint &hp, DenoisingFeatures &f) const {
+	if (!useGgx) return false;
+	Spectrum nVal, kVal;
+	GetNK(hp, nVal, kVal);
+	const float u = Clamp(nu->GetFloatValue(hp), 0.f, 1.f);
+	const float v = Clamp(nv->GetFloatValue(hp), 0.f, 1.f);
+	const Spectrum F = FresnelTexture::GeneralEvaluate(nVal, kVal, fabsf(Dot(hp.fixedDir, hp.shadeN))).Clamp(0.f, 1.f);
+	f.Add(F, Vector(hp.shadeN), sqrtf(u * v), false);
+	return true;
+}
 	
 Spectrum Metal2Material::Evaluate(const HitPoint &hitPoint,
 	const Vector &localLightDir, const Vector &localEyeDir, BSDFEvent *event,

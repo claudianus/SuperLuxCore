@@ -18,6 +18,7 @@
 
 #include <cstddef>
 
+#include "luxrays/utils/mc.h"
 #include "slg/cameras/orthographic.h"
 #include "slg/film/film.h"
 #include "slg/core/sdl.h"
@@ -167,7 +168,15 @@ bool OrthographicCamera::GetSamplePosition(Ray *ray, float *x, float *y) const {
 bool OrthographicCamera::LocalSampleLens(const float time,
 		const float u1, const float u2,
 		Point *lensp) const {
-	*lensp = Point(0.f, 0.f, 0.f);
+	// ProjectiveCamera::GenerateRay uses this offset to focus primary rays.
+	// Match the circular aperture used by OrthographicCamera_GenerateRay.
+	Point lensPoint(0.f, 0.f, 0.f);
+	if (lensRadius > 0.f) {
+		ConcentricSampleDisk(u1, u2, &lensPoint.x, &lensPoint.y);
+		lensPoint.x *= lensRadius;
+		lensPoint.y *= lensRadius;
+	}
+	*lensp = lensPoint;
 
 	return true;
 }

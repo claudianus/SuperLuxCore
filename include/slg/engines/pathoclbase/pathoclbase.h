@@ -31,6 +31,7 @@
 #include "slg/engines/pathoclbase/pathoclbaseoclthread.h"
 #include "slg/engines/pathoclbase/pathoclbasenativethread.h"
 #include "slg/engines/pathtracer.h"
+#include "slg/film/denoiser/denoisingguide.h"
 
 namespace slg {
 
@@ -68,7 +69,22 @@ public:
 
 	PathTracer pathTracer;
 
+	// Optional renderer-owned guide capture, independent of ordinary film AOVs.
+	bool denoisingGuidesEnabled = false;
+	bool denoisingFramesEnabled = false;
+	size_t denoisingGuidesMaxBytes = 0;
+	std::vector<float> GetDenoisingGuideSnapshot() const;
+	void ReserveDenoisingGuideBytes(const size_t bytes);
+	void ReleaseDenoisingGuideBytes(const size_t bytes);
+	void MergeDenoisingGuides(const std::vector<float> &records,
+			const u_int tileX, const u_int tileY, const u_int tileWidth, const u_int tileHeight);
+	void ResizeDenoisingGuides();
+
 protected:
+	mutable std::mutex denoisingGuideMutex;
+	std::vector<float> denoisingGuideFilm;
+	size_t denoisingGuideReservedBytes = 0;
+	u_int denoisingGuideWidth = 0, denoisingGuideHeight = 0;
 	virtual PathOCLBaseOCLRenderThread *CreateOCLThread(const u_int index,
 			luxrays::HardwareIntersectionDeviceRef device) = 0;
 	virtual PathOCLBaseNativeRenderThread *CreateNativeThread(const u_int index,

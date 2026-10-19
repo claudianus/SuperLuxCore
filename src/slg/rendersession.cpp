@@ -25,6 +25,9 @@
 #include "slg/renderstate.h"
 #include "slg/cameras/camera.h"
 #include "luxrays/utils/safesave.h"
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+#include "slg/engines/rtpathocl/rtpathocl.h"
+#endif
 
 using namespace std;
 using namespace luxrays;
@@ -126,8 +129,10 @@ void RenderSession::EndSceneEdit() {
 		SLG_LOG("[RenderSession] Edit actions: " << editActions);
 
 		// RTPATHs handle film Reset on their own
-		if (editActions.HasAnyAction())
+		if (editActions.HasAnyAction()) {
+			std::unique_lock<std::mutex> lock(filmMutex);
 			film->Reset();
+		}
 	}
 
 	// Publish the camera AFTER the engine-side scene preprocessing:
@@ -140,21 +145,7 @@ void RenderSession::EndSceneEdit() {
 }
 
 void RenderSession::PublishViewportCamera(const bool cameraOnly) {
-	// filmMutex serializes the filmMetadata std::map writes against
-	// FilmImplSession readers: the image pipeline's GetMetadata() lookups
-	// run under the same lock inside Apply().
-	std::unique_lock<std::mutex> lock(filmMutex);
-
-	// Camera reprojection data for the VIEWPORT_TEMPORAL imagepipeline
-	// plugin. The plugin warps the previous frame into not-yet-sampled
-	// pixels after camera edits; non-camera edits invalidate the history
-	// instead (warped colors would be wrong). Film metadata survives
-	// Film::Reset(), so the plugin can read it after the render
-	// restarts. The plugin keeps its own history camera, so only the
-	// current transforms are published here.
-	if (!film)
-		return;
-
+	Properties metadata;
 	const Camera &cam = renderConfig.GetScene().GetCamera();
 	const Transform &rtoC = cam.GetRasterToCamera(0);
 	const Transform &ctoW = cam.GetCameraToWorld(0);
@@ -168,21 +159,31 @@ void RenderSession::PublishViewportCamera(const bool cameraOnly) {
 		return ss.str();
 	};
 
-	film->SetMetadata("viewport.cam.rtoc", matToString(rtoC.GetMatrix()));
-	film->SetMetadata("viewport.cam.ctow", matToString(ctoW.GetMatrix()));
-	film->SetMetadata("viewport.cam.wtor",
-			matToString((ctoW * rtoC).GetMatrix().Inverse()));
-	film->SetMetadata("viewport.cam.wtoc",
-			matToString(ctoW.GetMatrix().Inverse()));
-	film->SetMetadata("viewport.cam.persp",
-			(cam.GetType() == Camera::PERSPECTIVE) ? "1" : "0");
+	metadata.Set(Property("viewport.cam.rtoc")(matToString(rtoC.GetMatrix())));
+	metadata.Set(Property("viewport.cam.ctow")(matToString(ctoW.GetMatrix())));
+	metadata.Set(Property("viewport.cam.wtor")(matToString((ctoW * rtoC).GetMatrix().Inverse())));
+	metadata.Set(Property("viewport.cam.wtoc")(matToString(ctoW.GetMatrix().Inverse())));
+	metadata.Set(Property("viewport.cam.persp")((cam.GetType() == Camera::PERSPECTIVE) ? "1" : "0"));
 	{
 		std::ostringstream ss;
 		ss.precision(9);
 		ss << cam.clipHither;
-		film->SetMetadata("viewport.cam.hither", ss.str());
+		metadata.Set(Property("viewport.cam.hither")(ss.str()));
 	}
-	film->SetMetadata("viewport.edit.cameraonly", cameraOnly ? "1" : "0");
+	metadata.Set(Property("viewport.edit.cameraonly")(cameraOnly ? "1" : "0"));
+
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+	if (auto *rt = dynamic_cast<RTPathOCLRenderEngine *>(renderEngine.get())) {
+		// Defer transforms until the render thread applies this camera. An
+		// older valid film must retain its own reprojection transforms.
+		rt->SetViewportCameraMetadata(metadata);
+		return;
+	}
+#endif
+	std::unique_lock<std::mutex> lock(filmMutex);
+	if (film)
+		for (const auto &key : metadata.GetAllNames())
+			film->SetMetadata(key, metadata.Get(key).Get<string>());
 }
 
 void RenderSession::Pause() {
@@ -300,7 +301,19 @@ RenderStateSPtr RenderSession::GetRenderState() {
 void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 	assert (renderEngine->IsStarted());
 
-	if ((props->IsDefined("film.width") && (props->Get("film.width").Get<u_int>() != film->GetWidth())) ||
+	bool resolutionPolicyChanged = false;
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+	if (renderEngine->GetType() == RTPATHOCL) {
+		for (const char *name : {"rtpath.resolutionreduction",
+				"rtpath.resolutionreduction.preview", "rtpath.resolutionreduction.preview.step"}) {
+			if (props->IsDefined(name) && props->Get(name).Get<int>() !=
+					renderConfig.GetProperty(name).Get<int>())
+				resolutionPolicyChanged = true;
+		}
+	}
+#endif
+	if (resolutionPolicyChanged ||
+			(props->IsDefined("film.width") && (props->Get("film.width").Get<u_int>() != film->GetWidth())) ||
 			(props->IsDefined("film.height") && (props->Get("film.height").Get<u_int>() != film->GetHeight()))) {
 		// I have to use a special procedure if the parsed props include
 		// a film resize
@@ -338,7 +351,16 @@ void RenderSession::Parse(luxrays::PropertiesRPtr props) {
 		PublishViewportCamera(false);
 	} else {
 		std::unique_lock<std::mutex> lock(filmMutex);
+		const uint64_t previousPipelineRevision = film->GetImagePipelineRevision();
 		film->Parse(props);
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+		if (props->IsDefined("rtpath.denoisingframes.haltspp"))
+			if (auto *rt = dynamic_cast<RTPathOCLRenderEngine *>(renderEngine.get()))
+				rt->SetDenoisingFrameHaltSPP(props->Get("rtpath.denoisingframes.haltspp").Get<u_longlong>());
+		if (film->GetImagePipelineRevision() != previousPipelineRevision)
+			if (auto *rt = dynamic_cast<RTPathOCLRenderEngine *>(renderEngine.get()))
+				rt->InvalidateDenoisingImagePipeline(film->GetImagePipelineRevision());
+#endif
 		// Cryptomatte manifests follow the parsed channel set
 		renderConfig.InjectCryptomatteManifests(*film);
 

@@ -151,6 +151,10 @@ public:
 	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
 			const unsigned int index, const bool executeImagePipeline,
 			const size_t bufferCapacityBytes);
+	// Binding-facing atomic pixel/readiness snapshot; session overrides lock film.
+	virtual luxrays::PropertiesUPtr GetOutputFloatSnapshot(const FilmOutputType type,
+			float *buffer, const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes);
 	void UpdateOutputFloat(const FilmOutputType type, const float *buffer,
 			const unsigned int index, const bool executeImagePipeline) = 0;
 	void UpdateOutputUInt(const FilmOutputType type, const unsigned int *buffer,
@@ -256,6 +260,9 @@ public:
 			const size_t bufferCapacityBytes) override;
 	virtual void GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
 			const unsigned int index, const bool executeImagePipeline,
+			const size_t bufferCapacityBytes) override;
+	virtual luxrays::PropertiesUPtr GetOutputFloatSnapshot(const FilmOutputType type,
+			float *buffer, const unsigned int index, const bool executeImagePipeline,
 			const size_t bufferCapacityBytes) override;
 	void UpdateOutputFloat(const FilmOutputType type, const float *buffer,
 			const unsigned int index, const bool executeImagePipeline) override;

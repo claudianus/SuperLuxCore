@@ -641,7 +641,7 @@ OPENCL_FORCE_INLINE float OpenPBRMat_LobePdf(__global const HitPoint *hitPoint,
 }
 
 //------------------------------------------------------------------------------
-// BSDF evaluation / sampling (GPU paths are always camera paths)
+// BSDF evaluation / sampling
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *hp,
@@ -724,14 +724,14 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvalIndependent(__global const HitPoint *h
 	return result;
 }
 
-OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitPoint,
+OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateDirectionalCore(__global const HitPoint *hitPoint,
 		__private const OpenPBRParams *p, const float3 lightDir, const float3 eyeDir,
-		BSDFEvent *event, float *directPdfW
+		BSDFEvent *event, float *directPdfW, const bool fromLight
 		MATERIALS_PARAM_DECL) {
-	if (p->independentNormals) return OpenPBRMat_EvalIndependent(hitPoint, p, lightDir, eyeDir, event, directPdfW, false MATERIALS_PARAM);
+	if (p->independentNormals) return OpenPBRMat_EvalIndependent(hitPoint, p, lightDir, eyeDir, event, directPdfW, fromLight MATERIALS_PARAM);
 	const float3 wi = lightDir;
 	const float3 wo = eyeDir;
-	const float3 wFixed = wo, wSmp = wi;
+	const float3 wFixed = fromLight ? wi : wo, wSmp = fromLight ? wo : wi;
 
 	float3 weights[OPENPBR_LOBE_COUNT];
 	float probs[OPENPBR_LOBE_COUNT];
@@ -817,6 +817,31 @@ OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitP
 	return result;
 }
 
+// Keep the sampling density tied to the traversal endpoint, while the
+// physical SSS value remains the same ordered (light, eye) operator as CPU.
+// Use a separate core call because device kernels cannot recurse.
+OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateDirectional(__global const HitPoint *hitPoint,
+		__private const OpenPBRParams *p, const float3 lightDir, const float3 eyeDir,
+		BSDFEvent *event, float *directPdfW, const bool fromLight
+		MATERIALS_PARAM_DECL) {
+	float3 result = OpenPBRMat_EvaluateDirectionalCore(hitPoint, p, lightDir, eyeDir,
+			event, directPdfW, fromLight MATERIALS_PARAM);
+	if (fromLight && p->sssWeight > 0.f && !p->independentNormals)
+		result = OpenPBRMat_EvaluateDirectionalCore(hitPoint, p, lightDir, eyeDir,
+				event, NULL, false MATERIALS_PARAM);
+	return result;
+}
+
+// Material_Evaluate always reports the density of its lightDir argument.
+// BSDF_EvaluateRev swaps the arguments to obtain the other density, including
+// at LIGHT_RAY vertices. Keep this convention separate from transport energy.
+OPENCL_FORCE_INLINE float3 OpenPBRMat_EvaluateImpl(__global const HitPoint *hitPoint,
+		__private const OpenPBRParams *p, const float3 lightDir, const float3 eyeDir,
+		BSDFEvent *event, float *directPdfW MATERIALS_PARAM_DECL) {
+	return OpenPBRMat_EvaluateDirectional(hitPoint, p, lightDir, eyeDir,
+			event, directPdfW, false MATERIALS_PARAM);
+}
+
 //------------------------------------------------------------------------------
 
 OPENCL_FORCE_INLINE void OpenPBRMat_Albedo(__global const Material* restrict material,
@@ -892,10 +917,18 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Evaluate(__global const Material* restrict m
 
 	BSDFEvent event;
 	float directPdfW;
-	const float3 result = OpenPBRMat_EvaluateImpl(hitPoint, &p, lightDir, eyeDir,
+	float3 result = OpenPBRMat_EvaluateImpl(hitPoint, &p, lightDir, eyeDir,
 			&event, &directPdfW MATERIALS_PARAM);
 
-	if (Spectrum_IsBlack(result)) {
+	if ((hitPoint->rayFlags & LIGHT_RAY) != 0) {
+		// Coverage and base-layer attenuation use the ray's fixed direction,
+		// as on the CPU. Preserve the existing lightDir-density PDF above.
+		// A swapped call may have black transport energy and a nonzero PDF:
+		// BSDF_EvaluateRev still needs that PDF for its direct density.
+		if (Spectrum_IsBlack(result)) directPdfW = 0.f;
+		result = OpenPBRMat_EvaluateDirectional(hitPoint, &p, lightDir, eyeDir,
+				&event, NULL, true MATERIALS_PARAM);
+	} else if (Spectrum_IsBlack(result)) {
 		MATERIAL_EVALUATE_RETURN_BLACK;
 	}
 
@@ -1062,14 +1095,17 @@ OPENCL_FORCE_INLINE void OpenPBRMat_Sample(__global const Material* restrict mat
 		if (reflected == sampledTransmit) { MATERIAL_SAMPLE_RETURN_BLACK; }
 	}
 	const bool fromLight = (hitPoint->rayFlags & LIGHT_RAY) != 0;
-	const float3 localLightDir = p.independentNormals && fromLight ? fixedDir : sampledDir;
-	const float3 localEyeDir = p.independentNormals && fromLight ? sampledDir : fixedDir;
+	const bool directionalSSS = !p.independentNormals && p.sssWeight > 0.f && fromLight;
+	const float3 localLightDir = (p.independentNormals || directionalSSS) && fromLight ? fixedDir : sampledDir;
+	const float3 localEyeDir = (p.independentNormals || directionalSSS) && fromLight ? sampledDir : fixedDir;
 
 	BSDFEvent event;
 	float pdfW;
 	float3 f = p.independentNormals ?
 			OpenPBRMat_EvalIndependent(hitPoint, &p, localLightDir, localEyeDir, &event, &pdfW, fromLight MATERIALS_PARAM) :
-			OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir, &event, &pdfW MATERIALS_PARAM);
+			(directionalSSS ? OpenPBRMat_EvaluateDirectional(hitPoint, &p, localLightDir, localEyeDir,
+					&event, &pdfW, true MATERIALS_PARAM) :
+			OpenPBRMat_EvaluateImpl(hitPoint, &p, localLightDir, localEyeDir, &event, &pdfW MATERIALS_PARAM));
 	if (pdfW <= 0.f) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}

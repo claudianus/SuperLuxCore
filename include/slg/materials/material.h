@@ -31,6 +31,7 @@
 #include "slg/usings.h"
 #include "slg/bsdf/bsdfevents.h"
 #include "slg/bsdf/hitpoint.h"
+#include "slg/materials/denoisingfeatures.h"
 #include "slg/textures/texture.h"
 
 namespace slg {
@@ -234,6 +235,10 @@ public:
 
 	// Albedo() returns the material albedo. It is used for Albedo AOV.
 	virtual luxrays::Spectrum Albedo(const HitPoint &hitPoint) const;
+	// Optional auxiliary estimates. False means unsupported, never guessed
+	// from a radiance AOV or a texture-wide average roughness.
+	virtual bool GetDenoisingFeatures(const HitPoint &hitPoint,
+			DenoisingFeatures &features) const;
 
 	// EvaluateTotal() returns the total reflection given an constant illumination
 	// over the hemisphere. It is currently used only by PhotonGICache and

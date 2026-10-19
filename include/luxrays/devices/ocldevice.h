@@ -20,6 +20,7 @@
 #define	_LUXRAYS_OCLDEVICE_H
 
 #include <memory>
+#include <cstdio>
 
 #include <boost/algorithm/string/trim.hpp>
 
@@ -172,8 +173,12 @@ class OpenCLDeviceKernel : public HardwareDeviceKernel {
 public:
 	OpenCLDeviceKernel() : oclKernel(nullptr) { }
 	virtual ~OpenCLDeviceKernel() {
-		if (oclKernel)
-			CHECK_OCL_ERROR(clReleaseKernel(oclKernel));
+		// Never propagate a driver failure through a noexcept destructor.
+		if (oclKernel) {
+			const cl_int error = clReleaseKernel(oclKernel);
+			if (error != CL_SUCCESS)
+				std::fprintf(stderr, "OpenCL cleanup: clReleaseKernel failed (code %d)\n", error);
+		}
 	}
 
 	bool IsNull() const { 
@@ -203,8 +208,12 @@ public:
 	OpenCLDeviceProgram() : oclProgram(nullptr) { }
 
 	virtual ~OpenCLDeviceProgram() {
-		if (oclProgram)
-			CHECK_OCL_ERROR(clReleaseProgram(oclProgram));
+		// Never propagate a driver failure through a noexcept destructor.
+		if (oclProgram) {
+			const cl_int error = clReleaseProgram(oclProgram);
+			if (error != CL_SUCCESS)
+				std::fprintf(stderr, "OpenCL cleanup: clReleaseProgram failed (code %d)\n", error);
+		}
 	}
 
 	bool IsNull() const { 
@@ -233,8 +242,12 @@ class OpenCLDeviceBuffer : public HardwareDeviceBuffer {
 public:
 	OpenCLDeviceBuffer() : oclBuff(nullptr) { }
 	virtual ~OpenCLDeviceBuffer() {
-		if (oclBuff)
-			CHECK_OCL_ERROR(clReleaseMemObject(oclBuff));
+		// Never propagate a driver failure through a noexcept destructor.
+		if (oclBuff) {
+			const cl_int error = clReleaseMemObject(oclBuff);
+			if (error != CL_SUCCESS)
+				std::fprintf(stderr, "OpenCL cleanup: clReleaseMemObject failed (code %d)\n", error);
+		}
 	}
 
 	bool IsNull() const { 
@@ -333,6 +346,8 @@ public:
 		void *src, const size_t size, const std::string &desc = "");
 
 	virtual void FreeBuffer(HardwareDeviceBuffer **buff);
+	// Cleanup only: consume the wrapper even after a driver failure.
+	virtual void FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept override;
 
 	friend class Context;
 

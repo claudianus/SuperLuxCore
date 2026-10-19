@@ -28,6 +28,8 @@
 #include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/utils/strutils.h"
 #include "luxrays/core/hardwareintersectiondevice.h"
+#include <cmath>
+#include <cstdlib>
 
 namespace luxrays {
 
@@ -153,10 +155,119 @@ void EmbreeAccel::ExportClusteredTriangleMesh(const RTCScene embreeScene,
 	rtcReleaseGeometry(geom);
 }
 
+// Diagnostic precision path. Keep the native path as default until the full
+// renderer/performance gates cover this callback, motion and clustered meshes.
+static bool PreciseTriangleHit(const Mesh &mesh, const u_int primitive,
+		const double *origin, const double *direction, const double minT,
+		const double maxT, float *t, float *b1, float *b2) {
+	const Triangle &tri = mesh.GetTriangles()[primitive];
+	const auto vertices = mesh.GetVertices();
+	double p[3][3];
+	for (int i = 0; i < 3; ++i) {
+		const Point &v = vertices[tri.v[i]];
+		p[i][0] = double(v.x) - origin[0];
+		p[i][1] = double(v.y) - origin[1];
+		p[i][2] = double(v.z) - origin[2];
+	}
+	int kz = 0;
+	if (std::abs(direction[1]) > std::abs(direction[kz])) kz = 1;
+	if (std::abs(direction[2]) > std::abs(direction[kz])) kz = 2;
+	if (direction[kz] == 0.) return false;
+	int kx = (kz + 1) % 3, ky = (kx + 1) % 3;
+	if (direction[kz] < 0.) std::swap(kx, ky);
+	const double sx = direction[kx] / direction[kz], sy = direction[ky] / direction[kz];
+	double x[3], y[3], z[3];
+	for (int i = 0; i < 3; ++i) {
+		x[i] = p[i][kx] - sx * p[i][kz];
+		y[i] = p[i][ky] - sy * p[i][kz];
+		z[i] = p[i][kz] / direction[kz];
+	}
+	const double e0 = x[1]*y[2] - y[1]*x[2];
+	const double e1 = x[2]*y[0] - y[2]*x[0];
+	const double e2 = x[0]*y[1] - y[0]*x[1];
+	if (((e0 < 0.) || (e1 < 0.) || (e2 < 0.)) &&
+			((e0 > 0.) || (e1 > 0.) || (e2 > 0.))) return false;
+	const double det = e0 + e1 + e2;
+	if (det == 0. || !std::isfinite(det)) return false;
+	const double distance = (e0*z[0] + e1*z[1] + e2*z[2]) / det;
+	if (!(distance >= minT && distance <= maxT) || !std::isfinite(distance)) return false;
+	*t = float(distance); *b1 = float(e1 / det); *b2 = float(e2 / det);
+	return true;
+}
+
+static void PreciseTriangleBounds(const RTCBoundsFunctionArguments *args) {
+	const Mesh &mesh = *static_cast<const Mesh *>(args->geometryUserPtr);
+	const Triangle &tri = mesh.GetTriangles()[args->primID];
+	const auto vertices = mesh.GetVertices();
+	const Point &a = vertices[tri.v[0]], &b = vertices[tri.v[1]], &c = vertices[tri.v[2]];
+	const float inf = std::numeric_limits<float>::infinity();
+	args->bounds_o->lower_x = std::nextafter(std::min(a.x, std::min(b.x,c.x)), -inf);
+	args->bounds_o->lower_y = std::nextafter(std::min(a.y, std::min(b.y,c.y)), -inf);
+	args->bounds_o->lower_z = std::nextafter(std::min(a.z, std::min(b.z,c.z)), -inf);
+	args->bounds_o->upper_x = std::nextafter(std::max(a.x, std::max(b.x,c.x)), inf);
+	args->bounds_o->upper_y = std::nextafter(std::max(a.y, std::max(b.y,c.y)), inf);
+	args->bounds_o->upper_z = std::nextafter(std::max(a.z, std::max(b.z,c.z)), inf);
+}
+
+static void PreciseTriangleIntersect(const RTCIntersectFunctionNArguments *args) {
+	const Mesh &mesh = *static_cast<const Mesh *>(args->geometryUserPtr);
+	RTCRayN *ray = RTCRayHitN_RayN(args->rayhit, args->N);
+	RTCHitN *hit = RTCRayHitN_HitN(args->rayhit, args->N);
+	for (u_int i = 0; i < args->N; ++i) {
+		if (!args->valid[i]) continue;
+		const double origin[] = {RTCRayN_org_x(ray,args->N,i), RTCRayN_org_y(ray,args->N,i), RTCRayN_org_z(ray,args->N,i)};
+		const double direction[] = {RTCRayN_dir_x(ray,args->N,i), RTCRayN_dir_y(ray,args->N,i), RTCRayN_dir_z(ray,args->N,i)};
+		float t, b1, b2;
+		if (!PreciseTriangleHit(mesh, args->primID, origin, direction,
+				RTCRayN_tnear(ray,args->N,i), RTCRayN_tfar(ray,args->N,i), &t, &b1, &b2)) continue;
+		RTCRayN_tfar(ray,args->N,i) = t;
+		RTCHitN_u(hit,args->N,i) = b1; RTCHitN_v(hit,args->N,i) = b2;
+		RTCHitN_primID(hit,args->N,i) = args->primID;
+		RTCHitN_geomID(hit,args->N,i) = args->geomID;
+		const auto verts = mesh.GetVertices();
+		const Triangle &tri = mesh.GetTriangles()[args->primID];
+		const Point &a = verts[tri.v[0]], &b = verts[tri.v[1]], &c = verts[tri.v[2]];
+		const double ax = double(b.x)-a.x, ay = double(b.y)-a.y, az = double(b.z)-a.z;
+		const double bx = double(c.x)-a.x, by = double(c.y)-a.y, bz = double(c.z)-a.z;
+		const double nx = ay*bz-az*by, ny = az*bx-ax*bz, nz = ax*by-ay*bx;
+		const double length = std::hypot(nx,ny,nz);
+		RTCHitN_Ng_x(hit,args->N,i) = float(nx/length);
+		RTCHitN_Ng_y(hit,args->N,i) = float(ny/length);
+		RTCHitN_Ng_z(hit,args->N,i) = float(nz/length);
+		for (u_int l = 0; l < RTC_MAX_INSTANCE_LEVEL_COUNT; ++l)
+			RTCHitN_instID(hit,args->N,i,l) = args->context->instID[l];
+	}
+}
+
+static void PreciseTriangleOccluded(const RTCOccludedFunctionNArguments *args) {
+	const Mesh &mesh = *static_cast<const Mesh *>(args->geometryUserPtr);
+	RTCRayN *ray = args->ray;
+	for (u_int i = 0; i < args->N; ++i) {
+		if (!args->valid[i]) continue;
+		const double origin[] = {RTCRayN_org_x(ray,args->N,i), RTCRayN_org_y(ray,args->N,i), RTCRayN_org_z(ray,args->N,i)};
+		const double direction[] = {RTCRayN_dir_x(ray,args->N,i), RTCRayN_dir_y(ray,args->N,i), RTCRayN_dir_z(ray,args->N,i)};
+		float t, b1, b2;
+		if (PreciseTriangleHit(mesh, args->primID, origin, direction,
+				RTCRayN_tnear(ray,args->N,i), RTCRayN_tfar(ray,args->N,i), &t, &b1, &b2))
+			RTCRayN_tfar(ray,args->N,i) = -std::numeric_limits<float>::infinity();
+	}
+}
+
 void EmbreeAccel::ExportTriangleMesh(const RTCScene embreeScene, MeshConstRef mesh) const {
 	const ExtTriangleMesh *extMesh = ExtTriangleMesh::FromMesh(&mesh);
 	if (extMesh && extMesh->HasClusterIndex() && !extMesh->HasVertexMotion()) {
 		ExportClusteredTriangleMesh(embreeScene, *extMesh);
+		return;
+	}
+	const char *precise = std::getenv("LUXRAYS_EMBREE_PRECISE");
+	if (precise && std::string(precise) == "1" && !(extMesh && extMesh->HasVertexMotion())) {
+		const RTCGeometry geom = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_USER);
+		rtcSetGeometryUserPrimitiveCount(geom, mesh.GetTotalTriangleCount());
+		rtcSetGeometryUserData(geom, const_cast<Mesh *>(&mesh));
+		rtcSetGeometryBoundsFunction(geom, PreciseTriangleBounds, nullptr);
+		rtcSetGeometryIntersectFunction(geom, PreciseTriangleIntersect);
+		rtcSetGeometryOccludedFunction(geom, PreciseTriangleOccluded);
+		rtcCommitGeometry(geom); rtcAttachGeometry(embreeScene, geom); rtcReleaseGeometry(geom);
 		return;
 	}
 

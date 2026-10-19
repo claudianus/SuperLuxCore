@@ -86,8 +86,8 @@ static bool CudaCubinCapable(const bool forcePTX) {
 // compiling the ~100k-line PathOCL megakernel. Default "mid" (mostly
 // preserved kernel performance, much faster compile); LUX_CUDA_OFAST
 // accepts none|min|mid|max.
-static const char *CudaOfastLevel() {
-	static const char *v = [] {
+static const string &CudaOfastLevel() {
+	static const string v = []() -> string {
 		// Option is NVRTC >= 12.9 only (12.9 -> 129); forcing it on an older
 		// NVRTC would fail the whole compile, so gate the env override too.
 		if (cuewNvrtcVersion() < 129)
@@ -143,6 +143,49 @@ static string GetCuda10Architecture() {
 	return to_string(major) + to_string(minor);
 }
 
+// Keep cache identity and the options passed to NVRTC on the same path. The
+// caller owns these strings until nvrtcCompileProgram has returned.
+static vector<string> CudaCompileOptions(const vector<string> &kernelsParameters,
+		const string &arch, const bool toCubin) {
+	vector<string> opts = {
+		"--device-as-default-execution-space",
+		string("--gpu-architecture=") + (toCubin ? "sm_" : "compute_") + arch,
+		"-Xcudafe", "--display_error_number",
+		"-Xcudafe", "--diag_suppress=550",
+		"-Xcudafe", "--diag_suppress=1055",
+		"-Xcudafe", "--diag_suppress=68"
+	};
+	if (CudaOfastLevel() != "none")
+		opts.push_back("--Ofast-compile=" + CudaOfastLevel());
+	// SASS's embedded ptxas needs bounded split compilation on large kernels.
+	opts.push_back("--split-compile=" + to_string(toCubin ? CudaSplitUnits() : 0));
+	opts.push_back("--pch");
+	opts.insert(opts.end(), kernelsParameters.begin(), kernelsParameters.end());
+	return opts;
+}
+
+static string CudaCompileIdentity(const vector<string> &kernelsParameters,
+		const string &programName, const string &arch, const bool cubinCapable) {
+	int major, minor;
+	CHECK_NVRTC_ERROR(nvrtcVersion(&major, &minor));
+	string identity = "luxrays-nvrtc-cache-v2:" + to_string(major) + "." + to_string(minor);
+	// Length delimiters preserve option boundaries (including spaces in -D).
+	const auto append = [&identity](const string &value) {
+		identity += ":" + to_string(value.size()) + ":" + value;
+	};
+	append(programName);
+	const char *disablePch = getenv("NVRTC_DISABLE_PCH");
+	append(disablePch ? disablePch : "");
+	const int modes = cubinCapable ? 2 : 1;
+	for (int mode = 0; mode < modes; ++mode) {
+		const auto opts = CudaCompileOptions(kernelsParameters, arch, cubinCapable && mode == 0);
+		append(to_string(opts.size()));
+		for (const auto &opt : opts)
+			append(opt);
+	}
+	return identity;
+}
+
 //------------------------------------------------------------------------------
 // cudaKernelCache
 //------------------------------------------------------------------------------
@@ -166,60 +209,15 @@ bool cudaKernelCache::ForcedCompilePTX(
 
 	for (int mode = 0; mode < archModes; ++mode) {
 		const bool toCubin = cubinCapable && (mode == 0);
-		const string targetArch = "--gpu-architecture=" +
-				(toCubin ? "sm_" + arch : "compute_" + arch);
 
 		nvrtcProgram prog;
 		CHECK_NVRTC_ERROR(nvrtcCreateProgram(&prog, kernelSource.c_str(), programName.c_str(), 0, nullptr, nullptr));
 
+		const auto ownedOpts = CudaCompileOptions(kernelsParameters, arch, toCubin);
 		vector<const char *> cudaOpts;
-		cudaOpts.push_back("--device-as-default-execution-space");
-		//cudaOpts.push_back("--disable-warnings");
-
-		// Set target architecture, based on current device's capability
-		cudaOpts.push_back(targetArch.c_str());
-
-		// To display warning numbers
-		cudaOpts.push_back("-Xcudafe");
-		cudaOpts.push_back("--display_error_number");
-
-		// To suppress warning: warning #550-D: variable "xyz" was set but never used
-		cudaOpts.push_back("-Xcudafe");
-		cudaOpts.push_back("--diag_suppress=550");
-
-		// To suppress warning: warning #1055-D: types cannot be declared in anonymous unions
-		cudaOpts.push_back("-Xcudafe");
-		cudaOpts.push_back("--diag_suppress=1055");
-
-		// To suppress warning: warning #68-D: integer conversion resulted in a change of sign
-		cudaOpts.push_back("-Xcudafe");
-		cudaOpts.push_back("--diag_suppress=68");
-
-		// Accelerate compilation: NVRTC >= 12.9 --Ofast-compile level
-		// (LUX_CUDA_OFAST). Storage must outlive nvrtcCompileProgram.
-		const string ofastOpt = string("--Ofast-compile=") + CudaOfastLevel();
-		if (CudaOfastLevel() != string("none"))
-			cudaOpts.push_back(ofastOpt.c_str());
-
-		// SASS mode needs split-compile: the embedded ptxas run with
-		// --split-compile=0 OOM-aborts the process on the PathOCL
-		// megakernel (~100k lines). Unit count scales with cores/RAM
-		// (LUX_CUDA_SPLIT); 4 units measured ~12GB peak and produced a
-		// valid 64MB sm_120 cubin in ~8min.
-		const string splitOpt = string("--split-compile=") +
-				to_string(toCubin ? CudaSplitUnits() : 0);
-		cudaOpts.push_back(splitOpt.c_str());
-
-		// Enable pre-compiled headers
-		cudaOpts.push_back("--pch");
-
-		// Enable debug info
-		//cudaOpts.push_back("-G");
-		// Enable only debug line info
-		//cudaOpts.push_back("--generate-line-info");
-
-		for	(auto const &p : kernelsParameters)
-			cudaOpts.push_back(p.c_str());
+		cudaOpts.reserve(ownedOpts.size());
+		for (const auto &opt : ownedOpts)
+			cudaOpts.push_back(opt.c_str());
 
 		// For some debug
 		//for (uint i = 0; i < cudaOpts.size(); ++i)
@@ -296,13 +294,14 @@ bool cudaKernelPersistentCache::CompilePTX(const vector<string> &kernelsParamete
 	// suffix is only a cache-key detail. forcePTX callers (OptiX) always get
 	// PTX since optixModuleCreateFromPTX cannot ingest cubins.
 	const bool cubinCapable = CudaCubinCapable(forcePTX);
+	const string arch = GetCuda10Architecture();
 	const string kernelName =
-			oclKernelPersistentCache::HashString(oclKernelPersistentCache::ToOptsString(kernelsParameters))
+			oclKernelPersistentCache::HashString(CudaCompileIdentity(kernelsParameters, programName, arch, cubinCapable))
 			+ "-" +
 			oclKernelPersistentCache::HashString(kernelSource) +
                         (cubinCapable ?
-				"_sm_" + GetCuda10Architecture() + ".cubin" :
-				"_compute_" + GetCuda10Architecture() + ".ptx");
+				"_sm_" + arch + ".cubin" :
+				"_compute_" + arch + ".ptx");
 	const std::filesystem::path dirPath = GetCacheDir(appName);
 	const std::filesystem::path filePath = dirPath / kernelName;
 	const string fileName = filePath.generic_string();

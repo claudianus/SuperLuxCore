@@ -336,6 +336,9 @@ public:
 	const PhotonGICacheParams &GetParams() const { return params; }
 
 	void Preprocess(const u_int threadCount);
+	// Call with all render/update threads stopped, after restoring a cache.
+	// Serialized payloads must not fix the current execution party count.
+	void ResetUpdateSynchronization(const u_int threadCount);
 	bool Update(const u_int threadIndex, const u_int filmSPP,
 		const std::function<void()> &threadZeroCallback);
 	bool Update(const u_int threadIndex, const u_int filmSPP) {

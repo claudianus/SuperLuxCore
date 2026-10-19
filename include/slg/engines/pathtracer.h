@@ -285,6 +285,11 @@ public:
 	// Albedo AOV settings
 	AlbedoSpecularSetting albedoSpecularSetting;
 	float albedoSpecularGlossinessThreshold;
+
+	// Explicit frame-wide pixel offset for temporal reconstruction. Off by
+	// default: ordinary rendering keeps sampling its configured pixel filter.
+	bool pixelJitterEnable = false;
+	float pixelJitterX = 0.f, pixelJitterY = 0.f;
 	
 	// Cycles sample clamp (path.clamping.cycles.direct/indirect, 0 = off):
 	// per-contribution limit on the RGB sum, see SampleResult::clampDirect

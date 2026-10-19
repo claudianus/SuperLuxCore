@@ -207,6 +207,8 @@ public:
 	virtual void AllocBuffer(HardwareDeviceBuffer **buff, const BufferType type,
 		void *src, const size_t size, const std::string &desc = "");
 	virtual void FreeBuffer(HardwareDeviceBuffer **buff);
+	// Cleanup only: consume the wrapper even after a driver failure.
+	virtual void FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept override;
 
 	//--------------------------------------------------------------------------
 	// CUDADevice specific methods

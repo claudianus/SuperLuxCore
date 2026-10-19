@@ -162,9 +162,10 @@ typedef struct {
 	, __global float *filmCryptoMaterial \
 	, __global float *filmLPE \
 	, const uint lpeCount \
+	, __global FilmDataPending *filmDataPending \
 	FILM_DENOISER_PARAM_DECL
 
-#define FILM_PARAM \
+#define FILM_PARAM_WITH_PENDING(pendingSlot) \
 	, film \
 	, filmWidth, filmHeight \
 	, filmSubRegion0, filmSubRegion1, filmSubRegion2, filmSubRegion3 \
@@ -214,7 +215,10 @@ typedef struct {
 	, filmCryptoMaterial \
 	, filmLPE \
 	, lpeCount \
+	, pendingSlot \
 	FILM_DENOISER_PARAM
+
+#define FILM_PARAM FILM_PARAM_WITH_PENDING(filmDataPending)
 
 #endif
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

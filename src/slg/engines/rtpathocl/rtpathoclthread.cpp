@@ -142,8 +142,8 @@ void RTPathOCLRenderThread::UpdateAllThreadsOCLBuffers() {
 void RTPathOCLRenderThread::UpdateCameraOCLBuffer() {
 	RTPathOCLRenderEngine *engine = (RTPathOCLRenderEngine *)renderEngine;
 
-	intersectionDevice.EnqueueWriteBuffer(cameraBuff, false, sizeof(slg::ocl::Camera),
-			&engine->compiledScene->camera);
+	threadCameraSnapshot = engine->compiledScene->camera;
+	intersectionDevice.EnqueueWriteBuffer(cameraBuff, false, sizeof(slg::ocl::Camera), &threadCameraSnapshot);
 }
 
 void RTPathOCLRenderThread::UpdateAllCameraThreadsOCLBuffers() {
@@ -159,6 +159,7 @@ void RTPathOCLRenderThread::UpdateAllCameraThreadsOCLBuffers() {
 }
 
 void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
+	ResetTileWorkCancellation();
 	//SLG_LOG("[RTPathOCLRenderThread::" << threadIndex << "] Rendering thread started");
 
 	RTPathOCLRenderEngine *engine = (RTPathOCLRenderEngine *)renderEngine;
@@ -198,60 +199,18 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
         // taskConfigBuff (per-thread: rtCfg is shared engine state, so
         // comparing against it would let thread 0's write mask the
         // upload thread 1..n still owes its own device buffer).
-        u_int appliedReductionOverride = engine->runtimeResolutionReduction.load();
+        // A new taskConfigBuff contains the configured base, not the
+        // previous thread's runtime override. Upload even an unchanged
+        // request before the very first tile of this thread/resize.
+        u_int appliedReductionOverride = ~0u;
 
         while (!stop_token.stop_requested()) {
                 // The film's halt tests (batch.halttime/haltspp, adaptive
                 // noise) set statsConvergence=1 - stop generating frames
                 // so WaitForDone()/HasDone() can observe the exit via
                 // threadDone instead of running until external Stop().
-                if (engine->GetFilm().GetConvergence() >= 1.f)
+                if (!engine->denoisingFramesEnabled && engine->GetFilm().GetConvergence() >= 1.f)
                         break;
-                //------------------------------------------------------------------
-                // Render the tile (there is only one tile for each device
-                // in RTPATHOCL)
-                //------------------------------------------------------------------
-
-                engine->tileRepository->NextTile(
-					engine->GetFilm(),
-					engine->filmMutex,
-					tileWork,
-					threadFilms[0]->GetFilm()
-				);
-
-                // tileWork can be NULL after a scene edit
-                if (tileWork.HasWork()) {
-                        //const double t0 = WallClockTime();
-                        //SLG_LOG("[RTPathOCLRenderThread::" << threadIndex << "] TileWork: " << tileWork);
-
-                        RenderTileWork(tileWork, samplerData, 0);
-
-                        // Async. transfer of GPU task statistics
-                        intersectionDevice.EnqueueReadBuffer(
-                                taskStatsBuff,
-                                CL_FALSE,
-                                sizeof(slg::ocl::pathoclbase::GPUTaskStats) * taskCount,
-                                gpuTaskStats.get());
-                        intersectionDevice.FinishQueue();
-
-                        // Fold the measured light-path counts into the
-                        // thread film before the merge below
-                        ConsumeLightSampleCounts();
-
-                        engine->tileRepository->NextTile(engine->GetFilm(), engine->filmMutex, tileWork, threadFilms[0]->GetFilm());
-
-                        // There is only one tile for each device in RTPATHOCL
-                        tileWork.Reset();
-
-                        //const double t1 = WallClockTime();
-                        //SLG_LOG("[RTPathOCLRenderThread::" << threadIndex << "] Tile rendering time: " + ToString((u_int)((t1 - t0) * 1000.0)) + "ms");
-                }
-
-                //------------------------------------------------------------------
-                if (frameBarrier)
-                        frameBarrier->arrive_and_wait();
-                //------------------------------------------------------------------
-
                 // Runtime resolution-reduction override (viewport
                 // interactivity): the reduction only selects which
                 // pixels a pass covers - never sample weights - so it
@@ -283,19 +242,72 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                                 // Base the copy on this thread's config
                                 // so per-device fields survive the
                                 // round-trip.
-                                slg::ocl::pathoclbase::GPUTaskConfiguration cfg =
-                                        threadTaskConfig;
-                                cfg.renderEngine.rtpathocl.resolutionReduction = target;
-                                cfg.renderEngine.rtpathocl.previewResolutionReduction =
+                                threadTaskConfig.renderEngine.rtpathocl.resolutionReduction = target;
+                                threadTaskConfig.renderEngine.rtpathocl.previewResolutionReduction =
                                         Max(target, engine->previewResolutionReduction);
+                                const slg::ocl::pathoclbase::GPUTaskConfiguration cfg =
+                                        threadTaskConfig;
                                 intersectionDevice.EnqueueWriteBuffer(
                                         taskConfigBuff, true,
                                         sizeof(cfg), &cfg);
                         }
                 }
 
+                //------------------------------------------------------------------
+                // Render the tile (there is only one tile for each device
+                // in RTPATHOCL)
+                //------------------------------------------------------------------
+
+                engine->tileRepository->NextTile(
+					engine->GetDenoisingFrameFilm(),
+					engine->filmMutex,
+					tileWork,
+					threadFilms[0]->GetFilm()
+				);
+
+                // tileWork can be NULL after a scene edit
+                while (tileWork.HasWork()) {
+                        //const double t0 = WallClockTime();
+                        //SLG_LOG("[RTPathOCLRenderThread::" << threadIndex << "] TileWork: " << tileWork);
+
+                        RenderTileWork(tileWork, samplerData, 0, stop_token);
+
+                        // Completion statistics were read by RenderTileWork;
+                        // drain the queued film/guide readbacks before commit.
+						intersectionDevice.FinishQueue();
+						threadFilms[0]->CommitDenoisingGuides();
+
+                        // Fold the measured light-path counts into the
+                        // thread film before the merge below
+                        ConsumeLightSampleCounts();
+
+                        const bool hasNextTile = engine->tileRepository->NextTile(engine->GetDenoisingFrameFilm(), engine->filmMutex, tileWork, threadFilms[0]->GetFilm());
+
+                        // Ordinary RTPATHOCL has one tile/device. Independent
+                        // frames drain all bounded tiles before publishing.
+                        if (!engine->denoisingFramesEnabled || !hasNextTile) {
+                            tileWork.Reset();
+                            break;
+                        }
+
+                        //const double t1 = WallClockTime();
+                        //SLG_LOG("[RTPathOCLRenderThread::" << threadIndex << "] Tile rendering time: " + ToString((u_int)((t1 - t0) * 1000.0)) + "ms");
+                }
+
+                //------------------------------------------------------------------
+                if (frameBarrier)
+                        frameBarrier->arrive_and_wait();
+                //------------------------------------------------------------------
+
+
+
                 if (threadIndex == 0) {
+						if (engine->denoisingFramesEnabled)
+							engine->PublishDenoisingFrame(threadCameraSnapshot);
                         //--------------------------------------------------------------
+                        // Fulfil pending reads before the camera reset discards this pass.
+                        engine->ServiceViewportReadbacks();
+
                         // Update frame time
                         //--------------------------------------------------------------
 
@@ -308,14 +320,24 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                         // (when custom camera bokeh is not used)
                         //--------------------------------------------------------------
 
+                        {
+                            std::lock_guard<std::mutex> cameraLock(engine->viewportCameraMutex);
                         if (engine->useFastCameraEditPath) {
                                 engine->useFastCameraEditPath = false;
 
                                 // Update OpenCL camera buffer if there is only a CAMERA_EDIT. It
                                 // is done by thread #0 for all threads.
                                 UpdateAllCameraThreadsOCLBuffers();
+								for (auto *thread : engine->renderOCLThreads)
+									static_cast<RTPathOCLRenderThread *>(thread)->ResetTileWorkCancellation();
                                 frameCounter = 0;
-                                engine->GetFilm().Reset(true);
+                                std::lock_guard<std::mutex> filmLock(*engine->filmMutex);
+                                engine->GetFilm().Reset();
+								if (engine->denoisingFramesEnabled) engine->denoisingFrameFilm->Reset();
+                                engine->viewportAppliedEpoch = engine->pendingViewportCameraEpoch;
+                                engine->ApplyViewportCameraMetadataLockLess();
+                        }
+
                         }
 
                         //--------------------------------------------------------------
@@ -334,7 +356,7 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
                                                 syncBarrier->arrive_and_wait();
                                                 requestedStop = true;
                                                 break;
-                                        case SYNCTYPE_ENDSCENEEDIT:
+                                        case SYNCTYPE_ENDSCENEEDIT: {
                                                 syncBarrier->arrive_and_wait();
 
                                                 // Engine thread compile the scene
@@ -343,29 +365,74 @@ void RTPathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
                                                 // Update OpenCL buffers if there is any edit action. It
                                                 // is done by thread #0 for all threads.
+                                                const bool cameraOnly = engine->updateActions.HasOnly(CAMERA_EDIT);
                                                 UpdateAllThreadsOCLBuffers();
+												for (auto *thread : engine->renderOCLThreads)
+													static_cast<RTPathOCLRenderThread *>(thread)->ResetTileWorkCancellation();
                                                 frameCounter = 0;
-                                                engine->GetFilm().Reset(true);
+                                                std::lock_guard<std::mutex> cameraLock(engine->viewportCameraMutex);
+                                                std::lock_guard<std::mutex> filmLock(*engine->filmMutex);
+                                                engine->GetFilm().Reset();
+												if (engine->denoisingFramesEnabled) {
+													engine->InitDenoisingFrameFilm();
+													if (!cameraOnly) ++engine->denoisingSceneEpoch;
+													std::lock_guard<std::mutex> lock(engine->denoisingFrameMutex);
+													engine->latestDenoisingFrame.reset();
+												}
 
+                                                engine->viewportAppliedEpoch = engine->viewportRequestedEpoch.load();
+                                                engine->ApplyViewportCameraMetadataLockLess();
                                                 syncBarrier->arrive_and_wait();
                                                 break;
+                                        }
                                         default:
                                                 throw runtime_error("Unknown sync. type in RTPathOCLRenderThread::RenderThreadImpl(): " + ToString(engine->syncType));
                                 }
 
-                                // Check if we are in pause mode
-                                if (engine->pauseMode) {
+                                // Check pause, halt and explicit final-render backpressure.
+								bool waitingForFrame = false;
+								if (engine->denoisingFramesEnabled) {
+									bool halted;
+									{
+										std::unique_lock<std::mutex> lock(*engine->filmMutex);
+										auto &film = engine->GetFilm();
+										const u_int *region = film.GetSubRegion();
+										const double pixels = double(region[1] - region[0] + 1) * (region[3] - region[2] + 1);
+										halted = film.GetConvergence() >= 1.f ||
+											(engine->denoisingExactHaltSPP > 0 &&
+											film.GetTotalEyeSampleCount() >= pixels * double(engine->denoisingExactHaltSPP));
+									}
+									{
+										std::lock_guard<std::mutex> lock(engine->denoisingFrameMutex);
+										engine->denoisingFrameHalt = halted;
+										waitingForFrame = engine->denoisingLosslessDelivery &&
+											engine->latestDenoisingFrame &&
+											engine->denoisingAcknowledgedFrameId < engine->denoisingFrameId;
+									}
+									engine->denoisingFrameCondition.notify_all();
+								}
+                                if (engine->pauseMode || waitingForFrame || (engine->denoisingFramesEnabled && engine->denoisingFrameHalt)) {
 									if (requestedStop)
 											break;
 
-									std::this_thread::sleep_for(100ms);
+									if (waitingForFrame) {
+										std::unique_lock<std::mutex> lock(engine->denoisingFrameMutex);
+										engine->denoisingFrameCondition.wait_for(lock, 100ms, [&] {
+											return engine->denoisingFramesStopped ||
+												engine->denoisingAcknowledgedFrameId >= engine->denoisingFrameId;
+										});
+									} else
+										std::this_thread::sleep_for(100ms);
                                 } else {
 									break;
 								}
                         }
 
                         // Re-initialize the tile queue for the next frame
-                        engine->tileRepository->Restart(engine->GetFilm(), frameCounter++);
+						if (engine->denoisingFramesEnabled) {
+							if (!stop_token.stop_requested()) engine->AdvanceDenoisingFrameJitter();
+						}
+                        engine->tileRepository->Restart(engine->GetDenoisingFrameFilm(), frameCounter++);
                 }
 
                 //------------------------------------------------------------------

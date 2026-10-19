@@ -23,6 +23,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
 
 #include "luxrays/devices/ocldevice.h"
 #include "luxrays/devices/cudadevice.h"
@@ -185,25 +186,31 @@ CUDADevice::CUDADevice(
 }
 
 CUDADevice::~CUDADevice() {
-	if (optixContext) {
-		// cudaContext could be not the current context and Optix crashes in this case
-		CHECK_CUDA_ERROR(cuCtxPushCurrent(cudaContext));
-
-		CHECK_OPTIX_ERROR(optixDeviceContextDestroy(optixContext));
-
-		CHECK_CUDA_ERROR(cuCtxPopCurrent(nullptr));
-	}
-
-	// Free all loaded modules
-	for (auto &m : loadedModules) {
-		CHECK_CUDA_ERROR(cuModuleUnload(m));
+	// The film device may have been created by the asynchronous image pipeline
+	// on another CPU thread. Module unload, just like OptiX destruction, needs
+	// the owning context current until ALL of its resources have been retired.
+	// A destructor must not throw: an asynchronous/driver shutdown error would
+	// otherwise terminate Blender instead of allowing the remaining cleanup.
+	const auto report = [](const int result, const char *operation) {
+		if (result != 0)
+			std::fprintf(stderr, "CUDA device cleanup: %s failed (code %d)\n", operation, result);
+	};
+	if (cudaContext) {
+		const CUresult pushed = cuCtxPushCurrent(cudaContext);
+		report(pushed, "cuCtxPushCurrent");
+		if (pushed == CUDA_SUCCESS) {
+			report(cuCtxSynchronize(), "cuCtxSynchronize");
+			if (optixContext)
+				report(optixDeviceContextDestroy(optixContext), "optixDeviceContextDestroy");
+			for (auto &m : loadedModules)
+				report(cuModuleUnload(m), "cuModuleUnload");
+			report(cuCtxPopCurrent(nullptr), "cuCtxPopCurrent");
+		}
+		// cuCtxDestroy releases remaining CUDA allocations even when an earlier
+		// cleanup call failed. Preserve the caller's unrelated current context.
+		report(cuCtxDestroy(cudaContext), "cuCtxDestroy");
 	}
 	loadedModules.clear();
-
-	if (cudaContext) {
-		CHECK_CUDA_ERROR(cuCtxDestroy(cudaContext));
-	}
-
 }
 
 void CUDADevice::PushThreadCurrentDevice() {
@@ -544,6 +551,31 @@ void CUDADevice::AllocBuffer(HardwareDeviceBuffer **hdBuff, const BufferType typ
 	}
 	
 	AllocMemory(size);
+}
+
+void CUDADevice::FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept {
+ if (!buff || !*buff) return;
+ auto *owned = static_cast<CUDADeviceBuffer *>(*buff);
+ *buff = nullptr;
+ const auto report = [this](CUresult error, const char *operation) {
+  if (error != CUDA_SUCCESS) { MarkCleanupError(); std::fprintf(stderr, "CUDA buffer cleanup: %s failed (code %d)\n", operation, int(error)); }
+ };
+ if (!owned->IsNull()) {
+  // A failed outer Film context push must never free under a foreign context.
+  const CUresult pushed = cuCtxPushCurrent(cudaContext);
+  report(pushed, "cuCtxPushCurrent");
+  if (pushed == CUDA_SUCCESS) {
+   size_t size = 0;
+   const CUresult queried = cuMemGetAddressRange(nullptr, &size, owned->cudaBuff);
+   report(queried, "cuMemGetAddressRange");
+   if (queried == CUDA_SUCCESS) FreeMemory(size);
+   report(cuMemFree(owned->cudaBuff), "cuMemFree");
+   CUcontext popped = nullptr;
+   report(cuCtxPopCurrent(&popped), "cuCtxPopCurrent");
+  }
+  // If the device context is unusable, its destruction reclaims allocations.
+ }
+ delete owned;
 }
 
 void CUDADevice::FreeBuffer(HardwareDeviceBuffer **buff) {

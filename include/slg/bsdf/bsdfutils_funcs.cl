@@ -36,8 +36,26 @@ OPENCL_FORCE_INLINE bool BSDF_IsDelta(__global const BSDF *bsdf
 	if (bsdf->cyclesBSSRDFPhase == 3u)
 		return Texture_GetFloatValue(mats[bsdf->materialIndex].cyclesbssrdf.roughnessTexIndex,
 				&bsdf->hitPoint TEXTURES_PARAM) <= 0.f;
+	// CPU BSDF::IsDelta promotes only materials implementing a PSR lobe.
+	// Their Evaluate/Sample already use that finite-width lobe at sigma > 0;
+	// retaining the static delta flag here would skip NEE at those vertices.
+	// Negative regularization is the separate Filter Glossy convention.
+	const MaterialType type = mats[bsdf->materialIndex].type;
+	if ((bsdf->hitPoint.regularization > 0.f) &&
+			((type == GLASS) || (type == MIRROR)))
+		return false;
 	return Material_IsDelta(bsdf->materialIndex
 			MATERIALS_PARAM);
+}
+
+OPENCL_FORCE_INLINE bool BSDF_IsDeltaForCameraConnection(__global const BSDF *bsdf
+		MATERIALS_PARAM_DECL) {
+	// CPU's BSSRDF walk replaces the material with a diffuse exit or an
+	// adjoint boundary proxy. GPU retains the entry material index, so its
+	// phase-specific classification represents that proxy's static flag.
+	if ((bsdf->cyclesBSSRDFPhase == 2u) || (bsdf->cyclesBSSRDFPhase == 3u))
+		return BSDF_IsDelta(bsdf MATERIALS_PARAM);
+	return Material_IsDelta(bsdf->materialIndex MATERIALS_PARAM);
 }
 
 // CPU BSDF::IsChainTransparentMedium(): media are transparent to the

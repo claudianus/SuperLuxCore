@@ -47,6 +47,8 @@ public:
 	virtual void Update(const u_int filmWidth, const u_int filmHeight,
 		const u_int *filmSubRegion);
 
+	void UpdateAuto(SceneConstRef scene) override;
+
 	// Rendering methods
 	virtual void GenerateRay(const float time,
 		const float filmX, const float filmY,

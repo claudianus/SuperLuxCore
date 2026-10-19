@@ -33,6 +33,7 @@
 
 #include <locale>
 #include <memory>
+#include <cmath>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -51,6 +52,15 @@
 #include "luxcore/pysuperluxcore/pysuperluxcoreforblender.h"
 #include "luxcore/pysuperluxcore/pysuperluxcoreutils.h"
 #include "mikktspace.h"
+#include "slg/bsdf/bsdf.h"
+#include "slg/cameras/perspective.h"
+#include "slg/film/imagepipeline/imagepipeline.h"
+#include "slg/film/denoiser/denoisingframe.h"
+#include "slg/film/denoiser/presentationresample.h"
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+#include "slg/engines/pathoclbase/pathoclbase.h"
+#include "slg/engines/rtpathocl/rtpathocl.h"
+#endif
 
 using namespace luxcore;
 using namespace luxcore::detail;
@@ -833,6 +843,27 @@ static void Film_GetOutputFloat1(
       throw std::runtime_error("Unsupported data type in Film.GetOutputFloat(): " + objType);
     }
   }
+}
+
+// The buffer lease and its format/contiguity validation survive native exceptions.
+static PropertiesUPtr Film_GetOutputFloatSnapshot(FilmImpl &film,
+        const Film::FilmOutputType type, py::object &obj,
+        const size_t index, const bool executeImagePipeline) {
+    Py_buffer view{};
+    if (PyObject_GetBuffer(obj.ptr(), &view,
+            PyBUF_C_CONTIGUOUS | PyBUF_FORMAT | PyBUF_WRITABLE) != 0)
+        throw py::error_already_set();
+    struct ReleaseBuffer { Py_buffer *view; ~ReleaseBuffer() { PyBuffer_Release(view); } } lease{&view};
+    if (view.itemsize != sizeof(float) || !view.format || strcmp(view.format, "f") != 0 ||
+            reinterpret_cast<uintptr_t>(view.buf) % alignof(float) != 0 || view.len < 0)
+        throw std::runtime_error("GetOutputFloatSnapshot requires aligned writable C-contiguous native float32");
+    PropertiesUPtr result;
+    {
+        py::gil_scoped_release release;
+        result = film.GetOutputFloatSnapshot(type, static_cast<float *>(view.buf),
+                index, executeImagePipeline, static_cast<size_t>(view.len));
+    }
+    return result;
 }
 
 static void Film_GetOutputFloat2(
@@ -2357,6 +2388,333 @@ static py::tuple RenderConfig_GetFilmSize(luxcore::detail::RenderConfigImpl *ren
 //------------------------------------------------------------------------------
 
 
+class DenoisingImagePipeline {
+    std::mutex mutex;
+    std::unique_ptr<slg::ImagePipeline> pipeline;
+    slg::FilmUPtr scaledFilm;
+    uint64_t epoch = 0, revision = 0, lastFrame = 0;
+    unsigned width = 0, height = 0;
+    unsigned outputWidth = 0, outputHeight = 0;
+public:
+    DenoisingImagePipeline() = default;
+    py::array_t<float> Process(const py::dict &packet, const py::object &rgba, const bool reset) {
+        if (!packet.contains("_frame_lease"))
+            throw std::runtime_error("A native coherent frame lease is required for image-pipeline processing");
+        const auto capsule = packet["_frame_lease"].cast<py::capsule>();
+        if (!capsule.name() || std::strcmp(capsule.name(), "superluxcore.denoising_frame"))
+            throw std::runtime_error("Invalid native frame lease");
+        const auto snapshot = *capsule.get_pointer<std::shared_ptr<const slg::DenoisingFrameSnapshot>>();
+        if (!snapshot || !snapshot->presentationFilm)
+            throw std::runtime_error(snapshot && !snapshot->presentationError.empty() ?
+                snapshot->presentationError : "Coherent frame image-pipeline capture is disabled");
+        py::ssize_t h = snapshot->presentationFilm->GetHeight(), w = snapshot->presentationFilm->GetWidth();
+        py::array input;
+        const float *pixels = nullptr;
+        if (!rgba.is_none()) {
+            if (!py::isinstance<py::array>(rgba))
+                throw std::runtime_error("Image-pipeline input must be a contiguous float32 RGBA array");
+            input = rgba.cast<py::array>();
+            if (!input.dtype().is(py::dtype::of<float>()) || !(input.flags() & py::array::c_style) ||
+                input.ndim() != 3 || input.shape(0) <= 0 || input.shape(0) > 16384 ||
+                input.shape(1) <= 0 || input.shape(1) > 16384 || input.shape(2) != 4)
+                throw std::runtime_error("Image-pipeline input must have supported dimensions and contiguous float32 RGBA layout");
+            h = input.shape(0); w = input.shape(1);
+            pixels = static_cast<const float *>(input.data());
+        }
+        if (snapshot->inputReduction > 1u &&
+                (w != snapshot->targetWidth || h != snapshot->targetHeight || snapshot->targetAlpha.empty()))
+            throw std::runtime_error("Canonical coverage reconstruction requires the original target raster and coverage");
+        const bool scaled = w != snapshot->presentationFilm->GetWidth() || h != snapshot->presentationFilm->GetHeight();
+        if (scaled && slg::ScaledPresentationBytes(*snapshot->presentationFilm, w, h) > (size_t(1) << 30))
+            throw std::runtime_error("Reconstructed presentation context and output exceed the 1 GiB budget");
+        py::array_t<float> result({h, w, py::ssize_t(4)});
+        float *output = result.mutable_data();
+        {
+            py::gil_scoped_release release;
+            std::lock_guard<std::mutex> ownLock(mutex);
+            std::lock_guard<std::mutex> frameLock(snapshot->presentationMutex);
+            auto &source = *snapshot->presentationFilm;
+            if (source.GetImagePipelineCount() == 0)
+                throw std::runtime_error("The captured frame has no image pipeline");
+            const bool fresh = reset || !pipeline || epoch != snapshot->sceneEpoch ||
+                revision != snapshot->presentationRevision || width != snapshot->width || height != snapshot->height ||
+                outputWidth != w || outputHeight != h;
+            if (!fresh && snapshot->frameId <= lastFrame)
+                throw std::runtime_error("Image-pipeline frames must arrive in increasing order");
+            if (pixels)
+                for (size_t i = 0; i < size_t(w) * h * 4; ++i)
+                    if (!std::isfinite(pixels[i])) throw std::runtime_error("Nonfinite image-pipeline input");
+            if (fresh) {
+                pipeline.reset(source.GetImagePipeline(0)->Copy());
+                scaledFilm.reset();
+            }
+            if (scaled) {
+                if (!scaledFilm) scaledFilm = slg::CreateScaledPresentation(source, w, h);
+                slg::CopyScaledPresentationChannels(source, *scaledFilm);
+            }
+            auto &film = scaled ? *scaledFilm : source;
+            // Preserve original AOV alpha for later raw fallback/reference reads.
+            struct AlphaRestore {
+                slg::Film &film;
+                std::vector<float> saved;
+                AlphaRestore(slg::Film &f, bool needed): film(f) {
+                    if (needed) {
+                        const float *a = film.channel_ALPHA->GetPixels();
+                        saved.assign(a, a + size_t(film.GetPixelCount()) * 2);
+                    }
+                }
+                ~AlphaRestore() { if (!saved.empty()) std::copy(saved.begin(), saved.end(), film.channel_ALPHA->GetPixels()); }
+            } alpha(film, pixels != nullptr && !scaled);
+            try {
+                if (pixels) {
+                    float *target = film.channel_IMAGEPIPELINEs[0]->GetPixels();
+                    float *a = film.channel_ALPHA->GetPixels();
+                    for (size_t i = 0; i < size_t(w) * h; ++i) {
+                        std::copy(pixels + i * 4, pixels + i * 4 + 3, target + i * 3);
+                        if (!snapshot->targetHoldoutRGB.empty() && snapshot->targetHoldout[i])
+                            std::copy_n(snapshot->targetHoldoutRGB.data() + i * 3, 3, target + i * 3);
+                        a[i * 2] = snapshot->targetAlpha.empty() ? pixels[i * 4 + 3] : snapshot->targetAlpha[i];
+                        a[i * 2 + 1] = 1.f;
+                    }
+                } else {
+                    film.MergeImagePipelineInput(0);
+                }
+                // HDR already contains LightMix. Apply plugins directly;
+                // ExecuteImagePipeline would merge/scale the input again.
+                pipeline->Apply(film, 0);
+                film.GetOutput<float>(slg::FilmOutputs::RGBA_IMAGEPIPELINE, output, 0, false);
+                for (size_t i = 0; i < size_t(w) * h * 4; ++i)
+                    if (!std::isfinite(output[i])) throw std::runtime_error("Nonfinite image-pipeline output");
+            } catch (...) { pipeline.reset(); scaledFilm.reset(); throw; }
+            epoch = snapshot->sceneEpoch; revision = snapshot->presentationRevision;
+            width = snapshot->width; height = snapshot->height; lastFrame = snapshot->frameId;
+            outputWidth = w; outputHeight = h;
+        }
+        return result;
+    }
+};
+
+static void RenderSession_SetDenoisingFrameHaltSPP(RenderSessionImpl &session, const uint64_t samples) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    if (!session.IsStarted() || !dynamic_cast<slg::RTPathOCLRenderEngine *>(session.GetSLGRenderSession().renderEngine.get()))
+        throw std::runtime_error("Updating independent-frame halt requires an active RTPATHOCL session");
+    auto props = std::make_unique<luxrays::Properties>();
+    props->Set(luxrays::Property("rtpath.denoisingframes.haltspp")(static_cast<u_longlong>(samples)));
+    session.Parse(props);
+#else
+    throw std::runtime_error("Updating independent-frame halt requires GPU support");
+#endif
+}
+
+static py::object RenderSession_GetDenoisingFrame(RenderSessionImpl &session,
+        const uint64_t afterId, const u_int timeoutMs) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    std::shared_ptr<const slg::DenoisingFrameSnapshot> snapshot;
+    {
+        py::gil_scoped_release release;
+        if (session.IsStarted()) {
+            auto *engine = dynamic_cast<slg::RTPathOCLRenderEngine *>(session.GetSLGRenderSession().renderEngine.get());
+            if (!engine) throw std::runtime_error("Independent frame streaming requires RTPATHOCL");
+            snapshot = engine->GetDenoisingFrame(afterId, timeoutMs);
+        }
+    }
+    if (!snapshot) return py::none();
+    const py::ssize_t h=snapshot->height,w=snapshot->width;
+    // The capsule owns a read-only lease. No film lock/GPU readback or extra
+    // full-frame copy occurs on this consumer call; newer frames can replace
+    // the publisher's slot while these arrays are being consumed.
+    auto *lease = new std::shared_ptr<const slg::DenoisingFrameSnapshot>(snapshot);
+    py::capsule owner(lease, "superluxcore.denoising_frame", [](void *p) { delete static_cast<std::shared_ptr<const slg::DenoisingFrameSnapshot> *>(p); });
+    py::array_t<float> color({h,w,py::ssize_t(4)},snapshot->color.data(),owner);
+    py::array_t<float> guides({h,w,py::ssize_t(slg::DENOISING_GUIDE_STRIDE)},snapshot->guides.data(),owner);
+    py::array_t<u_int> counts({h,w},snapshot->sampleCount.data(),owner);
+    py::array_t<float> ctw({py::ssize_t(4),py::ssize_t(4)},snapshot->cameraToWorld,owner);
+    py::array_t<float> wtc({py::ssize_t(4),py::ssize_t(4)},snapshot->worldToCamera,owner);
+    py::array_t<float> ctr({py::ssize_t(4),py::ssize_t(4)},snapshot->cameraToRaster,owner);
+    for (const auto &a : {py::object(color),py::object(guides),py::object(counts),py::object(ctw),py::object(wtc),py::object(ctr)})
+        a.attr("setflags")(false);
+    py::dict result;
+    result["color"]=color;result["guides"]=guides;result["sample_count"]=counts;
+    result["camera_to_world"]=ctw;result["world_to_camera"]=wtc;result["camera_to_raster"]=ctr;
+    result["frame_id"]=snapshot->frameId;result["scene_epoch"]=snapshot->sceneEpoch;
+    result["jitter"]=py::make_tuple(snapshot->jitterX,snapshot->jitterY);
+    result["complete"]=snapshot->complete;result["completed_time"]=snapshot->completedTime;
+    result["motion_camera_compatible"]=snapshot->motionCameraCompatible;
+    result["source"]="renderer_gpu";result["independent_samples"]=true;result["version"]=1;
+    result["guide_version"]=2;
+    result["target_size"]=py::make_tuple(snapshot->targetWidth, snapshot->targetHeight);
+    result["input_reduction"]=snapshot->inputReduction;
+    if (!snapshot->targetAlpha.empty()) {
+        const py::ssize_t th = snapshot->targetHeight, tw = snapshot->targetWidth;
+        py::array_t<float> alpha({th,tw}, snapshot->targetAlpha.data(), owner);
+        py::array_t<uint8_t> holdout({th,tw}, snapshot->targetHoldout.data(), owner);
+        alpha.attr("setflags")(false); holdout.attr("setflags")(false);
+        result["target_alpha"] = alpha; result["target_holdout"] = holdout;
+        if (!snapshot->targetHoldoutRGB.empty()) {
+            py::array_t<float> rgb({th,tw,py::ssize_t(3)}, snapshot->targetHoldoutRGB.data(), owner);
+            rgb.attr("setflags")(false); result["target_holdout_rgb"] = rgb;
+        }
+        result["coverage_source"] = "renderer_full_resolution";
+    }
+    result["_frame_lease"]=owner;
+    result["image_pipeline_available"]=bool(snapshot->presentationFilm);
+    result["image_pipeline_revision"]=snapshot->presentationRevision;
+    result["image_pipeline_channel_bytes"]=snapshot->presentationChannelBytes;
+    result["image_pipeline_error"]=snapshot->presentationError;
+    result["lossless_delivery"]=snapshot->losslessDelivery;
+    result["image_pipeline_accumulated"]=snapshot->presentationAccumulated;
+    result["accumulated_eye_samples"]=snapshot->accumulatedEyeSamples;
+    return std::move(result);
+#else
+    throw std::runtime_error("This build has no GPU frame producer");
+#endif
+}
+
+static void RenderSession_AcknowledgeDenoisingFrame(RenderSessionImpl &session, const py::dict &packet, const bool keepLossless) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    if (!packet.contains("_frame_lease"))
+        throw std::runtime_error("A native coherent frame lease is required for acknowledgement");
+    const auto capsule = packet["_frame_lease"].cast<py::capsule>();
+    if (!capsule.name() || std::strcmp(capsule.name(), "superluxcore.denoising_frame"))
+        throw std::runtime_error("Invalid native frame lease");
+    const auto snapshot = *capsule.get_pointer<std::shared_ptr<const slg::DenoisingFrameSnapshot>>();
+    py::gil_scoped_release release;
+    if (!session.IsStarted()) throw std::runtime_error("The render session is not started");
+    auto *engine = dynamic_cast<slg::RTPathOCLRenderEngine *>(session.GetSLGRenderSession().renderEngine.get());
+    if (!engine) throw std::runtime_error("Lossless frame delivery requires RTPATHOCL");
+    engine->AcknowledgeDenoisingFrame(snapshot, keepLossless);
+#else
+    throw std::runtime_error("This build has no GPU frame producer");
+#endif
+}
+
+static void RenderSession_ReleaseDenoisingFrameDelivery(RenderSessionImpl &session) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    py::gil_scoped_release release;
+    if (!session.IsStarted()) throw std::runtime_error("The render session is not started");
+    auto *engine = dynamic_cast<slg::RTPathOCLRenderEngine *>(session.GetSLGRenderSession().renderEngine.get());
+    if (!engine) throw std::runtime_error("Independent frame delivery requires RTPATHOCL");
+    engine->ReleaseDenoisingFrameDelivery();
+#else
+    throw std::runtime_error("This build has no GPU frame producer");
+#endif
+}
+
+static py::dict RenderSession_GetDenoisingGuides(RenderSessionImpl &session) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    std::vector<float> records;
+    size_t w, h;
+    {
+        py::gil_scoped_release release;
+        if (!session.IsStarted() || session.IsInSceneEdit() || (!session.IsInPause() && !session.HasDone()))
+            throw std::runtime_error("Pause or finish the frame before reading renderer-owned guides");
+        auto &native = session.GetSLGRenderSession();
+        const auto *engine = dynamic_cast<const slg::PathOCLBaseRenderEngine *>(native.renderEngine.get());
+        if (!engine) throw std::runtime_error("Renderer-owned GPU guides are unavailable on this engine");
+        records = engine->GetDenoisingGuideSnapshot();
+        w = native.film->GetWidth(); h = native.film->GetHeight();
+        if (records.size() != w*h*slg::DENOISING_GUIDE_STRIDE)
+            throw std::runtime_error("Renderer-owned guide dimensions changed during the read");
+    }
+    py::array_t<float> diffuse({h,w,size_t(4)}), specular({h,w,size_t(4)});
+    py::array_t<float> normal({h,w,size_t(4)}), position({h,w,size_t(4)});
+    py::array_t<uint8_t> status({h,w});
+    float *d=diffuse.mutable_data(), *s=specular.mutable_data();
+    float *n=normal.mutable_data(), *p=position.mutable_data();
+    uint8_t *flags=status.mutable_data();
+    {
+        py::gil_scoped_release release;
+        for (size_t i=0;i<w*h;++i) {
+            const float *r=records.data()+i*slg::DENOISING_GUIDE_STRIDE;
+            for (size_t k=0;k<3;++k) {d[4*i+k]=r[k];s[4*i+k]=r[4+k];n[4*i+k]=r[8+k];p[4*i+k]=r[12+k];}
+            d[4*i+3]=1.f;s[4*i+3]=0.f;n[4*i+3]=r[3];p[4*i+3]=r[15];
+            flags[i]=r[7]==4.f?0:(r[7]==0.f?2:static_cast<uint8_t>(r[7]));
+        }
+    }
+    py::dict result;
+    result["diffuse"]=diffuse;result["specular"]=specular;
+    result["normal_roughness"]=normal;result["position_depth"]=position;result["status"]=status;
+    result["source"]="renderer_gpu";result["version"]=1;
+    result["contract"]="Actual GPU primary hit/sample; 0 background, 1 supported, 2 unsupported/unwritten, 3 continuation required";
+    return result;
+#else
+    throw std::runtime_error("This build has no GPU guide producer");
+#endif
+}
+
+static py::dict RenderSession_GetDenoisingSurfaceGuides(RenderSessionImpl &session,
+        const float jitterX, const float jitterY) {
+    // Host reference producer. The caller serializes this with session edits;
+    // it never mutates a film, camera, sampler, transport setting or GPU task.
+    if (!std::isfinite(jitterX) || !std::isfinite(jitterY) ||
+            fabsf(jitterX) > .5f || fabsf(jitterY) > .5f)
+        throw std::runtime_error("Denoising guides require finite half-pixel jitter");
+    if (!session.IsStarted() || session.IsInSceneEdit())
+        throw std::runtime_error("Denoising guides require a preprocessed session outside scene edits");
+    if (!session.IsInPause() && !session.HasDone())
+        throw std::runtime_error("Pause or finish the frame before reading denoising guides");
+    auto &native = session.GetSLGRenderSession();
+    const auto &scene = native.renderConfig.GetScene();
+    const auto &camera = scene.GetCamera();
+    if (camera.GetType() != slg::Camera::PERSPECTIVE || camera.motionSystem ||
+            static_cast<const slg::PerspectiveCamera &>(camera).lensRadius != 0.f)
+        throw std::runtime_error("Surface guide reference currently supports static pinhole perspective cameras");
+    const size_t w = native.film->GetWidth(), h = native.film->GetHeight();
+    // Four float4 planes plus status: bounded independently of Python inputs.
+    if (!w || !h || w > 16384 || h > 16384 || w * h > (256u << 20) / 65)
+        throw std::runtime_error("Surface guides exceed the 256 MiB output budget");
+    py::array_t<float> diffuse({h, w, size_t(4)}), specular({h, w, size_t(4)});
+    py::array_t<float> normal({h, w, size_t(4)}), position({h, w, size_t(4)});
+    py::array_t<uint8_t> status({h, w});
+    float *d = diffuse.mutable_data(), *s = specular.mutable_data();
+    float *n = normal.mutable_data(), *p = position.mutable_data();
+    uint8_t *flags = status.mutable_data();
+    {
+        py::gil_scoped_release release;
+        const auto &worldToCamera = camera.GetWorldToCamera();
+        const float time = camera.GenerateRayTime(.5f);
+        for (size_t y = 0; y < h; ++y) for (size_t x = 0; x < w; ++x) {
+            const size_t i = y * w + x, j = 4 * i;
+            for (size_t k = 0; k < 4; ++k) d[j+k] = s[j+k] = n[j+k] = p[j+k] = 0.f;
+            d[j+3] = n[j+3] = 1.f;
+            p[j+3] = camera.clipYon;
+            flags[i] = 0;
+            slg::PathVolumeInfo volume;
+            luxrays::Ray ray;
+            camera.GenerateRay(time, x + .5f + jitterX, y + .5f + jitterY,
+                    &ray, &volume, .5f, .5f);
+            luxrays::RayHit hit;
+            slg::BSDF bsdf;
+            luxrays::Spectrum connection;
+            if (!scene.Intersect(nullptr, slg::EYE_RAY | slg::CAMERA_RAY,
+                    &volume, .5f, &ray, &hit, &bsdf, &connection)) continue;
+            const auto &hp = bsdf.hitPoint;
+            p[j] = hp.p.x; p[j+1] = hp.p.y; p[j+2] = hp.p.z;
+            p[j+3] = (worldToCamera * hp.p).z;
+            slg::DenoisingFeatures features;
+            flags[i] = 2;
+            if (bsdf.IsVolume() || !bsdf.GetMaterial()->GetDenoisingFeatures(hp, features)) continue;
+            for (size_t k = 0; k < 3; ++k) {
+                d[j+k] = features.diffuse.c[k];
+                s[j+k] = features.specular.c[k];
+            }
+            if (features.weight > 0.f) {
+                const luxrays::Vector cn = worldToCamera * (features.normal / features.weight);
+                n[j] = cn.x; n[j+1] = cn.y; n[j+2] = cn.z;
+                n[j+3] = features.roughness / features.weight;
+            }
+            const bool transparent = connection.c[0] != 1.f || connection.c[1] != 1.f || connection.c[2] != 1.f;
+            flags[i] = (features.transmission || features.FeatureWeight() < 1.f || transparent) ? 3 : 1;
+        }
+    }
+    py::dict result;
+    result["diffuse"] = diffuse; result["specular"] = specular;
+    result["normal_roughness"] = normal; result["position_depth"] = position;
+    result["status"] = status;
+    result["contract"] = "host primary-surface estimates; 0 background, 1 supported, 2 unsupported, 3 requires path continuation";
+    return result;
+}
+
 static std::shared_ptr<luxcore::detail::RenderStateImpl>
 RenderSession_GetRenderState(
 	const std::unique_ptr<luxcore::detail::RenderSessionImpl> & renderSession
@@ -2452,6 +2810,11 @@ void ConvertFilmChannelOutput_3xFloat_To_4xUChar(const size_t width, const size_
 //------------------------------------------------------------------------------
 
 PYBIND11_MODULE(pysuperluxcore, m) {
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+  m.attr("RT_FILM_RESOLUTION_POLICY_VERSION") = 1;
+#else
+  m.attr("RT_FILM_RESOLUTION_POLICY_VERSION") = 0;
+#endif
   // I get a crash on Ubuntu 19.10 without this line and this should be
   // good anyway to avoid problems with "," Vs. "." decimal separator, etc.
 
@@ -2471,6 +2834,12 @@ PYBIND11_MODULE(pysuperluxcore, m) {
   m.def("Version", LuxCoreVersion, "Returns the LuxCore version");
 
   m.def("Init", &LuxCore_Init);
+  py::class_<DenoisingImagePipeline>(m, "DenoisingImagePipeline")
+      .def(py::init<>())
+      .def_static("supports_upscaling", []() { return true; })
+      .def_static("supports_canonical_coverage", []() { return true; })
+      .def("process", &DenoisingImagePipeline::Process,
+          py::arg("frame"), py::arg("rgba") = py::none(), py::arg("reset") = false);
   m.def("Init", &LuxCore_InitDefaultHandler);
   m.def("SetLogHandler", &LuxCore_SetLogHandler);
 
@@ -2777,6 +3146,8 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .def("SaveFilm", &luxcore::detail::FilmImpl::SaveFilm)
     .def("GetRadianceGroupCount", &luxcore::detail::FilmImpl::GetRadianceGroupCount)
     .def("GetOutputSize", &luxcore::detail::FilmImpl::GetOutputSize)
+    .def("GetOutputFloatSnapshot", &Film_GetOutputFloatSnapshot, py::arg("output_type"),
+        py::arg("buffer"), py::arg("index") = 0, py::arg("execute_imagepipeline") = true)
     .def("GetOutputFloat", &Film_GetOutputFloat1)
     .def("GetOutputFloat", &Film_GetOutputFloat2)
     .def("GetOutputFloat", &Film_GetOutputFloat3)
@@ -2961,10 +3332,12 @@ PYBIND11_MODULE(pysuperluxcore, m) {
         return self.GetProperties()->Clone();
     })
     .def("GetProperty", &luxcore::detail::RenderConfigImpl::GetProperty)
-    // The returned scene is a non-owning reference into the config:
-    // keep the config alive while the wrapper is in use.
+    // A newly wrapped internal scene borrows its config. An external scene
+    // already has an owning Python wrapper retained by the config constructor.
+    // reference_internal only attaches the parent for a NEW wrapper; an
+    // unconditional keep_alive would create scene -> config -> scene cycles.
     .def("GetScene", &RenderConfig_GetScene,
-         py::return_value_policy::reference, py::keep_alive<0, 1>())
+         py::return_value_policy::reference_internal)
     .def("HasCachedKernels", &luxcore::detail::RenderConfigImpl::HasCachedKernels)
     .def("Parse", &luxcore::detail::RenderConfigImpl::Parse)
     .def("Delete", &luxcore::detail::RenderConfigImpl::Delete)
@@ -3015,10 +3388,11 @@ PYBIND11_MODULE(pysuperluxcore, m) {
 	)
 	//TODO
     //.def("GetRenderConfig", &RenderSession_GetRenderConfig)
-    // The returned config is a non-owning reference into the session:
-    // keep the session alive while the wrapper is in use.
+    // Python session constructors already retain the owning config wrapper.
+    // Reuse it without adding config -> session -> config keep-alive cycles.
+    // A genuinely new borrowed wrapper would still retain its parent.
     .def("GetRenderConfig", &luxcore::detail::RenderSessionImpl::GetRenderConfig,
-         py::keep_alive<0, 1>())
+         py::return_value_policy::reference_internal)
     // Long running calls release the GIL: kernel compilation (i.e. the
     // Metal path is a multi-second cl2msl + Metal compiler run) happens
     // inside Start(), and WaitNewFrame()/WaitForDone()/Stop() block on
@@ -3039,6 +3413,23 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .def("Resume", &luxcore::detail::RenderSessionImpl::Resume,
          py::call_guard<py::gil_scoped_release>())
     .def("IsInPause", &luxcore::detail::RenderSessionImpl::IsInPause)
+    .def("AcknowledgeDenoisingFrame", &RenderSession_AcknowledgeDenoisingFrame,
+         py::arg("frame"), py::arg("keep_lossless")=true)
+    .def("ReleaseDenoisingFrameDelivery", &RenderSession_ReleaseDenoisingFrameDelivery)
+    .def("SetDenoisingFrameHaltSPP", &RenderSession_SetDenoisingFrameHaltSPP,
+         py::arg("samples"), py::call_guard<py::gil_scoped_release>(),
+         "Update the coherent eye-sample cap without resetting the film (0 disables it); serialize with session lifecycle edits.")
+    .def("GetDenoisingFrame", &RenderSession_GetDenoisingFrame,
+         py::arg("after_id")=0, py::arg("timeout_ms")=0,
+         "Lease the newest complete independent RTPATH GPU frame (or None). "
+         "Read-only arrays remain valid across later edits, resize and stop; no UI/GPU queue drain.")
+    .def("GetDenoisingGuides", &RenderSession_GetDenoisingGuides,
+         "Read renderer-owned GPU primary-hit guides from a finished/paused frame. "
+         "Requires film.denoisingguides.enable; serialize with session lifecycle edits.")
+    .def("GetDenoisingSurfaceGuides", &RenderSession_GetDenoisingSurfaceGuides,
+         py::arg("jitter_x") = 0.f, py::arg("jitter_y") = 0.f,
+         "Optional host reference guides; serialize with session lifecycle edits. "
+         "Requires a paused or finished frame. Status 2/3 is not ready for DLSS presentation.")
     .def("SetRuntimeResolutionReduction",
          &luxcore::detail::RenderSessionImpl::SetRuntimeResolutionReduction,
          "Runtime override of the RTPATHOCL resolution reduction (0 restores "

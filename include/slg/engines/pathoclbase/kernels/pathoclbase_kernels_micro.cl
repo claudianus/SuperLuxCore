@@ -24,6 +24,87 @@
 
 //#define DEBUG_PRINTF_KERNEL_NAME 1
 
+// A strict atomic minimum has at most one successful writer at the final
+// depth. Consume its compact snapshot after the entire splat dispatch and
+// before samplers reuse their records. No pixel lock or approximate key.
+__kernel void CommitFilmData(
+        __constant const GPUTaskConfiguration* restrict taskConfig,
+        __global FilmDataPending *pending, const uint taskCount,
+        const uint filmWidth, const uint filmHeight,
+        __global float *filmDepth,
+        __global float *filmPosition, __global float *filmGeometryNormal,
+        __global float *filmShadingNormal, __global uint *filmMaterialID,
+        __global float *filmUV, __global uint *filmObjectID,
+        __global float *filmMotionVector) {
+    const uint gid = get_global_id(0);
+    if (gid >= taskCount) return;
+    __global FilmDataPending *sample = &pending[gid];
+    if (!sample->valid) return;
+    sample->valid = 0u;
+    if (!filmDepth || sample->pixelX >= filmWidth || sample->pixelY >= filmHeight)
+        return;
+    const uint index1 = sample->pixelX + sample->pixelY * filmWidth;
+    if (sample->depth != filmDepth[index1]) return;
+    __constant const Film *film = &taskConfig->film;
+    const uint index2 = index1 * 2, index3 = index1 * 3;
+    if (film->hasChannelPosition) Film_SetPixel3(&filmPosition[index3], &sample->position.x);
+    if (film->hasChannelGeometryNormal) Film_SetPixel3(&filmGeometryNormal[index3], &sample->geometryNormal.x);
+    if (film->hasChannelShadingNormal) Film_SetPixel3(&filmShadingNormal[index3], &sample->shadingNormal.x);
+    if (film->hasChannelMaterialID) filmMaterialID[index1] = sample->materialID;
+    if (film->hasChannelUV) Film_SetPixel2(&filmUV[index2], &sample->uv.u);
+    if (film->hasChannelObjectID && sample->objectID != NULL_INDEX)
+        filmObjectID[index1] = sample->objectID;
+    if (film->hasChannelMotionVector)
+        for (uint i = 0; i < 4; ++i) filmMotionVector[index1 * 4 + i] = sample->motionVector[i];
+}
+
+#if defined(RENDER_ENGINE_TILEPATHOCL)
+// Completed tiled eye samples remain resident until the next tile Init.
+// One writer per pixel selects the same primary sample for every data AOV;
+// a scalar atomic minimum followed by independent stores cannot do this.
+__kernel void TilePathResolveFilmData(
+        __constant const GPUTaskConfiguration* restrict taskConfig,
+        __global const GPUTaskStats *taskStats,
+        __global SampleResult *sampleResults,
+        const uint eyeTaskCount, const uint aaSamples,
+        const uint filmWidth, const uint filmHeight,
+        __global float *filmDepth,
+        __global float *filmPosition, __global float *filmGeometryNormal,
+        __global float *filmShadingNormal, __global uint *filmMaterialID,
+        __global float *filmUV, __global uint *filmObjectID,
+        __global float *filmMotionVector) {
+    const uint pixel = get_global_id(0);
+    if (pixel >= filmWidth * filmHeight || !filmDepth)
+        return;
+    const uint samplesPerPixel = aaSamples * aaSamples;
+    const ulong first = (ulong)pixel * samplesPerPixel;
+    if (first >= eyeTaskCount)
+        return;
+    const uint count = min(samplesPerPixel, eyeTaskCount - (uint)first);
+    const uint x = pixel % filmWidth, y = pixel / filmWidth;
+    float closest = INFINITY;
+    uint selected = NULL_INDEX;
+    for (uint i = 0; i < count; ++i) {
+        const uint task = (uint)first + i;
+        if (!taskStats[task].activeEyeSample || taskStats[task].sampleCount == 0)
+            continue;
+        __global SampleResult *sample = &sampleResults[task];
+        if (sample->pixelX == x && sample->pixelY == y && sample->depth < closest) {
+            closest = sample->depth;
+            selected = task;
+        }
+    }
+    // Miss-only pixels retain the cleared INF/background channel values.
+    // Equal depths choose the lowest task index deterministically.
+    if (selected != NULL_INDEX) {
+        filmDepth[pixel] = closest;
+        Film_WriteSampleResultData(pixel, &taskConfig->film, &sampleResults[selected],
+                filmPosition, filmGeometryNormal, filmShadingNormal,
+                filmMaterialID, filmUV, filmObjectID, filmMotionVector);
+    }
+}
+#endif
+
 // Adaptive aim radius for a focus-ring target: the cone should cover the
 // recorded target's local neighbourhood, so it is sized by the distance
 // to the nearest entry already in the ring. A dense cluster (a real
@@ -323,7 +404,9 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 
 	int throughShadowTransparency = taskState->throughShadowTransparency;
 	const bool continueToTrace = Scene_Intersect(taskConfig,
-			EYE_RAY | ((pathInfo->depth.depth == 0) ? CAMERA_RAY : INDIRECT_RAY),
+			EYE_RAY | ((pathInfo->depth.depth == 0) ? CAMERA_RAY : INDIRECT_RAY) |
+					((pathInfo->depth.depth > 0 && !pathInfo->isNearlyS) ?
+					SHADOW_TRANSPARENCY_CONNECTION : 0),
 			&pathInfo->depth, pathInfo->lastBSDFEvent,
 			&throughShadowTransparency,
 			&pathInfo->volume,
@@ -399,6 +482,7 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 __kernel void AdvancePaths_MK_HIT_NOTHING(
 		KERNEL_ARGS
 		KERNEL_ARGS_VC
+		KERNEL_ARGS_DENOISING_GUIDES
 		) {
 	WAVEFRONT_GUARD
 
@@ -469,6 +553,22 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 	}
 
 	if (pathInfo->depth.depth == 0) {
+#if defined(SLC_DENOISING_GUIDES)
+		__global float *record = denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE;
+#if defined(SLC_DENOISING_FRAMES)
+		for (uint i = 0; i < SLC_DENOISING_GUIDE_STRIDE; ++i) record[i] = 0.f;
+#endif
+		record[3] = 1.f; record[7] = 4.f; record[11] = 1.f; record[15] = camera->base.yon;
+		record[16] = sampleResult->pixelX; record[17] = sampleResult->pixelY; record[18] = rays[gid].time;
+#if defined(SLC_DENOISING_FRAMES)
+		record[7] = 1.f; record[19] = 2.f; record[27] = 2.f;
+		VSTORE3F(VLOAD3F(&rays[gid].d.x), record+24);
+		const float3 transparency = VLOAD3F(sampleResult->cameraTransparency.c);
+		if (transparency.x != 1.f || transparency.y != 1.f || transparency.z != 1.f) record[7] = 2.f;
+#else
+		VSTORE3F(VLOAD3F(&rays[gid].d.x), record+20);
+#endif
+#endif
 		// Scene_Intersect accumulated the primary-ray opacity.
 		sampleResult->depth = INFINITY;
 		sampleResult->position.x = INFINITY;
@@ -498,6 +598,20 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 		sampleResult->alpha = 0.f;
 	}
 
+#if defined(SLC_DENOISING_FRAMES)
+	if (pathInfo->depth.depth == 1u) {
+		__global float *record = denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE;
+		if (record[31] == 1.f) {
+			const float3 n = VLOAD3F(record+28), direction = VLOAD3F(&rays[gid].d.x);
+			const float n2 = dot(n,n);
+			if (n2 > 0.f) {
+				VSTORE3F(direction - n*(2.f*dot(direction,n)/n2), record+24);
+				record[27] = 3.f;
+			}
+		}
+	}
+#endif
+
 	taskState->state = MK_SPLAT_SAMPLE;
 }
 
@@ -511,6 +625,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 __kernel void AdvancePaths_MK_HIT_OBJECT(
 		KERNEL_ARGS
 		KERNEL_ARGS_VC
+		KERNEL_ARGS_DENOISING_GUIDES
 		) {
 	WAVEFRONT_GUARD
 
@@ -544,6 +659,27 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 	//--------------------------------------------------------------------------
 
 	// Something was hit
+#if defined(SLC_DENOISING_GUIDES)
+#if defined(SLC_DENOISING_FRAMES)
+	if (bsdf->cyclesBSSRDFPhase != 2u) {
+		__global float *record = denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE;
+		SLCDenoising_WritePathSurface(record, bsdf, camera, sampleResult,
+				rays[gid].time, pathInfo->depth.depth, rayHits[gid].t MATERIALS_PARAM);
+		if (!bsdf->isVolume && meshDescs[bsdf->hitPoint.meshIndex].type == TYPE_EXT_TRIANGLE_MOTION &&
+				(pathInfo->depth.depth == 0u || record[23] != 0.f ||
+				(pathInfo->depth.depth == 1u && record[31] == 1.f))) record[7] = 2.f;
+	}
+#else
+	if (bsdf->cyclesBSSRDFPhase != 2u && pathInfo->depth.depth == 0) {
+		SLCDenoising_WriteSurface(denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE,
+				bsdf, camera, sampleResult, rays[gid].time MATERIALS_PARAM);
+		// Per-shutter moving geometry needs previous-object transforms too.
+		// Keep that path explicit until the motion producer supplies them.
+		if (!bsdf->isVolume && meshDescs[bsdf->hitPoint.meshIndex].type == TYPE_EXT_TRIANGLE_MOTION)
+			denoisingGuides[gid*SLC_DENOISING_GUIDE_STRIDE+7] = 2.f;
+	}
+#endif
+#endif
 
 	if (bsdf->cyclesBSSRDFPhase != 2u && taskState->albedoToDo && BSDF_IsAlbedoEndPoint(bsdf, taskConfig->pathTracer.albedo.specularSetting,
 			taskConfig->pathTracer.albedo.specularGlossinessThreshold MATERIALS_PARAM)) {
@@ -1045,14 +1181,13 @@ __kernel void AdvancePaths_MK_RT_DL(
 	VSTORE3F(connectionThroughput * VLOAD3F(taskDirectLight->illumInfo.lightRadiance.c), taskDirectLight->illumInfo.lightRadiance.c);
 	VSTORE3F(connectionThroughput * VLOAD3F(taskDirectLight->illumInfo.lightIrradiance.c), taskDirectLight->illumInfo.lightIrradiance.c);
 
-	// Vertex connection (M6): CPU DirectLightSampling lifts the MIS
+	// CPU DirectLightSampling lifts the MIS
 	// weight to 1 when the shadow ray crossed a shadow-transparent
 	// occluder (throughShadowTransparency of the last shadow hit).
 	// The flag accumulates over the multi-segment shadow walk, but the
 	// undo must be applied ONCE on the terminating segment - doing it
 	// per iteration compounds 1/vcMisWeight for every transparent hit.
 	if (!continueToTrace &&
-			PT_VC_ON(taskConfig) &&
 			throughShadowTransparency &&
 			(taskDirectLight->illumInfo.vcMisWeight > 0.f) &&
 			(taskDirectLight->illumInfo.vcMisWeight < 1.f))
@@ -2078,6 +2213,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 		 * record consumed by the paired light task's camera connects.
 		 * NULL when disabled. */ \
 		, __global SspTail *sspTails
+		KERNEL_ARGS_DENOISING_GUIDES
 		) {
 	WAVEFRONT_GUARD
 
@@ -2613,6 +2749,13 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 						taskConfig->pathTracer.pgic.causticVolumeBeams
 						MATERIALS_PARAM);
 
+#if defined(SLC_DENOISING_FRAMES)
+	if (pathInfo->depth.depth == 0u) {
+		__global float *record = denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE;
+		record[31] = ((bsdfEvent & REFLECT) && !Spectrum_IsBlack(VLOAD3F(record+4))) ? 1.f :
+				((bsdfEvent & TRANSMIT) ? 2.f : 0.f);
+	}
+#endif
 	EyePathInfo_AddVertex(pathInfo, bsdf, bsdfEvent, bsdfPdfW,
 			taskConfig->pathTracer.hybridBackForward.glossinessThreshold
 			LPE_PARAM
@@ -2762,6 +2905,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 
 __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 		KERNEL_ARGS
+		KERNEL_ARGS_DENOISING_GUIDES
 		) {
 	WAVEFRONT_GUARD
 
@@ -2777,6 +2921,21 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 #endif
 	if (pathState != MK_SPLAT_SAMPLE)
 		return;
+	if (filmDataPending) {
+		filmDataPending[gid].valid = 0u;
+	}
+	// A wavefront queue may remap gid. Keep the kernel argument immutable
+	// (Metal packs it in a const argument table), and pass a local slot.
+	__global FilmDataPending *pendingSlot = filmDataPending ? filmDataPending + gid : NULL;
+
+#if defined(SLC_DENOISING_FRAMES)
+	// The physical path has ended (absorption, miss, roulette or depth limit).
+	// A deferred auxiliary tail ends with it, as in the Cycles estimator; an
+	// actually encountered unsupported vertex remains a sticky error.
+	__global float *record = denoisingGuides + gid*SLC_DENOISING_GUIDE_STRIDE;
+	if (record[7] == 3.f) record[7] = 1.f;
+	record[23] = 0.f;
+#endif
 
 	//--------------------------------------------------------------------------
 	// Start of variables setup
@@ -2847,7 +3006,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 
 	Sampler_SplatSample(taskConfig
 			SAMPLER_PARAM
-			FILM_PARAM);
+			FILM_PARAM_WITH_PENDING(pendingSlot));
 	taskStats[gid].sampleCount += 1;
 
 	// ReSTIR PT (PT-2): path-end commit - publish the measured suffix
@@ -4125,15 +4284,18 @@ __kernel void AdvancePaths_MK_LIGHT_VERTEX(
 
 			const bool cameraInvisible = (bsdf->sceneObjectIndex != NULL_INDEX) &&
 					sceneObjs[bsdf->sceneObjectIndex].cameraInvisible;
-			// CPU ConnectToEye: skip camera-invisible objects and delta
-			// BSDF vertices. Under PhotonGI deposit mode (B1') light
+			// CPU ConnectToEye deliberately uses the static material flag:
+			// PSR glass/mirror are non-delta for NEE and VC, but connecting
+			// their light vertex to the camera would double-count eye paths.
+			// Under PhotonGI deposit mode (B1') light
 			// tasks may run with lightTracing.enabled = 0: they only
 			// append photon records, so the whole connect block -
 			// visibility ray, pendingSplat, LMNEE start, focus
 			// credits - is skipped here (the Stage-A splat resolve and
 			// mneeActive blocks above are unreachable: pendingSplat and
 			// mneeActive can only be armed inside this block).
-			if (pathTracer->lightTracing.enabled && !cameraInvisible && !isDeltaBsdf) {
+			if (pathTracer->lightTracing.enabled && !cameraInvisible &&
+					!BSDF_IsDeltaForCameraConnection(bsdf MATERIALS_PARAM)) {
 				const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
 				const float3 lensPoint = MAKE_FLOAT3(lpi->lensPointX,
 						lpi->lensPointY, lpi->lensPointZ);

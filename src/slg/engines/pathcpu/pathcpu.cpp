@@ -145,8 +145,10 @@ void PathCPURenderEngine::StartLockLess() {
 
 		// I have to set the scene pointer in photonGICache because it is not
 		// saved by serialization
-		if (photonGICache)
+		if (photonGICache) {
 			photonGICache->SetScene(renderConfig.GetScene());
+			photonGICache->ResetUpdateSynchronization(renderThreads.size());
+		}
 
 		startRenderState = nullptr;
 	}
@@ -287,6 +289,19 @@ void PathCPURenderEngine::StopLockLess() {
 }
 
 void PathCPURenderEngine::EndSceneEditLockLess(const EditActionList &editActions) {
+	// BeginSceneEdit joined the render threads, which retired the cache's
+	// update-barrier seats. Rebuild before any thread restarts: both the
+	// photon population and its synchronization belong to the old scene.
+	delete photonGICache;
+	photonGICache = nullptr;
+	pathTracer.SetPhotonGICache(nullptr);
+	photonGICache = NewPhotonGICache();
+	if (photonGICache) {
+		photonGICache->SetMneeSeedCache(pathTracer.mneeSeeds.get());
+		photonGICache->MergeMneeSeeds();
+	}
+	pathTracer.SetPhotonGICache(photonGICache);
+
 	if (lightSamplerSharedData)
 		lightSamplerSharedData->Reset();
 

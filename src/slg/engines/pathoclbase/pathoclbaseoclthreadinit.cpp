@@ -69,8 +69,9 @@ void PathOCLBaseOCLRenderThread::InitFilm() {
 
 void PathOCLBaseOCLRenderThread::InitCamera() {
 	CompiledScene *cscene = renderEngine->compiledScene;
+	threadCameraSnapshot = cscene->camera;
 
-	intersectionDevice.AllocBufferRO(&cameraBuff, &cscene->camera,
+	intersectionDevice.AllocBufferRO(&cameraBuff, &threadCameraSnapshot,
 			sizeof(slg::ocl::Camera), "Camera");
 	if (not cscene->cameraBokehDistribution.empty())
 		intersectionDevice.AllocBufferRO(&cameraBokehDistributionBuff, cscene->cameraBokehDistribution.data(),
@@ -1232,6 +1233,11 @@ void PathOCLBaseOCLRenderThread::InitSampleResultsBuffer() {
 
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Size of a SampleResult: " << sampleResultSize << "bytes");
 	intersectionDevice.AllocBufferRW(&sampleResultsBuff, nullptr, sampleResultSize * taskCount, "SampleResult");
+	if ((renderEngine->GetType() != TILEPATHOCL) && threadTaskConfig.film.hasChannelDepth)
+		intersectionDevice.AllocBufferRW(&filmDataPendingBuff, nullptr,
+				sizeof(slg::ocl::FilmDataPending) * size_t(taskCount), "Pending film data");
+	else
+		intersectionDevice.FreeBuffer(&filmDataPendingBuff);
 }
 
 void PathOCLBaseOCLRenderThread::InitSampleDataBuffer() {

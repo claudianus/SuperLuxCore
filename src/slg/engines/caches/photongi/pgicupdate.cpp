@@ -22,6 +22,17 @@ using namespace std;
 using namespace luxrays;
 using namespace slg;
 
+void PhotonGICache::ResetUpdateSynchronization(const u_int count) {
+	if (!count)
+		throw runtime_error("PhotonGI update synchronization requires render threads");
+	threadCount = count;
+	threadsSyncBarrier.reset(new std::barrier(threadCount, completion_t{this}));
+	finishDroppedParties = 0;
+	finishUpdateFlag = false;
+	lastUpdateSpp = 0;
+	initialUpdatePending = params.caustic.enabled && (params.caustic.updateSpp > 0) && !IsCausticReady();
+}
+
 void PhotonGICache::LaunchUpdate(const u_int filmSPP) {
 	// Launch a background re-trace once the update period expires. The
 	// worker fills a shadow copy of the caustic cache while render

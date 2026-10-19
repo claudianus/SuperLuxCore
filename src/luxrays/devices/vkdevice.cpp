@@ -849,6 +849,20 @@ void VulkanDevice::AllocBuffer(HardwareDeviceBuffer **buff, const BufferType typ
 				" buffer size: " << ToMemString(size));
 }
 
+void VulkanDevice::FreeBufferForDestruction(HardwareDeviceBuffer **buff) noexcept {
+ if (!buff || !*buff) return;
+ auto *owned = static_cast<VulkanDeviceBuffer *>(*buff);
+ *buff = nullptr;
+ if (!owned->IsNull()) {
+  try { FinishQueue(); }
+  catch (...) { MarkCleanupError(); std::fprintf(stderr, "Vulkan buffer cleanup: queue drain failed\n"); }
+  vkDestroyBuffer((VkDevice)device, (VkBuffer)owned->buff, nullptr);
+  vkFreeMemory((VkDevice)device, (VkDeviceMemory)owned->mem, nullptr);
+  FreeMemory(owned->size);
+ }
+ delete owned;
+}
+
 void VulkanDevice::FreeBuffer(HardwareDeviceBuffer **buff) {
 	if (*buff && !(*buff)->IsNull()) {
 		VulkanDeviceBuffer *b = static_cast<VulkanDeviceBuffer *>(*buff);

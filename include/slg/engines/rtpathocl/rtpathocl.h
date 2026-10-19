@@ -21,7 +21,12 @@
 
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
+#include <deque>
+#include <functional>
+#include <exception>
 #include "slg/engines/tilepathocl/tilepathocl.h"
+#include "slg/film/denoiser/denoisingframe.h"
+#include <condition_variable>
 
 namespace slg {
 
@@ -78,18 +83,42 @@ public:
 
 	double GetFrameTime() const { return frameTime; }
 
+	virtual void BeginSceneEdit() override;
 	virtual void EndSceneEdit(const EditActionList &editActions);
+	void SetViewportCameraMetadata(const luxrays::Properties &metadata);
+	luxrays::PropertiesUPtr ReadViewportOutput(std::function<luxrays::PropertiesUPtr(Film &)> read);
+	void ServiceViewportReadbacks();
+	void CancelViewportReadbacks();
+
+	void GetViewportCameraEpochs(uint64_t &requested, uint64_t &applied, uint64_t &metadata) const {
+		requested = viewportRequestedEpoch.load();
+		applied = viewportAppliedEpoch.load();
+		metadata = viewportMetadataEpoch.load();
+	}
+
 
 	virtual void BeginFilmEdit();
 	virtual void EndFilmEdit(FilmRef film, std::mutex *flmMutex);
 
 	virtual void WaitNewFrame();
+	bool HasDone() const override;
+	void WaitForDone() const override;
+	FilmRef GetDenoisingFrameFilm() { return denoisingFramesEnabled ? *denoisingFrameFilm : GetFilm(); }
+	std::shared_ptr<const DenoisingFrameSnapshot> GetDenoisingFrame(const uint64_t afterId, const u_int timeoutMs);
+	void AcknowledgeDenoisingFrame(const std::shared_ptr<const DenoisingFrameSnapshot> &frame, const bool keepLossless);
+	void ReleaseDenoisingFrameDelivery();
+	// Called by RenderSession::Parse with the session film lock held.
+	void SetDenoisingFrameHaltSPP(const uint64_t samples);
+	void InvalidateDenoisingImagePipeline(const uint64_t revision);
+	void InitDenoisingFrameFilm();
+	void PublishDenoisingFrame(const slg::ocl::Camera &camera);
+	void AdvanceDenoisingFrameJitter();
 
 	// Runtime resolution-reduction override (see RenderEngine). Just an
 	// atomic store: render threads pick it up at the next frame boundary
 	// and re-upload their taskConfig buffer.
 	virtual void SetRuntimeResolutionReduction(const u_int reduction) {
-		runtimeResolutionReduction = reduction;
+		if (!denoisingFramesEnabled) runtimeResolutionReduction = reduction;
 	}
 
 	//--------------------------------------------------------------------------
@@ -118,6 +147,23 @@ public:
     };
 
 protected:
+	void UpdateResolutionReduction();
+	FilmUPtr denoisingFrameFilm;
+	bool denoisingImagePipelineEnabled = false;
+	bool denoisingImagePipelineAccumulated = false;
+	unsigned denoisingInputReduction = 1;
+	std::atomic<bool> denoisingLosslessDelivery{false};
+	uint64_t denoisingExactHaltSPP = 0;
+	uint64_t denoisingImagePipelineMaxBytes = 256ull * 1024 * 1024;
+	uint64_t denoisingImagePipelineRevision = 0;
+	uint64_t denoisingRequiredPipelineRevision = 0;
+	mutable std::mutex denoisingFrameMutex;
+	mutable std::condition_variable denoisingFrameCondition;
+	std::shared_ptr<const DenoisingFrameSnapshot> latestDenoisingFrame;
+	uint64_t denoisingFrameId = 0, denoisingSceneEpoch = 1;
+	uint64_t denoisingAcknowledgedFrameId = 0;
+	bool denoisingFramesStopped = true;
+	std::atomic<bool> denoisingFrameHalt{false};
 	static luxrays::PropertiesUPtr GetDefaultProps();
 
 	virtual void InitGPUTaskConfiguration();
@@ -135,6 +181,27 @@ protected:
 
 	EditActionList updateActions;
 	bool useFastCameraEditPath, cameraIsUsingCustomBokeh;
+	// Order: camera mutex, then film mutex. Snapshot readers take only film mutex.
+	std::mutex viewportCameraMutex;
+	std::atomic<uint64_t> viewportRequestedEpoch{0}, viewportAppliedEpoch{0};
+	std::atomic<uint64_t> viewportMetadataEpoch{~uint64_t(0)};
+	luxrays::Properties pendingViewportMetadata;
+	uint64_t pendingViewportMetadataEpoch = ~uint64_t(0);
+	uint64_t pendingViewportCameraEpoch = 0;
+	void ApplyViewportCameraMetadataLockLess();
+	struct ViewportReadRequest {
+		std::function<luxrays::PropertiesUPtr(Film &)> read;
+		luxrays::PropertiesUPtr result;
+		std::exception_ptr error;
+		std::mutex mutex;
+		std::condition_variable condition;
+		bool started = false, done = false, cancelled = false;
+	};
+	std::mutex viewportReadsMutex;
+	std::deque<std::shared_ptr<ViewportReadRequest>> viewportReads;
+	std::atomic<bool> viewportReadbackStopped{true}, viewportDemandReadback{false};
+
+
 
 	// Used by RTPathOCLRenderEngine code to sync. with render thread 0
 	std::barrier<completion_t> *syncBarrier;

@@ -81,4 +81,18 @@ typedef struct {
 	float spectralW[3];
 	unsigned int spectralHeroAlive;
 } SampleResult;
+
+// Compact data snapshot for a progressive splat that strictly lowered depth.
+// Current GPU samplers emit at most one data splat per task/advance. Snapshot
+// the contributing record here: Metropolis may overwrite its accepted result
+// before the splat kernel returns, and ordinary tasks reuse SampleResult next.
+typedef struct {
+	uint valid, pixelX, pixelY;
+	float depth;
+	Point position;
+	Normal geometryNormal, shadingNormal;
+	uint materialID, objectID;
+	UV uv;
+	float motionVector[4];
+} FilmDataPending;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

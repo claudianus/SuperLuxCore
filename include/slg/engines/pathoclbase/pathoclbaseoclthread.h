@@ -103,6 +103,13 @@ public:
 				const u_int tileX = 0, const u_int tileY = 0);
 		void SendFilm(luxrays::HardwareIntersectionDeviceRef intersectionDevice,
 				const u_int tileX = 0, const u_int tileY = 0);
+		void CommitDenoisingGuides();
+		void FreeDenoisingGuides();
+		luxrays::HardwareDeviceBuffer *denoisingGuidesBuff = nullptr;
+		std::vector<float> denoisingGuideRecords;
+		size_t denoisingGuideChargedBytes = 0;
+		u_int denoisingTileX = 0, denoisingTileY = 0;
+		bool denoisingGuidePending = false;
 
 		FilmRef GetFilm() { return *film; }
 		FilmConstRef GetFilm() const { return *film; }
@@ -235,6 +242,7 @@ protected:
 
 	void SetInitKernelArgs(const u_int filmIndex);
 	u_int SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
+	void SetFilmDataCommitKernelArgs(const u_int filmIndex);
 	u_int SetAdvancePathsLightKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
@@ -302,6 +310,9 @@ protected:
 	luxrays::HardwareDeviceBuffer *curveSegIndicesBuff;
 	luxrays::HardwareDeviceBuffer *curveCpAttrsBuff;
 	luxrays::HardwareDeviceBuffer *cameraBuff;
+	// Host copy whose lifetime matches the actual device upload. Fast camera
+	// edits can recompile the shared scene while the previous frame renders.
+	slg::ocl::Camera threadCameraSnapshot;
 	luxrays::HardwareDeviceBuffer *cameraBokehDistributionBuff;
 	luxrays::HardwareDeviceBuffer *lightIndexOffsetByMeshIndexBuff;
 	luxrays::HardwareDeviceBuffer *lightIndexByTriIndexBuff;
@@ -426,6 +437,11 @@ protected:
 	// OpenCL kernels
 	luxrays::HardwareDeviceKernelUPtr initSeedKernel;
 	luxrays::HardwareDeviceKernelUPtr initKernel;
+	luxrays::HardwareDeviceKernelUPtr tileResolveFilmDataKernel;
+	luxrays::HardwareDeviceKernelUPtr filmDataCommitKernel;
+	size_t filmDataCommitWorkGroupSize;
+	luxrays::HardwareDeviceBuffer *filmDataPendingBuff;
+	size_t tileResolveFilmDataWorkGroupSize;
 	size_t initWorkGroupSize;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_NEXT_VERTEX;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_HIT_NOTHING;

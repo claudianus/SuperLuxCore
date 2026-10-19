@@ -702,9 +702,13 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 	// linked to the previous (receiving) vertex - light linking
 	if (!CheckDirectHitVisibilityFlags(*lightSource, pathInfo.depth, pathInfo.lastBSDFEvent) ||
 			!lightSource->IsLinkedTo(pathInfo.linkAcceptMask) ||
-			// If the material is shadow transparent, Direct Light sampling
-			// will take care of transporting all emitted light
-			bsdf.hitPoint.throughShadowTransparency)
+			// NEE owns shadow-transparent connections only when its
+			// distribution can sample this emitter. Disabled (including
+			// large-mesh AUTO) and infinite-only picks leave this hit as
+			// the sole covering technique, with zero competing NEE PDF.
+			(bsdf.hitPoint.throughShadowTransparency &&
+			lightSource->IsDirectLightSamplingEnabled() &&
+			!pathInfo.lastOnlyInfiniteLights))
 		return;
 
 	float directPdfA;
@@ -841,7 +845,11 @@ void PathTracer::GenerateEyeRay(CameraConstRef camera, FilmConstRef film, Ray &e
 
 	// Sample according the pixel filter distribution
 	float distX, distY;
-	pixelFilterDistribution->SampleContinuous(uSubPixelX, uSubPixelY, &distX, &distY);
+	if (pixelJitterEnable) {
+		distX = pixelJitterX;
+		distY = pixelJitterY;
+	} else
+		pixelFilterDistribution->SampleContinuous(uSubPixelX, uSubPixelY, &distX, &distY);
 
 	sampleResult.filmX = sampleResult.pixelX + .5f + distX;
 	sampleResult.filmY = sampleResult.pixelY + .5f + distY;
@@ -1128,7 +1136,9 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 		const float passThrough = sampler.GetSample(sampleOffset);
 		const bool hit = pendingIntersection ? pendingHit : scene.Intersect(
 				IntersectionDevicePtr(&device),
-				EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY),
+				EYE_RAY | (sampleResult.firstPathVertex ? CAMERA_RAY : INDIRECT_RAY) |
+						((!sampleResult.firstPathVertex && !pathInfo.IsSpecularPath()) ?
+						SHADOW_TRANSPARENCY_CONNECTION : 0),
 				&pathInfo.volume, passThrough,
 				&eyeRay, &eyeRayHit, &bsdf, &connectionThroughput,
 				&pathThroughput, &sampleResult, false,
@@ -2323,8 +2333,9 @@ void PathTracer::ConnectToEye(IntersectionDeviceRef device,
 	// materials are skipped by their static flag: a PSR-regularized glass
 	// vertex reports non-delta, but the eye path already covers it (its
 	// camera-visible vertex is exact and the vertices behind are
-	// regularized), so connecting here double counted (GPU parity:
-	// BSDF_IsDelta reads the material flag).
+	// regularized), so connecting here double counted. The GPU camera
+	// connection likewise uses Material_IsDelta, separately from the
+	// dynamic BSDF_IsDelta used by NEE and vertex connections.
 	if (bsdf.IsCameraInvisible() || bsdf.GetMaterial()->IsDelta())
 		return;
 
@@ -3338,6 +3349,13 @@ void PathTracer::ParseOptions(
 	albedoSpecularSetting = String2AlbedoSpecularSetting(cfg.Get(defaultProps.Get("path.albedospecular.type")).Get<string>());
 	albedoSpecularGlossinessThreshold = Max(cfg.Get(defaultProps.Get("path.albedospecular.glossinessthreshold")).Get<double>(), 0.0);
 
+	pixelJitterEnable = cfg.Get(defaultProps.Get("path.sampling.pixeljitter.enable")).Get<bool>();
+	pixelJitterX = cfg.Get(defaultProps.Get("path.sampling.pixeljitter.x")).Get<float>();
+	pixelJitterY = cfg.Get(defaultProps.Get("path.sampling.pixeljitter.y")).Get<float>();
+	if (pixelJitterEnable && (!std::isfinite(pixelJitterX) || !std::isfinite(pixelJitterY) ||
+			fabsf(pixelJitterX) > .5f || fabsf(pixelJitterY) > .5f))
+		throw runtime_error("Frame pixel jitter must be finite and within half a pixel");
+
 	// MNEE (specular chain direct light sampling)
 	mneeEnable = cfg.Get(defaultProps.Get("path.mnee.enable")).Get<bool>();
 	mneeMaxIterations = Max(1, cfg.Get(defaultProps.Get("path.mnee.maxiterations")).Get<int>());
@@ -3603,6 +3621,9 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.direct")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.cycles.indirect")) <<
 			cfg.Get(GetDefaultProps()->Get("path.filterglossy")) <<
+			cfg.Get(GetDefaultProps()->Get("path.sampling.pixeljitter.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.sampling.pixeljitter.x")) <<
+			cfg.Get(GetDefaultProps()->Get("path.sampling.pixeljitter.y")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.type")) <<
 			cfg.Get(GetDefaultProps()->Get("path.albedospecular.glossinessthreshold")) <<
 			*Sampler::ToProperties(cfg);
@@ -3741,6 +3762,9 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.clamping.cycles.direct")(0.f) <<
 			Property("path.clamping.cycles.indirect")(0.f) <<
 			Property("path.filterglossy")(0.f) <<
+			Property("path.sampling.pixeljitter.enable")(false) <<
+			Property("path.sampling.pixeljitter.x")(0.f) <<
+			Property("path.sampling.pixeljitter.y")(0.f) <<
 			Property("path.albedospecular.type")("REFLECT_TRANSMIT") <<
 			Property("path.albedospecular.glossinessthreshold")(.05f);
 

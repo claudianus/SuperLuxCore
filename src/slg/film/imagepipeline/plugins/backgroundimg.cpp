@@ -53,8 +53,8 @@ BackgroundImgPlugin::BackgroundImgPlugin() {
 BackgroundImgPlugin::~BackgroundImgPlugin() {
 
 	if (hardwareDevice) {
-		hardwareDevice->FreeBuffer(&hwFilmImageMapDesc);
-		hardwareDevice->FreeBuffer(&hwFilmImageMap);
+		hardwareDevice->FreeBufferForDestruction(&hwFilmImageMapDesc);
+		hardwareDevice->FreeBufferForDestruction(&hwFilmImageMap);
 	}
 
 }

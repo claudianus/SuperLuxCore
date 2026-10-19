@@ -26,6 +26,9 @@
 #include <boost/format.hpp>
 #include <boost/serialization/shared_ptr.hpp>
 #include <filesystem>
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 
 #include "luxrays/core/exttrianglemesh.h"
 #include "luxrays/core/color/color.h"
@@ -36,6 +39,20 @@
 
 using namespace std;
 using namespace luxrays;
+
+// Mesh import often preprocesses many small material partitions. Starting the
+// full host OpenMP team for each independent triangle loop costs more than the
+// work, especially when a container has fewer CPU shares than visible cores.
+// Keep a useful amount of work per thread without changing the process-wide
+// OpenMP setting or the separate mesh-area reduction order.
+static int MeshPreprocessThreads(const size_t triangles) {
+#if defined(_OPENMP)
+	return std::min<int>(omp_get_max_threads(),
+			std::min<size_t>(16, std::max<size_t>(1, (triangles + 16383) / 16384)));
+#else
+	return 1;
+#endif
+}
 
 //------------------------------------------------------------------------------
 // ExtMesh
@@ -302,7 +319,8 @@ void ExtTriangleMesh::Preprocess() {
 	// from a .lxm section (LoadProxy v3): recomputing it would fault in
 	// every vertex/triangle page, defeating ray-driven residency.
 	if (!triNormals.IsExternal() || !triNormals) {
-		#pragma omp parallel for
+		const int threadCount = MeshPreprocessThreads(tris.Count());
+		#pragma omp parallel for if(threadCount > 1) num_threads(threadCount)
 		for (long long i = 0; i < tris.Count(); ++i)
 			triNormals[i] = tris[i].GetGeometryNormal(vertices);
 	}
@@ -329,7 +347,8 @@ void ExtTriangleMesh::BuildTriDiffCache() {
 	const auto &uvLayer = uvs[0];
 
 	triDiffCache.resize(tris.Count());
-	#pragma omp parallel for
+	const int threadCount = MeshPreprocessThreads(tris.Count());
+	#pragma omp parallel for if(threadCount > 1) num_threads(threadCount)
 	for (long long i = 0; i < tris.Count(); ++i) {
 		const Triangle &tri = tris[i];
 		const u_int v0 = tri.v[0], v1 = tri.v[1], v2 = tri.v[2];

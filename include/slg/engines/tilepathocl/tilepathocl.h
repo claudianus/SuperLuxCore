@@ -22,6 +22,7 @@
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include <vector>
+#include <atomic>
 
 #include "slg/engines/tilepathcpu/tilepathcpu.h"
 #include "slg/engines/pathoclbase/pathoclbase.h"
@@ -42,7 +43,13 @@ public:
 
 	friend class TilePathOCLRenderEngine;
 
+	// RTPATH stops its jthread only after a frame barrier handshake. Signal
+	// pending tile work separately so a long transparent path can reach it.
+	void CancelTileWork() { tileWorkCancelled.store(true, std::memory_order_release); }
+	void ResetTileWorkCancellation() { tileWorkCancelled.store(false, std::memory_order_release); }
+
 protected:
+	std::atomic<bool> tileWorkCancelled{false};
 	void UpdateSamplerData(const TileWork &tileWork,
 			slg::ocl::TilePathSamplerSharedData &samplerData);
 
@@ -51,7 +58,7 @@ protected:
 
 	void RenderTileWork(const TileWork &tileWork,
 			slg::ocl::TilePathSamplerSharedData &samplerData,
-			const u_int filmIndex);
+			const u_int filmIndex, std::stop_token stop_token);
 	// Applies the light-path sample counts snapshotted by
 	// RenderTileWork() to the matching thread films. Call after
 	// FinishQueue() so the async taskStats readbacks have landed.
@@ -61,6 +68,7 @@ protected:
 	// taskStats at the start of every work, so a single shared buffer
 	// would only ever hold the last work's counts
 	std::vector<std::unique_ptr<slg::ocl::pathoclbase::GPUTaskStats[]>> gpuTaskStatsPerFilm;
+	std::vector<u_int> gpuTaskStatsPerFilmSize;
 	std::vector<char> lightSampleCountPending;
 };
 

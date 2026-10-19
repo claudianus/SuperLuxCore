@@ -168,6 +168,8 @@ public:
 	void Start();
 	void Interrupt();
 	void Stop();
+	// Only hardware-only contexts without intersection worker threads.
+	void StopHardwareForDestruction() noexcept;
 	bool IsRunning() const { return started; }
 
 	//--------------------------------------------------------------------------
