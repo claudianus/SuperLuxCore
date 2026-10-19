@@ -19,7 +19,8 @@ def main():
             files={info+'METADATA':('Metadata-Version: 2.4\nName: pysuperluxcore\nVersion: '+old+'\nSummary: 한글 fixture\n').encode(),info+'WHEEL':('Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: false\nTag: '+tag+'\n').encode(),'pysuperluxcore/'+native:b'PACKAGING FIXTURE native never load','pysuperluxcore/__init__.py':b'# preserved Python\n','pysuperluxcore/cl2msl.py':b'# preserved translator\n','pysuperluxcore-'+old+'.data/data/sentinel':b'preserved data'}
             (helper/lib).write_bytes(b'PACKAGING FIXTURE new helper never load');(helper/'CUEW-LICENSE.txt').write_bytes(b'fixture cuew');(helper/'NVIDIA-DLSS-LICENSE.txt').write_bytes(b'fixture runtime license')
             if platform=='windows':
-                files.update({'pysuperluxcore/'+lib:b'PACKAGING FIXTURE old helper never load','pysuperluxcore/CUEW-LICENSE.txt':b'fixture cuew','pysuperluxcore/dlss-runtime/'+runtime:b'PACKAGING FIXTURE runtime never load','pysuperluxcore/dlss-runtime/NVIDIA-DLSS-LICENSE.txt':b'fixture runtime license','pysuperluxcore/dlss-provenance.json':b'{}'})
+                (helper/'CUEW-LICENSE.txt').write_bytes(b'fixture cuew\n');(helper/'NVIDIA-DLSS-LICENSE.txt').write_bytes(b'fixture runtime license\n')
+                files.update({'pysuperluxcore/'+lib:b'PACKAGING FIXTURE old helper never load','pysuperluxcore/CUEW-LICENSE.txt':b'fixture cuew\r\n','pysuperluxcore/dlss-runtime/'+runtime:b'PACKAGING FIXTURE runtime never load','pysuperluxcore/dlss-runtime/NVIDIA-DLSS-LICENSE.txt':b'fixture runtime license\r\n','pysuperluxcore/dlss-provenance.json':b'{}'})
             (p/runtime).write_bytes(b'PACKAGING FIXTURE runtime never load')
             proof=dict(ABI=1,invalid_frame_failure_output_preserved=True,helper_sha256=digest((helper/lib).read_bytes()),source_sha256='fixture')
             (p/'proof.json').write_text(json.dumps(proof))

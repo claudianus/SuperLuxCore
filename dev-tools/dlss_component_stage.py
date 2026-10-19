@@ -34,13 +34,16 @@ def main():
         data=unpacked/('pysuperluxcore-'+old_version+'.data')
         if data.exists():data.rename(unpacked/('pysuperluxcore-'+a.version+'.data'))
         shutil.copy2(helper,package/libname)
-        shutil.copy2(a.helper/'CUEW-LICENSE.txt',package/'CUEW-LICENSE.txt')
+        cuew_license=package/'CUEW-LICENSE.txt'
+        if cuew_license.exists():
+            assert cuew_license.read_bytes().replace(b'\r\n',b'\n')==(a.helper/'CUEW-LICENSE.txt').read_bytes().replace(b'\r\n',b'\n')
+        else:shutil.copy2(a.helper/'CUEW-LICENSE.txt',cuew_license)
         runtime=package/'dlss-runtime';runtime.mkdir(exist_ok=True)
         if a.runtime:
             assert a.runtime.name==runtime_name and a.runtime_license
             shutil.copy2(a.runtime,runtime/runtime_name);shutil.copy2(a.runtime_license,runtime/'NVIDIA-DLSS-LICENSE.txt')
         assert (runtime/runtime_name).is_file() and (runtime/'NVIDIA-DLSS-LICENSE.txt').is_file()
-        assert (runtime/'NVIDIA-DLSS-LICENSE.txt').read_bytes()==(a.helper/'NVIDIA-DLSS-LICENSE.txt').read_bytes()
+        assert (runtime/'NVIDIA-DLSS-LICENSE.txt').read_bytes().replace(b'\r\n',b'\n')==(a.helper/'NVIDIA-DLSS-LICENSE.txt').read_bytes().replace(b'\r\n',b'\n')
         runtime_sha=sha((runtime/runtime_name).read_bytes())
         if not a.fixture_only:
             expected='b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee' if a.platform=='windows' else 'a5d59de18841f15779039dda567a15dd723ba737915f489271fdb5f109fbfb96'
