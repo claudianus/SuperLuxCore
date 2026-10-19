@@ -170,6 +170,7 @@ HomogeneousVolume::InteriorScope::InteriorScope(const HomogeneousVolume &owner, 
 			upsampling = Spectral::GetUpsamplingModel();
 		}
 		volume = &owner;
+		isotropic = owner.GetG().GetSpectrumValue(point).Black();
 	}
 	sssInteriorScope = this;
 }
@@ -183,6 +184,24 @@ bool HomogeneousVolume::InteriorScope::Matches() const {
 	return hero == sw->hero && aliveMask == sw->aliveMask &&
 			upsampling == Spectral::GetUpsamplingModel() &&
 			wavelengths[0] == sw->w[0] && wavelengths[1] == sw->w[1] && wavelengths[2] == sw->w[2];
+}
+
+bool HomogeneousVolume::InteriorScope::IsotropicPhase(Spectrum &value, float &pdf) const {
+	static const bool disabled = getenv("SUPERLUXCORE_SSS_NO_PHASE_SCOPE") != nullptr;
+	if (disabled || !volume || !isotropic || !Matches()) return false;
+	if (!phaseReady) {
+		HitPoint point;
+		point.Init();
+		BSDFEvent event;
+		// All referenced inputs are proven spatial constants. The existing
+		// material evaluator supplies both HG/Schlick arithmetic and the
+		// reconstructed albedo; do not replace it with an approximation.
+		phaseValue = volume->Evaluate(point, Vector(0.f, 0.f, 1.f),
+				Vector(0.f, 0.f, 1.f), &event, &phasePdf, nullptr);
+		phaseReady = true;
+	}
+	value = phaseValue; pdf = phasePdf;
+	return true;
 }
 
 Spectrum HomogeneousVolume::SSSCoeffs(const HitPoint &hitPoint,

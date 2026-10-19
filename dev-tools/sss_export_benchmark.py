@@ -27,7 +27,7 @@ for k,v in {'renderengine.type':'TILEPATHCPU','renderengine.seed':a.seed,'native
             'sampler.type':'TILEPATHSAMPLER','tile.multipass.enable':False,'tilepath.sampling.aa.size':math.isqrt(a.spp),
             'batch.haltspp':0,'batch.halttime':0,'path.spectral.enable':a.spectral,
             'film.outputs.sssraycount.type':'RAYCOUNT','film.outputs.sssraycount.filename':'unused.exr'}.items():props.Set(s.Property(k,v))
-(out/'render.cfg').write_text(str(props));t=time.monotonic();config=s.RenderConfig(props);renderer=s.RenderSession(config)
+(out/'render.cfg').write_text(str(props));t=time.monotonic();cpu_start=time.process_time();config=s.RenderConfig(props);renderer=s.RenderSession(config)
 try:
     prep=time.monotonic();renderer.Start();preparation=time.monotonic()-prep;deadline=time.monotonic()+300
     while not renderer.HasDone():
@@ -37,13 +37,13 @@ try:
     raw=np.empty((height,width,3),np.float32);film.GetOutputFloat(s.FilmOutputType.RGB,raw,0,False)
     counts=np.empty((height,width),np.uint32);film.GetOutputUInt(s.FilmOutputType.SAMPLECOUNT,counts,0,False)
     rays=np.empty((height,width),np.float32);film.GetOutputFloat(s.FilmOutputType.RAYCOUNT,rays,0,False)
-    elapsed=time.monotonic()-t
+    elapsed=time.monotonic()-t;cpu_elapsed=time.process_time()-cpu_start
 finally:
     if renderer.IsStarted():renderer.Stop()
 assert np.isfinite(raw).all() and counts.min()==counts.max()==a.spp
 np.save(out/'linear.npy',raw);np.save(out/'samples.npy',counts);np.save(out/'rays.npy',rays)
 record=dict(engine='SUPERLUXCORE',spp=a.spp,seed=a.seed,spectral=a.spectral,threads=a.threads,size=[width,height],
-            seconds=elapsed,preparation_seconds=preparation,raycount_buffer_mean=float(rays.mean(dtype=float)),native_sha256=identity,min_samples=int(counts.min()),
+            seconds=elapsed,cpu_seconds=cpu_elapsed,preparation_seconds=preparation,raycount_buffer_mean=float(rays.mean(dtype=float)),native_sha256=identity,min_samples=int(counts.min()),
             max_samples=int(counts.max()),finite=True,mean_rgb=raw.mean(axis=(0,1),dtype=float).tolist(),
             timing_scope='Native config/preparation/tracing/film readback; excludes Blender, EXR and display',
             diagnostics={k:v for k,v in os.environ.items() if k.startswith('SUPERLUXCORE_SSS_')},

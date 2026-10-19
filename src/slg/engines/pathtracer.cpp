@@ -1018,7 +1018,11 @@ bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef s
 			if (u0 < proposal.classic)
 				bsdf.Sample(&direction, u0 / proposal.classic, u1, &pdf, &cosine, &event);
 			else direction = proposal.SampleGuide((u0 - proposal.classic) / (1.f - proposal.classic), u1);
-			const Spectrum phase = bsdf.Evaluate(direction, &event, &pdf);
+			Spectrum phase;
+			if (coefficients.IsotropicPhase(phase, pdf))
+				event = DIFFUSE | REFLECT;
+			else
+				phase = bsdf.Evaluate(direction, &event, &pdf);
 			pdf = proposal.Pdf(direction, pdf, &flight);
 			weight = pdf > 0.f ? phase / pdf : Spectrum();
 			cosine = 1.f;

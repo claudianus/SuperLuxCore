@@ -50,6 +50,9 @@ public:
 		~InteriorScope();
 		InteriorScope(const InteriorScope &) = delete;
 		InteriorScope &operator=(const InteriorScope &) = delete;
+		// Reuse the original evaluator only for proven spatial constants
+		// and exactly zero phase anisotropy; wavelength changes miss.
+		bool IsotropicPhase(luxrays::Spectrum &value, float &pdf) const;
 	private:
 		friend class HomogeneousVolume;
 		bool Matches() const;
@@ -60,6 +63,10 @@ public:
 		u_int hero = 0, aliveMask = 0;
 		int upsampling = 0;
 		bool spectral = false;
+		bool isotropic = false;
+		mutable bool phaseReady = false;
+		mutable luxrays::Spectrum phaseValue;
+		mutable float phasePdf = 0.f;
 	};
 	virtual float Scatter(const luxrays::Ray &ray, const float u, const bool scatteredStart,
 		luxrays::Spectrum *connectionThroughput, luxrays::Spectrum *connectionEmission) const;
