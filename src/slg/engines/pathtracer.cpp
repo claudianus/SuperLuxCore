@@ -1009,8 +1009,7 @@ bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef s
 		Vector direction;
 		float cosine, pdf;
 		BSDFEvent event;
-		Spectrum weight = bsdf.Sample(&direction, sampler.GetSample(offset + 6),
-				sampler.GetSample(offset + 7), &pdf, &cosine, &event);
+		Spectrum weight;
 		pathInfo.isPassThroughPath = false;
 		SSSFlightProposal flight;
 		SSSDirectionProposal proposal;
@@ -1023,6 +1022,9 @@ bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef s
 			pdf = proposal.Pdf(direction, pdf, &flight);
 			weight = pdf > 0.f ? phase / pdf : Spectrum();
 			cosine = 1.f;
+		} else {
+			weight = bsdf.Sample(&direction, sampler.GetSample(offset + 6),
+					sampler.GetSample(offset + 7), &pdf, &cosine, &event);
 		}
 		if (weight.Black()) return false;
 		verify (!weight.IsNaN() && !weight.IsInf() && !weight.IsNeg());

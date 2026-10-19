@@ -36,7 +36,7 @@ def main():
     ap.add_argument('--engine', choices=['PATHCPU','PATHOCL','TILEPATHOCL'], default='PATHCPU')
     args = ap.parse_args()
     allowed_cases = {'legacy','auto','chromatic','spectral','textured','anisotropic',
-                     'vdh','point','litpoint','interior','blacktextured','shadowtransparent','nested'}
+                     'vdh','point','litpoint','interior','area','blacktextured','shadowtransparent','nested'}
     unknown_cases = set(args.cases.split(',')) - allowed_cases
     if unknown_cases:
         ap.error('Unknown SSS cases: ' + ', '.join(sorted(unknown_cases)))
@@ -120,6 +120,16 @@ scene.materials.inner.emission = 20 20 20
 scene.objects.inner.material = inner
 scene.objects.inner.vertices = -2.976 2.15 3.079  -2.576 2.15 3.079  -2.576 2.15 3.479  -2.976 2.15 3.479
 scene.objects.inner.faces = 0 1 2 0 2 3
+'''
+        if case == 'area':
+            scene_text += '''
+scene.lights.env.gain = 0 0 0
+scene.materials.area.type = matte
+scene.materials.area.kd = 0 0 0
+scene.materials.area.emission = 30 30 30
+scene.objects.area.material = area
+scene.objects.area.vertices = -4.3 0 1.8  -1.3 0 1.8  -1.3 0 4.8  -4.3 0 4.8
+scene.objects.area.faces = 0 2 1 0 3 2
 '''
         if case == 'blacktextured':
             scene_text += '''

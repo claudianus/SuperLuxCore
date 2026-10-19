@@ -476,14 +476,23 @@ float HomogeneousVolume::ScatterSSS(const Ray &ray, const float u,
 		const float flight = -logf(1.f - remapped) / proposal->rates[selected];
 		const bool scattered = flight < segmentLength;
 		const float distance = scattered ? flight : segmentLength;
-		double pdf = 0.;
-		for (unsigned i = 0; i < 9; ++i)
-			pdf += proposal->probabilities[i] * exp(-double(proposal->rates[i]) * distance) *
-					(scattered ? proposal->rates[i] : 1.f);
 		const Spectrum sigmaT = sigmaA + sigmaS;
+		double physicalTr[3];
+		for (unsigned i = 0; i < 3; ++i)
+			physicalTr[i] = exp(-double(distance) * sigmaT.c[i]);
+		double pdf = 0.;
+		for (unsigned i = 0; i < 9; ++i) {
+			// The classic channel component normally has exactly the same
+			// extinction as the physical flight. Reuse its double-precision
+			// exponential, preserving the mixture summation order. Textured
+			// flights with a different source coefficient keep their own rate.
+			const double tr = i < 3 && proposal->rates[i] == sigmaT.c[i] ?
+					physicalTr[i] : exp(-double(proposal->rates[i]) * distance);
+			pdf += proposal->probabilities[i] * tr * (scattered ? proposal->rates[i] : 1.f);
+		}
 		for (unsigned i = 0; i < 3; ++i)
 			segmentTransmittance.c[i] = pdf > 0. ?
-					exp(-double(distance) * sigmaT.c[i]) * (scattered ? sigmaT.c[i] : 1.f) / pdf : 0.f;
+					physicalTr[i] * (scattered ? sigmaT.c[i] : 1.f) / pdf : 0.f;
 		scatterDistance = scattered ? distance : -1.f;
 	} else
 		scatterDistance = ScatterChromatic(u, scatterAllowed,

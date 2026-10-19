@@ -887,6 +887,16 @@ Spectrum OpenPBRMaterial::EvalInternal(const HitPoint &hitPoint, const Params &p
 		*reversePdfW = pdfR;
 	}
 
+	// The ordered (light, eye) scattering operator is independent of which
+	// endpoint generated the path. Directional energy compensation belongs
+	// to that operator; only the proposal probabilities follow wFixed.
+	// Preserve the PDFs above and use the existing eye operator for SSS.
+	if (hitPoint.fromLight && p.sssWeight > 0.f) {
+		HitPoint eyeOperator = hitPoint;
+		eyeOperator.fromLight = false;
+		return EvalInternal(eyeOperator, p, localLightDir, localEyeDir,
+				event, nullptr, nullptr);
+	}
 	return result;
 }
 
