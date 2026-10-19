@@ -8,7 +8,7 @@ package='bl_ext.user_default.superluxcore';bpy.ops.preferences.addon_enable(modu
 addon=importlib.import_module(package)
 import pysuperluxcore
 root=Path(pysuperluxcore.__file__).parent;version=importlib.metadata.version('pysuperluxcore')
-assert version=='2.11.34+dlss.exp20261019.fix3'
+assert version=='2.11.34+dlss.exp20261019.fix4'
 assert str(Path(os.environ['BLENDER_USER_RESOURCES']).resolve()).lower() in str(root.resolve()).lower(),root
 previous=json.loads((out/'previous-install.json').read_text())
 native,=root.glob('pysuperluxcore*.pyd' if platform=='win32' else 'pysuperluxcore*.so')
@@ -17,12 +17,12 @@ sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
 provenance=json.loads((root/'dlss-provenance.json').read_text())
 assert sha(native)==provenance['native_module_sha256'] and sha(helper)==provenance['helper_sha256']
 if platform=='win32':
-    assert previous['version']=='2.11.34+dlss.exp20261019.fix2'
+    assert previous['version']=='2.11.34+dlss.exp20261019.fix3'
     assert sha(native)==previous['native_sha256']=='207328da3920d73aed7b0dfa0c33c8a65f8861799b53dcc2a895456f1217db70'
 else:
-    assert previous['version']=='2.11.34+dlss.exp20261019'
-    assert sha(native)!=previous['native_sha256']
-assert sha(helper)!=previous['helper_sha256']
+    assert previous['version']=='2.11.34+dlss.exp20261019.fix3'
+    assert sha(native)==previous['native_sha256']
+assert sha(helper)==previous['helper_sha256']
 assert ctypes.CDLL(str(helper)).slc_dlss_abi()==1
 dlss=importlib.import_module(package+'.engine.dlss');assert dlss._library_path().resolve()==helper.resolve()
 runtime=root/'dlss-runtime'/('nvngx_dlssd.dll' if platform=='win32' else 'libnvidia-ngx-dlssd.so.310.9.16')
@@ -38,5 +38,16 @@ bpy.ops.render.render(write_still=True)
 image=bpy.data.images.load(scene.render.filepath,check_existing=False);values=np.asarray(image.pixels[:],dtype=np.float32)
 assert values.size==128*72*4 and np.isfinite(values).all() and np.max(values.reshape(-1,4)[:,:3])>0
 result=dict(passed=True,host=bpy.app.version_string,platform=platform,distribution_version=version,installed_zip_CPU_render=True,DLSS_helper_ABI_and_discovery=True,invalid_frame_output_preserved=True,whole_ZIP_upgrade=True,previous=previous,native_sha256=sha(native),helper_sha256=sha(helper),CPU_DLSS_unavailable_fallback_render=True,NGX_GPU_evaluations=0,actual_RTX_acceptance=False,RTX_quality_and_performance_accepted=False,component_provenance=provenance)
+# Execute the installed candidate's exact source-body threading regression.
+import runpy
+old_argv=sys.argv
+try:
+    sys.argv=['installed-viewport-error-stop','--out',str(out/'installed-recovery.json')]
+    try:runpy.run_path(str(Path(addon.__file__).parent/'dev-tools/viewport_error_stop_test.py'),run_name='__main__')
+    except SystemExit as exit_status:assert exit_status.code==0
+finally:sys.argv=old_argv
+recovery=json.loads((out/'installed-recovery.json').read_text());assert recovery['passed'] and len(recovery['records'])==7
+result['installed_error_recovery_source_test']=True
+result['installed_base_sha256']=hashlib.sha256((Path(addon.__file__).parent/'engine/base.py').read_bytes()).hexdigest()
 (out/'installed-blender-smoke.json').write_text(json.dumps(result,indent=2)+'\n')
 print('PASS fix3 installed ZIP upgrade, helper discovery and CPU/OIDN fallback')
