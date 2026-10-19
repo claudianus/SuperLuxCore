@@ -56,6 +56,7 @@
 #include "slg/textures/constfloat.h"
 #include "slg/textures/constfloat3.h"
 #include "slg/volumes/homogenous.h"
+#include "slg/volumes/sssboundaryguard.h"
 #include "slg/textures/imagemaptex.h"
 #include "slg/usings.h"
 #include "slg/utils/pathinfo.h"
@@ -980,9 +981,8 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 					sssFlightDone = true;
 					if (t > 0.f) {
 						const float cosHit = AbsDot(ray->d, boundary.geometryN);
-						const float guard = 8.f * MachineEpsilon::E(boundary.p);
-						if ((rayHit->t - t) * cosHit < guard)
-							t = Max(ray->mint, rayHit->t - guard / Max(cosHit, 1e-3f));
+						t = SSSGuardedScatter(t, rayHit->t, cosHit,
+								MachineEpsilon::E(boundary.p), ray->mint);
 						rayHit->t = t;
 						rayHit->meshIndex = 0xfffffffeu;
 						bsdf->Init(false, throughShadowTransparency, *this, *ray, *rayVolume, t, passThrough);
@@ -1104,9 +1104,15 @@ bool Scene::Intersect(IntersectionDevicePtr device,
 				// stays "inside" with an unpaired eta^2. Keep the vertex
 				// a few epsilons off the surface along its normal.
 				const float cosHit = AbsDot(ray->d, bsdf->hitPoint.geometryN);
-				const float guard = 8.f * MachineEpsilon::E(bsdf->hitPoint.p);
-				if ((rayHit->t - t) * cosHit < guard)
-					t = Max(ray->mint, rayHit->t - guard / Max(cosHit, 1e-3f));
+				if (rayVolume->GetType() == HOMOGENEOUS_VOL &&
+						static_cast<const HomogeneousVolume *>(&*rayVolume)->IsSSSParametrized())
+					t = SSSGuardedScatter(t, rayHit->t, cosHit,
+							MachineEpsilon::E(bsdf->hitPoint.p), ray->mint);
+				else {
+					const float guard = 8.f * MachineEpsilon::E(bsdf->hitPoint.p);
+					if ((rayHit->t - t) * cosHit < guard)
+						t = Max(ray->mint, rayHit->t - guard / Max(cosHit, 1e-3f));
+				}
 			}
 
 			if (t > 0.f) {
