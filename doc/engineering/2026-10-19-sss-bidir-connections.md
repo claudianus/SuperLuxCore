@@ -111,5 +111,7 @@ belonging to that Blender was stopped. No equal-time Cycles, uncontended
 ABBA, installed-addon, Metal or viewport improvement is claimed. BIDIRCPU's
 private screen also has a different finite-depth contract from the canonical
 PATH/Cycles comparison, so those errors are not directly interchangeable.
-Consumed native overlays are removed; the final candidate and one immutable
-baseline remain for the next bounded comparison.
+Consumed native overlays were removed after measurement. The final candidate
+was also removed at user-requested closure; one immutable baseline remains.
+The raw build, identities, source and render evidence are retained. See
+`2026-10-19-sss-tile-balance.md` for the closing checks and incomplete scope.

@@ -18,9 +18,11 @@ p=argparse.ArgumentParser();p.add_argument('--module',type=Path,required=True)
 p.add_argument('--scene',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
 p.add_argument('--spp',type=int,default=144);p.add_argument('--seed',type=int,default=17)
 p.add_argument('--threads',type=int,default=4);p.add_argument('--spectral',action='store_true')
+p.add_argument('--tile-size',type=int,help='Override CPU tile width and height; minimum 8, sample budget unchanged')
 p.add_argument('--aovs',action='store_true',help='Export raw first-camera-lobe AOVs for RGB variance diagnostics')
 p.add_argument('--path-audit',action='store_true',help='Export cumulative internal-scatter LPEs without changing transport')
 a=p.parse_args();assert a.spp>0 and math.isqrt(a.spp)**2==a.spp
+if a.tile_size is not None and a.tile_size < 8:p.error('--tile-size must be at least 8')
 if (a.aovs or a.path_audit) and a.spectral:p.error('Diagnostic output currently validates RGB only')
 module=a.module.resolve();scene=a.scene.resolve();out=a.out.resolve();assert not out.exists(),out;out.mkdir(parents=True)
 sys.path.insert(0,str(module));import pysuperluxcore as s
@@ -33,6 +35,8 @@ for k,v in {'renderengine.type':'TILEPATHCPU','renderengine.seed':a.seed,'native
             'path.regularization.auto':False,'path.regularization.sigma':0.,'path.regularization.halflife':0.,
             'path.filterglossy':0.,'path.clamping.cycles.direct':0.,'path.clamping.cycles.indirect':0.,
             'path.clamping.variance.maxvalue':0.}.items():props.Set(s.Property(k,v))
+if a.tile_size is not None:
+    for key in ['tile.size','tile.size.x','tile.size.y']:props.Set(s.Property(key,a.tile_size))
 aov_names=([kind+'_'+side for kind in ['DIRECT_DIFFUSE','DIRECT_GLOSSY','INDIRECT_DIFFUSE',
             'INDIRECT_GLOSSY','INDIRECT_SPECULAR'] for side in ['REFLECT','TRANSMIT']]+['EMISSION']) if a.aovs else []
 for name in aov_names:
@@ -87,6 +91,7 @@ record=dict(comparison_contract='sss-unregularized-v2',authored_scene_sha256=aut
             raw_controls=dict(denoising=False,adaptive_sampling=False),
             native_fidelity=checked,
             engine='SUPERLUXCORE',spp=a.spp,seed=a.seed,spectral=a.spectral,threads=a.threads,size=[width,height],
+            tile_size_request=a.tile_size,
             seconds=elapsed,cpu_seconds=cpu_elapsed,preparation_seconds=preparation,raycount_buffer_mean=float(rays.mean(dtype=float)),native_sha256=identity,min_samples=int(counts.min()),
             max_samples=int(counts.max()),finite=True,mean_rgb=raw.mean(axis=(0,1),dtype=float).tolist(),
             timing_scope='Native config/preparation/tracing/film readback; excludes Blender, EXR and display',
