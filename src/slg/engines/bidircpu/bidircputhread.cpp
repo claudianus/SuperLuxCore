@@ -30,6 +30,7 @@
 #include "luxrays/utils/thread.h"
 
 #include "slg/engines/bidircpu/bidircpu.h"
+#include "slg/engines/bidircpu/bidirmeasure.h"
 #include "slg/cameras/camera.h"
 #include "slg/lights/light.h"
 #include "slg/lights/lightsourcedefs.h"
@@ -262,6 +263,21 @@ SampleResult &BiDirCPURenderThread::AddResult(vector<SampleResult> &sampleResult
 	return sampleResult;
 }
 
+// Volume vertices have a volume measure, not a projected surface area.
+// Their artificial shading normal is a phase frame, not a geometry cosine.
+static bool UseVolumeMeasure(const BSDF &bsdf) {
+    static const bool legacy = getenv("SUPERLUXCORE_BIDIR_LEGACY_VOLUME_MEASURE") != nullptr;
+    return !legacy && bsdf.IsVolume();
+}
+
+static void SetConnectionVolume(PathVolumeInfo &volume, const BSDF &origin, const Vector &direction) {
+    // The shadow origin is already offset onto the outgoing side. Its
+    // volume stack must cross the same boundary before tracing that ray.
+    if (!origin.IsVolume() && Dot(origin.hitPoint.fixedDir, origin.hitPoint.geometryN) *
+            Dot(direction, origin.hitPoint.geometryN) < 0.f)
+        volume.Update(TRANSMIT, origin);
+}
+
 void BiDirCPURenderThread::ConnectVertices(const float time,
 		const PathVertexVM &eyeVertex, const PathVertexVM &lightVertex,
 		SampleResult &eyeSampleResult, const float u0) const {
@@ -286,8 +302,8 @@ void BiDirCPURenderThread::ConnectVertices(const float time,
 
 		if (!lightBsdfEval.Black()) {
 			// Check if the 2 surfaces can see each other
-			const float cosThetaAtCamera = Dot(eyeVertex.bsdf.hitPoint.shadeN, p2pDir);
-			const float cosThetaAtLight = Dot(lightVertex.bsdf.hitPoint.shadeN, -p2pDir);
+			const float cosThetaAtCamera = UseVolumeMeasure(eyeVertex.bsdf) ? 1.f : Dot(eyeVertex.bsdf.hitPoint.shadeN, p2pDir);
+			const float cosThetaAtLight = UseVolumeMeasure(lightVertex.bsdf) ? 1.f : Dot(lightVertex.bsdf.hitPoint.shadeN, -p2pDir);
 			// Was:
 			//  const float geometryTerm = cosThetaAtCamera * cosThetaAtLight / eyeDistance2;
 			//
@@ -312,33 +328,13 @@ void BiDirCPURenderThread::ConnectVertices(const float time,
 			BSDF bsdfConn;
 			Spectrum connectionThroughput;
 			PathVolumeInfo volInfo = eyeVertex.volInfo; // I need to use a copy here
-			// For the connection event, we need to evaluate the volume based
-			// on whether the shadow ray is going into the object or not
-			bool connectionIntoObject = (Dot(lightVertex.bsdf.hitPoint.geometryN, -shadowRayDir) < 0.f);
-			volInfo.SetCurrentVolume(connectionIntoObject ?
-				lightVertex.bsdf.hitPoint.interiorVolume :
-				lightVertex.bsdf.hitPoint.exteriorVolume
-			);
+			SetConnectionVolume(volInfo, eyeVertex.bsdf, shadowRayDir);
 			if (!scene.Intersect(
 					luxrays::make_observer(device),
 					LIGHT_RAY | INDIRECT_RAY | SHADOW_RAY,
 					&volInfo, u0, &p2pRay, &p2pRayHit, &bsdfConn,
 					&connectionThroughput)) {
 				// Nothing was hit, the light path vertex is visible
-
-				if (eyeVertex.depth >= engine->rrDepth) {
-					// Russian Roulette
-					const float prob = RenderEngine::RussianRouletteProb(eyeBsdfEval, engine->rrImportanceCap);
-					eyeBsdfPdfW *= prob;
-					eyeBsdfRevPdfW *= prob;
-				}
-
-				if (lightVertex.depth >= engine->rrDepth) {
-					// Russian Roulette
-					const float prob = RenderEngine::RussianRouletteProb(lightBsdfEval, engine->rrImportanceCap);
-					lightBsdfPdfW *= prob;
-					lightBsdfRevPdfW *= prob;
-				}
 
 				// Convert pdfs to area pdfs
 				const float eyeBsdfPdfA = PdfWtoA(eyeBsdfPdfW, p2pDistance, cosThetaAtLight);
@@ -423,6 +419,7 @@ void BiDirCPURenderThread::ConnectToEye(const float time,
 			BSDF bsdfConn;
 			Spectrum connectionThroughput;
 			PathVolumeInfo volInfo = lightVertex.volInfo; // I need to use a copy here
+			SetConnectionVolume(volInfo, lightVertex.bsdf, traceRay.d);
 			if (!scene.Intersect(
 					luxrays::make_observer(device),
 					LIGHT_RAY | CAMERA_RAY,
@@ -430,13 +427,7 @@ void BiDirCPURenderThread::ConnectToEye(const float time,
 					&connectionThroughput)) {
 				// Nothing was hit, the light path vertex is visible
 
-				if (lightVertex.depth >= engine->rrDepth) {
-					// Russian Roulette
-					const float prob = RenderEngine::RussianRouletteProb(bsdfEval, engine->rrImportanceCap);
-					bsdfRevPdfW *= prob;
-				}
-
-				const float cosToCamera = Dot(lightVertex.bsdf.hitPoint.shadeN, -eyeDir);
+				const float cosToCamera = UseVolumeMeasure(lightVertex.bsdf) ? 1.f : Dot(lightVertex.bsdf.hitPoint.shadeN, -eyeDir);
 				float cameraPdfW, fluxToRadianceFactor;
 				scene.GetCamera().GetPDF(eyeRay, eyeDistance, filmX, filmY, &cameraPdfW, &fluxToRadianceFactor);
 				const float cameraPdfA = PdfWtoA(cameraPdfW, eyeDistance, cosToCamera);
@@ -512,6 +503,7 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 					BSDF shadowBsdf;
 					Spectrum connectionThroughput;
 					PathVolumeInfo volInfo = eyeVertex.volInfo; // I need to use a copy here
+					SetConnectionVolume(volInfo, eyeVertex.bsdf, shadowRay.d);
 					// Check if the light source is visible
 					if (!scene.Intersect(
 						luxrays::make_observer(device),
@@ -524,15 +516,7 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 						// sampled with BSDF
 						bsdfPdfW *= (light->IsEnvironmental() || light->IsIntersectable()) ? 1.f : 0.f;
 
-						// The +1 is there to account the current path vertex used for DL
-						if (eyeVertex.depth + 1 >= engine->rrDepth) {
-							// Russian Roulette
-							const float prob = RenderEngine::RussianRouletteProb(bsdfEval, engine->rrImportanceCap);
-							bsdfPdfW *= prob;
-							bsdfRevPdfW *= prob;
-						}
-
-						const float cosThetaToLight = AbsDot(shadowRay.d, eyeVertex.bsdf.hitPoint.shadeN);
+						const float cosThetaToLight = UseVolumeMeasure(eyeVertex.bsdf) ? 1.f : AbsDot(shadowRay.d, eyeVertex.bsdf.hitPoint.shadeN);
 						const float directLightSamplingPdfW = directPdfW * lightPickPdf;
 
 						// emissionPdfA / directPdfA = emissionPdfW / directPdfW
@@ -544,7 +528,10 @@ void BiDirCPURenderThread::DirectLightSampling(const float time,
 						const float focusEmissionPdfW = engine->pathTracer.
 								LightFocusEmissionPdfW(scene, *light,
 								-shadowRay.d, emissionPdfW);
-						const float weightCamera = MIS(focusEmissionPdfW * cosThetaToLight / (directPdfW * cosThetaAtLight)) *
+						// Environment emission is represented per projected disk;
+						// TraceLightPath likewise initializes it with usedCosLight=1.
+						const float emissionCos = BiDirEmissionCosine(light->IsEnvironmental(), cosThetaAtLight);
+						const float weightCamera = MIS(focusEmissionPdfW * cosThetaToLight / (directPdfW * emissionCos)) *
 								(misVmWeightFactor + eyeVertex.dVCM + eyeVertex.dVC * MIS(bsdfRevPdfW));
 						// Disable MIS if we have gone trough a shadow transparent object
 						const float misWeight = shadowBsdf.hitPoint.throughShadowTransparency ?
@@ -694,7 +681,7 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 		// If the light source is not intersectable, it can not be
 		// sampled with BSDF
 		if (light->IsEnvironmental() || light->IsIntersectable()) {
-			const float usedCosLight = light->IsEnvironmental() ? 1.f : cosThetaAtLight;
+			const float usedCosLight = BiDirEmissionCosine(light->IsEnvironmental(), cosThetaAtLight);
 			lightVertex.dVC = MIS(usedCosLight / lightEmitPdfW);
 		} else
 			lightVertex.dVC = 0.f;
@@ -751,7 +738,7 @@ bool BiDirCPURenderThread::TraceLightPath(const float time,
 				// Infinite lights use MIS based on solid angle instead of area
 				if((lightVertex.depth > 1) || !light->IsEnvironmental())
 					lightVertex.dVCM *= MIS(nextEventRayHit.t * nextEventRayHit.t);
-				const float factor = 1.f / MIS(AbsDot(lightVertex.bsdf.hitPoint.shadeN, lightRay.d));
+				const float factor = UseVolumeMeasure(lightVertex.bsdf) ? 1.f : 1.f / MIS(AbsDot(lightVertex.bsdf.hitPoint.shadeN, lightRay.d));
 				lightVertex.dVCM *= factor;
 				lightVertex.dVC *= factor;
 				lightVertex.dVM *= factor;
@@ -822,6 +809,7 @@ bool BiDirCPURenderThread::Bounce(const float time, const SamplerUPtr& sampler,
 			&bsdfPdfW, &cosSampledDir, &event);
 	if (bsdfSample.Black())
 		return false;
+	if (UseVolumeMeasure(pathVertex->bsdf)) cosSampledDir = 1.f;
 
 	float bsdfRevPdfW;
 	if (event & SPECULAR)
@@ -846,6 +834,11 @@ bool BiDirCPURenderThread::Bounce(const float time, const SamplerUPtr& sampler,
 	pathVertex->throughput *= bsdfSample;
 	assert (!pathVertex->throughput.IsNaN() && !pathVertex->throughput.IsInf());
 
+	// Use the same roulette-free heuristic densities in every strategy.
+	// Roulette still divides throughput by its actual survival probability
+	// above. MIS needs a partition of unity, not necessarily actual sampling
+	// densities; partial/depth-dependent roulette factors broke that partition.
+	// Keeping roulette out also avoids guessing reverse-path survival rules.
 	// New MIS weights
 	if (event & SPECULAR) {
 		pathVertex->dVCM = 0.f;
@@ -1105,7 +1098,7 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 				}
 
 				// Update MIS constants
-				const float factor = 1.f / MIS(AbsDot(eyeVertex.bsdf.hitPoint.shadeN, eyeVertex.bsdf.hitPoint.fixedDir));
+				const float factor = UseVolumeMeasure(eyeVertex.bsdf) ? 1.f : 1.f / MIS(AbsDot(eyeVertex.bsdf.hitPoint.shadeN, eyeVertex.bsdf.hitPoint.fixedDir));
 				eyeVertex.dVCM *= MIS(t_MIS * t_MIS) * factor;
 				eyeVertex.dVC *= factor;
 				eyeVertex.dVM *= factor;

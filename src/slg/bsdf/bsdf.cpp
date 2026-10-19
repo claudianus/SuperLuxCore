@@ -472,7 +472,7 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 			return Spectrum();
 		*pdfW /= probability;
 	}
-	*absCosSampledDir = fabsf(CosTheta(localSampledDir));
+	*absCosSampledDir = IsVolume() ? 1.f : fabsf(CosTheta(localSampledDir));
 	*sampledDir = frame.ToWorld(localSampledDir);
 
 	// Volume tracking follows the geometric side (hitPoint.intoObject +
@@ -503,8 +503,9 @@ Spectrum BSDF::Sample(Vector *sampledDir,
 					hitPoint.GetLandingShadeN(), lightDir);
 	}
 
-	// Adjoint BSDF
-	if (hitPoint.fromLight) {
+	// A volume's normal is only a phase frame; it has no projected area.
+	// Match Evaluate(), which also excludes phases from surface adjoints.
+	if (!IsVolume() && hitPoint.fromLight) {
 		const float absDotFixedDirNG = AbsDot(hitPoint.fixedDir, hitPoint.geometryN);
 		const float absDotSampledDirNG = AbsDot(*sampledDir, hitPoint.geometryN);
 		result *= (absDotSampledDirNG / absDotFixedDirNG);

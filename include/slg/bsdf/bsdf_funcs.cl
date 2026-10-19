@@ -422,7 +422,7 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	if (!(selectionProbability > 0.f))
 		return BLACK;
 	*pdfW /= selectionProbability;
-	*absCosSampledDir = fabs(CosTheta(localSampledDir));
+	*absCosSampledDir = bsdf->isVolume ? 1.f : fabs(CosTheta(localSampledDir));
 	*sampledDir = Frame_ToWorld(&bsdf->frame, localSampledDir);
 
 	const bool fromLight = (bsdf->hitPoint.rayFlags & LIGHT_RAY) != 0;
@@ -467,7 +467,7 @@ OPENCL_FORCE_INLINE float3 BSDF_Sample(__global const BSDF *bsdf, const float u0
 	// Kd*|fixedDir.z/sampledDir.z|) is approximated by the shading-frame
 	// cosine ratio - exact for cosine-weighted materials, identity on
 	// flat-shaded geometry.
-	if (fromLight) {
+	if (!bsdf->isVolume && fromLight) {
 		const float3 geometryN = VLOAD3F(&bsdf->hitPoint.geometryN.x);
 		const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
 		const float3 fixedDir = VLOAD3F(&bsdf->hitPoint.fixedDir.x);
