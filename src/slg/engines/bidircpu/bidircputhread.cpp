@@ -31,6 +31,7 @@
 
 #include "slg/engines/bidircpu/bidircpu.h"
 #include "slg/engines/bidircpu/bidirmeasure.h"
+#include "slg/engines/bidircpu/bidirconnectionproposal.h"
 #include "slg/cameras/camera.h"
 #include "slg/lights/light.h"
 #include "slg/lights/lightsourcedefs.h"
@@ -923,6 +924,16 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 
 	vector<SampleResult> sampleResults;
 	vector<PathVertexVM> lightPathVertices;
+	vector<double> connectionWeights;
+	BiDirConnectionProposal connectionProposal;
+	static const u_int connectionBudget = []() {
+		const char *value = getenv("SUPERLUXCORE_SSS_BIDIR_CONNECTIONS");
+		return value ? u_int(Clamp(atoi(value), 0, 64)) : 0u;
+	}();
+	static const bool uniformConnections = getenv("SUPERLUXCORE_SSS_BIDIR_CONNECTION_UNIFORM") != nullptr;
+	static const bool profileConnections = getenv("SUPERLUXCORE_SSS_BIDIR_CONNECTION_PROFILE") != nullptr;
+	static const bool allConnections = getenv("SUPERLUXCORE_SSS_BIDIR_CONNECTION_ALL") != nullptr;
+	unsigned long long potentialConnections = 0, actualConnections = 0, selectedVertices = 0;
 
 	for(u_int steps = 0; !stop_token.stop_requested(); ++steps) {
 		// Check if we are in pause mode
@@ -1154,10 +1165,33 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 				//--------------------------------------------------------------
 
 				if (!eyeVertex.bsdf.IsDelta()) {
-					for (vector<PathVertexVM>::const_iterator lightPathVertex = lightPathVertices.begin();
-							lightPathVertex < lightPathVertices.end(); ++lightPathVertex)
-						ConnectVertices(time, eyeVertex, *lightPathVertex, eyeSampleResult,
-								sampler->GetSample(sampleOffset + 6));
+					const size_t count = lightPathVertices.size();
+					const bool subset = connectionBudget && count > connectionBudget &&
+							(allConnections || (eyeVertex.bsdf.IsVolumeDepthVertex() && !eyeVertex.bsdf.IsChainTransparentMedium()));
+					if (profileConnections) potentialConnections += count;
+					if (subset) {
+						connectionWeights.resize(count);
+						for (size_t i = 0; i < count; ++i) {
+							const Vector delta = lightPathVertices[i].bsdf.hitPoint.p - eyeVertex.bsdf.hitPoint.p;
+							// This floor bounds only the proposal, never radiance or geometry.
+							connectionWeights[i] = Max(0.f, lightPathVertices[i].throughput.Max()) /
+									std::max(1e-12, double(delta.LengthSquared()));
+						}
+						connectionProposal.Build(connectionWeights, !uniformConnections);
+						const float u = sampler->GetSample(sampleOffset + 6);
+						for (u_int j = 0; j < connectionBudget; ++j) {
+							const auto choice = connectionProposal.Sample((double(u) + j) / connectionBudget);
+							PathVertexVM selectedEye(eyeVertex);
+							selectedEye.throughput *= float(1. / (connectionBudget * choice.probability));
+							ConnectVertices(time, selectedEye, lightPathVertices[choice.index], eyeSampleResult, choice.remapped);
+						}
+						if (profileConnections) { actualConnections += connectionBudget; ++selectedVertices; }
+					} else {
+						for (const auto &lightVertex : lightPathVertices)
+							ConnectVertices(time, eyeVertex, lightVertex, eyeSampleResult,
+									sampler->GetSample(sampleOffset + 6));
+						if (profileConnections) actualConnections += count;
+					}
 					
 					assert (eyeSampleResult.IsValid());
 				}
@@ -1209,6 +1243,9 @@ void BiDirCPURenderThread::RenderFunc(std::stop_token stop_token) {
 			photonGICache->Update(threadIndex, spp);
                 }
 	} // ~for
+	if (profileConnections)
+		fprintf(stderr, "BIDIR_SSS_CONNECTIONS thread=%u potential=%llu actual=%llu selected_vertices=%llu\n",
+				threadIndex, potentialConnections, actualConnections, selectedVertices);
 
 	threadDone = true;
 
