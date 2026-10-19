@@ -220,7 +220,9 @@ struct Instance {
             if(f.depth[i]<0||f.normal_roughness[i*4+3]<0||f.normal_roughness[i*4+3]>1)throw std::runtime_error("Depth/roughness outside DLSS contract");
             if(f.color[i*4+3]<0||f.color[i*4+3]>1)throw std::runtime_error("Alpha outside [0, 1]");
         }
-        const bool recreated=resize(f);Parameters p;
+        const bool recreated=resize(f);
+        if(manager.cleanupFailed)throw std::runtime_error("DLSS resize cleanup failed; restart Blender before processing");
+        Parameters p;
         color->upload(f.color);depth->upload(f.depth);diffuse->upload(f.diffuse);specular->upload(f.specular);normal->upload(f.normal_roughness);motion->upload(f.motion);specMotion->upload(f.specular_motion);
         p->Set(NVSDK_NGX_Parameter_Reset,(f.reset||recreated||!history||lastScene!=f.scene_serial)?1:0);
         p->Set(NVSDK_NGX_Parameter_Jitter_Offset_X,f.jitter_x);p->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y,f.jitter_y);

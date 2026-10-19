@@ -24,7 +24,7 @@ PRE=r'''
 using CUcontext=void*;using CUresult=int;using NVSDK_NGX_Result=unsigned;using NVSDK_NGX_Handle=int;
 constexpr int CUDA_SUCCESS=0;constexpr unsigned NGX_SUCCESS=1,NGX_FAILURE=0xBAD00001u;
 #define NVSDK_NGX_FAILED(r) ((unsigned(r)&0xFFF00000u)==0xBAD00000u)
-std::string fault;std::vector<int> stack{42};bool popFaultUsed=false;unsigned evaluations=0,liveParameters=0,pushes=0,pops=0;
+std::string fault;std::vector<int> stack{42};bool popFaultUsed=false;unsigned evaluations=0,liveParameters=0,parameterAllocations=0,pushes=0,pops=0;
 struct Manager{CUcontext context=reinterpret_cast<void*>(uintptr_t(7));bool cleanupFailed=false;}manager;
 std::mutex mutex;
 int cuCtxPushCurrent(CUcontext){++pushes;if(fault=="push")return 99;stack.push_back(7);return 0;}
@@ -36,8 +36,8 @@ void cuda(int r){if(r)throw std::runtime_error("CUDA result "+std::to_string(r))
 void ngx(unsigned r){if(NVSDK_NGX_FAILED(r))throw std::runtime_error("NGX result "+std::to_string(r));}
 void error(char *p,uint32_t n,const char *s){if(p&&n){std::strncpy(p,s,n-1);p[n-1]=0;}}
 struct NVSDK_NGX_Parameter{template<class T>void Set(const char *,T){assert(stack.back()==7);}}parameterStorage;
-unsigned NVSDK_NGX_CUDA_AllocateParameters(NVSDK_NGX_Parameter **p){assert(stack.back()==7);if(fault=="parameter-allocate")return NGX_FAILURE;assert(!liveParameters);++liveParameters;*p=&parameterStorage;return NGX_SUCCESS;}
-unsigned NVSDK_NGX_CUDA_DestroyParameters(NVSDK_NGX_Parameter *){assert(stack.back()==7&&liveParameters==1);if(fault=="parameter-destroy")return NGX_FAILURE;--liveParameters;return NGX_SUCCESS;}
+unsigned NVSDK_NGX_CUDA_AllocateParameters(NVSDK_NGX_Parameter **p){assert(stack.back()==7);++parameterAllocations;if(fault=="parameter-allocate"||liveParameters)return NGX_FAILURE;++liveParameters;*p=&parameterStorage;return NGX_SUCCESS;}
+unsigned NVSDK_NGX_CUDA_DestroyParameters(NVSDK_NGX_Parameter *){assert(stack.back()==7&&liveParameters==1);if((fault=="parameter-destroy"&&parameterAllocations==2)||fault=="resize-parameter-destroy"||fault=="steady-parameter-destroy")return NGX_FAILURE;--liveParameters;return NGX_SUCCESS;}
 unsigned NVSDK_NGX_CUDA_EvaluateFeature(int *,NVSDK_NGX_Parameter *,void *){assert(stack.back()==7);++evaluations;return fault.find("evaluate")!=std::string::npos?NGX_FAILURE:NGX_SUCCESS;}
 struct Texture{
  unsigned width,height,channels;uint64_t texture=1,surface=2;
@@ -56,6 +56,7 @@ struct Instance{
  bool resize(const SlcDLSSFrame &f){
   if(fault=="resize")throw std::bad_alloc();
   if(output&&output->width==f.output_width&&output->height==f.output_height)return false;
+  Parameters featureParameters;
   color=std::make_unique<Texture>(f.width,f.height,4);depth=std::make_unique<Texture>(f.width,f.height,1);
   diffuse=std::make_unique<Texture>(f.width,f.height,4);specular=std::make_unique<Texture>(f.width,f.height,4);normal=std::make_unique<Texture>(f.width,f.height,4);
   motion=std::make_unique<Texture>(f.width,f.height,2);specMotion=std::make_unique<Texture>(f.width,f.height,2);output=std::make_unique<Texture>(f.output_width,f.output_height,4);
@@ -69,10 +70,11 @@ extern "C" void probe_setup(const char *name,int m){fault=name;mode=m;frame.widt
  const unsigned channels[]={4,1,4,4,4,2,2};for(unsigned c:channels)inputs.emplace_back(32*32*c,.4f);
  for(size_t i=0;i<1024;++i)inputs[0][i*4+3]=float(i%7)/6.f;
  frame.color=inputs[0].data();frame.depth=inputs[1].data();frame.diffuse=inputs[2].data();frame.specular=inputs[3].data();frame.normal_roughness=inputs[4].data();frame.motion=inputs[5].data();frame.specular_motion=inputs[6].data();
- output.assign(size_t(frame.output_width)*frame.output_height*4,-123.5f);capacity=output.size();expectedSuccess=fault=="success";
- if(fault=="duplicate"){
+ output.assign(size_t(frame.output_width)*frame.output_height*4,-123.5f);capacity=output.size();expectedSuccess=fault=="success"||fault=="steady-success";
+ if(fault=="duplicate"||fault=="steady-success"||fault=="steady-parameter-destroy"){
   const auto saved=fault;fault="success";char message[256];assert(slc_dlss_process(&instance,&frame,output.data(),capacity,message,sizeof(message))==1);fault=saved;
   std::fill(output.begin(),output.end(),-123.5f);committedBefore=1;
+  if(fault!="duplicate")++frame.frame_id;
  }
  if(fault=="dimensions")frame.width=0;if(fault=="independent")frame.independent_samples=0;
  if(fault=="jitter")frame.jitter_x=.75f;if(fault=="guide-missing")frame.motion=nullptr;
@@ -93,13 +95,15 @@ extern "C" int probe_check(int result,const char *message){
  if(bool(result)!=expectedSuccess)return 21;if(!rawUnchanged)return 22;
  if(!expectedSuccess){if(!outUnchanged||!message[0])return 23;if(instance.stats.frames!=committedBefore)return 24;}
  else{
-  if(instance.stats.frames!=1||!instance.history||instance.lastId!=frame.frame_id||instance.lastScene!=frame.scene_serial)return 25;
+  if(instance.stats.frames!=committedBefore+1||!instance.history||instance.lastId!=frame.frame_id||instance.lastScene!=frame.scene_serial)return 25;
   for(size_t i=0;i<output.size()/4;++i){const float alpha=mode==1?inputs[0][i*4+3]:1.f;
    const float expected[]={.25f,.5f,1.5f,alpha};if(std::memcmp(output.data()+i*4,expected,sizeof(expected)))return 26;}
  }
- bool cleanup=fault=="push"||fault.find("pop")!=std::string::npos||fault=="parameter-destroy"||fault=="poisoned";
+ bool parameterError=fault=="parameter-destroy"||fault=="resize-parameter-destroy"||fault=="steady-parameter-destroy";
+ bool cleanup=fault=="push"||fault.find("pop")!=std::string::npos||parameterError||fault=="poisoned";
  if(manager.cleanupFailed!=cleanup)return 27;
- if(liveParameters!=(fault=="parameter-destroy"?1u:0u))return 28;
+ if(liveParameters!=(parameterError?1u:0u))return 28;
+ if(fault=="resize-parameter-destroy"&&(parameterAllocations!=1||evaluations!=0))return 32;
  if(fault=="pop-held"){if(stack!=std::vector<int>({42,7}))return 29;}
  else if(stack!=std::vector<int>({42}))return 30;
  if(cleanup){auto prior=output;unsigned calls=evaluations;char msg[256];++frame.frame_id;
@@ -159,7 +163,7 @@ def main():
             subprocess.run(['clang','-fsanitize=address,undefined','-c',str(driver),'-o',str(obj)],capture_output=True,text=True,check=True,timeout=30)
             build=subprocess.run(['clang++','-std=c++17','-fsanitize=address,undefined',str(cpp),str(obj),'-o',str(exe)],capture_output=True,text=True,timeout=40)
         assert build.returncode==0,build.stdout+build.stderr
-        faults=['success','pop','pop-held','parameter-destroy'] if a.baseline else ['success','push','pop','pop-held','parameter-allocate','parameter-destroy','evaluate','evaluate+pop','sync','download','upload','resize','nonfinite-output','dimensions','independent','jitter','guide-missing','nonfinite-input','depth','roughness','alpha','capacity','budget','duplicate','null-handle','null-frame','null-output','alias','poisoned']
+        faults=['success','pop','pop-held','parameter-destroy','resize-parameter-destroy','steady-parameter-destroy'] if a.baseline else ['success','steady-success','push','pop','pop-held','parameter-allocate','parameter-destroy','resize-parameter-destroy','steady-parameter-destroy','evaluate','evaluate+pop','sync','download','upload','resize','nonfinite-output','dimensions','independent','jitter','guide-missing','nonfinite-input','depth','roughness','alpha','capacity','budget','duplicate','null-handle','null-frame','null-output','alias','poisoned']
         for fault in faults:
             for mode in [1,2]:
                 receipt=t/'stdio.json';receipt.unlink(missing_ok=True)
