@@ -660,17 +660,20 @@ void PathGuidingCache::FitLeaf(const AggStats &a, ReadLeaf &out) const {
 		}
 		m.nComp = dst;
 
-		// Weighted log-likelihood of the fitted model over the raw bin
-		// masses (the EM fit worked on the normalized target; BIC needs
-		// the evidence scale back for a fair penalty comparison).
+		// The target q is normalized. BIC's penalty uses a signal-record
+		// count, so its likelihood must use the same evidence units.
+		// Scaling radiance units must not change model complexity while
+		// leaving q and the number of observations unchanged.
 		m.logLik = 0.f;
+		static const bool legacyMass = getenv("LUX_PG_BIC_LEGACY_MASS") != nullptr;
+		const float likelihoodMass = legacyMass ? qSum : Max(a.nz, 1.f);
 		for (u_int i = 0; i < DIR_BINS; ++i) {
 			if (q[i] <= 0.f)
 				continue;
 			float mix = 0.f;
 			for (u_int k = 0; k < dst; ++k)
 				mix += m.w[k] * VmfPdf(Dot(centroid[i], m.mu[k]), m.kappa[k]);
-			m.logLik += q[i] * qSum * logf(Max(mix, 1e-30f));
+			m.logLik += q[i] * likelihoodMass * logf(Max(mix, 1e-30f));
 		}
 	};
 
