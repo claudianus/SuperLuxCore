@@ -988,6 +988,12 @@ bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef s
 		SspTail *tail, bool &found) const {
 	const auto *interior = static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get());
 	const HomogeneousVolume::InteriorScope coefficients(*interior, bsdf.hitPoint);
+	// Indexed Sobol dimensions have no draw-order state. Do not generate
+	// five light samples when the connection is provably blocked. Keep
+	// sequential/lazy samplers' existing draw schedule unchanged.
+	static const bool retainBlockedSamples = getenv("SUPERLUXCORE_SSS_RETAIN_BLOCKED_NEE_SAMPLES") != nullptr;
+	const bool indexedSamples = !retainBlockedSamples &&
+			(sampler.GetType() == SOBOL || sampler.GetType() == TILEPATHSAMPLER);
 	for (;;) {
 		if (!found || !bsdf.IsVolume() || bsdf.GetMaterial().get() != interior ||
 				!static_cast<const HomogeneousVolume *>(bsdf.GetMaterial().get())->IsSSSParametrized() ||
@@ -999,13 +1005,16 @@ bool PathTracer::RenderSSSInterior(IntersectionDeviceRef device, SceneConstRef s
 		result.lastPathVertex = pathInfo.depth.IsLastPathVertex(maxPathDepth, bsdf.GetEventTypes(), true);
 		if (result.lastPathVertex) return false;
 		const u_int offset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
-		const float u0 = sampler.GetSample(offset + 1), u1 = sampler.GetSample(offset + 2),
-				u2 = sampler.GetSample(offset + 3), u3 = sampler.GetSample(offset + 4),
-				u4 = sampler.GetSample(offset + 5);
 		static const bool retainBlockedNEE = getenv("SUPERLUXCORE_SSS_RETAIN_BLOCKED_NEE") != nullptr;
-		if (retainBlockedNEE || mneeEnable || !pathInfo.volume.sssProposalAxisValid ||
-				!scene.IsSSSDirectOccluded(*interior, bsdf.hitPoint.p))
-			DirectLightSampling(device, scene, ray.time, u0, u1, u2, u3, u4, pathInfo, throughput, bsdf, &result);
+		const bool sampleLight = retainBlockedNEE || mneeEnable || !pathInfo.volume.sssProposalAxisValid ||
+				!scene.IsSSSDirectOccluded(*interior, bsdf.hitPoint.p);
+		if (sampleLight || !indexedSamples) {
+			const float u0 = sampler.GetSample(offset + 1), u1 = sampler.GetSample(offset + 2),
+					u2 = sampler.GetSample(offset + 3), u3 = sampler.GetSample(offset + 4),
+					u4 = sampler.GetSample(offset + 5);
+			if (sampleLight)
+				DirectLightSampling(device, scene, ray.time, u0, u1, u2, u3, u4, pathInfo, throughput, bsdf, &result);
+		}
 		Vector direction;
 		float cosine, pdf;
 		BSDFEvent event;
