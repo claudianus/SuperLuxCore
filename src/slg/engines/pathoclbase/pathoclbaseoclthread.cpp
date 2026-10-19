@@ -139,6 +139,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	samplesBuff = nullptr;
 	sampleDataBuff = nullptr;
 	sampleResultsBuff = nullptr;
+	filmDataPendingBuff = nullptr;
 	taskStatsBuff = nullptr;
 	eyePathInfosBuff = nullptr;
 	lightPathInfosBuff = nullptr;
@@ -270,6 +271,7 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&samplesBuff);
 	intersectionDevice.FreeBuffer(&sampleDataBuff);
 	intersectionDevice.FreeBuffer(&sampleResultsBuff);
+	intersectionDevice.FreeBuffer(&filmDataPendingBuff);
 	intersectionDevice.FreeBuffer(&taskStatsBuff);
 	intersectionDevice.FreeBuffer(&eyePathInfosBuff);
 	intersectionDevice.FreeBuffer(&lightPathInfosBuff);

@@ -78,6 +78,10 @@ void RTPathOCLRenderEngine::UpdateResolutionReduction() {
 }
 
 void RTPathOCLRenderEngine::StartLockLess() {
+	viewportDemandReadback = false;
+	++viewportRequestedEpoch;
+	viewportAppliedEpoch = viewportRequestedEpoch.load();
+	viewportMetadataEpoch = pendingViewportMetadataEpoch = ~uint64_t(0);
 	//--------------------------------------------------------------------------
 	// Rendering parameters
 	//--------------------------------------------------------------------------
@@ -146,9 +150,12 @@ void RTPathOCLRenderEngine::StartLockLess() {
 	// StopLockLess() may wait on the barrier (a failed start never
 	// reaches this point and must not block).
 	syncThreadsRunning = true;
+	viewportReadbackStopped = false;
 }
 
 void RTPathOCLRenderEngine::StopLockLess() {
+	viewportReadbackStopped = true;
+	CancelViewportReadbacks();
 	{
 		std::lock_guard<std::mutex> lock(denoisingFrameMutex);
 		denoisingFramesStopped = true;
@@ -183,6 +190,110 @@ void RTPathOCLRenderEngine::StopLockLess() {
 	}
 }
 
+PropertiesUPtr RTPathOCLRenderEngine::ReadViewportOutput(
+        std::function<PropertiesUPtr(Film &)> read) {
+    viewportDemandReadback = true;
+    {
+        std::lock_guard<std::mutex> lock(*filmMutex);
+        if (viewportReadbackStopped.load()) return nullptr;
+        if (GetFilm().GetTotalEyeSampleCount() > 0.0) return read(GetFilm());
+    }
+    auto request = std::make_shared<ViewportReadRequest>();
+    request->read = read;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        for (auto it = viewportReads.begin(); it != viewportReads.end();) {
+            // Keep the request alive until its mutex guard is released.
+            auto queued = *it;
+            std::lock_guard<std::mutex> guard(queued->mutex);
+            if (queued->cancelled) it = viewportReads.erase(it);
+            else ++it;
+        }
+        if (viewportReadbackStopped.load() || viewportReads.size() >= 4) return nullptr;
+        viewportReads.push_back(request);
+    }
+    std::unique_lock<std::mutex> lock(request->mutex);
+    if (!request->condition.wait_for(lock, std::chrono::milliseconds(250),
+            [&] { return request->done; })) {
+        if (!request->started) {
+            // The buffer lease is about to return to Python. A queued
+            // callback may never touch that pointer after cancellation.
+            request->cancelled = request->done = true;
+            request->read = {};
+            return nullptr;
+        }
+        // A running copy owns the caller buffer until completion.
+        request->condition.wait(lock, [&] { return request->done; });
+    }
+    if (request->error) std::rethrow_exception(request->error);
+    return std::move(request->result);
+}
+
+void RTPathOCLRenderEngine::ServiceViewportReadbacks() {
+    std::deque<std::shared_ptr<ViewportReadRequest>> requests;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        requests.swap(viewportReads);
+    }
+    for (auto &request : requests) {
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            if (request->cancelled) continue;
+            request->started = true;
+        }
+        PropertiesUPtr result;
+        std::exception_ptr error;
+        try {
+            std::lock_guard<std::mutex> lock(*filmMutex);
+            result = request->read(GetFilm());
+        } catch (...) { error = std::current_exception(); }
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->result = std::move(result);
+            request->error = error;
+            request->done = true;
+        }
+        request->condition.notify_all();
+    }
+}
+
+void RTPathOCLRenderEngine::CancelViewportReadbacks() {
+    std::deque<std::shared_ptr<ViewportReadRequest>> requests;
+    {
+        std::lock_guard<std::mutex> lock(viewportReadsMutex);
+        requests.swap(viewportReads);
+    }
+    for (auto &request : requests) {
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->cancelled = request->done = true;
+            request->read = {};
+        }
+        request->condition.notify_all();
+    }
+}
+
+void RTPathOCLRenderEngine::BeginSceneEdit() {
+    ++viewportRequestedEpoch;
+    TilePathOCLRenderEngine::BeginSceneEdit();
+}
+
+void RTPathOCLRenderEngine::ApplyViewportCameraMetadataLockLess() {
+    // Both camera and film mutexes held, or all rendering threads stopped.
+    if (pendingViewportMetadataEpoch != viewportAppliedEpoch.load()) return;
+    for (const auto &key : pendingViewportMetadata.GetAllNames())
+        GetFilm().SetMetadata(key, pendingViewportMetadata.Get(key).Get<string>());
+    viewportMetadataEpoch = pendingViewportMetadataEpoch;
+}
+
+void RTPathOCLRenderEngine::SetViewportCameraMetadata(const Properties &metadata) {
+    std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
+    pendingViewportMetadata.Set(metadata);
+    pendingViewportMetadataEpoch = viewportRequestedEpoch.load();
+    std::lock_guard<std::mutex> filmLock(*filmMutex);
+    ApplyViewportCameraMetadataLockLess();
+}
+
 void RTPathOCLRenderEngine::EndSceneEdit(const EditActionList &editActions) {
 	// Check if I can use the fast camera edit path
 	if (!denoisingFramesEnabled && editActions.HasOnly(CAMERA_EDIT) &&
@@ -191,10 +302,15 @@ void RTPathOCLRenderEngine::EndSceneEdit(const EditActionList &editActions) {
 			!(dynamic_cast<const PerspectiveCamera*>(&renderConfig.GetScene().GetCamera()))->bokehDistributionImageMap &&
 			// Camera was not using custom bokeh
 			!cameraIsUsingCustomBokeh) {
+		std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
 		TilePathOCLRenderEngine::EndSceneEdit(editActions);
+		pendingViewportCameraEpoch = viewportRequestedEpoch.load();
 		useFastCameraEditPath = true;
-		for (auto *thread : renderOCLThreads)
-			static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
+		// Demand readers need a completed current-camera pass. Coalesce
+		// newer cameras at its boundary instead of cancelling every pass.
+		if (!viewportDemandReadback.load())
+			for (auto *thread : renderOCLThreads)
+				static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
 	} else {
 		syncType = SYNCTYPE_ENDSCENEEDIT;
 		updateActions.AddActions(editActions.GetActions());
@@ -216,6 +332,9 @@ void RTPathOCLRenderEngine::EndSceneEdit(const EditActionList &editActions) {
 
 // A fast path for film resize
 void RTPathOCLRenderEngine::BeginFilmEdit() {
+	viewportReadbackStopped = true;
+	CancelViewportReadbacks();
+	++viewportRequestedEpoch;
 	syncType = SYNCTYPE_BEGINFILMEDIT;
 	for (auto *thread : renderOCLThreads)
 		static_cast<RTPathOCLRenderThread *>(thread)->CancelTileWork();
@@ -243,8 +362,11 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	taskConfig.renderEngine.rtpathocl.previewResolutionReductionStep = previewResolutionReductionStep;
 	taskConfig.renderEngine.rtpathocl.resolutionReduction = resolutionReduction;
 	// Update the film pointer
-	film = &flm;
-	filmMutex = flmMutex;
+	{
+		std::lock_guard<std::mutex> filmLock(*flmMutex);
+		film = &flm;
+		filmMutex = flmMutex;
+	}
 	InitFilm();
 	ResizeDenoisingGuides();
 	if (denoisingFramesEnabled) {
@@ -268,6 +390,16 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	a.AddActions(CAMERA_EDIT);
 	compiledScene->Recompile(a);
 
+	{
+		std::lock_guard<std::mutex> cameraLock(viewportCameraMutex);
+		std::lock_guard<std::mutex> filmLock(*filmMutex);
+		// InitCamera on the new threads supersedes any old pending camera edit.
+		useFastCameraEditPath = false;
+		pendingViewportCameraEpoch = viewportRequestedEpoch.load();
+		viewportAppliedEpoch = pendingViewportCameraEpoch;
+		viewportMetadataEpoch = ~uint64_t(0);
+	}
+
 	// Re-start all rendering threads. The handshake is re-established
 	// below: a thread failing to start (kernel compilation error) must
 	// not leave StopLockLess() waiting on the barrier.
@@ -279,6 +411,7 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	syncType = SYNCTYPE_NONE;
 	syncBarrier->arrive_and_wait();
 	syncThreadsRunning = true;
+	viewportReadbackStopped = false;
 }
 
 void RTPathOCLRenderEngine::UpdateFilmLockLess() {

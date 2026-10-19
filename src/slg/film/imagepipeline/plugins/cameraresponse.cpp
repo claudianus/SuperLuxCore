@@ -149,12 +149,12 @@ CameraResponsePlugin::CameraResponsePlugin(const string &name) {
 CameraResponsePlugin::~CameraResponsePlugin() {
 
 	if (hardwareDevice) {
-		hardwareDevice->FreeBuffer(&hwRedI);
-		hardwareDevice->FreeBuffer(&hwRedB);
-		hardwareDevice->FreeBuffer(&hwGreenI);
-		hardwareDevice->FreeBuffer(&hwGreenB);
-		hardwareDevice->FreeBuffer(&hwBlueI);
-		hardwareDevice->FreeBuffer(&hwBlueB);
+		hardwareDevice->FreeBufferForDestruction(&hwRedI);
+		hardwareDevice->FreeBufferForDestruction(&hwRedB);
+		hardwareDevice->FreeBufferForDestruction(&hwGreenI);
+		hardwareDevice->FreeBufferForDestruction(&hwGreenB);
+		hardwareDevice->FreeBufferForDestruction(&hwBlueI);
+		hardwareDevice->FreeBufferForDestruction(&hwBlueB);
 	}
 }
 

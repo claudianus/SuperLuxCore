@@ -225,19 +225,12 @@ Film::Film(Private p, const u_int w, const u_int h, const u_int * sr)
 Film::~Film() {
 	if (imagePipelineThread) {
 		imagePipelineThread->request_stop();
-		imagePipelineThread->join();
+		if (imagePipelineThread->joinable())
+			imagePipelineThread->join();
 	}
 
-	// The image pipeline plugin destructor can use the hardware device to free
-	// some memory so I have to set the current context
-	if (hardwareDevice)
-		hardwareDevice->PushThreadCurrentDevice();
-
 	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
-
-	if (hardwareDevice)
-		hardwareDevice->PopThreadCurrentDevice();
+		DeleteImagePipeline(ip);
 
 	// I have to delete the OCL context after the image pipeline because it
 	// can be used by plugins
@@ -329,15 +322,19 @@ void Film::CopyDynamicSettings(const Film &film) {
 	lpeAutomata = film.lpeAutomata;
 
 	// Copy the image pipeline
-	for (ImagePipeline *ip: imagePipelines)
-		delete ip;
-	imagePipelines.resize(0);
+	bool cleanupOK = true;
+	for (auto *&ip: imagePipelines) {
+		cleanupOK = DeleteImagePipeline(ip) && cleanupOK;
+		ip = nullptr;
+	}
+	imagePipelines.clear();
 	for(ImagePipeline *ip: film.imagePipelines)
 		imagePipelines.push_back(ip->Copy());
 	imagePipelineRevision = film.imagePipelineRevision;
 	filmMetadata = film.filmMetadata;
 
 	filmDenoiser->SetEnabled(film.filmDenoiser->IsEnabled());
+	if (!cleanupOK) throw runtime_error("Image pipeline cleanup failed after copying owned settings");
 }
 
 void Film::CopyHaltSettings(const Film &film) {

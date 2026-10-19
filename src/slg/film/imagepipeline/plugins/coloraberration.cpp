@@ -47,7 +47,7 @@ ColorAberrationPlugin::~ColorAberrationPlugin() {
 	delete[] tmpBuffer;
 
 	if (hardwareDevice)
-		hardwareDevice->FreeBuffer(&hwTmpBuffer);
+		hardwareDevice->FreeBufferForDestruction(&hwTmpBuffer);
 }
 
 ImagePipelinePlugin *ColorAberrationPlugin::Copy() const {

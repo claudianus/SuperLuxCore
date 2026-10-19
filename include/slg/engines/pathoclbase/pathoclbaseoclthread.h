@@ -242,6 +242,7 @@ protected:
 
 	void SetInitKernelArgs(const u_int filmIndex);
 	u_int SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
+	void SetFilmDataCommitKernelArgs(const u_int filmIndex);
 	u_int SetAdvancePathsLightKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
@@ -437,6 +438,9 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr initSeedKernel;
 	luxrays::HardwareDeviceKernelUPtr initKernel;
 	luxrays::HardwareDeviceKernelUPtr tileResolveFilmDataKernel;
+	luxrays::HardwareDeviceKernelUPtr filmDataCommitKernel;
+	size_t filmDataCommitWorkGroupSize;
+	luxrays::HardwareDeviceBuffer *filmDataPendingBuff;
 	size_t tileResolveFilmDataWorkGroupSize;
 	size_t initWorkGroupSize;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_NEXT_VERTEX;

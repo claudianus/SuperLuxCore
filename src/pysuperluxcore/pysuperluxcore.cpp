@@ -845,6 +845,27 @@ static void Film_GetOutputFloat1(
   }
 }
 
+// The buffer lease and its format/contiguity validation survive native exceptions.
+static PropertiesUPtr Film_GetOutputFloatSnapshot(FilmImpl &film,
+        const Film::FilmOutputType type, py::object &obj,
+        const size_t index, const bool executeImagePipeline) {
+    Py_buffer view{};
+    if (PyObject_GetBuffer(obj.ptr(), &view,
+            PyBUF_C_CONTIGUOUS | PyBUF_FORMAT | PyBUF_WRITABLE) != 0)
+        throw py::error_already_set();
+    struct ReleaseBuffer { Py_buffer *view; ~ReleaseBuffer() { PyBuffer_Release(view); } } lease{&view};
+    if (view.itemsize != sizeof(float) || !view.format || strcmp(view.format, "f") != 0 ||
+            reinterpret_cast<uintptr_t>(view.buf) % alignof(float) != 0 || view.len < 0)
+        throw std::runtime_error("GetOutputFloatSnapshot requires aligned writable C-contiguous native float32");
+    PropertiesUPtr result;
+    {
+        py::gil_scoped_release release;
+        result = film.GetOutputFloatSnapshot(type, static_cast<float *>(view.buf),
+                index, executeImagePipeline, static_cast<size_t>(view.len));
+    }
+    return result;
+}
+
 static void Film_GetOutputFloat2(
 	FilmImpl & film,
 	const Film::FilmOutputType type,
@@ -3125,6 +3146,8 @@ PYBIND11_MODULE(pysuperluxcore, m) {
     .def("SaveFilm", &luxcore::detail::FilmImpl::SaveFilm)
     .def("GetRadianceGroupCount", &luxcore::detail::FilmImpl::GetRadianceGroupCount)
     .def("GetOutputSize", &luxcore::detail::FilmImpl::GetOutputSize)
+    .def("GetOutputFloatSnapshot", &Film_GetOutputFloatSnapshot, py::arg("output_type"),
+        py::arg("buffer"), py::arg("index") = 0, py::arg("execute_imagepipeline") = true)
     .def("GetOutputFloat", &Film_GetOutputFloat1)
     .def("GetOutputFloat", &Film_GetOutputFloat2)
     .def("GetOutputFloat", &Film_GetOutputFloat3)

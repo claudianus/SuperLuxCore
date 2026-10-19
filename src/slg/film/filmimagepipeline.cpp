@@ -36,38 +36,70 @@ using namespace slg;
 // Film image pipeline related methods
 //------------------------------------------------------------------------------
 
+bool Film::DeleteImagePipeline(ImagePipeline *pipeline) {
+ if (!pipeline) return true;
+ WaitAsyncExecuteImagePipeline();
+ bool ok = true, pushed = false;
+ if (hardwareDevice) {
+  try { hardwareDevice->PushThreadCurrentDevice(); pushed = true; }
+  catch (...) { ok = false; std::fprintf(stderr, "Film cleanup: context push failed\n"); }
+  if (pushed) {
+   try { hardwareDevice->FinishQueue(); }
+   catch (...) { ok = false; std::fprintf(stderr, "Film cleanup: queue drain failed\n"); }
+  }
+ }
+ // GPU plugins use cleanup-only buffer release; no exception may escape delete.
+ // A failed context push is handled again by the owning CUDA buffer releaser.
+ delete pipeline;
+ if (pushed) {
+  try { hardwareDevice->PopThreadCurrentDevice(); }
+  catch (...) { ok = false; std::fprintf(stderr, "Film cleanup: context pop failed\n"); }
+ }
+ if (hardwareDevice && hardwareDevice->HasCleanupError()) ok = false;
+ return ok;
+}
+
 void Film::SetImagePipelines(const u_int index, ImagePipeline *newImagePipeline) {
-	if (index < imagePipelines.size()) {
-		// It replaces an existing image pipeline
-		delete imagePipelines[index];
-		imagePipelines[index] = newImagePipeline;
-	} else if (index == imagePipelines.size()) {
-		// Add a new image pipeline at the end of the vector
-		imagePipelines.resize(imagePipelines.size() + 1, NULL);
-		imagePipelines[index] = newImagePipeline;
-	} else
-		throw runtime_error("Wrong image pipeline index in Film::SetImagePipelines(): " + ToString(index));
-	++imagePipelineRevision;
+ bool ok = true;
+ if (index < imagePipelines.size()) {
+  ok = DeleteImagePipeline(imagePipelines[index]);
+  imagePipelines[index] = newImagePipeline;
+ } else if (index == imagePipelines.size()) {
+  imagePipelines.push_back(newImagePipeline);
+ } else {
+  throw runtime_error("Wrong image pipeline index in Film::SetImagePipelines(): " + ToString(index));
+ }
+ ++imagePipelineRevision;
+ // Publish ownership before reporting cleanup failure; retry/destruction must
+ // never see a pointer whose destructor has already run.
+ if (!ok) throw runtime_error("Image pipeline cleanup failed; replacement is owned, restart the render session");
 }
 
 void Film::SetImagePipelines(ImagePipeline *newImagePipeline) {
-	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
-
-	if (newImagePipeline) {
-		imagePipelines.resize(1);
-		imagePipelines[0] = newImagePipeline;
-	} else
-		imagePipelines.resize(0);
-	++imagePipelineRevision;
+ std::vector<ImagePipeline *> replacement;
+ if (newImagePipeline) replacement.push_back(newImagePipeline);
+ bool ok = true;
+ for (auto *&ip : imagePipelines) {
+  ok = DeleteImagePipeline(ip) && ok;
+  ip = nullptr;
+ }
+ imagePipelines.swap(replacement);
+ ++imagePipelineRevision;
+ if (!ok) throw runtime_error("Image pipeline cleanup failed; replacement is owned, restart the render session");
 }
 
 void Film::SetImagePipelines(std::vector<ImagePipeline *> &newImagePiepelines) {
-	for(ImagePipeline *ip: imagePipelines)
-		delete ip;
-
-	imagePipelines = newImagePiepelines;
-	++imagePipelineRevision;
+ if (&newImagePiepelines == &imagePipelines) return;
+ // Allocate the new pointer container before consuming any old ownership.
+ auto replacement = newImagePiepelines;
+ bool ok = true;
+ for (auto *&ip : imagePipelines) {
+  ok = DeleteImagePipeline(ip) && ok;
+  ip = nullptr;
+ }
+ imagePipelines.swap(replacement);
+ ++imagePipelineRevision;
+ if (!ok) throw runtime_error("Image pipeline cleanup failed; replacement is owned, restart the render session");
 }
 
 void Film::MergeSampleBuffers(const u_int imagePipelineIndex) {
@@ -132,18 +164,35 @@ void Film::AsyncExecuteImagePipeline(const u_int index) {
 	if (isAsyncImagePipelineRunning)
 		throw runtime_error("AsyncExecuteImagePipeline() called while another AsyncExecuteImagePipeline() is still running");
 
+	// Retire the previous joinable worker and report its failure before reuse.
+	HasDoneAsyncExecuteImagePipeline();
 	isAsyncImagePipelineRunning = true;
-
-	imagePipelineThread = std::make_unique<luxrays::JThread>(&Film::ExecuteImagePipelineThreadImpl, this, index);
+	try {
+		imagePipelineThread = std::make_unique<luxrays::JThread>(&Film::ExecuteImagePipelineThreadImpl, this, index);
+	} catch (...) {
+		isAsyncImagePipelineRunning = false;
+		throw;
+	}
 	SetThreadName(imagePipelineThread, "LxImagePipeline");
 }
 
 bool Film::HasDoneAsyncExecuteImagePipeline() {
-	return !isAsyncImagePipelineRunning;
+	if (isAsyncImagePipelineRunning)
+		return false;
+	WaitAsyncExecuteImagePipeline();
+	// The release/acquire atomic flag and join publish the worker's exception.
+	// Consume it once on the caller, never in a cleanup/destructor path.
+	const auto error = asyncImagePipelineError;
+	asyncImagePipelineError = nullptr;
+	if (error)
+		std::rethrow_exception(error);
+	return true;
 }
 
 void Film::WaitAsyncExecuteImagePipeline() {
-	if (isAsyncImagePipelineRunning)
+	// A completed worker is still joinable. Join it before replacing plugins
+	// or starting a new worker so no native thread resources remain retained.
+	if (imagePipelineThread && imagePipelineThread->joinable())
 		imagePipelineThread->join();
 }
 
@@ -155,7 +204,13 @@ void Film::ExecuteImagePipeline(const u_int index) {
 }
 
 void Film::ExecuteImagePipelineThreadImpl(const u_int index) {
-        ExecuteImagePipelineImpl(index);
+	try {
+		ExecuteImagePipelineImpl(index);
+	} catch (...) {
+		// A driver/plugin exception escaping a native thread calls terminate().
+		// Keep it for the polling caller, which can report a failed denoise.
+		asyncImagePipelineError = std::current_exception();
+	}
 	isAsyncImagePipelineRunning = false;
 }
 
@@ -179,24 +234,33 @@ void Film::ExecuteImagePipelineImpl(const u_int index) {
 	if (hwEnable && hardwareDevice)
 		hardwareDevice->PushThreadCurrentDevice();
 
-	// Merge all buffers
-	//const double t1 = WallClockTime();
-	if (hwEnable && hardwareDevice)
-		MergeSampleBuffersHW(index);
-	else
-		MergeSampleBuffers(index);
+	try {
+		// Merge all buffers
+		//const double t1 = WallClockTime();
+		if (hwEnable && hardwareDevice)
+			MergeSampleBuffersHW(index);
+		else
+			MergeSampleBuffers(index);
 
-	//const double t2 = WallClockTime();
-	//SLG_LOG("MergeSampleBuffers time: " << int((t2 - t1) * 1000.0) << "ms");
+		//const double t2 = WallClockTime();
+		//SLG_LOG("MergeSampleBuffers time: " << int((t2 - t1) * 1000.0) << "ms");
 
-	// Apply the image pipeline
-	//const double p1 = WallClockTime();
+		// Apply the image pipeline
+		//const double p1 = WallClockTime();
 
-	// Transfer all buffers to OpenCL device memory
-	if (hwEnable && hardwareDevice && imagePipelines[index]->CanUseHW())
-		WriteAllHWBuffers();
+		// Transfer all buffers to OpenCL device memory
+		if (hwEnable && hardwareDevice && imagePipelines[index]->CanUseHW())
+			WriteAllHWBuffers();
 
-	imagePipelines[index]->Apply(*this, index);
+		imagePipelines[index]->Apply(*this, index);
+	} catch (...) {
+		// Do not leave this worker holding the film context after a failed
+		// merge/plugin/readback. Preserve the original execution exception.
+		if (hwEnable && hardwareDevice) {
+			try { hardwareDevice->PopThreadCurrentDevice(); } catch (...) { }
+		}
+		throw;
+	}
 
 	if (hwEnable && hardwareDevice)
 		hardwareDevice->PopThreadCurrentDevice();

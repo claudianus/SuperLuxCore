@@ -362,6 +362,71 @@ void FilmImplSession::GetOutputFloat(const FilmOutputType type, float *buffer,
 	API_END();
 }
 
+// Called with filmMutex held for session films. Standalone callers own synchronization.
+static PropertiesUPtr ReadOutputFloatSnapshot(slg::Film &film,
+        const Film::FilmOutputType type, float *buffer, const u_int index,
+        const bool executeImagePipeline, const size_t capacity,
+        const bool cameraEpochSupported, const uint64_t requested,
+        const uint64_t applied, const uint64_t metadataEpoch) {
+    const auto output = static_cast<slg::FilmOutputs::FilmOutputType>(type);
+    if (!film.HasOutput(output))
+        throw runtime_error("Film output unavailable in GetOutputFloatSnapshot");
+    const size_t elements = film.GetOutputSize(output);
+    if (elements > capacity / sizeof(float))
+        throw runtime_error("Not enough space in GetOutputFloatSnapshot buffer");
+    const double eyeSamples = film.GetTotalEyeSampleCount();
+    const bool ready = eyeSamples > 0.0 &&
+            (!cameraEpochSupported || applied == metadataEpoch);
+    auto result = std::make_unique<Properties>();
+    result->Set(Property("snapshot.width")(film.GetWidth()));
+    result->Set(Property("snapshot.height")(film.GetHeight()));
+    result->Set(Property("snapshot.eye.samples")(eyeSamples));
+    result->Set(Property("snapshot.ready")(ready));
+    result->Set(Property("snapshot.copied")(ready));
+    result->Set(Property("snapshot.camera.supported")(cameraEpochSupported));
+    result->Set(Property("snapshot.camera.requested")(static_cast<unsigned long long>(requested)));
+    result->Set(Property("snapshot.camera.applied")(static_cast<unsigned long long>(applied)));
+    result->Set(Property("snapshot.camera.metadata")(static_cast<unsigned long long>(metadataEpoch)));
+    if (ready) {
+        film.GetOutput<float>(output, buffer, index, executeImagePipeline);
+        for (const char *key : {"viewport.cam.rtoc", "viewport.cam.ctow", "viewport.cam.wtor",
+                "viewport.cam.wtoc", "viewport.cam.persp", "viewport.cam.hither"}) {
+            const auto value = film.GetMetadata(key);
+            if (value) result->Set(Property(key)(*value));
+        }
+    }
+    return result;
+}
+
+PropertiesUPtr FilmImpl::GetOutputFloatSnapshot(const FilmOutputType type, float *buffer,
+        const unsigned int index, const bool executeImagePipeline, const size_t capacity) {
+    return ReadOutputFloatSnapshot(GetSLGFilm(), type, buffer, index,
+            executeImagePipeline, capacity, false, 0, 0, 0);
+}
+
+PropertiesUPtr FilmImplSession::GetOutputFloatSnapshot(const FilmOutputType type, float *buffer,
+        const unsigned int index, const bool executeImagePipeline, const size_t capacity) {
+    auto &session = renderSession.GetSLGRenderSession();
+#if !defined(LUXRAYS_DISABLE_OPENCL)
+    if (auto *rt = dynamic_cast<slg::RTPathOCLRenderEngine *>(session.renderEngine.get())) {
+        auto read = [=](slg::Film &film) {
+            uint64_t requested, applied, metadata;
+            rt->GetViewportCameraEpochs(requested, applied, metadata);
+            return ReadOutputFloatSnapshot(film, type, buffer, index,
+                    executeImagePipeline, capacity, true, requested, applied, metadata);
+        };
+        if (auto result = rt->ReadViewportOutput(read)) return result;
+        // Stopped, resizing, paused timeout or bounded queue admission:
+        // the session-owned film stays initialized until its locked swap.
+        std::unique_lock<std::mutex> lock(session.filmMutex);
+        return read(*session.film);
+    }
+#endif
+    std::unique_lock<std::mutex> lock(session.filmMutex);
+    return ReadOutputFloatSnapshot(*session.film, type, buffer, index,
+            executeImagePipeline, capacity, false, 0, 0, 0);
+}
+
 void FilmImplSession::GetOutputUInt(const FilmOutputType type, unsigned int *buffer,
 		const unsigned int index, const bool executeImagePipeline) {
 	API_BEGIN("{}, {}, {}, {}", ToArgString(type), (void *)buffer, index, executeImagePipeline);
@@ -537,6 +602,7 @@ void FilmImplSession::WaitAsyncExecuteImagePipeline() {
 
 	std::unique_lock<std::mutex> lock(renderSession.GetSLGRenderSession().filmMutex);
 	renderSession.GetSLGRenderSession().film->WaitAsyncExecuteImagePipeline();
+	renderSession.GetSLGRenderSession().film->HasDoneAsyncExecuteImagePipeline();
 
 	API_END();
 }
@@ -953,6 +1019,7 @@ void FilmImplStandalone::WaitAsyncExecuteImagePipeline() {
 	API_BEGIN_NOARGS();
 
 	standAloneFilm->WaitAsyncExecuteImagePipeline();
+	standAloneFilm->HasDoneAsyncExecuteImagePipeline();
 
 	API_END();
 }

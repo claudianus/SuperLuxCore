@@ -7985,6 +7985,7 @@ __kernel void Init(
 	const size_t gid = get_global_id(0);
 	taskStats[gid].sampleCount = 0u;
 	taskStats[gid].activeEyeSample = 0u;
+	if (filmDataPending) filmDataPending[gid].valid = 0u;
 #if defined(SLC_DENOISING_GUIDES)
 	for (uint i = 0; i < SLC_DENOISING_GUIDE_STRIDE; ++i) denoisingGuides[gid*SLC_DENOISING_GUIDE_STRIDE+i] = 0.f;
 #endif

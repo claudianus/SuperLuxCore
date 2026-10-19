@@ -1,3 +1,4 @@
+#include <cstdio>
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -45,13 +46,22 @@ OptixDenoiserPlugin::OptixDenoiserPlugin(const float s, const u_int minSPP) : sh
 
 OptixDenoiserPlugin::~OptixDenoiserPlugin() {
 	if (cudaDevice) {
-		if (denoiserHandle)
-			CHECK_OPTIX_ERROR(optixDenoiserDestroy(denoiserHandle));
+		if (denoiserHandle) {
+			bool pushed = false;
+			try { cudaDevice->PushThreadCurrentDevice(); pushed = true; }
+			catch (...) { cudaDevice->MarkCleanupError(); std::fprintf(stderr, "OptiX denoiser cleanup: context unavailable\n"); }
+			if (pushed) {
+				const OptixResult error = optixDenoiserDestroy(denoiserHandle);
+				if (error != OPTIX_SUCCESS) { cudaDevice->MarkCleanupError(); std::fprintf(stderr, "OptiX denoiser cleanup failed (code %d)\n", int(error)); }
+				try { cudaDevice->PopThreadCurrentDevice(); }
+				catch (...) { cudaDevice->MarkCleanupError(); std::fprintf(stderr, "OptiX denoiser cleanup: context pop failed\n"); }
+			}
+		}
 
-		cudaDevice->FreeBuffer(&denoiserStateScratchBuff);
-		cudaDevice->FreeBuffer(&denoiserTmpBuff);
-		cudaDevice->FreeBuffer(&albedoTmpBuff);
-		cudaDevice->FreeBuffer(&avgShadingNormalTmpBuff);
+		cudaDevice->FreeBufferForDestruction(&denoiserStateScratchBuff);
+		cudaDevice->FreeBufferForDestruction(&denoiserTmpBuff);
+		cudaDevice->FreeBufferForDestruction(&albedoTmpBuff);
+		cudaDevice->FreeBufferForDestruction(&avgShadingNormalTmpBuff);
 	}
 }
 

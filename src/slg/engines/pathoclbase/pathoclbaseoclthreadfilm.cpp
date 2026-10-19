@@ -598,6 +598,7 @@ u_int PathOCLBaseOCLRenderThread::ThreadFilm::SetFilmKernelArgs(HardwareIntersec
 	intersectionDevice.SetKernelArg(kernel, argIndex++, channel_LPE_Buff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, lpeAutomataBuff);
 	intersectionDevice.SetKernelArg(kernel, argIndex++, film->GetLPECount());
+	intersectionDevice.SetKernelArg(kernel, argIndex++, renderThread->filmDataPendingBuff);
 
 	// Film denoiser sample accumulator parameters
 	FilmDenoiser &denoiser = film->GetDenoiser();

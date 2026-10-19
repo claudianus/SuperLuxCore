@@ -354,6 +354,23 @@ OPENCL_FORCE_INLINE void Film_WriteSampleResultData(const uint index1,
 	}
 }
 
+OPENCL_FORCE_INLINE void Film_StorePendingData(__global FilmDataPending *pending,
+		__constant const Film* restrict film,
+		const uint x, const uint y, __global SampleResult *sampleResult) {
+	pending->pixelX = x;
+	pending->pixelY = y;
+	pending->depth = sampleResult->depth;
+	if (film->hasChannelPosition) pending->position = sampleResult->position;
+	if (film->hasChannelGeometryNormal) pending->geometryNormal = sampleResult->geometryNormal;
+	if (film->hasChannelShadingNormal) pending->shadingNormal = sampleResult->shadingNormal;
+	if (film->hasChannelMaterialID) pending->materialID = sampleResult->materialID;
+	if (film->hasChannelObjectID) pending->objectID = sampleResult->objectID;
+	if (film->hasChannelUV) pending->uv = sampleResult->uv;
+	if (film->hasChannelMotionVector)
+		for (uint i = 0; i < 4; ++i) pending->motionVector[i] = sampleResult->motionVector[i];
+	pending->valid = 1u;
+}
+
 OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
 		__global SampleResult *sampleResult
 		FILM_PARAM_DECL) {
@@ -367,7 +384,14 @@ OPENCL_FORCE_INLINE void Film_AddSampleResultData(const uint x, const uint y,
 #if defined(RENDER_ENGINE_TILEPATHOCL)
 	deferData = film->hasChannelDepth;
 #endif
-	if (!deferData) {
+	if (filmDataPending && film->hasChannelDepth) {
+		// A strict successful atomic minimum has exactly one winner at the
+		// final depth. Commit that winner after all splats have completed.
+		// Keep depth atomic even if color atomics were explicitly disabled.
+		if (Film_MinPixel(true, &filmDepth[index1], sampleResult->depth))
+			Film_StorePendingData(filmDataPending, film,
+					x, y, sampleResult);
+	} else if (!deferData) {
 		bool depthWrite = true;
 		if (film->hasChannelDepth)
 			depthWrite = Film_MinPixel(usePixelAtomics, &filmDepth[index1], sampleResult->depth);
@@ -642,6 +666,7 @@ OPENCL_FORCE_INLINE void Film_SplatLight(
 		, __global float *filmLPE \
 		, __global const LPEAutomaton* restrict lpeAutomata \
 		, const uint lpeCount \
+		, __global FilmDataPending *filmDataPending \
 		KERNEL_ARGS_FILM_DENOISER
 
 //------------------------------------------------------------------------------

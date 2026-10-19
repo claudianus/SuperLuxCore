@@ -24,6 +24,40 @@
 
 //#define DEBUG_PRINTF_KERNEL_NAME 1
 
+// A strict atomic minimum has at most one successful writer at the final
+// depth. Consume its compact snapshot after the entire splat dispatch and
+// before samplers reuse their records. No pixel lock or approximate key.
+__kernel void CommitFilmData(
+        __constant const GPUTaskConfiguration* restrict taskConfig,
+        __global FilmDataPending *pending, const uint taskCount,
+        const uint filmWidth, const uint filmHeight,
+        __global float *filmDepth,
+        __global float *filmPosition, __global float *filmGeometryNormal,
+        __global float *filmShadingNormal, __global uint *filmMaterialID,
+        __global float *filmUV, __global uint *filmObjectID,
+        __global float *filmMotionVector) {
+    const uint gid = get_global_id(0);
+    if (gid >= taskCount) return;
+    __global FilmDataPending *sample = &pending[gid];
+    if (!sample->valid) return;
+    sample->valid = 0u;
+    if (!filmDepth || sample->pixelX >= filmWidth || sample->pixelY >= filmHeight)
+        return;
+    const uint index1 = sample->pixelX + sample->pixelY * filmWidth;
+    if (sample->depth != filmDepth[index1]) return;
+    __constant const Film *film = &taskConfig->film;
+    const uint index2 = index1 * 2, index3 = index1 * 3;
+    if (film->hasChannelPosition) Film_SetPixel3(&filmPosition[index3], &sample->position.x);
+    if (film->hasChannelGeometryNormal) Film_SetPixel3(&filmGeometryNormal[index3], &sample->geometryNormal.x);
+    if (film->hasChannelShadingNormal) Film_SetPixel3(&filmShadingNormal[index3], &sample->shadingNormal.x);
+    if (film->hasChannelMaterialID) filmMaterialID[index1] = sample->materialID;
+    if (film->hasChannelUV) Film_SetPixel2(&filmUV[index2], &sample->uv.u);
+    if (film->hasChannelObjectID && sample->objectID != NULL_INDEX)
+        filmObjectID[index1] = sample->objectID;
+    if (film->hasChannelMotionVector)
+        for (uint i = 0; i < 4; ++i) filmMotionVector[index1 * 4 + i] = sample->motionVector[i];
+}
+
 #if defined(RENDER_ENGINE_TILEPATHOCL)
 // Completed tiled eye samples remain resident until the next tile Init.
 // One writer per pixel selects the same primary sample for every data AOV;
@@ -2874,6 +2908,12 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 #endif
 	if (pathState != MK_SPLAT_SAMPLE)
 		return;
+	if (filmDataPending) {
+		filmDataPending[gid].valid = 0u;
+	}
+	// A wavefront queue may remap gid. Keep the kernel argument immutable
+	// (Metal packs it in a const argument table), and pass a local slot.
+	__global FilmDataPending *pendingSlot = filmDataPending ? filmDataPending + gid : NULL;
 
 #if defined(SLC_DENOISING_FRAMES)
 	// The physical path has ended (absorption, miss, roulette or depth limit).
@@ -2953,7 +2993,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 
 	Sampler_SplatSample(taskConfig
 			SAMPLER_PARAM
-			FILM_PARAM);
+			FILM_PARAM_WITH_PENDING(pendingSlot));
 	taskStats[gid].sampleCount += 1;
 
 	// ReSTIR PT (PT-2): path-end commit - publish the measured suffix

@@ -1,3 +1,4 @@
+#include <cstdio>
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -281,6 +282,26 @@ void Context::Interrupt() {
 		device->Interrupt();
 		device->PopThreadCurrentDevice();
 	}
+}
+
+void Context::StopHardwareForDestruction() noexcept {
+ if (!started) return;
+ if (!idevices.empty()) {
+  std::fprintf(stderr, "Context cleanup refused: intersection devices require normal Stop\n");
+  return;
+ }
+ for (auto &device : devices) {
+  bool pushed = false;
+  try { device->PushThreadCurrentDevice(); pushed = true; }
+  catch (...) { std::fprintf(stderr, "Context hardware cleanup: context push failed\n"); }
+  if (pushed) {
+   try { if (device->IsRunning()) { device->Interrupt(); device->Stop(); } }
+   catch (...) { std::fprintf(stderr, "Context hardware cleanup: device stop failed\n"); }
+   try { device->PopThreadCurrentDevice(); }
+   catch (...) { std::fprintf(stderr, "Context hardware cleanup: context pop failed\n"); }
+  }
+ }
+ started = false;
 }
 
 void Context::Stop() {

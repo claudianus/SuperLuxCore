@@ -660,6 +660,11 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 				false, "TilePathResolveFilmData"});
 	else
 		tileResolveFilmDataKernel.reset();
+	if (filmDataPendingBuff)
+		jobs.push_back({&filmDataCommitKernel, &filmDataCommitWorkGroupSize,
+				false, "CommitFilmData"});
+	else
+		filmDataCommitKernel.reset();
 	if (compileVisibility)
 		jobs.push_back({&advancePathsKernel_MK_RT_RESTIR, nullptr, true, "AdvancePaths_MK_RT_RESTIR"});
 	else
@@ -1041,6 +1046,7 @@ constexpr u_int MK_PT_RESOLVE = 19;
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
+	SetFilmDataCommitKernelArgs(filmIndex);
 	if (advancePathsKernel_MK_RT_NEXT_VERTEX)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_RT_NEXT_VERTEX, filmIndex, MK_RT_NEXT_VERTEX);
 	// Vertex connection (M6): MK_HIT_NOTHING and MK_HIT_OBJECT take the
@@ -1205,6 +1211,22 @@ void PathOCLBaseOCLRenderThread::SetKernelArgs() {
 	SetInitKernelArgs(0);
 }
 
+void PathOCLBaseOCLRenderThread::SetFilmDataCommitKernelArgs(const u_int filmIndex) {
+	if (!filmDataCommitKernel) return;
+	auto &film = *threadFilms[filmIndex];
+	u_int arg = 0;
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, taskConfigBuff);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, filmDataPendingBuff);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, renderEngine->taskCount);
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, film.GetFilm().GetWidth());
+	intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, film.GetFilm().GetHeight());
+	for (auto *buffer : {film.channel_DEPTH_Buff, film.channel_POSITION_Buff,
+			film.channel_GEOMETRY_NORMAL_Buff, film.channel_SHADING_NORMAL_Buff,
+			film.channel_MATERIAL_ID_Buff, film.channel_UV_Buff,
+			film.channel_OBJECT_ID_Buff, film.channel_MOTION_VECTOR_Buff})
+		intersectionDevice.SetKernelArg(filmDataCommitKernel, arg++, buffer);
+}
+
 void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	const u_int taskCount = renderEngine->taskCount;
 
@@ -1290,6 +1312,10 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_SPLAT_SAMPLE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	if (filmDataCommitKernel)
+		intersectionDevice.EnqueueKernel(filmDataCommitKernel,
+				HardwareDeviceRange(RoundUp<u_int>(taskCount, filmDataCommitWorkGroupSize)),
+				HardwareDeviceRange(filmDataCommitWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_NEXT_SAMPLE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_CAMERA_RAY,
@@ -1344,21 +1370,15 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 				HardwareDeviceRange(prefixSize), HardwareDeviceRange(advancePathsWorkGroupSize));
 	}
 
-	// Peek the totals through the shared-storage mapping when the
-	// device exposes one: on Metal EnqueueReadBuffer drains the whole
-	// command queue (FinishQueue) to service a host memcpy, which
-	// serialized every wavefront iteration and defeated batching. A
-	// racing read is safe here - WAVEFRONT_GUARD bounds lanes against
-	// the device-side totals, so stale or undersized launch sizes only
-	// defer tail work to the next BuildQueues pass. The taskCount
-	// clamp keeps a torn counter from inflating a launch range past
-	// the queue capacity.
-	if (void *totalsHost = taskQueueTotalsBuff->GetHostVisiblePointer()) {
-		memcpy(wavefrontQueueTotals.data(), totalsHost,
-				sizeof(u_int) * wavefrontQueueTotals.size());
-		for (u_int &t : wavefrontQueueTotals)
-			t = std::min(t, taskCount);
-	} else
+	// Host-visible storage does not make a CPU peek a completion fence.
+	// During an asynchronous batch its stale zero/short counts can skip
+	// newly populated device queues until the next FinishQueue(). Launch
+	// capacity-bounded lanes instead: WAVEFRONT_GUARD uses the current
+	// device totals after QueuePrefix/BuildQueues in queue order. Inactive
+	// lanes exit without touching a task. Non-mapped devices retain their
+	// synchronized compact launch sizes.
+	const bool deviceBoundsLaunch = taskQueueTotalsBuff->GetHostVisiblePointer() != nullptr;
+	if (!deviceBoundsLaunch)
 		intersectionDevice.EnqueueReadBuffer(taskQueueTotalsBuff,
 				CL_TRUE, sizeof(u_int) * wavefrontQueueTotals.size(),
 				wavefrontQueueTotals.data());
@@ -1508,7 +1528,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	};
 
 	for (const auto &[kernelMember, state] : dispatchTable) {
-		const u_int count = wavefrontQueueTotals[state];
+		const u_int count = deviceBoundsLaunch ? taskCount : wavefrontQueueTotals[state];
 		const HardwareDeviceKernelUPtr &kernel = this->*kernelMember;
 		if (count && kernel) {
 			// OpenCL requires the global size to be a multiple of the
@@ -1518,6 +1538,12 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 					/ advancePathsWorkGroupSize * advancePathsWorkGroupSize;
 			intersectionDevice.EnqueueKernel(kernel,
 					HardwareDeviceRange(launchSize), HardwareDeviceRange(advancePathsWorkGroupSize));
+			// The queued path must retire winning data snapshots before
+			// NEXT_SAMPLE can reuse them, just like the dense path.
+			if (state == MK_SPLAT_SAMPLE && filmDataCommitKernel)
+				intersectionDevice.EnqueueKernel(filmDataCommitKernel,
+						HardwareDeviceRange(RoundUp<u_int>(taskCount, filmDataCommitWorkGroupSize)),
+						HardwareDeviceRange(filmDataCommitWorkGroupSize));
 		}
 	}
 }

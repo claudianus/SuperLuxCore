@@ -65,9 +65,9 @@ BloomFilterPlugin::~BloomFilterPlugin() {
 	delete[] bloomBufferTmp;
 
 	if (hardwareDevice) {
-		hardwareDevice->FreeBuffer(&hwBloomBuffer);
-		hardwareDevice->FreeBuffer(&hwBloomBufferTmp);
-		hardwareDevice->FreeBuffer(&hwBloomFilter);
+		hardwareDevice->FreeBufferForDestruction(&hwBloomBuffer);
+		hardwareDevice->FreeBufferForDestruction(&hwBloomBufferTmp);
+		hardwareDevice->FreeBufferForDestruction(&hwBloomFilter);
 	}
 }
 

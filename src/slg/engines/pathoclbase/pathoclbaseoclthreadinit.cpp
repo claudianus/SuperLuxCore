@@ -1233,6 +1233,11 @@ void PathOCLBaseOCLRenderThread::InitSampleResultsBuffer() {
 
 	SLG_LOG("[PathOCLBaseRenderThread::" << threadIndex << "] Size of a SampleResult: " << sampleResultSize << "bytes");
 	intersectionDevice.AllocBufferRW(&sampleResultsBuff, nullptr, sampleResultSize * taskCount, "SampleResult");
+	if ((renderEngine->GetType() != TILEPATHOCL) && threadTaskConfig.film.hasChannelDepth)
+		intersectionDevice.AllocBufferRW(&filmDataPendingBuff, nullptr,
+				sizeof(slg::ocl::FilmDataPending) * size_t(taskCount), "Pending film data");
+	else
+		intersectionDevice.FreeBuffer(&filmDataPendingBuff);
 }
 
 void PathOCLBaseOCLRenderThread::InitSampleDataBuffer() {
