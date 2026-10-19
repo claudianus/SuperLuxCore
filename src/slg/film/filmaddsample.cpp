@@ -217,11 +217,11 @@ void Film::AddSampleResultColor(const u_int x, const u_int y,
 		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
 			channel_CRYPTOMATTE_MATERIAL->AddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
 
-		// LPE: per-expression weighted radiance (eye-path contributions
-		// routed by the NFA terminal evaluation)
-		for (u_int i = 0; i < channel_LPEs.size(); ++i)
-			channel_LPEs[i]->AddIfValidWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 	}
+	// LPE expressions are configured independently of ordinary composing
+	// AOVs. An LPE-only film must accumulate these channels too.
+	for (u_int i = 0; i < channel_LPEs.size(); ++i)
+		channel_LPEs[i]->AddIfValidWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 }
 
 void Film::AddSampleResultData(const u_int x, const u_int y,
@@ -463,11 +463,10 @@ void Film::AtomicAddSampleResultColor(const u_int x, const u_int y,
 		if (channel_CRYPTOMATTE_MATERIAL && sampleResult.HasChannel(CRYPTOMATTE_MATERIAL))
 			channel_CRYPTOMATTE_MATERIAL->AtomicAddCoverage(x, y, sampleResult.cryptoMaterialID, weight);
 
-		// LPE: per-expression weighted radiance (eye-path contributions
-		// routed by the NFA terminal evaluation)
-		for (u_int i = 0; i < channel_LPEs.size(); ++i)
-			channel_LPEs[i]->AtomicAddWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 	}
+	// Same independent-expression rule for concurrent CPU splats.
+	for (u_int i = 0; i < channel_LPEs.size(); ++i)
+		channel_LPEs[i]->AtomicAddWeightedPixel(x, y, sampleResult.lpeRadiance[i].c, weight);
 }
 
 void Film::AtomicAddSampleResultData(const u_int x, const u_int y,
