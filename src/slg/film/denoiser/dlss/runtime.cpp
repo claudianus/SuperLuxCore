@@ -39,10 +39,6 @@ bool ngxCleanup(NVSDK_NGX_Result result,const char *operation) noexcept {
     std::fprintf(stderr,"DLSS cleanup: %s failed (NGX %u); restart Blender\n",operation,unsigned(result));
     return false;
 }
-struct Scope {
-    explicit Scope(CUcontext context){cuda(cuCtxPushCurrent(context));}
-    ~Scope(){CUcontext unused=nullptr;cuCtxPopCurrent(&unused);}
-};
 void releaseManager() noexcept {
     if(!manager.refs||--manager.refs)return;
     if(cudaCleanup(cuCtxPushCurrent(manager.context),"shutdown context push")){
@@ -145,7 +141,7 @@ struct Texture {
 struct Parameters {
     NVSDK_NGX_Parameter *p=nullptr;
     Parameters(){ngx(NVSDK_NGX_CUDA_AllocateParameters(&p));}
-    ~Parameters(){if(p)NVSDK_NGX_CUDA_DestroyParameters(p);}
+    ~Parameters(){if(p)ngxCleanup(NVSDK_NGX_CUDA_DestroyParameters(p),"parameter destroy");}
     NVSDK_NGX_Parameter *operator->(){return p;}
 };
 struct Instance {
@@ -244,7 +240,6 @@ struct Instance {
                 for(size_t i=0;i<size_t(f.output_width)*f.output_height;++i)scratch[i*4+3]=std::clamp(scratch[i*4+3],0.f,1.f);
             }
         }catch(...){history=false;throw;}
-        std::memcpy(target,scratch.data(),scratch.size()*sizeof(float));history=true;lastId=f.frame_id;lastScene=f.scene_serial;++stats.frames;
         stats.evaluate_readback_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     }
 };
@@ -268,7 +263,27 @@ void *slc_dlss_create(uint32_t device,const char *runtime,const char *cache,uint
 }
 int slc_dlss_process(void *handle,const SlcDLSSFrame *frame,float *output,uint64_t outputCapacity,char *message,uint32_t capacity){
     std::lock_guard<std::mutex> lock(mutex);error(message,capacity,"");
-    try{if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before processing");if(!handle||!frame)throw std::runtime_error("Invalid DLSS handle/frame");Scope scope(manager.context);static_cast<Instance*>(handle)->process(*frame,output,outputCapacity);return 1;}
+    try{
+        if(manager.cleanupFailed)throw std::runtime_error("DLSS cleanup failed; restart Blender before processing");
+        if(!handle||!frame)throw std::runtime_error("Invalid DLSS handle/frame");
+        const CUresult pushed=cuCtxPushCurrent(manager.context);
+        cudaCleanup(pushed,"frame context push");cuda(pushed);
+        auto &instance=*static_cast<Instance*>(handle);
+        try{instance.process(*frame,output,outputCapacity);}
+        catch(...){
+            CUcontext previous=nullptr;
+            cudaCleanup(cuCtxPopCurrent(&previous),"failed frame context pop");
+            throw;
+        }
+        CUcontext previous=nullptr;const CUresult popped=cuCtxPopCurrent(&previous);
+        cudaCleanup(popped,"frame context pop");
+        if(manager.cleanupFailed){instance.history=false;throw std::runtime_error("DLSS cleanup failed; restart Blender before processing");}
+        // Publish only after parameter retirement and context restoration have
+        // succeeded. Failed cleanup must not expose output or advance history.
+        std::memcpy(output,instance.scratch.data(),instance.scratch.size()*sizeof(float));
+        instance.history=true;instance.lastId=frame->frame_id;instance.lastScene=frame->scene_serial;++instance.stats.frames;
+        return 1;
+    }
     catch(const std::exception &e){error(message,capacity,e.what());return 0;}
 }
 void slc_dlss_stats(void *handle,SlcDLSSStats *stats){std::lock_guard<std::mutex> lock(mutex);if(handle&&stats)*stats=static_cast<Instance*>(handle)->stats;}

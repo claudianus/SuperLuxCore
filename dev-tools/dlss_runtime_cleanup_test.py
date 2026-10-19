@@ -27,7 +27,7 @@ using CUresult=int;using NVSDK_NGX_Result=int;using NVSDK_NGX_Handle=int;
 constexpr int CUDA_SUCCESS=0;
 #define NVSDK_NGX_FAILED(r) ((r)!=0)
 struct SlcDLSSStats { uint64_t texture_bytes=0,host_scratch_bytes=0;unsigned width=0,height=0,output_width=0,output_height=0,frames=0; };
-struct SlcDLSSFrame {};
+struct SlcDLSSFrame {uint64_t frame_id=0,scene_serial=0;};
 std::string fault;std::vector<int> stack{42};std::map<uintptr_t,int> allocations;
 int nextId=1,pushes=0,pops=0,shutdowns=0,destroys=0,wrappers=0,instances=0,processed=0;
 bool injected=false;
@@ -105,7 +105,7 @@ struct Texture {
 struct Instance {
  SlcDLSSStats stats;unsigned preset=0;NVSDK_NGX_Handle *feature=reinterpret_cast<int*>(allocate());
  std::unique_ptr<Texture> color,depth,diffuse,specular,normal,motion,specMotion,output;
- std::vector<float> scratch;bool history=true;
+ std::vector<float> scratch;uint64_t lastId=0,lastScene=0;bool history=true;
  Instance(){++instances;for(auto *p:{&color,&depth,&diffuse,&specular,&normal,&motion,&specMotion,&output})*p=std::make_unique<Texture>();scratch.resize(64);}
  ~Instance(){clear();--instances;}
  void process(const SlcDLSSFrame &,float *out,uint64_t){++processed;*out=123;}

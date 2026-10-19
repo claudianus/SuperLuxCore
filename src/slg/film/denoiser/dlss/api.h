@@ -23,6 +23,7 @@ typedef struct SlcDLSSFrame {
 typedef struct SlcDLSSStats {
     // Requested texture payload and host scratch only. CUDA allocation padding,
     // context overhead and opaque NGX/model allocations are additional.
+    // frames counts output frames successfully published to the caller.
     uint64_t texture_bytes,host_scratch_bytes,sdk_private_bytes,frames;
     uint32_t width,height,output_width,output_height;
     double evaluate_readback_seconds;

@@ -1,7 +1,7 @@
-name: DLSS initialization transaction acceptance
+name: DLSS frame publication transaction acceptance
 on:
   push:
-    branches: [review/dlss-init-transaction-20261019]
+    branches: [review/dlss-frame-transaction-20261019]
 permissions:
   contents: read
 jobs:
@@ -13,13 +13,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - run: python dev-tools/dlss_frame_transaction_test.py --out frame-fixed.json
       - run: python dev-tools/dlss_init_transaction_test.py --out init-fixed.json
       - run: python dev-tools/dlss_runtime_cleanup_test.py --out teardown-fixed.json
       - run: python dev-tools/film_cleanup_ownership_test.py --out film-reference-model-fixed.json
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: dlss-init-host
+          name: dlss-frame-host
           path: '*-fixed.json'
   windows-helper:
     runs-on: windows-2022
@@ -31,6 +32,8 @@ jobs:
         with:
           python-version: '3.13'
       - uses: ilammy/msvc-dev-cmd@v1
+      - run: python dev-tools/dlss_frame_transaction_test.py --msvc --out windows-frame-fixed.json
+      - run: python dev-tools/dlss_frame_transaction_test.py --msvc --no-console --out windows-gui-frame-fixed.json
       - run: python dev-tools/dlss_init_transaction_test.py --msvc --out windows-init-fixed.json
       - run: python dev-tools/dlss_init_transaction_test.py --msvc --no-console --out windows-gui-init-fixed.json
       - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --out windows-teardown-fixed.json
@@ -59,26 +62,52 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --install out/dlss --config Release
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: ABI load and native driver-discovery smoke without feature evaluation
-        shell: python
-        run: |
-          import ctypes as C,hashlib,json,os,pathlib,tempfile
-          libpath=pathlib.Path('out/dlss-install/superluxcore_dlss.dll').resolve()
-          lib=C.CDLL(str(libpath));lib.slc_dlss_abi.restype=C.c_uint32
-          assert lib.slc_dlss_abi()==1
-          lib.slc_dlss_create.argtypes=[C.c_uint32,C.c_char_p,C.c_char_p,C.c_uint64,C.c_char_p,C.c_uint32];lib.slc_dlss_create.restype=C.c_void_p
-          lib.slc_dlss_destroy.argtypes=[C.c_void_p];lib.slc_dlss_destroy.restype=None
-          with tempfile.TemporaryDirectory(prefix='slc-init-abi-') as cache:
-              message=C.create_string_buffer(1024)
-              handle=lib.slc_dlss_create(0,os.fsencode(pathlib.Path('.dlss-sdk/lib/Windows_x86_64/rel').resolve()),os.fsencode(cache),4096,message,len(message))
-              if not handle: assert message.value
-              lib.slc_dlss_destroy(handle);lib.slc_dlss_destroy(None)
-          pathlib.Path('helper-abi.json').write_text(json.dumps(dict(ABI=1,create_returned_handle=bool(handle),create_error=message.value.decode('utf8',errors='replace'),NGX_evaluations=0,helper_sha256=hashlib.sha256(libpath.read_bytes()).hexdigest(),source_sha256=hashlib.sha256(pathlib.Path('src/slg/film/denoiser/dlss/runtime.cpp').read_bytes()).hexdigest(),scope='Actual DLL build/load/create-discovery/close only; mock tests do not certify RTX or driver recovery'),indent=2))
+      - name: Built helper ABI and invalid-frame contract
+        run: python dev-tools/dlss_helper_smoke.py --library out/dlss-install/superluxcore_dlss.dll --runtime .dlss-sdk/lib/Windows_x86_64/rel --out helper-abi.json
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: dlss-init-windows-helper
+          name: dlss-frame-windows-helper
           path: |
             *-fixed.json
             helper-abi.json
             out/dlss-install/*
+  linux-helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/DLSS
+          ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
+          path: .dlss-sdk
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /include/
+            /LICENSE.txt
+            /lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16
+      - name: Build and validate helper in the glibc 2.28 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/project" -w /project quay.io/pypa/manylinux_2_28_x86_64 bash -euxo pipefail -c '
+            export CC=/opt/rh/gcc-toolset-14/root/usr/bin/gcc
+            export CXX=/opt/rh/gcc-toolset-14/root/usr/bin/g++
+            cmake -S src/slg/film/denoiser/dlss -B out/dlss-linux -DCMAKE_BUILD_TYPE=Release -DDLSS_ROOT=/project/.dlss-sdk -DCMAKE_INSTALL_PREFIX=/project/out/dlss-linux-install -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -pthread"
+            cmake --build out/dlss-linux --parallel 2
+            cmake --install out/dlss-linux
+            /opt/python/cp313-cp313/bin/python dev-tools/dlss_helper_smoke.py --library out/dlss-linux-install/libsuperluxcore_dlss.so --runtime .dlss-sdk/lib/Linux_x86_64/rel --elf-runtime .dlss-sdk/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16 --out linux-helper-abi.json
+          '
+          docker image inspect quay.io/pypa/manylinux_2_28_x86_64 --format '{{json .RepoDigests}}' > manylinux-image-digest.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: dlss-frame-linux-helper
+          path: |
+            linux-helper-abi.json
+            manylinux-image-digest.json
+            out/dlss-linux-install/*
