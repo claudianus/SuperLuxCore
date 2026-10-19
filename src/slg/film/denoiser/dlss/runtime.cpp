@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <utility>
 #define NVSDK_NGX_HEADER_ONLY
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs_dlssd.h>
@@ -63,30 +64,51 @@ void acquireManager(unsigned device,const char *runtime,const char *cache){
         if(device!=manager.device||runtime!=manager.runtime||cache!=manager.cache)throw std::runtime_error("Active DLSS instances must share one GPU/runtime/cache");
         ++manager.refs;return;
     }
+    // Allocate publication strings before acquiring a native context. Moving
+    // this completed state into manager cannot strand it on a host allocation.
+    Manager prepared;prepared.device=device;prepared.runtime=runtime;prepared.cache=cache;
     if(cuewInit(CUEW_INIT_CUDA)!=CUEW_SUCCESS)throw std::runtime_error("CUDA driver is unavailable");
     cuda(cuInit(0));CUdevice gpu;cuda(cuDeviceGet(&gpu,device));
     CUcontext context=nullptr;cuda(cuCtxCreate(&context,0,gpu));
-    CUcontext popped=nullptr;cuda(cuCtxPopCurrent(&popped));
+    bool current=true,ngxInitialized=false;
     try{
+        CUcontext popped=nullptr;
+        const CUresult initialPop=cuCtxPopCurrent(&popped);current=false;
+        cudaCleanup(initialPop,"initial context pop");cuda(initialPop);
+        const CUresult pushed=cuCtxPushCurrent(context);
+        cudaCleanup(pushed,"initialization context push");cuda(pushed);current=true;
         // Python's os.fsencode supplies UTF-8 on Windows as well. Narrow
         // filesystem::path would interpret Korean user directories as ANSI.
         const auto runtimePath=std::filesystem::u8path(runtime),cachePath=std::filesystem::u8path(cache);
-        Scope scope(context);std::filesystem::create_directories(cachePath);
+        std::filesystem::create_directories(cachePath);
         const auto wRuntime=runtimePath.wstring(),wCache=cachePath.wstring();
         const wchar_t *paths[]={wRuntime.c_str()};NVSDK_NGX_FeatureCommonInfo common={};common.PathListInfo.Path=paths;common.PathListInfo.Length=1;
         NVSDK_NGX_FeatureDiscoveryInfo discovery={};discovery.SDKVersion=NVSDK_NGX_Version_API;discovery.FeatureID=NVSDK_NGX_Feature_RayReconstruction;
         discovery.Identifier.IdentifierType=NVSDK_NGX_Application_Identifier_Type_Project_Id;
         discovery.Identifier.v.ProjectDesc={projectId,NVSDK_NGX_ENGINE_TYPE_CUSTOM,"SuperLuxCore-2.11.34"};discovery.ApplicationDataPath=wCache.c_str();discovery.FeatureInfo=&common;
         ngx(NVSDK_NGX_CUDA_Init_with_ProjectID(projectId,NVSDK_NGX_ENGINE_TYPE_CUSTOM,"SuperLuxCore-2.11.34",wCache.c_str(),&common));
+        ngxInitialized=true;
         // The header-only SDK resets GContext on Shutdown but retains GLib.
         // Its pre-init query wrapper then skips reloading the cleared query
         // pointer and returns NotImplemented. Init reloads the full API table.
-        try{
-            NVSDK_NGX_FeatureRequirement requirement={};ngx(NVSDK_NGX_CUDA_GetFeatureRequirements(gpu,&discovery,&requirement));
-            if(requirement.FeatureSupported!=NVSDK_NGX_FeatureSupportResult_Supported)throw std::runtime_error("CUDA Ray Reconstruction is unsupported on the selected device/driver");
-        }catch(...){NVSDK_NGX_CUDA_Shutdown();throw;}
-    }catch(...){cuCtxDestroy(context);throw;}
-    manager.context=context;manager.refs=1;manager.device=device;manager.runtime=runtime;manager.cache=cache;
+        NVSDK_NGX_FeatureRequirement requirement={};ngx(NVSDK_NGX_CUDA_GetFeatureRequirements(gpu,&discovery,&requirement));
+        if(requirement.FeatureSupported!=NVSDK_NGX_FeatureSupportResult_Supported)throw std::runtime_error("CUDA Ray Reconstruction is unsupported on the selected device/driver");
+        const CUresult finalPop=cuCtxPopCurrent(&popped);current=false;
+        cudaCleanup(finalPop,"initialization context pop");cuda(finalPop);
+    }catch(...){
+        // A failing pop may already have consumed its stack entry. Never pop
+        // blindly: reacquire our own context if NGX still needs shutdown.
+        if(ngxInitialized&&!current)
+            current=cudaCleanup(cuCtxPushCurrent(context),"initialization rollback push");
+        if(current){
+            if(ngxInitialized)ngxCleanup(NVSDK_NGX_CUDA_Shutdown(),"initialization NGX rollback");
+            CUcontext popped=nullptr;cudaCleanup(cuCtxPopCurrent(&popped),"initialization rollback pop");
+        }
+        if(!cudaCleanup(cuCtxDestroy(context),"initialization context rollback"))
+            manager.context=context; // Retain identity; cleanupFailed blocks reuse.
+        throw;
+    }
+    prepared.context=context;prepared.refs=1;manager=std::move(prepared);
 }
 struct Texture {
     CUarray array=nullptr;CUtexObject texture=0;CUsurfObject surface=0;

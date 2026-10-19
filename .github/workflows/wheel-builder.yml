@@ -1,321 +1,41 @@
-name: Windows DLSS stability fix2 acceptance
+name: DLSS initialization transaction acceptance
 on:
   push:
-    branches: [release/windows-dlss-stability-20261019-fix2]
+    branches: [review/dlss-init-transaction-20261019]
 permissions:
   contents: read
 jobs:
-  packaging-regression:
-    name: Wheel staging and experimental version regression
+  host-init:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - run: python -m pip install wheel
-      - run: python dev-tools/wheel_packaging_regression.py
-
-  teardown-regression:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: python dev-tools/cuda_teardown_test.py --out cuda-fixed.json
-      - run: python dev-tools/film_pipeline_teardown_test.py --out film-fixed.json
-      - run: python dev-tools/film_async_error_test.py --out async-fixed.json
-      - run: python dev-tools/opencl_cleanup_error_test.py --out opencl-fixed.json
-      - run: python dev-tools/film_cleanup_ownership_test.py --out ownership-fixed.json
-      - run: python dev-tools/cuda_buffer_cleanup_test.py --out cuda-buffer-fixed.json
-      - run: python dev-tools/optix_denoiser_cleanup_test.py --out optix-fixed.json
-      - run: python dev-tools/dlss_runtime_cleanup_test.py --out dlss-runtime-fixed.json
-      - uses: actions/upload-artifact@v5
-        if: always()
-        with:
-          name: teardown-host-regression
-          path: '*-fixed.json'
-
-  windows-no-console:
-    name: Windows MSVC teardown with and without a console
-    runs-on: windows-2022
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - uses: ilammy/msvc-dev-cmd@v1
-      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --out windows-console-fixed.json
-      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --no-console --out windows-gui-fixed.json
+      - run: python dev-tools/dlss_init_transaction_test.py --out init-fixed.json
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --out teardown-fixed.json
+      - run: python dev-tools/film_cleanup_ownership_test.py --out film-reference-model-fixed.json
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: windows-cleanup-no-console
+          name: dlss-init-host
           path: '*-fixed.json'
-
-  # CUDA is never exercised on the macOS dev machines nor on the GPU-less
-  # runners, so kernel code that compiles for CPU/Metal/OpenCL can ship broken
-  # on CUDA (v2.11.21). NVRTC needs no GPU: compile every hardware program as
-  # CUDADevice assembles it and refuse to build wheels when any of them fails.
-  cuda-kernel-check:
-    needs: [packaging-regression, teardown-regression, windows-no-console]
-    name: CUDA kernel compile gate (NVRTC)
-    runs-on: ubuntu-latest
+  windows-helper:
+    runs-on: windows-2022
+    timeout-minutes: 20
     steps:
-      - name: Checkout main repository (standard context)
-        if: ${{ !env.ACT }}
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ inputs.repository }}
-          ref: ${{ inputs.ref }}
-
-      - name: Checkout main repository (act context)
-        if: env.ACT
-        uses: actions/checkout@v6
-
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-
-      # Same NVRTC as the Windows/Linux bundles ship (SuperBlendLuxCore
-      # cmake/bundled-wheels-*.txt).
-      - name: Install NVRTC
-        run: python -m pip install nvidia-cuda-nvrtc-cu12==12.9.86
-
-      - name: Compile CUDA kernels
-        run: python dev-tools/cuda_kernel_check.py --jobs 4
-
-  build-wheels:
-    name: Build wheel ${{ matrix.os }}-3.${{ matrix.python-minor }}
-    needs: [cuda-kernel-check]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        # The addon requires Blender >= 5.2, which bundles Python 3.13
-        # (blender_manifest.toml: blender_version_min = "5.2.0").
-        python-minor: [13]
-        #os: [ubuntu-latest, windows-2022, macos-15-intel, macos-15, windows-11-arm]
-        os: [windows-2022]
-    env:
-      # Reminder: report all variables here to CIBW_ENVIRONMENT_PASS_LINUX
-      CMAKE_BUILD_PARALLEL_LEVEL: 2
-      BUILD_TYPE: ${{ github.event.inputs.build-type || 'Release' }}
-      CXX_VERSION: 20
-      GCC_VERSION: 14
-      GLIBC_VERSION: 2_28
-      GH_TOKEN: ${{ github.token }}
-      PYTHON_MINOR: ${{ matrix.python-minor }}
-    outputs:
-      commit: ${{ steps.current-commit.outputs.commit }}
-      branch: ${{ steps.current-commit.outputs.branch }}
-      version: ${{ steps.output-version.outputs.version }}
-
-    steps:
-
-      - name: Configure git for long paths
-        shell: bash
-        if: runner.os == 'Windows'
-        run: git config --system core.longpaths true
-
-      - name: Checkout main repository (standard context)
-        if: ${{ !env.ACT }}
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ inputs.repository }}
-          ref: ${{ inputs.ref }}
-
-      - name: Checkout main repository (act context)
-        if: env.ACT
-        uses: actions/checkout@v6
-
-      - name: Get current commit
-        shell: bash
-        id: current-commit
-        run: |
-          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git symbolic-ref HEAD)" >> $GITHUB_OUTPUT
-          echo "commit=$(git rev-parse HEAD)"
-          echo "branch=$(git symbolic-ref HEAD)"
-
-      - name: Find workspace
-        shell: bash
-        run: |
-          case ${{ runner.os }} in
-            Linux) _workspace="/project";;
-            Windows) _workspace=$(cygpath -u $GITHUB_WORKSPACE);;
-            macOS) _workspace="$GITHUB_WORKSPACE";;
-            *) echo "Unhandled os ${{ runner.os }}";exit 64;;
-          esac
-          echo "WORKSPACE=${_workspace}" >> $GITHUB_ENV
-
-      - name: Set Conan parameters
-        shell: bash
-        run: |
-            _build_type=$(echo "${{ env.BUILD_TYPE }}" | tr '[:upper:]' '[:lower:]')
-            if [[ "${{ runner.os }}" == "Windows" ]]; then
-              _conan_home=$(cygpath -w "${{ env.WORKSPACE }}/.conan2")
-            else
-              _conan_home="${{ env.WORKSPACE }}/.conan2"
-            fi
-            echo "CONAN_PRESET=conan-${_build_type}" >> $GITHUB_ENV
-            echo "CONAN_HOME=${_conan_home}" >> $GITHUB_ENV
-
-      - name: Configure ccache
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const workspace = String.raw`${{ github.workspace }}`;
-
-            const envVariables = {
-                'cache-variant': String.raw`ccache`,
-                'CMAKE_CXX_COMPILER_LAUNCHER': String.raw`ccache`,
-                'CMAKE_C_COMPILER_LAUNCHER': String.raw`ccache`,
-                'CCACHE_CONFIGPATH': String.raw`${workspace}/build-system/ccache.conf`,
-                'CCACHE_DIR': String.raw`${workspace}/.ccache`,
-                'CCACHE_DEBUGDIR': String.raw`${workspace}/ccache-debug`,
-                'CCACHE_LOGFILE': String.raw`${workspace}/ccache.log`
-            };
-
-            for (const [key, value] of Object.entries(envVariables)) {
-                core.exportVariable(key, value);
-            }
-
-      # Update apt: needed to install ccache
-      - name: Update apt (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update -y
-
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@v1
-        with:
-          create-symlink: false
-          variant: ${{ env.cache-variant }}
-          key: cpl-${{ matrix.os }}-${{ matrix.python-minor}}
-          restore-keys: cpl-${{ matrix.os }}-${{ matrix.python-minor}}-
-          max-size: 5G
-          verbose: 1
-
-      - name: Prepare msvc
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
-
-      - name: Prepare Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          _V=${{ env.GCC_VERSION }}
-          _T=/opt/rh/gcc-toolset-${_V}/root
-
-          echo "TOOLSET_ROOT=${_T}" >> $GITHUB_ENV
-          echo "CXX=${_T}/usr/bin/g++" >> $GITHUB_ENV
-          echo "CC=${_T}/usr/bin/gcc" >> $GITHUB_ENV
-          echo "AR=${_T}/usr/bin/ar" >> $GITHUB_ENV
-          echo "RANLIB=${_T}/usr/bin/ranlib" >> $GITHUB_ENV
-
-      - name: Set MacOS deployment target and other set-ups
-        if: runner.os == 'macOS'
-        uses: actions/github-script@v8
-        with:
-          # Minimum targets driven by:
-          # Intel: libomp
-          # Arm: opensubdiv
-          script: |
-            if ('${{ runner.arch }}' == 'X64') {
-              target = '11.0';  // Required by libomp
-              arch='x86_64';
-            }
-            else {
-              target = '14.2';  // Required by opensubdiv
-              arch='armv8';
-            }
-            core.exportVariable('MACOSX_DEPLOYMENT_TARGET', target);
-            core.exportVariable('CMAKE_OSX_DEPLOYMENT_TARGET', target);
-            core.exportVariable('PKG_ARCH', arch);
-
-      - name: Prepare MacOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-            # We make conan believe we use apple-clang (see profiles), but
-            # actually we use recent version of llvm, to get full compatibility
-            # with C++20 (in particular: joining threads)
-
-            LLVM_VERSION=21
-
-            # llvm
-            brew install llvm@${LLVM_VERSION}
-            brew link llvm@${LLVM_VERSION} --overwrite
-            LLVM_PREFIX=$(brew --prefix llvm@${LLVM_VERSION})
-            echo "CC=clang" >> $GITHUB_ENV
-            echo "CXX=clang++" >> $GITHUB_ENV
-            echo "AR=llvm-ar" >> $GITHUB_ENV
-            echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
-
-            # lld
-            brew install lld@${LLVM_VERSION}
-            brew link lld@${LLVM_VERSION} --overwrite
-            LLD_PREFIX=$(brew --prefix lld@${LLVM_VERSION})
-
-            # Set paths
-            echo "PATH=${LLVM_PREFIX}/bin:${LLD_PREFIX}/bin:$PATH" >> $GITHUB_ENV
-            echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib:${LLD_PREFIX}/lib:${DYLD_LIBRARY_PATH}" >> $GITHUB_ENV
-
-            # Set flags
-            echo "LDFLAGS=${LD_FLAGS} -fuse-ld=${LLD_PREFIX}/bin/ld64.lld -L${LLVM_PREFIX}/lib -L${LLD_PREFIX}/lib" >> $GITHUB_ENV
-            echo "CPPFLAGS=${CPPFLAGS} -I${LLVM_PREFIX}/include -I${LLD_PREFIX}/include" >> $GITHUB_ENV
-
-
-      # TODO: The following block is an ugly hack but, at the moment (2025-02-25),
-      # scikit-build-core lacks a preset parameter, so this is the only way
-      # I found to pass a calculated environment var to CMake build step
-      - name: Set M4 env var
-        if: runner.os != 'Windows'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            if ('${{ runner.arch }}' == 'X64') {
-              arch = 'x86_64'
-            } else {
-              arch = 'armv8'
-            }
-            base = '${{ env.WORKSPACE }}/out/dependencies/full_deploy/host/m4/1.4.19/Release/'
-            core.exportVariable('M4', base + arch + '/bin/m4')
-
-      - name: Export version for scikit-build-core
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          if (input_version := "${{ inputs.version }}"):
-            result = input_version
-          else:
-            build_settings_file = Path("build-system", "build-settings.json")
-            with open(build_settings_file) as in_file:
-              default_version = json.load(in_file)["DefaultVersion"]
-            result = ".".join(default_version[i] for i in ("major", "minor", "patch"))
-            if (prerelease := default_version["prerelease"]):
-              result = f"{result}-{prerelease}"
-
-          print(f"Version: {result}")
-
-          with open("SKVERSION", "w+") as out_file:
-            out_file.write(result)
-
-      - name: Output version
-        id: output-version
-        shell: bash
-        run: |
-          _version=$(cat SKVERSION)
-          echo "version=${_version}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Checkout pinned NVIDIA SDK release files
-        uses: actions/checkout@v6
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: python dev-tools/dlss_init_transaction_test.py --msvc --out windows-init-fixed.json
+      - run: python dev-tools/dlss_init_transaction_test.py --msvc --no-console --out windows-gui-init-fixed.json
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --out windows-teardown-fixed.json
+      - run: python dev-tools/dlss_runtime_cleanup_test.py --msvc --no-console --out windows-gui-teardown-fixed.json
+      - uses: actions/checkout@v6
         with:
           repository: NVIDIA/DLSS
           ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
@@ -325,14 +45,12 @@ jobs:
             /include/
             /LICENSE.txt
             /lib/Windows_x86_64/rel/nvngx_dlssd.dll
-
       - name: Verify official runtime signature
         shell: pwsh
         run: |
           $sig = Get-AuthenticodeSignature .dlss-sdk/lib/Windows_x86_64/rel/nvngx_dlssd.dll
-          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'NVIDIA') { throw "Invalid NVIDIA release signature: $($sig.Status)" }
-
-      - name: Build optional CUDA DLSS helper
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'NVIDIA') { throw 'Invalid NVIDIA signature' }
+      - name: Build only the separate DLSS helper
         shell: pwsh
         run: |
           cmake -S src/slg/film/denoiser/dlss -B out/dlss -A x64 "-DDLSS_ROOT=$env:GITHUB_WORKSPACE/.dlss-sdk" "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE/out/dlss-install" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -341,265 +59,26 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --install out/dlss --config Release
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-      # Build wheel
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_BUILD_FRONTEND: build
-          CIBW_BUILD_VERBOSITY: 1
-          CIBW_BUILD: cp3${{ matrix.python-minor }}-*
-          CIBW_SKIP: "*musllinux*"
-          CIBW_ARCHS: auto64
-          CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux_${{ env.GLIBC_VERSION }}_x86_64
-          CIBW_ENVIRONMENT: >
-            SKBUILD_CMAKE_ARGS='--preset conan-default;--log-level=VERBOSE;-DLUXCORE_VERSION=${{ steps.output-version.outputs.version }};-DLUXCORE_BUILD_UI=OFF;-G Ninja Multi-Config'
-            SKBUILD_CMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-            GH_TOKEN=${{ secrets.GITHUB_TOKEN }}
-            LUX_BUILD_TYPE=${{ env.BUILD_TYPE }}
-            DEPS_WITHOUT_SUDO=1
-          CIBW_ENVIRONMENT_PASS_LINUX: |
-            CC
-            CXX
-            BUILD_TYPE
-            GCC_VERSION
-            SANITIZE
-            ASAN_PATH
-            RUNNER_OS
-            RUNNER_ARCH
-            WORKSPACE
-            CMAKE_CXX_COMPILER_LAUNCHER
-            CMAKE_C_COMPILER_LAUNCHER
-            PYTHON_MINOR
-            BOOST_INSTALL_LAYOUT
-            SPDLOG_FMT_EXTERNAL
-            CXX_VERSION
-            CONAN_HOME
-            CONAN_PRESET
-            M4
-          CIBW_BEFORE_ALL_LINUX: |
-            # Install toolchain (gcc, ccache...)
-            dnf install -y epel-release
-            dnf install -y almalinux-release-devel
-            dnf install -y ccache
-            dnf install -y perl-IPC-Cmd perl-Digest-SHA
-            dnf install -y ninja-build gdb
-
-            # Install gh (via conda)
-            dnf install -y wget
-            mkdir -p miniconda3
-            wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda3/miniconda.sh
-            bash miniconda3/miniconda.sh -b -u -p miniconda3
-            rm miniconda3/miniconda.sh
-            source miniconda3/bin/activate
-            conda init --all
-
-            # Accept conda terms of service
-            conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-            conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-            # Install gh
-            conda install gh --channel conda-forge -y
-            echo ${{ secrets.GITHUB_TOKEN }} | gh auth login --with-token
-
-            # Manylinux_2_34 compatibility (for future use)
-            if [[ ${{ env.GLIBC_VERSION }} != 2_28 ]]; then
-              dnf install -y perl-FindBin perl-lib
-            fi
-
-            # Install dependencies
-            pip install "conan==2.21" && pip install wheel && make deps
-
-          CIBW_BEFORE_ALL_MACOS: |
-            pip install "conan==2.21" && pip install wheel && make deps
-
-          CIBW_BEFORE_ALL_WINDOWS: |
-            pip install "conan==2.21" && pip install wheel && make deps
-
-
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
-            paths=$(find /project -type d -wholename "*/lib" -print0 | xargs -0 realpath | tr "\n" ":")
-            LD_LIBRARY_PATH=$paths:$LD_LIBRARY_PATH
-            echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
-            export LD_LIBRARY_PATH
-
-            ## Check build data
-            unzip {wheel} -d /tmp/wheel
-
-            auditwheel \
-              --verbose repair -w {dest_dir} \
-              --plat manylinux_${{ env.GLIBC_VERSION }}_x86_64 \
-              --only-plat \
-              ${{ env.BUILD_TYPE == 'Release' && '--strip' || '' }} \
-              {wheel}
-
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: |
-            bash.exe ${{ env.WORKSPACE }}/build-system/wheels/repair_wheel_windows.sh '{wheel}' '{dest_dir}' '%VCToolsRedistDir%%Platform%' '${{ env.WORKSPACE }}'
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: |
-            cp {wheel} ${{ env.WORKSPACE }}
-            paths=$(find ${{ env.WORKSPACE }} -type d -wholename "*/lib" -print0 | xargs -0 realpath | tr "\n" ":")
-            DYLD_LIBRARY_PATH=$paths:$DYLD_LIBRARY_PATH
-            echo "DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}"
-            export DYLD_LIBRARY_PATH
-            delocate-listdeps -v {wheel}
-            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          # Preserve the smoke gate and retain native import backtraces when
-          # wheel relocation or an optional runtime crashes before test output.
-          CIBW_TEST_ENVIRONMENT: PYTHONFAULTHANDLER=1 PYTHONUNBUFFERED=1
-          CIBW_TEST_COMMAND_LINUX: >-
-            python -X faulthandler -m pysuperluxcoretest ||
-            (gdb --batch -ex run -ex bt --args python -c "import pysuperluxcore"; exit 1)
-          CIBW_TEST_COMMAND_WINDOWS: pysuperluxcoretest
-          CIBW_TEST_COMMAND_MACOS: pysuperluxcoretest
-          # macos-15-intel runners are GPU-less VMs: the smoke test aborts
-          # inside MTLLoader (no target architecture), though the wheel is
-          # fine on real Intel Macs with Metal-capable GPUs.
-          CIBW_TEST_SKIP: ${{ matrix.os == 'macos-15-intel' && '*macosx_x86_64' || '' }}
-          CIBW_CONTAINER_ENGINE: >
-            docker;
-            create_args:
-              --mount type=bind,source=${{ env.CCACHE_DIR }},target=/root/.ccache
-
-        with:
-            package-dir: .
-            output-dir: wheelhouse
-            config-file: "{package}/pyproject.toml"
-
-
-      - name: Preserve tested native wheel before optional DLSS packaging
-        uses: actions/upload-artifact@v5
-        with:
-          name: native-windows-wheel-input
-          path: ./wheelhouse/*.whl
-          retention-days: 14
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Stage DLSS payload and verify installed Windows ABI
-        shell: pwsh
-        run: |
-          python -m pip install wheel
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python dev-tools/windows_dlss_package.py stage --wheels wheelhouse --sdk .dlss-sdk --helper out/dlss-install
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $wheel = (Get-ChildItem wheelhouse/*.whl | Select-Object -First 1).FullName
-          python -m pip install --no-deps --force-reinstall $wheel
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python dev-tools/windows_dlss_package.py abi
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-      - name: Save dependency cache
-        if: always()
-        id: cache-deps-save
-        uses: actions/cache/save@v5
-        with:
-          path: conan-cache
-          key: deps-${{ matrix.os }}-${{ matrix.python-minor}}-${{ hashFiles('**/conan-cache') }}
-
-      #- name: Setup tmate session (debug)
-        #if: ${{ failure() }}
-        #uses: mxschmitt/action-tmate@v3
-
-      # Upload artifacts
-      - uses: actions/upload-artifact@v5
-        id: upload
-        with:
-          name: cibw-wheels-${{ matrix.os }}-${{ matrix.python-minor }}
-          path: ./wheelhouse/*.whl
-
-  experimental-windows-bundle:
-    name: Windows hotfix ZIP and installed upgrade smoke
-    needs: [build-wheels]
-    runs-on: windows-2022
-    timeout-minutes: 60
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SLC_NATIVE_COMMIT: ${{ github.sha }}
-    steps:
-      - name: Preserve source bytes on Windows checkout
-        shell: pwsh
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with:
-          repository: claudianus/SuperBlendLuxCore
-          ref: 7582980f5e8198bb189baa22d0226934e31cb6a5
-          path: addon
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: actions/download-artifact@v7
-        with:
-          name: cibw-wheels-windows-2022-13
-          path: addon/wheels
-      - name: Viewport fallback and failure presentation regression
-        shell: pwsh
-        run: |
-          python addon/dev-tools/dlss_viewport_fallback_test.py --out viewport-fallback.json
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python addon/dev-tools/dlss_viewport_backend_ui_test.py --out viewport-backend-ui.json
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Give the wheel its unique experimental cache identity
-        shell: pwsh
-        run: |
-          python -m pip install wheel
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python dev-tools/reversion_windows_wheel.py
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Fetch hash-pinned NVRTC and Blender
-        shell: pwsh
-        run: |
-          python -m pip download --require-hashes --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp -d addon/wheels -r addon/cmake/bundled-wheels-win.txt
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Invoke-WebRequest https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip -OutFile "$env:RUNNER_TEMP/blender.zip"
-          Expand-Archive "$env:RUNNER_TEMP/blender.zip" "$env:RUNNER_TEMP/blender"
-          Remove-Item "$env:RUNNER_TEMP/blender.zip"
-          gh release download experimental-windows-dlss-20261019-fix1 --repo claudianus/SuperBlendLuxCore --pattern SuperLuxCore-2.11.34+dlss.exp20261019.fix1-windows_x64.zip --dir stable-package
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          "BLENDER_ROOT=$env:RUNNER_TEMP/blender/blender-5.2.2-windows-x64" >> $env:GITHUB_ENV
-      - name: Build and verify Windows extension
-        shell: pwsh
-        run: |
-          cmake -S addon -B addon-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBLC_BUNDLE_WHEELS=ON
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build addon-build
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python addon/cmake/verify_bundle.py addon-build/out --platforms windows_x64
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Isolated installed ZIP CPU render and DLSS discovery
+      - name: ABI load and native driver-discovery smoke without feature evaluation
         shell: python
         run: |
-          import os, pathlib, subprocess, shutil
-          out = pathlib.Path('addon-build/out').resolve()
-          env = dict(os.environ, BLENDER_USER_RESOURCES=str(out/'profile-한글'), SLC_SMOKE_OUT=str(out), PYTHONUNBUFFERED='1')
-          blender = str(pathlib.Path(env['BLENDER_ROOT'])/'blender.exe')
-          package, = out.glob('SuperLuxCore-*-windows_x64.zip')
-          def run(args, timeout):
-              child = subprocess.Popen([blender, *args], env=env)
-              try:
-                  code = child.wait(timeout=timeout)
-              except subprocess.TimeoutExpired:
-                  subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'], check=False)
-                  child.wait()
-                  raise
-              if code: raise RuntimeError('Blender failed: '+str(code))
-          try:
-              stable=pathlib.Path('stable-package/SuperLuxCore-2.11.34+dlss.exp20261019.fix1-windows_x64.zip').resolve()
-              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(stable)], 120)
-              expression="import bpy,importlib.metadata,json,pathlib,hashlib; bpy.ops.preferences.addon_enable(module='bl_ext.user_default.superluxcore'); import pysuperluxcore; assert importlib.metadata.version('pysuperluxcore')=='2.11.34+dlss.exp20261019.fix1'; native=next(pathlib.Path(pysuperluxcore.__file__).parent.glob('pysuperluxcore*.pyd')); pathlib.Path("+repr(str(out/'stable-install.json'))+").write_text(json.dumps({'version':'2.11.34+dlss.exp20261019.fix1','native_sha256':hashlib.sha256(native.read_bytes()).hexdigest()}))"
-              run(['--background','--factory-startup','--python-exit-code','1','--python-expr',expression], 120)
-              run(['--background','--factory-startup','--command','extension','install-file','-r','user_default','-e',str(package)], 120)
-              run(['--background','--factory-startup','--python-exit-code','1','--python','dev-tools/windows_blender_smoke.py'], 240)
-          finally:
-              shutil.rmtree(out/'profile-한글', ignore_errors=True)
+          import ctypes as C,hashlib,json,os,pathlib,tempfile
+          libpath=pathlib.Path('out/dlss-install/superluxcore_dlss.dll').resolve()
+          lib=C.CDLL(str(libpath));lib.slc_dlss_abi.restype=C.c_uint32
+          assert lib.slc_dlss_abi()==1
+          lib.slc_dlss_create.argtypes=[C.c_uint32,C.c_char_p,C.c_char_p,C.c_uint64,C.c_char_p,C.c_uint32];lib.slc_dlss_create.restype=C.c_void_p
+          lib.slc_dlss_destroy.argtypes=[C.c_void_p];lib.slc_dlss_destroy.restype=None
+          with tempfile.TemporaryDirectory(prefix='slc-init-abi-') as cache:
+              message=C.create_string_buffer(1024)
+              handle=lib.slc_dlss_create(0,os.fsencode(pathlib.Path('.dlss-sdk/lib/Windows_x86_64/rel').resolve()),os.fsencode(cache),4096,message,len(message))
+              if not handle: assert message.value
+              lib.slc_dlss_destroy(handle);lib.slc_dlss_destroy(None)
+          pathlib.Path('helper-abi.json').write_text(json.dumps(dict(ABI=1,create_returned_handle=bool(handle),create_error=message.value.decode('utf8',errors='replace'),NGX_evaluations=0,helper_sha256=hashlib.sha256(libpath.read_bytes()).hexdigest(),source_sha256=hashlib.sha256(pathlib.Path('src/slg/film/denoiser/dlss/runtime.cpp').read_bytes()).hexdigest(),scope='Actual DLL build/load/create-discovery/close only; mock tests do not certify RTX or driver recovery'),indent=2))
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: experimental-windows-dlss
+          name: dlss-init-windows-helper
           path: |
-            addon-build/out/*windows_x64.zip
-            addon-build/out/*.json
-            addon-build/out/*.exr
-          retention-days: 14
+            *-fixed.json
+            helper-abi.json
+            out/dlss-install/*

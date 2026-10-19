@@ -22,7 +22,10 @@ string fault;int current=42,wrappers=0,deletedPipelines=0,releaseCalls=0,context
 set<int> resources;int serial=0;
 int clReleaseMemObject(void *value){++releaseCalls;if(fault=="release")return -5;resources.erase(int(reinterpret_cast<uintptr_t>(value)));return 0;}
 int clReleaseCommandQueue(int){return 0;}
-int clReleaseContext(int){++contextReleases;resources.clear();return 0;}
+// Releasing a context reference does not reclaim still-retained memory objects.
+// Model failed buffer releases explicitly instead of treating context release
+// as CUDA-style forced allocation reclamation.
+int clReleaseContext(int){++contextReleases;return 0;}
 #define CHECK_OCL_ERROR(e) do{if((e)!=0)throw runtime_error("OpenCL error");}while(0)
 template<class T> string ToString(T v){return to_string(v);}
 struct HardwareDeviceBuffer{virtual ~HardwareDeviceBuffer()=default;virtual bool IsNull()const=0;virtual size_t GetSize()const=0;};
@@ -101,9 +104,11 @@ int main(int argc,char **argv){fault=argv[1];string op=argv[2];bool threw=false;
    assert(f.imagePipelines.size()==(op=="vector"?2:1));
   }
  }
- assert(wrappers==0);assert(resources.empty());assert(contextReleases==1);
+ assert(wrappers==0);assert(contextReleases==1);
+ if(fault=="release")assert(resources.size()==size_t(serial));
+ else assert(resources.empty());
  assert(deletedPipelines==(op=="destroy"?1:(op=="vector"||op=="copy")?3:2));
- puts("PASS owned wrappers/pipelines retired exactly once, context reclaimed and API failure preserves replacement ownership");}
+ printf("PASS host owners retired once; native handles still retained in error model: %zu; API failure preserves replacement ownership\n",resources.size());}
 '''
 def main():
  a=argparse.ArgumentParser();a.add_argument('--root',type=Path,default=ROOT);a.add_argument('--out',type=Path,required=True);args=a.parse_args();root=args.root
@@ -116,5 +121,5 @@ def main():
   for fault in ['success','push','finish','pop','size','release','stop']:
    for op in ['destroy','index','scalar','vector','copy']:
     q=subprocess.run([str(exe),fault,op],capture_output=True,text=True,timeout=5);rows.append(dict(fault=fault,operation=op,returncode=q.returncode,stdout=q.stdout,stderr=q.stderr))
- args.out.write_text(json.dumps(dict(scope='production Film, Gamma, OpenCL buffer/device and hardware Context retirement; ASan/UBSan with simulated driver',records=rows),indent=2)+'\n');print([(r['fault'],r['operation'],r['returncode']) for r in rows]);assert all(r['returncode']==0 for r in rows)
+ args.out.write_text(json.dumps(dict(scope='production Film, Gamma, OpenCL buffer/device and hardware Context retirement; ASan/UBSan with simulated driver. Failed clReleaseMemObject retains native handles even after clReleaseContext; no driver-error native-memory recovery claim.',records=rows),indent=2)+'\n');print([(r['fault'],r['operation'],r['returncode']) for r in rows]);assert all(r['returncode']==0 for r in rows)
 if __name__=='__main__':main()
